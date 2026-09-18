@@ -22,11 +22,28 @@ or ML model** — pure lexical statistics.
 - **Score boosting** (`BoostedTextSearchEngine`): a decorator that applies **signed** score
   adjustments (multiplicative factor and/or additive offset) per result — boost a category or a
   priority, damp or penalize stale matches — without touching the underlying engine.
+- **Second-stage reranking**: an `IReranker` seam and the `RerankedTextSearchEngine`
+  decorator (over-fetch, re-rank, guard rails) in the core; `LexiSharp.Hybrid` ships a
+  diversity-preserving **MMR** reranker and a **cascade** pipeline that chains any number of
+  reranking stages with per-stage trimming.
+- **Metadata filters**: declarative, AND-composed filters over document fields
+  (`MetadataFilterOperator`: equal, not-equal, contains, numeric-or-ordinal greater/less than)
+  in `SearchOptions` — applied by the stock engine before any relevance math.
+- **Lexical similarity** (`LexiSharp.Similarity`): pairwise token-set measures (Jaccard,
+  Sørensen–Dice) over the library tokenizer, a `pg_trgm`-style character trigram similarity,
+  and a rolling Levenshtein edit distance — near-duplicate detection and fuzzy matching with
+  no index.
+- **Keyword extraction** (`LexiSharp.Keywords`): a corpus-backed **TF-IDF** extractor
+  (demotes corpus-frequent words) and a graph-based **TextRank** extractor (weighted
+  co-occurrence graph + PageRank), both deterministic and tokenizer-configurable.
 - **Explainable scoring**: `Bm25Scorer` implements `IScoreExplainer`, and
   `RankedTextSearchEngine.Explain` returns a per-term breakdown (TF, IDF, term score, length
   normalization, parameter values) of any ranking decision.
+- **Evaluation metrics** (`RetrievalMetrics`): `Precision@k`, `Recall@k`, `F1@k`, binary and
+  **graded** `nDCG@k` (exponential gains), plus `ReciprocalRank@k` (→ MRR) and
+  `AveragePrecision@k` (→ MAP).
 - **BM25 tuning**: `Bm25ParameterTuner` grid-searches `k1`/`b` against your own validation
-  queries, judged by `Precision@k`, `Recall@k`, `F1@k` or `nDCG@k` (`RetrievalMetrics`).
+  queries, judged by `Precision@k`, `Recall@k`, `F1@k` or `nDCG@k`.
 - **Supervised classification** (`NaiveBayesClassifier`): multinomial Naive Bayes with
   Laplace smoothing, exposing a dedicated `ITextClassifier` interface.
 - **Configurable tokenizer**: Unicode NFKD normalization and diacritics removal,
@@ -128,6 +145,91 @@ a multiplicative factor (`result => 2.0`). Positive boosts (factor &gt; 1, posit
 negative ones (factor in (0, 1) damp, negative offset penalty) are equally expressible; factor 0
 drops the document entirely. The decorator requests more candidates than the final limit
 (`maxCandidates`, default 50) so boosted documents can surface.
+
+### Reranking (`IReranker`, MMR, cascade)
+
+Retrieve with recall, then re-rank a shortlist with precision. The core seam is `IReranker`;
+`RerankedTextSearchEngine` decorates any engine (over-fetches, re-ranks, applies
+`MinimumScore`/`Limit` on the final scores):
+
+```csharp
+using LexiSharp.Core;
+
+IReranker reranker = ...;                                    // yours, or the MMR one below
+ITextSearchEngine engine = new RerankedTextSearchEngine(baseEngine, reranker, maxCandidates: 100);
+```
+
+`LexiSharp.Hybrid` ships two built-in rerankers. **MMR** (Maximal Marginal Relevance)
+re-orders candidates so each next pick is relevant *and* different from the picks before it —
+near-duplicate results are pushed back; candidates without a vector are never penalized:
+
+```csharp
+using LexiSharp.Hybrid;
+
+var vectors = new Dictionary<string, ReadOnlyMemory<float>>
+{
+    ["doc-1"] = embedding1, // pre-computed with your IEmbeddingProvider
+    ["doc-2"] = embedding2,
+};
+
+IReranker mmr = new MaximalMarginalRelevanceReranker(vectors, lambda: 0.7, limit: 5);
+```
+
+**Cascade** chains any number of stages, trimming between stages so only the strongest
+candidates reach the expensive final ones; it is itself an `IReranker`, so cascades nest:
+
+```csharp
+var pipeline = new CascadeRerankPipeline(
+    new IReranker[] { lexicalReranker, mmr },
+    new CascadeRerankOptions(StageLimit: 20, FinalLimit: 5, MinimumScore: 0.01));
+```
+
+### Metadata filters
+
+Gate the corpus with structured predicates over `SearchDocument.Fields` — every filter must
+hold (AND), and filtering happens before scoring:
+
+```csharp
+var options = new SearchOptions(
+    Limit: 10,
+    Filters:
+    [
+        new MetadataFilter("kind", MetadataFilterOperator.Equal, "article"),
+        new MetadataFilter("year", MetadataFilterOperator.GreaterThan, "2023"),
+        new MetadataFilter("tags", MetadataFilterOperator.Contains, "nlp"),
+    ]);
+
+var results = engine.Search("vector search", options);
+```
+
+Comparisons are culture-invariant; greater/less-than go numeric when both sides parse as
+numbers, otherwise ordinal. Documents missing a field fail everything except `NotEqual`.
+
+### Lexical similarity and keyword extraction
+
+Pairwise similarity for near-duplicate detection and record de-duplication — token-set
+measures over the library tokenizer, `pg_trgm`-style trigrams, and Levenshtein:
+
+```csharp
+using LexiSharp.Similarity;
+
+bool duplicate = LexicalSimilarity.Jaccard(stored, incoming) > 0.5;
+double fuzzy   = LexicalSimilarity.Trigram("kubernetes cluster", "kubernetes clusters");
+int edits      = LevenshteinDistance.Distance("kitten", "sitting"); // 3
+```
+
+Keyword extraction pulls the representative terms out of a text. TF-IDF becomes corpus-aware
+when built over an `ITextIndex`; TextRank needs no corpus at all:
+
+```csharp
+using LexiSharp.Keywords;
+
+IKeywordExtractor tags = new TfIdfKeywordExtractor(someIndex, StopWordTokenizer);
+IKeywordExtractor graph = new TextRankKeywordExtractor(StopWordTokenizer); // co-occurrence + PageRank
+
+foreach (var keyword in graph.Extract(document.Text, topN: 5))
+    Console.WriteLine($"{keyword.Term}: {keyword.Score:F3}");
+```
 
 ### Index persistence (`LexiSharp.MessagePack`)
 
@@ -322,15 +424,20 @@ computes embeddings — and `VectorSimilarity` provides pure cosine math. `Postg
 is the reference consumer: it turns any provider into an ANN backend that the same
 `HybridTextSearchEngine` merges exactly like a lexical engine.
 
+The reranking stage composes with all of it: wrap the hybrid in a
+`RerankedTextSearchEngine` (core decorator) and pass a `CascadeRerankPipeline` or the
+`MaximalMarginalRelevanceReranker` to add a precision or diversity pass on top of the fused
+ranking — the same two-stage retrieve-then-rerank shape, one line of composition.
+
 ## Architecture
 
 ```
 Package            Responsibilities
 ─────────────────────────────────────────────────────────────────────────────
-LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider + boost decorator
+LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider + boost/rerank decorators + filters + similarity + keywords + metrics
 LexiSharp.Postgres  PostgreSQL providers: tsvector+unaccent (lexical), pgvector ANN (vector), pg_trgm+fuzzystrmatch (fuzzy)
 LexiSharp.ParadeDB   true BM25 provider on the pg_search (Tantivy) extension
-LexiSharp.Hybrid    federated engine + mergers (RRF, weighted, reranking)
+LexiSharp.Hybrid    federated engine + mergers (RRF, weighted, reranking) + rerankers (MMR, cascade)
 LexiSharp.MessagePack   MessagePack (binary) persistence for the in-memory index
 ```
 
