@@ -25,8 +25,9 @@ or ML model** — pure lexical statistics.
   Tokenization is SIMD-accelerated (`SearchValues` + `IndexOfAnyExcept`, with a
   `System.Text.Ascii` fast path in normalization).
 - **Optional backends**, shipped as separate packages:
-  - `LexiSharp.Postgres` — a PostgreSQL full-text engine over `tsvector` + GIN +
-    `unaccent`, implementing the same `ITextSearchEngine`;
+  - `LexiSharp.Postgres` — PostgreSQL backends implementing the same `ITextSearchEngine`:
+    a lexical engine over `tsvector` + GIN + `unaccent`, and an ANN engine over `pgvector`
+    (HNSW/IVFFlat) driven by an external `IEmbeddingProvider`;
   - `LexiSharp.Hybrid` — a federated engine that queries several engines and merges
     their results into one coherent ranking.
 
@@ -89,7 +90,12 @@ var tokenizer = new Tokenizer(new TokenizerOptions
 
 ### PostgreSQL backend (`LexiSharp.Postgres`)
 
-Persistent, shared, concurrent full-text search on top of a classic PostgreSQL setup:
+Persistent, shared, concurrent search on top of a classic PostgreSQL setup. Two engines,
+both implementing `ITextSearchEngine` and sharing the same documents table (so the hybrid
+engine can fan out to both and merge lexical + vector results with
+`ReciprocalRankFusionMerger`):
+
+**Lexical (`PostgresTextSearchEngine`)** — full-text over `tsvector`:
 
 ```csharp
 // install once:  dotnet add package LexiSharp.Postgres
@@ -107,11 +113,31 @@ The provider installs (idempotently) the `unaccent` extension, a documents table
 with `ts_rank_cd`. Combined with the `simple` config, `unaccent` mirrors LexiSharp's
 accent-insensitive normalization. Scores are PostgreSQL-native, so they are **not** numerically
 comparable to `Bm25Scorer`/`TfIdfScorer` — feed both backends into the hybrid engine below
-when you need one consistent ordering. To opt into **ANN/embeddings** later, add a
-`pgvector` column and an HNSW/IVFFlat index yourself: the provider deliberately stays lexical.
+when you need one consistent ordering.
+
+**Vector (`PostgresVectorSearchEngine`)** — ANN over `pgvector` (HNSW or IVFFlat), fed by
+your own embeddings:
+
+```csharp
+ITextSearchEngine vector = new PostgresVectorSearchEngine(
+    "Host=db;Port=5432;Username=app;Password=secret;Database=search",
+    new MyEmbeddingProvider(),                                // your ONNX/model-server deps, never LexiSharp
+    new PostgresVectorOptions { Dimension = 384, Distance = VectorDistance.Cosine });
+
+vector.Add(new SearchDocument("1", "the quick brown fox ..."));
+vector.Search("a fast fox");   // scores: cosine→1-dist, L2→1/(1+dist), inner product→-dist
+```
+
+The engine installs (idempotently) the `vector` extension, adds an `embedding vector(D)`
+column and an HNSW (or IVFFlat) index on the same documents table. IVFFlat needs rows to
+cluster lists, so the index is created on the first `EnsureSchema()` call **after** your
+first inserts. ANN results are approximate: combine with `HybridTextSearchEngine` + RRF to
+trade recall for speed — exact cosine behavior is verified in the integration suite.
 
 By default the integration tests are skipped unless `POSTGRES_TEST_CONNECTION` points at a
 live instance (e.g. `Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp`).
+The vector tests additionally require the `vector` extension: use the `pgvector/pgvector:pg16`
+image (lexical tests only need stock PostgreSQL).
 
 ### Hybrid engine (`LexiSharp.Hybrid`)
 
@@ -147,20 +173,20 @@ Writes fan out to every engine. Three merge strategies are available:
 Reciprocal Rank Fusion never looks at scores, so it is the natural bridge for the future
 embedding-backed engines: cosines from any model land in the same formula without calibration.
 
-**Embeddings are an agreed seam, not a feature here**: `IEmbeddingProvider` describes how a
+**Embeddings are an agreed seam, not a feature here**: `IEmbeddingProvider` (core) describes how a
 consumer project (ONNX model, model server, ...) would produce vectors — LexiSharp never
-computes embeddings — and `VectorSimilarity` provides pure cosine math. A future
-embedding-backed engine (in-memory HNSW, PostgreSQL `pgvector` ANN) can be fed to the same
-`HybridTextSearchEngine` and merged exactly like a lexical engine.
+computes embeddings — and `VectorSimilarity` provides pure cosine math. `PostgresVectorSearchEngine`
+is the reference consumer: it turns any provider into an ANN backend that the same
+`HybridTextSearchEngine` merges exactly like a lexical engine.
 
 ## Architecture
 
 ```
 Package            Responsibilities
 ─────────────────────────────────────────────────────────────────────────────
-LexiSharp         records + interfaces + in-memory index + scorers + tokenizer
-LexiSharp.Postgres  PostgreSQL provider (tsvector + GIN + unaccent)
-LexiSharp.Hybrid    federated engine, mergers, IEmbeddingProvider seam
+LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider
+LexiSharp.Postgres  PostgreSQL providers: tsvector+unaccent (lexical) and pgvector ANN (vector)
+LexiSharp.Hybrid    federated engine + mergers (RRF, weighted, reranking)
 ```
 
 Within the core package, separation of concerns mirrors the recommendations the library
@@ -184,6 +210,9 @@ dotnet build LexiSharp.slnx
 dotnet test  tests/LexiSharp.Tests                # xUnit suite (Postgres tests need POSTGRES_TEST_CONNECTION)
 dotnet run  --project bench/LexiSharp.Benchmarks  # BenchmarkDotNet suite
 ```
+
+Postgres integration tests run against whatever `POSTGRES_TEST_CONNECTION` points to; use the
+`pgvector/pgvector:pg16` image to enable both the lexical and the vector suites.
 
 ## License
 

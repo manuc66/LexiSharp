@@ -1,4 +1,4 @@
-namespace LexiSharp.Hybrid;
+namespace LexiSharp.Core;
 
 /// <summary>
 /// Contract for producing text embeddings. <b>LexiSharp never computes embeddings itself</b>:
@@ -7,10 +7,10 @@ namespace LexiSharp.Hybrid;
 /// the dimension contract.
 /// </summary>
 /// <remarks>
-/// This seam exists so that the hybrid engine can later host embeddings-backed sources
-/// (e.g. a PostgreSQL <c>pgvector</c> ANN index or an in-memory HNSW store) alongside the
-/// lexical engines, and merge lexical + vector results. Nothing in this package consumes the
-/// interface yet; it is the agreed extension point.
+/// This seam exists so that embedding-backed engines (a PostgreSQL <c>pgvector</c> ANN index,
+/// an in-memory HNSW store, ...) can be integrated and merged with lexical engines through the
+/// hybrid package — whose <c>ReciprocalRankFusionMerger</c> combines ranks across engines with
+/// incomparable score scales.
 /// </remarks>
 public interface IEmbeddingProvider
 {
