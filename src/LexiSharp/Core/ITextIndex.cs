@@ -58,4 +58,13 @@ public interface ITextIndex
 
     /// <summary>Attempts to read the original document; returns false when unknown.</summary>
     bool TryGetDocument(string documentId, [NotNullWhen(true)] out SearchDocument? document);
+
+    /// <summary>
+    /// Snapshots the corpus statistics of the index.
+    /// </summary>
+    /// <remarks>
+    /// The default implementation derives everything from the other members, so any
+    /// <see cref="ITextIndex"/> implementation gets statistics for free.
+    /// </remarks>
+    TextIndexStatistics GetStatistics() => TextIndexStatistics.From(this);
 }

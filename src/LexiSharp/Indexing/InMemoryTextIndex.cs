@@ -185,4 +185,7 @@ public sealed class InMemoryTextIndex : ITextIndex
     /// <inheritdoc />
     public bool TryGetDocument(string documentId, [NotNullWhen(true)] out SearchDocument? document) =>
         _documents.TryGetValue(documentId, out document);
+
+    /// <inheritdoc />
+    public TextIndexStatistics GetStatistics() => TextIndexStatistics.From(this);
 }
