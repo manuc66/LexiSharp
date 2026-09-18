@@ -1,0 +1,278 @@
+using LexiSharp.Core;
+using Npgsql;
+using NpgsqlTypes;
+
+namespace LexiSharp.Postgres;
+
+/// <summary>
+/// PostgreSQL-backed <see cref="ITextSearchEngine"/>: lexical full-text search over a
+/// <c>tsvector</c> column with a GIN index, queried with <c>websearch_to_tsquery</c> and ranked
+/// with <c>ts_rank_cd</c>. Combined with <c>unaccent()</c> and the <c>simple</c> configuration it
+/// mirrors LexiSharp's diacritic-insensitive normalization.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Schema (created by <see cref="EnsureSchema"/> unless <see cref="PostgresIndexOptions.AutoCreateSchema"/>
+/// is disabled):
+/// </para>
+/// <code>
+/// CREATE EXTENSION IF NOT EXISTS unaccent;
+/// CREATE TABLE IF NOT EXISTS {schema}.{table} (
+///   id       text PRIMARY KEY,
+///   content  text NOT NULL,
+///   category text,
+///   fields   jsonb,
+///   tsv      tsvector GENERATED ALWAYS AS (to_tsvector('simple', unaccent(content))) STORED
+/// );
+/// CREATE INDEX IF NOT EXISTS {table}_tsv_gin ON {schema}.{table} USING GIN (tsv);
+/// </code>
+/// <para>
+/// Ranking uses the database's native <c>ts_rank_cd</c>, so scores are <b>not</b> numerically
+/// comparable to LexiSharp's BM25/TF-IDF. When identical scoring matters, wrap this engine in
+/// the hybrid package's merger strategy (re-rank on the union) or recompute scores in C#.
+/// </para>
+/// <para>
+/// Embeddings/ANN (<c>pgvector</c>) are intentionally not created here: add a
+/// <c>embedding vector(n)</c> column and an HNSW/IVFFlat index when you opt into vector search.
+/// </para>
+/// </remarks>
+public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
+{
+    private readonly NpgsqlDataSource _dataSource;
+    private readonly PostgresIndexOptions _options;
+    private bool _schemaReady;
+
+    /// <param name="connectionString">A PostgreSQL connection string (Npgsql format).</param>
+    /// <param name="options">Naming/behavior options (default: <see cref="PostgresIndexOptions"/>).</param>
+    /// <param name="autoCreateSchema">
+    /// Shortcut for <see cref="PostgresIndexOptions.AutoCreateSchema"/>; overrides the option when set.
+    /// </param>
+    public PostgresTextSearchEngine(
+        string connectionString,
+        PostgresIndexOptions? options = null,
+        bool? autoCreateSchema = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+
+        _options = options ?? new PostgresIndexOptions();
+
+        if (!_options.IsValid)
+            throw new ArgumentException("Schema, table and text search config must match [A-Za-z0-9_].", nameof(options));
+
+        if (autoCreateSchema is not null)
+            _options = _options with { AutoCreateSchema = autoCreateSchema.Value };
+
+        _dataSource = NpgsqlDataSource.Create(connectionString);
+
+        if (_options.AutoCreateSchema)
+        {
+            EnsureSchema();
+            _schemaReady = true;
+        }
+        else
+        {
+            _schemaReady = false;
+        }
+    }
+
+    /// <summary>Installs the extension, table and GIN index if they do not exist yet. Idempotent.</summary>
+    public void EnsureSchema()
+    {
+        EnsureSchemaAsync().GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// Drops the documents table (and its GIN index). Useful for tests and clean teardowns.
+    /// Does not drop the <c>unaccent</c> extension, which is instance-wide.
+    /// </summary>
+    public void DropSchema()
+    {
+        using var connection = _dataSource.OpenConnection();
+
+        using var command = connection.CreateCommand();
+        command.CommandText = $"DROP TABLE IF EXISTS {_options.QualifiedTableName}";
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>Async variant of <see cref="EnsureSchema"/>.</summary>
+    public async Task EnsureSchemaAsync(CancellationToken cancellationToken = default)
+    {
+        if (_schemaReady)
+            return;
+
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+
+        await using (var command = connection.CreateCommand())
+        {
+            string table = _options.QualifiedTableName;
+            string indexName = PostgresIndexOptions.QuoteIdentifier($"{_options.Table}_tsv_gin");
+
+            command.CommandText = $"""
+                CREATE EXTENSION IF NOT EXISTS unaccent;
+                CREATE TABLE IF NOT EXISTS {table} (
+                    id       text PRIMARY KEY,
+                    content  text NOT NULL,
+                    category text,
+                    fields   jsonb,
+                    tsv      tsvector
+                );
+                CREATE INDEX IF NOT EXISTS {indexName} ON {table} USING GIN (tsv);
+                """;
+
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        _schemaReady = true;
+    }
+
+    /// <inheritdoc />
+    public void Index(IEnumerable<SearchDocument> documents)
+    {
+        ArgumentNullException.ThrowIfNull(documents);
+
+        using var connection = _dataSource.OpenConnection();
+
+        using (var command = connection.CreateCommand())
+        using (var transaction = connection.BeginTransaction())
+        {
+            command.CommandText = $"TRUNCATE {_options.QualifiedTableName}";
+            command.Transaction = transaction;
+            command.ExecuteNonQuery();
+
+            foreach (var document in documents)
+                Insert(connection, transaction, document);
+
+            transaction.Commit();
+        }
+    }
+
+    /// <inheritdoc />
+    public void Add(SearchDocument document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        using var connection = _dataSource.OpenConnection();
+        Insert(connection, null, document);
+    }
+
+    /// <inheritdoc />
+    public void Remove(string documentId)
+    {
+        ArgumentNullException.ThrowIfNull(documentId);
+
+        using var connection = _dataSource.OpenConnection();
+
+        using var command = connection.CreateCommand();
+        command.CommandText = $"DELETE FROM {_options.QualifiedTableName} WHERE id = @id";
+        command.Parameters.AddWithValue("id", documentId);
+        command.ExecuteNonQuery();
+    }
+
+    /// <inheritdoc />
+    public void Clear()
+    {
+        using var connection = _dataSource.OpenConnection();
+
+        using var command = connection.CreateCommand();
+        command.CommandText = $"TRUNCATE {_options.QualifiedTableName}";
+        command.ExecuteNonQuery();
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        options ??= SearchOptions.Default;
+
+        if (options.Limit <= 0 || string.IsNullOrWhiteSpace(query))
+            return Array.Empty<SearchResult>();
+
+        using var connection = _dataSource.OpenConnection();
+
+        using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT id, content, category, fields, ts_rank_cd(tsv, query, 32) AS score
+            FROM {_options.QualifiedTableName},
+                 websearch_to_tsquery('{_options.TextSearchConfig}', unaccent(@query)) AS query
+            WHERE tsv @@ query
+            ORDER BY score DESC
+            LIMIT @limit;
+            """;
+
+        command.Parameters.AddWithValue("query", query);
+        command.Parameters.AddWithValue("limit", options.Limit);
+
+        var results = new List<SearchResult>();
+
+        using var reader = command.ExecuteReader();
+
+        while (reader.Read())
+        {
+            double score = reader.GetDouble(4);
+
+            if (double.IsNaN(score) || double.IsInfinity(score) || score == 0)
+                continue;
+
+            if (score < options.MinimumScore)
+                continue;
+
+            var document = ReadDocument(reader);
+            results.Add(new SearchResult(document.Id, score, document));
+        }
+
+        return results;
+    }
+
+    /// <summary>Releases the underlying Npgsql data source.</summary>
+    public void Dispose() => _dataSource.Dispose();
+
+    private void Insert(NpgsqlConnection connection, NpgsqlTransaction? transaction, SearchDocument document)
+    {
+        using var command = connection.CreateCommand();
+
+        string tsvExpr = $"to_tsvector('{_options.TextSearchConfig}', unaccent(@content))";
+
+        command.CommandText = $"""
+            INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, tsv)
+            VALUES (@id, @content, @category, @fields, {tsvExpr})
+            ON CONFLICT (id) DO UPDATE
+                SET content = EXCLUDED.content,
+                    category = EXCLUDED.category,
+                    fields = EXCLUDED.fields,
+                    tsv = {tsvExpr.Replace("@content", "EXCLUDED.content")};
+            """;
+
+        if (transaction is not null)
+            command.Transaction = transaction;
+
+        command.Parameters.AddWithValue("id", document.Id);
+        command.Parameters.AddWithValue("content", document.Text);
+        command.Parameters.AddWithValue("category", (object?)document.Category ?? DBNull.Value);
+
+        var fieldsParameter = command.Parameters.AddWithValue(
+            "fields",
+            document.Fields is null ? DBNull.Value : System.Text.Json.JsonSerializer.Serialize(document.Fields));
+        fieldsParameter.NpgsqlDbType = NpgsqlDbType.Jsonb;
+
+        command.ExecuteNonQuery();
+    }
+
+    private static SearchDocument ReadDocument(NpgsqlDataReader reader)
+    {
+        string id = reader.GetString(0);
+        string content = reader.GetString(1);
+        string? category = reader.IsDBNull(2) ? null : reader.GetString(2);
+        var fields = reader.IsDBNull(3) ? null : DeserializeFields(reader.GetString(3));
+
+        return new SearchDocument(id, content, fields, category);
+    }
+
+    private static IReadOnlyDictionary<string, string>? DeserializeFields(string? json)
+    {
+        if (string.IsNullOrEmpty(json))
+            return null;
+
+        return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+    }
+}
