@@ -22,9 +22,9 @@ namespace LexiSharp.Core;
 /// </para>
 /// <para>
 /// The decorator only sees what the inner engine returns. To give boosted documents a chance
-/// to surface, more candidates than the final limit are requested from the inner engine
-/// (<paramref name="maxCandidates"/>); a document ranked beyond that retrieval depth stays out
-/// of reach no matter its boost.
+    /// to surface, more candidates than the final limit are requested from the inner engine
+    /// (<c>maxCandidates</c>); a document ranked beyond that retrieval depth stays out
+    /// of reach no matter its boost.
 /// </para>
 /// </remarks>
 public sealed class BoostedTextSearchEngine : ITextSearchEngine
