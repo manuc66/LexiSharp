@@ -17,13 +17,25 @@ public sealed class Bm25Scorer : ITextScorer
 
     /// <param name="k1">Term-frequency saturation: higher values let frequent terms contribute more.</param>
     /// <param name="b">Document-length normalization, in <c>[0, 1]</c>. <c>0</c> disables normalization.</param>
-    public Bm25Scorer(double k1 = 1.2, double b = 0.75)
+    public Bm25Scorer(double k1 = 1.5, double b = 0.75)
     {
         if (k1 < 0) throw new ArgumentOutOfRangeException(nameof(k1), k1, "k1 must be non-negative.");
         if (b is < 0 or > 1) throw new ArgumentOutOfRangeException(nameof(b), b, "b must be within [0, 1].");
 
         _k1 = k1;
         _b = b;
+    }
+
+    /// <summary>Builds a scorer from a preset or tuned <see cref="Bm25Parameters"/> profile.</summary>
+    public Bm25Scorer(Bm25Parameters parameters)
+    {
+        ArgumentNullException.ThrowIfNull(parameters);
+
+        if (parameters.K1 < 0) throw new ArgumentOutOfRangeException(nameof(parameters), parameters, "k1 must be non-negative.");
+        if (parameters.B is < 0 or > 1) throw new ArgumentOutOfRangeException(nameof(parameters), parameters, "b must be within [0, 1].");
+
+        _k1 = parameters.K1;
+        _b = parameters.B;
     }
 
     /// <inheritdoc />
