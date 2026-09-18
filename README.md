@@ -24,6 +24,8 @@ or ML model** — pure lexical statistics.
 - **Explainable scoring**: `Bm25Scorer` implements `IScoreExplainer`, and
   `RankedTextSearchEngine.Explain` returns a per-term breakdown (TF, IDF, term score, length
   normalization, parameter values) of any ranking decision.
+- **BM25 tuning**: `Bm25ParameterTuner` grid-searches `k1`/`b` against your own validation
+  queries, judged by `Precision@k`, `Recall@k`, `F1@k` or `nDCG@k` (`RetrievalMetrics`).
 - **Supervised classification** (`NaiveBayesClassifier`): multinomial Naive Bayes with
   Laplace smoothing, exposing a dedicated `ITextClassifier` interface.
 - **Configurable tokenizer**: Unicode NFKD normalization and diacritics removal,
