@@ -9,7 +9,7 @@ namespace LexiSharp.Ranking;
 /// <remarks>
 /// There is no universally best parameter pair: it depends on corpus size and homogeneity.
 /// The presets below trade off saturation and length normalization; the sweet spot for a
-/// given corpus can be found empirically with the parameter tuner.
+/// given corpus can be found empirically with <see cref="Bm25ParameterTuner"/>.
 /// </remarks>
 public sealed record Bm25Parameters(double K1, double B)
 {

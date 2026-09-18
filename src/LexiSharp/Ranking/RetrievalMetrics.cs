@@ -10,7 +10,7 @@ namespace LexiSharp.Ranking;
 /// <item><description><c>retrievedIds</c> is the ranked list returned by an engine (best first), already truncated at <c>k</c>.</description></item>
 /// <item><description>Precision counts unfilled result slots as misses: <c>P@k = |retrieved ∩ relevant| / k</c>.</description></item>
 /// <item><description>Queries with an empty relevant set score 0 on every metric; callers that average over a
-/// validation set typically skip them (as <see cref="Tuning.Bm25ParameterTuner"/> does).</description></item>
+/// validation set typically skip them (as <see cref="Bm25ParameterTuner"/> does).</description></item>
 /// </list>
 /// </remarks>
 public static class RetrievalMetrics
