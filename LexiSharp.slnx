@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/bench/">
+    <Project Path="bench/LexiSharp.Benchmarks/LexiSharp.Benchmarks.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/LexiSharp/LexiSharp.csproj" />
+    <Project Path="src/LexiSharp.Hybrid/LexiSharp.Hybrid.csproj" />
+    <Project Path="src/LexiSharp.Postgres/LexiSharp.Postgres.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LexiSharp.Tests/LexiSharp.Tests.csproj" />
+  </Folder>
+</Solution>
