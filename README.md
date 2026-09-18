@@ -17,6 +17,9 @@ or ML model** — pure lexical statistics.
   - `BooleanScorer` — exact AND/OR filter.
 - **In-memory inverted index** (`InMemoryTextIndex`) with term positions, document
   frequencies, corpus statistics and incremental `Add`/`Remove`.
+- **Score boosting** (`BoostedTextSearchEngine`): a decorator that applies **signed** score
+  adjustments (multiplicative factor and/or additive offset) per result — boost a category or a
+  priority, damp or penalize stale matches — without touching the underlying engine.
 - **Supervised classification** (`NaiveBayesClassifier`): multinomial Naive Bayes with
   Laplace smoothing, exposing a dedicated `ITextClassifier` interface.
 - **Configurable tokenizer**: Unicode NFKD normalization and diacritics removal,
@@ -91,6 +94,33 @@ var tokenizer = new Tokenizer(new TokenizerOptions
     Stemmer = new MyStemmer(),    // implement IStemmer (French, Snowball, ...)
 });
 ```
+
+### Score boosting (`BoostedTextSearchEngine`)
+
+Wrap any engine to boost or damp its ranking without changing the engine. The boost is a
+function of the whole result, so it can read the score, the document metadata or external
+data (a closure over your own store):
+
+```csharp
+ITextSearchEngine boosted = new BoostedTextSearchEngine(baseEngine,
+    result =>
+    {
+        double factor = 1.0;
+        if (result.Document.Category == "priority")
+            factor = 2.0;                                  // up-weighted metadata
+        if (result.Document.Fields.TryGetValue("stale", out _))
+            factor *= 0.5;                                 // damp old matches
+
+        return new ScoreBoost(Multiply: factor, Add: -0.5); // factor and/or offset, signed
+    });
+```
+
+Writes are forwarded to the inner engine; `Search` applies `score * Multiply + Add` to every
+candidate, then re-sorts and re-applies `Limit`/`MinimumScore`. A plain double is accepted as
+a multiplicative factor (`result => 2.0`). Positive boosts (factor &gt; 1, positive offset) and
+negative ones (factor in (0, 1) damp, negative offset penalty) are equally expressible; factor 0
+drops the document entirely. The decorator requests more candidates than the final limit
+(`maxCandidates`, default 50) so boosted documents can surface.
 
 ### PostgreSQL backend (`LexiSharp.Postgres`)
 
@@ -251,7 +281,7 @@ is the reference consumer: it turns any provider into an ANN backend that the sa
 ```
 Package            Responsibilities
 ─────────────────────────────────────────────────────────────────────────────
-LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider
+LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider + boost decorator
 LexiSharp.Postgres  PostgreSQL providers: tsvector+unaccent (lexical), pgvector ANN (vector), pg_trgm+fuzzystrmatch (fuzzy)
 LexiSharp.ParadeDB   true BM25 provider on the pg_search (Tantivy) extension
 LexiSharp.Hybrid    federated engine + mergers (RRF, weighted, reranking)
