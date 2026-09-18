@@ -3,10 +3,11 @@ using Npgsql;
 namespace LexiSharp.Postgres;
 
 /// <summary>
-/// Shared DDL for the documents table, used by both the lexical and the vector engines so
-/// they can safely point at the same table.
+/// Shared DDL for the documents table. Used by the lexical (<c>tsvector</c>), vector
+/// (<c>pgvector</c> ANN) and ParadeDB (<c>pg_search</c> BM25) engines so they can all point
+/// at the same table.
 /// </summary>
-internal static class PostgresSchema
+public static class PostgresSchema
 {
     /// <summary>
     /// Idempotently installs <c>unaccent</c> and the documents table with its <c>tsv</c> column

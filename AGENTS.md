@@ -7,10 +7,11 @@
   conventionnel (`feat:`, `fix:`, `refactor:`, `chore:`, ...).
 - La solution est `LexiSharp.slnx` (format .NET 10, XML) : ne pas régénérer de `.sln`.
 - Cible net8.0. Packages optionnels : `LexiSharp.Postgres` (Npgsql),
+  `LexiSharp.ParadeDB` (BM25 Tantivy via pg_search, référence LexiSharp.Postgres),
   `LexiSharp.Hybrid` (fédération + RRF) — ne pas ajouter de dépendances au core.
   La couture `IEmbeddingProvider` vit **dans le core** (partagée Hybrid/Postgres) ;
   Postgres ne référence jamais Hybrid.
 - Tests d'intégration Postgres désactivés sauf si `POSTGRES_TEST_CONNECTION` pointe
-  vers une instance joignable (ex. docker `pgvector/pgvector:pg16` sur le port 5432)
-  — l'image pgvector couvre aussi les tests vectoriels (extension `vector`),
-  alors que `postgres:16` ne couvre que le lexical.
+  vers une instance joignable : `pgvector/pgvector:pg16` couvre lexical+vectoriel
+  (extension `vector`), `paradedb/paradedb:pg16` couvre lexical+ParadeDB (extension
+  `pg_search`, auto-skip si absente) — `postgres:16` ne couvre que le lexical.
