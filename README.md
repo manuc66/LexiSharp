@@ -11,7 +11,8 @@ or ML model** — pure lexical statistics.
 - **Pluggable architecture**: an `ITextIndex`, `ITextScorer` and `ITokenizer` are
   independent contracts; algortihms can be swapped without touching the engine.
 - **Four ranking strategies** behind the same `ITextSearchEngine`:
-  - `Bm25Scorer` — Okapi BM25 (generally the best classical choice),
+  - `Bm25Scorer` — Okapi BM25 (generally the best classical choice), with ready-made
+    `Bm25Parameters` profiles (`Balanced`, `Aggressive`, `Conservative`),
   - `TfIdfScorer` — TF-IDF,
   - `QueryLikelihoodScorer` — probabilistic language model (Jelinek-Mercer smoothing),
   - `BooleanScorer` — exact AND/OR filter.
