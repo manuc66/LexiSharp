@@ -9,8 +9,12 @@ namespace LexiSharp.Ranking;
 /// <remarks>
 /// <c>score(q,d) = Σ_t idf(t) * tf(t,d) * (k1 + 1) / (tf(t,d) + k1 * (1 − b + b · |d| / avgdl))</c>
 /// with <c>idf(t) = ln(1 + (N − df(t) + 0.5) / (df(t) + 0.5))</c>.
+/// <para>
+/// The scorer also implements <see cref="IScoreExplainer"/>, so every ranking decision can be
+/// audited term by term (see <see cref="Explain"/>).
+/// </para>
 /// </remarks>
-public sealed class Bm25Scorer : ITextScorer
+public sealed class Bm25Scorer : ITextScorer, IScoreExplainer
 {
     private readonly double _k1;
     private readonly double _b;
@@ -72,5 +76,63 @@ public sealed class Bm25Scorer : ITextScorer
         }
 
         return score;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Terms absent from the document contribute nothing and are omitted from
+    /// <see cref="ScoreExplanation.Terms"/>. The reported
+    /// <see cref="ScoreExplanation.TotalScore"/> always equals <see cref="Score"/> for the
+    /// same inputs.
+    /// </remarks>
+    public ScoreExplanation Explain(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index)
+    {
+        ArgumentNullException.ThrowIfNull(index);
+        ArgumentNullException.ThrowIfNull(queryTerms);
+
+        int documentCount = index.Count;
+        int documentLength = index.DocumentLength(documentId);
+        double averageLength = index.AverageDocumentLength;
+
+        double lengthRatio = averageLength > 0 ? documentLength / averageLength : 0;
+        double normalization = 1.0 - _b + _b * lengthRatio;
+
+        var contributions = new List<TermContribution>();
+        double total = 0;
+
+        if (documentCount > 0 && documentLength > 0 && averageLength > 0)
+        {
+            foreach (var term in queryTerms.Distinct(StringComparer.Ordinal))
+            {
+                int tf = index.TermFrequency(documentId, term);
+
+                if (tf == 0)
+                    continue;
+
+                int df = index.DocumentFrequency(term);
+                double idf = Math.Log(1.0 + (documentCount - df + 0.5) / (df + 0.5));
+                double termScore = idf * tf * (_k1 + 1.0) / (tf + _k1 * normalization);
+
+                contributions.Add(new TermContribution(term, tf, df, idf, termScore));
+                total += termScore;
+            }
+        }
+
+        var parameters = new Dictionary<string, double>
+        {
+            ["k1"] = _k1,
+            ["b"] = _b,
+        };
+
+        return new ScoreExplanation(
+            documentId,
+            Name,
+            total,
+            documentLength,
+            averageLength,
+            lengthRatio,
+            normalization,
+            contributions,
+            parameters);
     }
 }
