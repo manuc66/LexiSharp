@@ -21,6 +21,9 @@ or ML model** — pure lexical statistics.
 - **Score boosting** (`BoostedTextSearchEngine`): a decorator that applies **signed** score
   adjustments (multiplicative factor and/or additive offset) per result — boost a category or a
   priority, damp or penalize stale matches — without touching the underlying engine.
+- **Explainable scoring**: `Bm25Scorer` implements `IScoreExplainer`, and
+  `RankedTextSearchEngine.Explain` returns a per-term breakdown (TF, IDF, term score, length
+  normalization, parameter values) of any ranking decision.
 - **Supervised classification** (`NaiveBayesClassifier`): multinomial Naive Bayes with
   Laplace smoothing, exposing a dedicated `ITextClassifier` interface.
 - **Configurable tokenizer**: Unicode NFKD normalization and diacritics removal,

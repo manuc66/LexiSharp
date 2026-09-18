@@ -98,4 +98,24 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
             .Take(options.Limit)
             .ToList();
     }
+
+    /// <summary>
+    /// Explains why a document received the score it did for a query, by delegating to the
+    /// scorer's <see cref="IScoreExplainer"/> capability when it has one.
+    /// </summary>
+    /// <param name="documentId">Id of the document to explain.</param>
+    /// <param name="query">The raw query; tokenized with the engine's tokenizer.</param>
+    /// <returns>
+    /// A <see cref="ScoreExplanation"/>, or <c>null</c> when the active scorer cannot explain
+    /// itself (it does not implement <see cref="IScoreExplainer"/>) or the document is unknown.
+    /// </returns>
+    public ScoreExplanation? Explain(string documentId, string query)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        if (_scorer is not IScoreExplainer explainer || !_index.Contains(documentId))
+            return null;
+
+        return explainer.Explain(documentId, _tokenizer.Tokenize(query), _index);
+    }
 }
