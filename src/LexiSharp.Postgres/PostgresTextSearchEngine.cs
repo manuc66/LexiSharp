@@ -102,25 +102,7 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
 
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
-        await using (var command = connection.CreateCommand())
-        {
-            string table = _options.QualifiedTableName;
-            string indexName = PostgresIndexOptions.QuoteIdentifier($"{_options.Table}_tsv_gin");
-
-            command.CommandText = $"""
-                CREATE EXTENSION IF NOT EXISTS unaccent;
-                CREATE TABLE IF NOT EXISTS {table} (
-                    id       text PRIMARY KEY,
-                    content  text NOT NULL,
-                    category text,
-                    fields   jsonb,
-                    tsv      tsvector
-                );
-                CREATE INDEX IF NOT EXISTS {indexName} ON {table} USING GIN (tsv);
-                """;
-
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
+        await PostgresSchema.CreateDocumentTableAsync(connection, _options, cancellationToken).ConfigureAwait(false);
 
         _schemaReady = true;
     }
@@ -231,7 +213,7 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
     {
         using var command = connection.CreateCommand();
 
-        string tsvExpr = $"to_tsvector('{_options.TextSearchConfig}', unaccent(@content))";
+        string tsvExpr = PostgresSchema.TsvExpression(_options, "@content");
 
         command.CommandText = $"""
             INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, tsv)

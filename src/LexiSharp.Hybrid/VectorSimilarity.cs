@@ -2,7 +2,7 @@ namespace LexiSharp.Hybrid;
 
 /// <summary>
 /// Pure vector math helpers used to compare embeddings. These are arithmetic utilities, not
-/// an embedding pipeline: vectors must already exist (see <see cref="IEmbeddingProvider"/>).
+/// an embedding pipeline: vectors must already exist (see <see cref="Core.IEmbeddingProvider"/>).
 /// </summary>
 public static class VectorSimilarity
 {

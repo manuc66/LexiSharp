@@ -25,6 +25,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="LexiSharp.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../LexiSharp/LexiSharp.csproj" />
     <None Include="../../README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
