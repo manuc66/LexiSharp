@@ -82,6 +82,10 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
         // Convention: a score of exactly 0 means "not a match".
         foreach (var document in _index.Documents)
         {
+            // Structured filters gate the corpus before any relevance math is paid for.
+            if (!options.PassesFilters(document))
+                continue;
+
             double score = _scorer.Score(document.Id, queryTerms, _index);
 
             if (double.IsNaN(score) || double.IsInfinity(score) || score == 0)
