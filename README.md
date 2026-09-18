@@ -17,7 +17,8 @@ or ML model** — pure lexical statistics.
   - `QueryLikelihoodScorer` — probabilistic language model (Jelinek-Mercer smoothing),
   - `BooleanScorer` — exact AND/OR filter.
 - **In-memory inverted index** (`InMemoryTextIndex`) with term positions, document
-  frequencies, corpus statistics and incremental `Add`/`Remove`.
+  frequencies, corpus statistics and incremental `Add`/`Remove`, plus an index statistics
+  snapshot (`GetStatistics`: documents, vocabulary, tokens, average length, vocabulary richness).
 - **Score boosting** (`BoostedTextSearchEngine`): a decorator that applies **signed** score
   adjustments (multiplicative factor and/or additive offset) per result — boost a category or a
   priority, damp or penalize stale matches — without touching the underlying engine.
