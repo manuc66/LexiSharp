@@ -26,8 +26,10 @@ or ML model** — pure lexical statistics.
   `System.Text.Ascii` fast path in normalization).
 - **Optional backends**, shipped as separate packages:
   - `LexiSharp.Postgres` — PostgreSQL backends implementing the same `ITextSearchEngine`:
-    a lexical engine over `tsvector` + GIN + `unaccent`, and an ANN engine over `pgvector`
-    (HNSW/IVFFlat) driven by an external `IEmbeddingProvider`;
+    a lexical engine over `tsvector` + GIN + `unaccent`, an ANN engine over `pgvector`
+    (HNSW/IVFFlat) driven by an external `IEmbeddingProvider`, and an approximate
+    **fuzzy** engine over the `pg_trgm` trigram extension (with optional `fuzzystrmatch`
+    refinement);
   - `LexiSharp.ParadeDB` — **true Okapi BM25** on top of the `pg_search` Tantivy extension
     (AGPL-3, requires the ParadeDB Docker image or self-hosted extension);
   - `LexiSharp.Hybrid` — a federated engine that queries several engines and merges
@@ -92,9 +94,9 @@ var tokenizer = new Tokenizer(new TokenizerOptions
 
 ### PostgreSQL backend (`LexiSharp.Postgres`)
 
-Persistent, shared, concurrent search on top of a classic PostgreSQL setup. Two engines,
-both implementing `ITextSearchEngine` and sharing the same documents table (so the hybrid
-engine can fan out to both and merge lexical + vector results with
+Persistent, shared, concurrent search on top of a classic PostgreSQL setup. Several engines,
+all implementing `ITextSearchEngine` and sharing the same documents table (so the hybrid
+engine can fan out and merge lexical + vector + fuzzy results with
 `ReciprocalRankFusionMerger`):
 
 **Lexical (`PostgresTextSearchEngine`)** — full-text over `tsvector`:
@@ -140,6 +142,34 @@ By default the integration tests are skipped unless `POSTGRES_TEST_CONNECTION` p
 live instance (e.g. `Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp`).
 The vector tests additionally require the `vector` extension: use the `pgvector/pgvector:pg16`
 image (lexical tests only need stock PostgreSQL).
+
+**Fuzzy (`PostgresFuzzySearchEngine`)** — approximate, typo-tolerant matching over `pg_trgm`
+trigrams, with optional `fuzzystrmatch` (edit distance + phonetics):
+
+```csharp
+ITextSearchEngine fuzzy = new PostgresFuzzySearchEngine(connectionString, new PostgresFuzzyOptions
+{
+    SearchMode = TrgmSearchMode.Nearest,        // kNN: closest labels first (autocomplete)
+    // SearchMode = TrgmSearchMode.Similarity,  // threshold: content % query (de-dup, did-you-mean)
+    SimilarityThreshold = 0.3,                  // honored via set_limit() in Similarity mode
+    UseLevenshteinRefinement = true,            // exact edit-distance post-filter
+    IncludePhonetic = true,                     // metaphone column; phonetic matches (Similarity mode)
+});
+fuzzy.Index(new[]
+{
+    new SearchDocument("1", "katherine"),
+    new SearchDocument("2", "catherine"),
+});
+fuzzy.Search("caterin");   // typo-tolerant: both labels come back
+```
+
+The engine installs (idempotently) `pg_trgm` (+ `fuzzystrmatch` when enabled) and **GiST and
+GIN trigram indexes** on the same shared documents table. Scores are trigram similarities in
+`[0, 1]` (1 identical, 0 no shared trigram → excluded, honoring the library's score-0
+convention). `Nearest` mode orders with the GiST kNN operator (`content <-> query`); `Similarity`
+mode ranks by `similarity()` above the configured threshold. These are the classic building
+blocks for autocomplete, de-duplication of names/addresses and "did you mean". PostgreSQL-native
+scores again call for `ReciprocalRankFusionMerger` when mixing with other engines.
 
 ### ParadeDB backend (`LexiSharp.ParadeDB`)
 
@@ -222,7 +252,7 @@ is the reference consumer: it turns any provider into an ANN backend that the sa
 Package            Responsibilities
 ─────────────────────────────────────────────────────────────────────────────
 LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider
-LexiSharp.Postgres  PostgreSQL providers: tsvector+unaccent (lexical) and pgvector ANN (vector)
+LexiSharp.Postgres  PostgreSQL providers: tsvector+unaccent (lexical), pgvector ANN (vector), pg_trgm+fuzzystrmatch (fuzzy)
 LexiSharp.ParadeDB   true BM25 provider on the pg_search (Tantivy) extension
 LexiSharp.Hybrid    federated engine + mergers (RRF, weighted, reranking)
 ```
@@ -250,8 +280,9 @@ dotnet run  --project bench/LexiSharp.Benchmarks  # BenchmarkDotNet suite
 ```
 
 Postgres/ParadeDB integration tests run against whatever `POSTGRES_TEST_CONNECTION` points to:
-`pgvector/pgvector:pg16` covers the lexical + vector suites,
-`paradedb/paradedb:pg16` covers the lexical + ParadeDB (BM25) suites.
+`pgvector/pgvector:pg16` covers the lexical + vector + fuzzy suites,
+`paradedb/paradedb:pg16` covers the lexical + ParadeDB (BM25) + fuzzy suites. The fuzzy tests
+self-skip when `pg_trgm` (and `fuzzystrmatch`, when exercised) are unavailable.
 
 ## License
 
