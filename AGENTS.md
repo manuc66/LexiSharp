@@ -8,7 +8,9 @@
 - La solution est `LexiSharp.slnx` (format .NET 10, XML) : ne pas régénérer de `.sln`.
 - Cible net8.0. Packages optionnels : `LexiSharp.Postgres` (Npgsql),
   `LexiSharp.ParadeDB` (BM25 Tantivy via pg_search, référence LexiSharp.Postgres),
-  `LexiSharp.Hybrid` (fédération + RRF) — ne pas ajouter de dépendances au core.
+  `LexiSharp.Hybrid` (fédération + RRF),
+  `LexiSharp.MessagePack` (persistance binaire de l'index in-memory, MessagePack + LZ4)
+  — ne pas ajouter de dépendances au core.
   La couture `IEmbeddingProvider` vit **dans le core** (partagée Hybrid/Postgres) ;
   Postgres ne référence jamais Hybrid.
 - Tests d'intégration Postgres désactivés sauf si `POSTGRES_TEST_CONNECTION` pointe
