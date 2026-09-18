@@ -25,8 +25,11 @@ public sealed class InMemoryTextIndex : ITextIndex
 
     public InMemoryTextIndex(ITokenizer? tokenizer = null)
     {
-        _tokenizer = tokenizer ?? Tokenizer.Default;
+        _tokenizer = tokenizer ?? LexiSharp.Linguistics.Tokenizer.Default;
     }
+
+    /// <summary>The tokenizer used to split documents and queries into terms.</summary>
+    public ITokenizer Tokenizer => _tokenizer;
 
     /// <inheritdoc />
     public IReadOnlyCollection<SearchDocument> Documents => _documents.Values;

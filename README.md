@@ -129,6 +129,45 @@ negative ones (factor in (0, 1) damp, negative offset penalty) are equally expre
 drops the document entirely. The decorator requests more candidates than the final limit
 (`maxCandidates`, default 50) so boosted documents can surface.
 
+### Index persistence (`LexiSharp.MessagePack`)
+
+Save and reload an `InMemoryTextIndex` as compact, LZ4-compressed MessagePack binary —
+documents (id, text, fields, category) **and** tokenizer configuration:
+
+```csharp
+// install once:  dotnet add package LexiSharp.MessagePack
+using LexiSharp.MessagePack;
+
+MessagePackTextIndexPersistence.Save(index, "corpus.bin");
+var reloaded = MessagePackTextIndexPersistence.Load("corpus.bin"); // identical statistics, no re-indexing
+```
+
+A `Tokenizer` (stop words, n-grams, single-char terms) is reconstructed automatically. A custom
+`ITokenizer` cannot be serialized: hand the same implementation to `Load` — a type-name check
+protects against rebuilding with the wrong pipeline. Stemmed tokenizers likewise require the
+original tokenizer at load time (stemmers are not serializable).
+
+### Explainable scoring and BM25 tuning
+
+Audit any ranking decision term by term, then let the corpus pick its own parameters:
+
+```csharp
+var engine = new RankedTextSearchEngine(index, new Bm25Scorer());
+ScoreExplanation? why = engine.Explain("doc-1", "search engine");
+// why.Terms -> per-term TF, IDF and score contribution; why.LengthRatio, why.Parameters...
+
+var tuner = new Bm25ParameterTuner(index, validationQueries: [
+    new Bm25ValidationQuery("search engine", ["doc-1", "doc-7"]),
+    new Bm25ValidationQuery("fuzzy matching", ["doc-3"]),
+]);
+Bm25TuningResult tuning = tuner.Tune(topK: 5);          // grid search over k1 x b
+var tunedEngine = new RankedTextSearchEngine(index, new Bm25Scorer(tuning.Parameters));
+```
+
+Each validation query lists the relevant document ids; candidates are judged with
+`Precision@k`, `Recall@k`, `F1@k` (default) or `nDCG@k` (`RetrievalMetrics`), averaged over the
+set. The index is never mutated; `tuning.Grid` exposes every evaluated `(k1, b)` point.
+
 ### PostgreSQL backend (`LexiSharp.Postgres`)
 
 Persistent, shared, concurrent search on top of a classic PostgreSQL setup. Several engines,
@@ -292,6 +331,7 @@ LexiSharp         records + interfaces + in-memory index + scorers + tokenizer +
 LexiSharp.Postgres  PostgreSQL providers: tsvector+unaccent (lexical), pgvector ANN (vector), pg_trgm+fuzzystrmatch (fuzzy)
 LexiSharp.ParadeDB   true BM25 provider on the pg_search (Tantivy) extension
 LexiSharp.Hybrid    federated engine + mergers (RRF, weighted, reranking)
+LexiSharp.MessagePack   MessagePack (binary) persistence for the in-memory index
 ```
 
 Within the core package, separation of concerns mirrors the recommendations the library

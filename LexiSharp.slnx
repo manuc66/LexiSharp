@@ -5,6 +5,7 @@
   <Folder Name="/src/">
     <Project Path="src/LexiSharp/LexiSharp.csproj" />
     <Project Path="src/LexiSharp.Hybrid/LexiSharp.Hybrid.csproj" />
+    <Project Path="src/LexiSharp.MessagePack/LexiSharp.MessagePack.csproj" />
     <Project Path="src/LexiSharp.ParadeDB/LexiSharp.ParadeDB.csproj" />
     <Project Path="src/LexiSharp.Postgres/LexiSharp.Postgres.csproj" />
   </Folder>

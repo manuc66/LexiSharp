@@ -32,6 +32,9 @@ public sealed class Tokenizer : ITokenizer
     /// <summary>A shared tokenizer with default options.</summary>
     public static Tokenizer Default { get; } = new();
 
+    /// <summary>The normalized configuration this tokenizer runs with.</summary>
+    public TokenizerOptions Options => _options;
+
     public Tokenizer(TokenizerOptions? options = null)
     {
         _options = (options ?? TokenizerOptions.Default).Sanitize();
