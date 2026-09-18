@@ -28,6 +28,8 @@ or ML model** — pure lexical statistics.
   - `LexiSharp.Postgres` — PostgreSQL backends implementing the same `ITextSearchEngine`:
     a lexical engine over `tsvector` + GIN + `unaccent`, and an ANN engine over `pgvector`
     (HNSW/IVFFlat) driven by an external `IEmbeddingProvider`;
+  - `LexiSharp.ParadeDB` — **true Okapi BM25** on top of the `pg_search` Tantivy extension
+    (AGPL-3, requires the ParadeDB Docker image or self-hosted extension);
   - `LexiSharp.Hybrid` — a federated engine that queries several engines and merges
     their results into one coherent ranking.
 
@@ -139,6 +141,41 @@ live instance (e.g. `Host=localhost;Port=5432;Username=postgres;Password=postgre
 The vector tests additionally require the `vector` extension: use the `pgvector/pgvector:pg16`
 image (lexical tests only need stock PostgreSQL).
 
+### ParadeDB backend (`LexiSharp.ParadeDB`)
+
+True Okapi BM25 ranking, computed by Tantivy inside PostgreSQL through the `pg_search`
+extension — the strongest fit when *lexical ranking quality* is a real business requirement.
+
+```csharp
+// install once:  dotnet add package LexiSharp.ParadeDB
+using LexiSharp.ParadeDB;
+
+ITextSearchEngine engine = new ParadeDBTextSearchEngine(connectionString);
+engine.Add(new SearchDocument("1", "the quick brown fox jumps over the lazy dog"));
+```
+
+The engine installs (idempotently) the `pg_search` extension and a ParadeDB index
+(`USING paradedb`, the renamed `USING bm25`) **on the same shared documents table** as the
+Postgres engines, then matches with the `|||` disjunction operator and ranks with
+`pdb.score(id)` — real BM25 (Tantivy variant), unlike `ts_rank_cd`. The default content
+tokenizer (`pdb.simple` with ASCII folding) mirrors LexiSharp's diacritic-insensitive,
+lowercase normalization:
+
+```csharp
+new ParadeDBTextSearchEngine(
+    connectionString,
+    new ParadeDBOptions { ContentTokenizer = "pdb.simple('ascii_folding=true')" });
+```
+
+BM25 scores are PostgreSQL-native, so they are **not** numerically comparable to
+`Bm25Scorer`/`TfIdfScorer` — use the hybrid engine's `ReciprocalRankFusionMerger` (or
+re-rank) for a single cross-engine ordering. Note the extension is **AGPL-3 licensed**: fine
+for SaaS/internal use, but review it if you distribute the stack.
+
+By default the tests are skipped unless `POSTGRES_TEST_CONNECTION` points at a live instance
+**with `pg_search` available** (the `paradedb/paradedb:pg16` image ships it, preloaded) —
+they self-skip when the extension is absent.
+
 ### Hybrid engine (`LexiSharp.Hybrid`)
 
 Federate a **hot** in-memory index and a **cold** persistent backend, and produce one
@@ -167,7 +204,7 @@ Writes fan out to every engine. Three merge strategies are available:
 | Merger | Behavior | Best for |
 | --- | --- | --- |
 | `RerankingResultMerger` (default) | re-scores the union with one `ITextScorer` | comparable stats, identical score scale wanted |
-| `ReciprocalRankFusionMerger` | `Σ 1/(k + rank)` (k=60), rank-only | engines with **incomparable scales** — lexical + vector, ts_rank_cd vs BM25 |
+| `ReciprocalRankFusionMerger` | `Σ 1/(k + rank)` (k=60), rank-only | engines with **incomparable scales** — lexical + vector, ts_rank_cd vs BM25 (Postgres vs ParadeDB vs in-memory) |
 | `WeightedScoreResultMerger` | normalized per-engine score blend | native scores trusted, per-engine weights wanted |
 
 Reciprocal Rank Fusion never looks at scores, so it is the natural bridge for the future
@@ -186,6 +223,7 @@ Package            Responsibilities
 ─────────────────────────────────────────────────────────────────────────────
 LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider
 LexiSharp.Postgres  PostgreSQL providers: tsvector+unaccent (lexical) and pgvector ANN (vector)
+LexiSharp.ParadeDB   true BM25 provider on the pg_search (Tantivy) extension
 LexiSharp.Hybrid    federated engine + mergers (RRF, weighted, reranking)
 ```
 
@@ -211,8 +249,9 @@ dotnet test  tests/LexiSharp.Tests                # xUnit suite (Postgres tests 
 dotnet run  --project bench/LexiSharp.Benchmarks  # BenchmarkDotNet suite
 ```
 
-Postgres integration tests run against whatever `POSTGRES_TEST_CONNECTION` points to; use the
-`pgvector/pgvector:pg16` image to enable both the lexical and the vector suites.
+Postgres/ParadeDB integration tests run against whatever `POSTGRES_TEST_CONNECTION` points to:
+`pgvector/pgvector:pg16` covers the lexical + vector suites,
+`paradedb/paradedb:pg16` covers the lexical + ParadeDB (BM25) suites.
 
 ## License
 
