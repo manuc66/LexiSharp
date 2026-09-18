@@ -78,6 +78,105 @@ public static class RetrievalMetrics
         return idcg == 0 ? 0 : dcg / idcg;
     }
 
+    /// <summary>
+    /// Reciprocal rank at <c>k</c>: <c>1 / rank</c> of the first relevant document within the
+    /// first <c>k</c> positions, <c>0</c> when none appears. Average this over a validation set
+    /// to get MRR (Mean Reciprocal Rank).
+    /// </summary>
+    public static double ReciprocalRankAtK(IReadOnlyCollection<string> retrievedIds, IReadOnlyCollection<string> relevantIds, int k)
+    {
+        ArgumentNullException.ThrowIfNull(retrievedIds);
+        ArgumentNullException.ThrowIfNull(relevantIds);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(k);
+
+        if (relevantIds.Count == 0)
+            return 0;
+
+        var relevant = new HashSet<string>(relevantIds, StringComparer.Ordinal);
+        int rank = 1;
+
+        foreach (var id in retrievedIds)
+        {
+            if (rank > k)
+                break;
+
+            if (relevant.Contains(id))
+                return 1.0 / rank;
+
+            rank++;
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Average precision at <c>k</c>: the mean of the precisions observed at every relevant hit
+    /// within the first <c>k</c> positions, normalized by <c>min(|relevant|, k)</c>. Average
+    /// this over a validation set to get MAP (Mean Average Precision).
+    /// </summary>
+    public static double AveragePrecisionAtK(IReadOnlyCollection<string> retrievedIds, IReadOnlyCollection<string> relevantIds, int k)
+    {
+        ArgumentNullException.ThrowIfNull(retrievedIds);
+        ArgumentNullException.ThrowIfNull(relevantIds);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(k);
+
+        if (relevantIds.Count == 0)
+            return 0;
+
+        var relevant = new HashSet<string>(relevantIds, StringComparer.Ordinal);
+        int matches = 0;
+        double precisionSum = 0;
+        int rank = 1;
+
+        foreach (var id in retrievedIds)
+        {
+            if (rank > k)
+                break;
+
+            if (relevant.Contains(id))
+            {
+                matches++;
+                precisionSum += matches / (double)rank;
+            }
+
+            rank++;
+        }
+
+        return precisionSum / Math.Min(relevantIds.Count, k);
+    }
+
+    /// <summary>
+    /// nDCG@k with <b>graded</b> relevance: gains follow the exponential convention
+    /// <c>2^rel − 1</c>, and the ideal ranking is the best possible ordering of the available
+    /// relevance levels. Documents missing from the map count as relevance 0.
+    /// </summary>
+    public static double NdcgAtK(IReadOnlyCollection<string> retrievedIds, IReadOnlyDictionary<string, double> gradedRelevance, int k)
+    {
+        ArgumentNullException.ThrowIfNull(retrievedIds);
+        ArgumentNullException.ThrowIfNull(gradedRelevance);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(k);
+
+        if (gradedRelevance.Count == 0)
+            return 0;
+
+        if (gradedRelevance.Values.Any(gain => double.IsNaN(gain) || gain < 0))
+            throw new ArgumentOutOfRangeException(nameof(gradedRelevance), "Relevance gains must be non-negative and finite.");
+
+        var graded = new Dictionary<string, double>(gradedRelevance, StringComparer.Ordinal);
+        double dcg = 0;
+        int depth = Math.Min(k, retrievedIds.Count);
+
+        for (int rank = 1; rank <= depth; rank++)
+        {
+            if (graded.TryGetValue(retrievedIds.ElementAt(rank - 1), out var gain) && gain > 0)
+                dcg += (Math.Pow(2, gain) - 1) / Math.Log2(rank + 1);
+        }
+
+        double idcg = IdealDcg(graded.Values.OrderByDescending(gain => gain), k);
+
+        return idcg == 0 ? 0 : dcg / idcg;
+    }
+
     private static int CountMatches(IReadOnlyCollection<string> retrievedIds, IReadOnlyCollection<string> relevantIds, int k)
     {
         var relevant = new HashSet<string>(relevantIds, StringComparer.Ordinal);
@@ -98,6 +197,25 @@ public static class RetrievalMetrics
 
         for (int rank = 1; rank <= relevantCount; rank++)
             idcg += 1.0 / Math.Log2(rank + 1);
+
+        return idcg;
+    }
+
+    private static double IdealDcg(IEnumerable<double> orderedGains, int k)
+    {
+        double idcg = 0;
+        int rank = 1;
+
+        foreach (var gain in orderedGains)
+        {
+            if (rank > k)
+                break;
+
+            if (gain > 0)
+                idcg += (Math.Pow(2, gain) - 1) / Math.Log2(rank + 1);
+
+            rank++;
+        }
 
         return idcg;
     }
