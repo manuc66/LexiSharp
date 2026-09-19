@@ -27,3 +27,15 @@ internal sealed record StoredDocument(
     [property: Key(1)] string Text,
     [property: Key(2)] Dictionary<string, string>? Fields,
     [property: Key(3)] string? Category);
+
+/// <summary>Wire format of a persisted sparse engine (versioned).</summary>
+[MessagePackObject(AllowPrivate = true)]
+internal sealed record StoredSparseIndex(
+    [property: Key(0)] int Version,
+    [property: Key(1)] List<StoredSparseEntry> Entries);
+
+/// <summary>Wire format of a single sparse document: the document plus its learned weights.</summary>
+[MessagePackObject(AllowPrivate = true)]
+internal sealed record StoredSparseEntry(
+    [property: Key(0)] StoredDocument Document,
+    [property: Key(1)] Dictionary<string, float> Weights);
