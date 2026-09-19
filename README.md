@@ -6,13 +6,30 @@ LexiSharp provides a small, dependency-free set of interfaces and implementation
 indexing plain text and retrieving/ranking/classifying documents **without any semantic
 or ML model** — pure lexical statistics.
 
+## Status & provenance
+
+- **Young, single-maintainer project (v0.1.0).** No production track record and no external
+  contributors yet; the public API may still change between minor versions. Evaluate it as
+  such before adopting it.
+- **Developed with AI assistance.** Most of the code and this README were written with LLM
+  coding agents, then reviewed and tested by the maintainer. The techniques implemented
+  (BM25, RRF, SPLADE-style sparse retrieval, MaxSim) follow established IR literature; this
+  repository contributes no novel research.
+- **Claims vs. evidence.** Behavior described in this README is covered by the xUnit suite
+  (Postgres/ParadeDB integration tests self-skip without a live instance — see
+  *Building & testing*). Comparative or performance statements are kept to a minimum; the
+  few measured numbers live in [BENCHMARKS.md](BENCHMARKS.md) and are indicative only.
+- **Not every combination is exercised.** Engines, scorers, rerankers and mergers are tested
+  individually and in a few documented combinations, but the full cross-product is not:
+  treat unusual pairings as *supported by construction, not yet stress-tested*.
+
 ## Features
 
 - **Pluggable architecture**: an `ITextIndex`, `ITextScorer` and `ITokenizer` are
   independent contracts; algortihms can be swapped without touching the engine.
 - **Four ranking strategies** behind the same `ITextSearchEngine`:
-  - `Bm25Scorer` — Okapi BM25 (generally the best classical choice), with ready-made
-    `Bm25Parameters` profiles (`Balanced`, `Aggressive`, `Conservative`),
+  - `Bm25Scorer` — Okapi BM25, with ready-made `Bm25Parameters` profiles (`Balanced`,
+    `Aggressive`, `Conservative`),
   - `TfIdfScorer` — TF-IDF,
   - `QueryLikelihoodScorer` — probabilistic language model (Jelinek-Mercer smoothing),
   - `BooleanScorer` — exact AND/OR filter.
@@ -191,11 +208,10 @@ var pipeline = new CascadeRerankPipeline(
     new CascadeRerankOptions(StageLimit: 20, FinalLimit: 5, MinimumScore: 0.01));
 ```
 
-**Cross-encoder** is the precision stage the pipeline above was written for: it re-scores the
-shortlist with a pairwise model — the natural *.NET* landing spot for ColBERT-style late
-interaction or an LLM judge, i.e. anything too expensive for whole-corpus scoring. The model
-itself is a consumer-provided seam (`ICrossEncoderScorer`, same contract as `IEmbeddingProvider`:
-LexiSharp never runs the model):
+**Cross-encoder** re-scores the shortlist with a pairwise model — a precision stage for cases
+where whole-corpus scoring would be too expensive (ColBERT-style late interaction, an LLM
+judge, ...). The model itself is a consumer-provided seam (`ICrossEncoderScorer`, same
+contract as `IEmbeddingProvider`: LexiSharp never runs the model):
 
 ```csharp
 IReranker cross = new CrossEncoderReranker(myOnnxCrossEncoder, limit: 5);
@@ -434,8 +450,9 @@ scores again call for `ReciprocalRankFusionMerger` when mixing with other engine
 
 ### ParadeDB backend (`LexiSharp.ParadeDB`)
 
-True Okapi BM25 ranking, computed by Tantivy inside PostgreSQL through the `pg_search`
-extension — the strongest fit when *lexical ranking quality* is a real business requirement.
+Okapi BM25 ranking computed by Tantivy inside PostgreSQL through the `pg_search`
+extension — an option to consider when `ts_rank_cd` ranking is not good enough and true
+BM25 is wanted.
 
 ```csharp
 // install once:  dotnet add package LexiSharp.ParadeDB
@@ -498,9 +515,9 @@ Writes fan out to every engine. Three merge strategies are available:
 | `ReciprocalRankFusionMerger` | `Σ 1/(k + rank)` (k=60), rank-only | engines with **incomparable scales** — lexical + vector, ts_rank_cd vs BM25 (Postgres vs ParadeDB vs in-memory) |
 | `WeightedScoreResultMerger` | normalized per-engine score blend | native scores trusted, per-engine weights wanted |
 
-Reciprocal Rank Fusion never looks at scores, so it is the natural bridge between
-incomparable engines — the sparse and dense embedding backends land in the same formula
-without calibration.
+Reciprocal Rank Fusion never looks at scores, so it bridges engines whose scores are not
+comparable — the sparse and dense embedding backends land in the same formula without
+calibration.
 
 **Embeddings are an agreed seam, not a feature here**: `IEmbeddingProvider` (core) describes how a
 consumer project (ONNX model, model server, ...) would produce vectors — LexiSharp never
@@ -530,8 +547,11 @@ var results = engine.Search("learned sparse retrieval");
 ```
 
 Like `IEmbeddingProvider`, `ISparseEmbeddingProvider` is a pure seam in the core: the ONNX model,
-tokenizer and vocabulary live in the consumer. Weights are expected non-negative (ReLU-like);
-non-positive values are treated as "term absent". The engine implements `ITextSearchEngine`, so
+tokenizer and vocabulary live in the consumer. A walkthrough of writing a SPLADE provider
+(ONNX + HuggingFace tokenizer + vocabulary mapping) is in
+[docs/SPLADE.md](docs/SPLADE.md) — an outline, not a tested reference implementation. Weights
+are expected non-negative (ReLU-like); non-positive values are treated as "term absent". The
+engine implements `ITextSearchEngine`, so
 it drops straight into `HybridTextSearchEngine` where it merges with BM25 and dense engines via
 `ReciprocalRankFusionMerger` — RRF keeps sparse-only hits (matching terms the lexical scorer and
 the dense cosine disagree on) that a BM25 re-scoring merge would drop.
@@ -580,7 +600,7 @@ was designed from:
 ```bash
 dotnet build LexiSharp.slnx
 dotnet test  tests/LexiSharp.Tests                # xUnit suite (Postgres tests need POSTGRES_TEST_CONNECTION)
-dotnet run  --project bench/LexiSharp.Benchmarks  # BenchmarkDotNet suite
+dotnet run  --project bench/LexiSharp.Benchmarks  # BenchmarkDotNet suite (published numbers: BENCHMARKS.md)
 ```
 
 Postgres/ParadeDB integration tests run against whatever `POSTGRES_TEST_CONNECTION` points to:
