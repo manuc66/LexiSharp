@@ -28,7 +28,9 @@ jobs:
           echo "$checks" | jq -e 'length > 0' > /dev/null || { echo "No CI check runs found for ${{ github.sha }}"; exit 1; }
           # "skipped" is accepted: optional jobs (Sonar, Codecov) are skipped
           # while their secrets are not configured and must not block releases.
-          echo "$checks" | jq -e 'group_by(.name) | map(max_by(.id)) | all(.[]; .status == "completed" and (.conclusion == "success" or .conclusion == "skipped"))' > /dev/null \
+          # The publish job itself is excluded: its own in-progress check run
+          # is registered on the tagged commit before this gate executes.
+          echo "$checks" | jq -e 'group_by(.name) | map(max_by(.id)) | map(select(.name != "publish")) | all(.[]; .status == "completed" and (.conclusion == "success" or .conclusion == "skipped"))' > /dev/null \
             || { echo "CI checks not all green for ${{ github.sha }}:"; echo "$checks" | jq -r '.[] | "\(.name): \(.status)/\(.conclusion)"'; exit 1; }
           echo "All CI checks passed for ${{ github.sha }}"
 
