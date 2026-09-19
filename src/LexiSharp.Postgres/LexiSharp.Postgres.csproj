@@ -26,6 +26,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="LexiSharp.Tests" />
+    <InternalsVisibleTo Include="LexiSharp.ParadeDB" />
   </ItemGroup>
 
   <ItemGroup>

@@ -27,7 +27,7 @@ internal static class PostgresExtensionInstaller
             {
                 await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
-            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCode.UniqueViolation)
+            catch (PostgresException ex) when (ex.SqlState == "23505")
             {
                 // Lost a CREATE EXTENSION race against another process or host:
                 // the extension is present, which is all IF NOT EXISTS promises.

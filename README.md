@@ -47,8 +47,8 @@ or ML model** — pure lexical statistics.
   adjustments (multiplicative factor and/or additive offset) per result — boost a category or a
   priority, damp or penalize stale matches — without touching the underlying engine.
 - **Second-stage reranking**: an `IReranker` seam and the `RerankedTextSearchEngine`
-  decorator (over-fetch, re-rank, guard rails) in the core; `LexiSharp.Hybrid` ships a
-  diversity-preserving **MMR** reranker, a **cascade** pipeline that chains any number of
+  decorator (over-fetch, re-rank, guard rails) in the core; shipped rerankers include a
+  diversity-preserving **MMR**, a **cascade** pipeline that chains any number of
   reranking stages with per-stage trimming, a **cross-encoder** reranker driven by a
   consumer-provided pairwise scoring model (`ICrossEncoderScorer`), and a **ColBERT MaxSim**
   reranker that re-scores a shortlist token-by-token with late interaction
@@ -89,9 +89,7 @@ or ML model** — pure lexical statistics.
     approximate **fuzzy** engine over the `pg_trgm` trigram extension (with optional
     `fuzzystrmatch` refinement);
   - `LexiSharp.ParadeDB` — **true Okapi BM25** on top of the `pg_search` Tantivy extension
-    (AGPL-3, requires the ParadeDB Docker image or self-hosted extension);
-  - `LexiSharp.Hybrid` — a federated engine that queries several engines and merges
-    their results into one coherent ranking.
+    (AGPL-3, requires the ParadeDB Docker image or self-hosted extension).
 
 ## Quick start
 
@@ -190,7 +188,7 @@ IReranker reranker = ...;                                    // yours, or the MM
 ITextSearchEngine engine = new RerankedTextSearchEngine(baseEngine, reranker, maxCandidates: 100);
 ```
 
-`LexiSharp.Hybrid` ships two built-in rerankers. **MMR** (Maximal Marginal Relevance)
+`LexiSharp` ships two built-in rerankers. **MMR** (Maximal Marginal Relevance)
 re-orders candidates so each next pick is relevant *and* different from the picks before it —
 near-duplicate results are pushed back; candidates without a vector are never penalized:
 
@@ -491,13 +489,12 @@ By default the tests are skipped unless `POSTGRES_TEST_CONNECTION` points at a l
 **with `pg_search` available** (the `paradedb/paradedb:pg16` image ships it, preloaded) —
 they self-skip when the extension is absent.
 
-### Hybrid engine (`LexiSharp.Hybrid`)
+### Hybrid engine
 
 Federate a **hot** in-memory index and a **cold** persistent backend, and produce one
 consistent global ranking:
 
 ```csharp
-// install once:  dotnet add package LexiSharp.Hybrid
 using LexiSharp.Core;
 using LexiSharp.Hybrid;
 using LexiSharp.Indexing;
@@ -581,10 +578,9 @@ retrieve-then-rerank shape, one line of composition.
 ```
 Package            Responsibilities
 ─────────────────────────────────────────────────────────────────────────────
-LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider + ISparseEmbeddingProvider + sparse engine (export/import) + boost/rerank decorators + filters + similarity + keywords + metrics
+LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider + ISparseEmbeddingProvider + sparse engine (export/import) + boost/rerank decorators + filters + similarity + keywords + metrics + hybrid federation (RRF, weighted, cascade, cross-encoder, MMR, MaxSim)
 LexiSharp.Postgres  PostgreSQL providers: tsvector+unaccent (lexical), pgvector ANN (vector), pgvector sparsevec (sparse), pg_trgm+fuzzystrmatch (fuzzy)
 LexiSharp.ParadeDB   true BM25 provider on the pg_search (Tantivy) extension
-LexiSharp.Hybrid    federated engine + mergers (RRF, weighted, reranking) + rerankers (MMR, cascade, cross-encoder, MaxSim)
 LexiSharp.MessagePack   MessagePack (binary) persistence for the in-memory index and the sparse engine
 ```
 
