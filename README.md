@@ -24,8 +24,12 @@ or ML model** — pure lexical statistics.
   priority, damp or penalize stale matches — without touching the underlying engine.
 - **Second-stage reranking**: an `IReranker` seam and the `RerankedTextSearchEngine`
   decorator (over-fetch, re-rank, guard rails) in the core; `LexiSharp.Hybrid` ships a
-  diversity-preserving **MMR** reranker and a **cascade** pipeline that chains any number of
-  reranking stages with per-stage trimming.
+  diversity-preserving **MMR** reranker, a **cascade** pipeline that chains any number of
+  reranking stages with per-stage trimming, and a **cross-encoder** reranker driven by a
+  consumer-provided pairwise scoring model (`ICrossEncoderScorer`).
+- **Sparse learned embeddings**: `SparseTextSearchEngine` and its `ISparseEmbeddingProvider`
+  seam bring SPLADE/uniCOIL-style retrieval (.NET-core only, weights learned, inverted-index
+  scoring kept) without pulling ONNX into the library — the model lives in the consumer.
 - **Metadata filters**: declarative, AND-composed filters over document fields
   (`MetadataFilterOperator`: equal, not-equal, contains, numeric-or-ordinal greater/less than)
   in `SearchOptions` — applied by the stock engine before any relevance math.
@@ -183,6 +187,19 @@ var pipeline = new CascadeRerankPipeline(
     new IReranker[] { lexicalReranker, mmr },
     new CascadeRerankOptions(StageLimit: 20, FinalLimit: 5, MinimumScore: 0.01));
 ```
+
+**Cross-encoder** is the precision stage the pipeline above was written for: it re-scores the
+shortlist with a pairwise model — the natural *.NET* landing spot for ColBERT-style late
+interaction or an LLM judge, i.e. anything too expensive for whole-corpus scoring. The model
+itself is a consumer-provided seam (`ICrossEncoderScorer`, same contract as `IEmbeddingProvider`:
+LexiSharp never runs the model):
+
+```csharp
+IReranker cross = new CrossEncoderReranker(myOnnxCrossEncoder, limit: 5);
+```
+
+`CrossEncoderReranker` replaces each candidate's score with the model's, drops `0`/NaN/infinity
+scores, and applies an optional `MinimumScore` and `Limit`.
 
 ### Metadata filters
 
@@ -424,20 +441,50 @@ computes embeddings — and `VectorSimilarity` provides pure cosine math. `Postg
 is the reference consumer: it turns any provider into an ANN backend that the same
 `HybridTextSearchEngine` merges exactly like a lexical engine.
 
+### Sparse learned embeddings (`ISparseEmbeddingProvider`, `SparseTextSearchEngine`)
+
+SPLADE-style models (SPLADE, uniCOIL, ...) produce **sparse** learned vectors: a handful of
+`term → weight` pairs where the weights are learned instead of tf-idf/BM25 frequencies.
+The key insight of this family is that it does **not** replace the inverted-index infrastructure,
+only the scoring function. `SparseTextSearchEngine` applies exactly that: it keeps a classic
+`term → document → weight` inverted index, and a query scores each document by sparse
+**dot product** `Σ_t w_q(t)·w_d(t,d)` — only the terms the learned model activated are visited:
+
+```csharp
+using LexiSharp.Core;
+using LexiSharp.Indexing;
+
+ISparseEmbeddingProvider splade = myOnnxSplade; // consumer-provided, incl. vocab mapping
+ITextSearchEngine engine = new SparseTextSearchEngine(splade);
+
+engine.Add(new SearchDocument("doc-1", "sparse retrievers beat dense on exact terms"));
+
+var results = engine.Search("learned sparse retrieval");
+```
+
+Like `IEmbeddingProvider`, `ISparseEmbeddingProvider` is a pure seam in the core: the ONNX model,
+tokenizer and vocabulary live in the consumer. Weights are expected non-negative (ReLU-like);
+non-positive values are treated as "term absent". The engine implements `ITextSearchEngine`, so
+it drops straight into `HybridTextSearchEngine` and merges with BM25/dense engines via
+`ReciprocalRankFusionMerger`.
+
+### Reranking stage
+
 The reranking stage composes with all of it: wrap the hybrid in a
-`RerankedTextSearchEngine` (core decorator) and pass a `CascadeRerankPipeline` or the
-`MaximalMarginalRelevanceReranker` to add a precision or diversity pass on top of the fused
-ranking — the same two-stage retrieve-then-rerank shape, one line of composition.
+`RerankedTextSearchEngine` (core decorator) and pass a `CascadeRerankPipeline`, a
+`MaximalMarginalRelevanceReranker` or a `CrossEncoderReranker` to add a precision or diversity
+pass on top of the fused ranking — the same two-stage retrieve-then-rerank shape, one line of
+composition.
 
 ## Architecture
 
 ```
 Package            Responsibilities
 ─────────────────────────────────────────────────────────────────────────────
-LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider + boost/rerank decorators + filters + similarity + keywords + metrics
+LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider + ISparseEmbeddingProvider + sparse engine + boost/rerank decorators + filters + similarity + keywords + metrics
 LexiSharp.Postgres  PostgreSQL providers: tsvector+unaccent (lexical), pgvector ANN (vector), pg_trgm+fuzzystrmatch (fuzzy)
 LexiSharp.ParadeDB   true BM25 provider on the pg_search (Tantivy) extension
-LexiSharp.Hybrid    federated engine + mergers (RRF, weighted, reranking) + rerankers (MMR, cascade)
+LexiSharp.Hybrid    federated engine + mergers (RRF, weighted, reranking) + rerankers (MMR, cascade, cross-encoder)
 LexiSharp.MessagePack   MessagePack (binary) persistence for the in-memory index
 ```
 
