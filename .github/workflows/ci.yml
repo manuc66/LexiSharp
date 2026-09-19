@@ -5,22 +5,62 @@ on:
     branches: [ main ]
   pull_request:
 
+# Only cancel in-progress runs for PRs; main pushes must always run
+# (their results gate the NuGet publish on tagged commits).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+
 jobs:
+  preflight:
+    # secrets are not usable in job-level `if:` conditions, so a first job
+    # detects which optional services are configured and exposes booleans.
+    runs-on: ubuntu-latest
+    outputs:
+      has_sonar: ${{ steps.check.outputs.has_sonar }}
+    steps:
+      - id: check
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          echo "has_sonar=$([ -n "$SONAR_TOKEN" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
   core:
-    name: Build + unit tests (no backend)
+    name: Build + unit tests + coverage (no backend)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: '10.0.x'
 
-      - name: Build
-        run: dotnet build LexiSharp.slnx -c Release
+      # coverlet.msbuild instruments during the build, so coverage collection
+      # requires the build to happen inside the same dotnet test invocation
+      # (--no-build would skip instrumentation and empty the report).
+      - name: Test with coverage (60% total line gate)
+        run: >
+          dotnet test tests/LexiSharp.Tests -c Release
+          -p:CollectCoverage=true -p:CoverletOutputFormat=cobertura
+          -p:CoverletOutput=../../TestResults/coverage-
+          -p:Threshold=60 -p:ThresholdType=line -p:ThresholdStat=total
 
-      - name: Test (Postgres/ParadeDB suites self-skip)
-        run: dotnet test tests/LexiSharp.Tests -c Release --no-build
+      - name: Upload coverage to Codecov
+        # Auto-skipped until CODECOV_TOKEN is configured on the repository.
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        if: env.CODECOV_TOKEN != ''
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
+        with:
+          files: TestResults/**/coverage*.cobertura.xml
+          fail_ci_if_error: true
 
   postgres:
     name: Integration tests (pgvector/pgvector:pg16)
@@ -41,9 +81,9 @@ jobs:
     env:
       POSTGRES_TEST_CONNECTION: Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: '10.0.x'
 
@@ -72,9 +112,9 @@ jobs:
     env:
       POSTGRES_TEST_CONNECTION: Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: '10.0.x'
 
@@ -83,3 +123,111 @@ jobs:
 
       - name: Test (lexical + ParadeDB BM25 + fuzzy)
         run: dotnet test tests/LexiSharp.Tests -c Release --no-build
+
+  analysis:
+    # SonarCloud cannot be analyzed with the generic GitHub action; C# requires
+    # the SonarScanner for .NET, and per Sonar's docs the coverage report must
+    # be produced in the same job (between begin and end), so this job builds
+    # and tests the solution itself. Auto-skipped until SONAR_TOKEN is set.
+    name: SonarCloud analysis
+    needs: preflight
+    if: needs.preflight.outputs.has_sonar == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install SonarScanner for .NET
+        run: dotnet tool install --global dotnet-sonarscanner --version 11.2.1
+
+      - name: Begin SonarCloud analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          PR_KEY: ${{ github.event.pull_request.number }}
+          PR_BRANCH: ${{ github.head_ref }}
+          PR_BASE: ${{ github.base_ref }}
+        run: |
+          pr_args=""
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            pr_args="/d:sonar.pullrequest.key=$PR_KEY /d:sonar.pullrequest.branch=$PR_BRANCH /d:sonar.pullrequest.base=$PR_BASE"
+          fi
+          dotnet-sonarscanner begin /k:manuc66_lexisharp /o:manuc66-github /d:sonar.token="$SONAR_TOKEN" /d:sonar.host.url=https://sonarcloud.io /d:sonar.cs.cobertura.reportsPaths=TestResults/**/coverage*.cobertura.xml /d:sonar.exclusions=**/*Tests*/**/*,**/bench/**/* $pr_args
+
+      - name: Test with coverage
+        # The build happens here: coverlet.msbuild instrumentation requires
+        # build and test in the same invocation.
+        run: >
+          dotnet test tests/LexiSharp.Tests -c Release
+          -p:CollectCoverage=true -p:CoverletOutputFormat=cobertura
+          -p:CoverletOutput=../../TestResults/coverage-
+
+      - name: End SonarCloud analysis
+        run: dotnet-sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  license-check:
+    name: License check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Verify LICENSE file and package license declarations
+        run: |
+          test -f LICENSE || { echo "ERROR: LICENSE file missing"; exit 1; }
+          grep -q "MIT License" LICENSE || { echo "ERROR: LICENSE is not MIT"; exit 1; }
+          for csproj in src/*/*.csproj; do
+            if grep -q '<IsPackable>true</IsPackable>' "$csproj"; then
+              grep -q '<PackageLicenseExpression>MIT</PackageLicenseExpression>' "$csproj" \
+                || { echo "ERROR: $csproj does not declare the MIT license"; exit 1; }
+              echo "OK: $csproj (MIT)"
+            fi
+          done
+
+  sbom:
+    name: SBOM (SPDX)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          path: ./
+          artifact-name: sbom.spdx.json
+          format: spdx-json
+
+  bench-smoke:
+    # Does not measure performance: only proves the benchmarks build and run
+    # end-to-end (regressions in the bench harness fail CI just like tests).
+    name: Benchmarks smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Run one benchmark class (short job)
+        run: >
+          dotnet run --project bench/LexiSharp.Benchmarks -c Release --
+          --filter '*TokenizerBenchmarks*' --job short
