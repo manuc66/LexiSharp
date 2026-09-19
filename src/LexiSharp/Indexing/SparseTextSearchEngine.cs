@@ -3,6 +3,17 @@ using LexiSharp.Core;
 namespace LexiSharp.Indexing;
 
 /// <summary>
+/// A document together with its stored sparse vector — the atomic unit of
+/// <see cref="SparseTextSearchEngine.Export"/> and <see cref="SparseTextSearchEngine.Import"/>,
+/// and what a persistence backend serializes to reload a corpus without re-embedding it.
+/// </summary>
+/// <param name="Document">The indexed document.</param>
+/// <param name="Weights">The learned term weights the engine stored for the document (positive, finite).</param>
+public sealed record SparseIndexEntry(
+    SearchDocument Document,
+    IReadOnlyDictionary<string, float> Weights);
+
+/// <summary>
 /// In-memory sparse search engine: indexes documents as their sparse learned embeddings
 /// (SPLADE, uniCOIL, ...) and answers queries by dot-product scoring.
 /// </summary>
@@ -31,13 +42,18 @@ namespace LexiSharp.Indexing;
 /// on the underlying async work. Prefer the <see cref="AddAsync"/> and <see cref="SearchAsync"/>
 /// overloads when you can. Mutations are not thread-safe; synchronize externally.
 /// </para>
+/// <para>
+/// <see cref="Export"/> and <see cref="Import"/> decouple persistence from inference: a saved
+/// corpus (e.g. via <c>LexiSharp.MessagePack</c>) is reloaded from its stored weights alone, and
+/// only <i>queries</i> keep needing the model afterwards.
+/// </para>
 /// </remarks>
 public sealed class SparseTextSearchEngine : ITextSearchEngine
 {
     private readonly ISparseEmbeddingProvider _embeddings;
 
     private readonly Dictionary<string, SearchDocument> _documents = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string[]> _termsByDocument = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, IReadOnlyDictionary<string, float>> _vectorsByDocument = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Dictionary<string, float>> _postings = new(StringComparer.Ordinal);
 
     /// <param name="embeddings">External sparse embedding producer; never implemented inside LexiSharp.</param>
@@ -96,9 +112,9 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine
         if (!_documents.Remove(documentId))
             return;
 
-        if (_termsByDocument.Remove(documentId, out var terms))
+        if (_vectorsByDocument.Remove(documentId, out var vector))
         {
-            foreach (var term in terms)
+            foreach (var term in vector.Keys)
             {
                 if (_postings.TryGetValue(term, out var postings) &&
                     postings.Remove(documentId) && postings.Count == 0)
@@ -113,8 +129,45 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine
     public void Clear()
     {
         _documents.Clear();
-        _termsByDocument.Clear();
+        _vectorsByDocument.Clear();
         _postings.Clear();
+    }
+
+    /// <summary>
+    /// Materializes the whole corpus as its stored documents and sparse vectors — the payload a
+    /// persistence backend (e.g. <c>LexiSharp.MessagePack</c>) serializes and that
+    /// <see cref="Import"/> restores without re-embedding anything.
+    /// </summary>
+    public IReadOnlyList<SparseIndexEntry> Export()
+    {
+        var entries = new List<SparseIndexEntry>(_documents.Count);
+
+        foreach (var (documentId, document) in _documents)
+            entries.Add(new SparseIndexEntry(document, _vectorsByDocument[documentId]));
+
+        return entries;
+    }
+
+    /// <summary>
+    /// Replaces the whole corpus with the given documents and sparse vectors, bypassing the
+    /// embedding provider. Rationale: the weights were already computed once at index time, so a
+    /// reloaded corpus must not be embedded again.
+    /// </summary>
+    /// <param name="entries">Documents with their learned vectors, as produced by <see cref="Export"/>.</param>
+    public void Import(IEnumerable<SparseIndexEntry> entries)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+
+        Clear();
+
+        foreach (var entry in entries)
+        {
+            ArgumentNullException.ThrowIfNull(entry);
+            ArgumentNullException.ThrowIfNull(entry.Document);
+            ArgumentNullException.ThrowIfNull(entry.Weights);
+
+            AddVector(entry.Document, entry.Weights);
+        }
     }
 
     /// <inheritdoc />
@@ -196,12 +249,14 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine
 
         _documents[document.Id] = document;
 
-        var terms = new List<string>();
+        var weights = new Dictionary<string, float>(StringComparer.Ordinal);
 
         foreach (var (term, weight) in vector ?? EmptyVector)
         {
             if (string.IsNullOrEmpty(term) || !float.IsFinite(weight) || weight <= 0)
                 continue;
+
+            weights[term] = weight;
 
             if (!_postings.TryGetValue(term, out var postings))
             {
@@ -210,10 +265,9 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine
             }
 
             postings[document.Id] = weight;
-            terms.Add(term);
         }
 
-        _termsByDocument[document.Id] = terms.ToArray();
+        _vectorsByDocument[document.Id] = weights;
     }
 
     private static IReadOnlyDictionary<string, float> EmptyVector { get; } =
