@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  core:
+    name: Build + unit tests (no backend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build
+        run: dotnet build LexiSharp.slnx -c Release
+
+      - name: Test (Postgres/ParadeDB suites self-skip)
+        run: dotnet test tests/LexiSharp.Tests -c Release --no-build
+
+  postgres:
+    name: Integration tests (pgvector/pgvector:pg16)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lexisharp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      POSTGRES_TEST_CONNECTION: Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build
+        run: dotnet build LexiSharp.slnx -c Release
+
+      - name: Test (lexical + vector + sparse + fuzzy)
+        run: dotnet test tests/LexiSharp.Tests -c Release --no-build
+
+  paradedb:
+    name: Integration tests (paradedb/paradedb:pg16)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: paradedb/paradedb:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lexisharp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      POSTGRES_TEST_CONNECTION: Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build
+        run: dotnet build LexiSharp.slnx -c Release
+
+      - name: Test (lexical + ParadeDB BM25 + fuzzy)
+        run: dotnet test tests/LexiSharp.Tests -c Release --no-build
