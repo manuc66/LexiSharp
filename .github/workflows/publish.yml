@@ -14,7 +14,7 @@ jobs:
       id-token: write
       contents: write
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # A tag can be pushed with a failing build (branch protection does not
       # cover tags), so gate publishing on the tagged commit's CI checks.
