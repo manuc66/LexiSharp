@@ -14,7 +14,8 @@
   La couture `IEmbeddingProvider` vit **dans le core** (partagée Hybrid/Postgres) ;
   Postgres ne référence jamais Hybrid.
 - Tests d'intégration Postgres désactivés sauf si `POSTGRES_TEST_CONNECTION` pointe
-  vers une instance joignable : `pgvector/pgvector:pg16` couvre lexical+vectoriel+fuzzy
+  vers une instance joignable : `pgvector/pgvector:pg16` couvre lexical+vectoriel+sparse+fuzzy
   (extensions `vector` et `pg_trgm`/`fuzzystrmatch`), `paradedb/paradedb:pg16` couvre
   lexical+ParadeDB+fuzzy (extension `pg_search`, auto-skip si absente) — `postgres:16`
-  ne couvre que le lexical. Les tests fuzzy s'auto-skippent si `pg_trgm` manque.
+  ne couvre que le lexical. Les tests fuzzy s'auto-skippent si `pg_trgm` manque ; les tests
+  vectoriel/sparse s'auto-skippent si l'extension `vector` manque.
