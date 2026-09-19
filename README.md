@@ -25,8 +25,10 @@ or ML model** — pure lexical statistics.
 - **Second-stage reranking**: an `IReranker` seam and the `RerankedTextSearchEngine`
   decorator (over-fetch, re-rank, guard rails) in the core; `LexiSharp.Hybrid` ships a
   diversity-preserving **MMR** reranker, a **cascade** pipeline that chains any number of
-  reranking stages with per-stage trimming, and a **cross-encoder** reranker driven by a
-  consumer-provided pairwise scoring model (`ICrossEncoderScorer`).
+  reranking stages with per-stage trimming, a **cross-encoder** reranker driven by a
+  consumer-provided pairwise scoring model (`ICrossEncoderScorer`), and a **ColBERT MaxSim**
+  reranker that re-scores a shortlist token-by-token with late interaction
+  (`ITokenEmbeddingProvider`).
 - **Sparse learned embeddings**: `SparseTextSearchEngine` and its `ISparseEmbeddingProvider`
   seam bring SPLADE/uniCOIL-style retrieval (.NET-core only, weights learned, inverted-index
   scoring kept) without pulling ONNX into the library — the model lives in the consumer.
@@ -58,9 +60,10 @@ or ML model** — pure lexical statistics.
 - **Optional backends**, shipped as separate packages:
   - `LexiSharp.Postgres` — PostgreSQL backends implementing the same `ITextSearchEngine`:
     a lexical engine over `tsvector` + GIN + `unaccent`, an ANN engine over `pgvector`
-    (HNSW/IVFFlat) driven by an external `IEmbeddingProvider`, and an approximate
-    **fuzzy** engine over the `pg_trgm` trigram extension (with optional `fuzzystrmatch`
-    refinement);
+    (HNSW/IVFFlat) driven by an external `IEmbeddingProvider`, a learned-**sparse** engine
+    over `pgvector sparsevec` (HNSW) driven by an `ISparseEmbeddingProvider`, and an
+    approximate **fuzzy** engine over the `pg_trgm` trigram extension (with optional
+    `fuzzystrmatch` refinement);
   - `LexiSharp.ParadeDB` — **true Okapi BM25** on top of the `pg_search` Tantivy extension
     (AGPL-3, requires the ParadeDB Docker image or self-hosted extension);
   - `LexiSharp.Hybrid` — a federated engine that queries several engines and merges
@@ -201,6 +204,33 @@ IReranker cross = new CrossEncoderReranker(myOnnxCrossEncoder, limit: 5);
 `CrossEncoderReranker` replaces each candidate's score with the model's, drops `0`/NaN/infinity
 scores, and applies an optional `MinimumScore` and `Limit`.
 
+**MaxSim** (ColBERT-style late interaction) re-scores the shortlist token-by-token instead of
+as a single embedding: every token of the query is embedded, each scores against the whole
+candidate's token embeddings (`max similarity per query token`, summed), so a query token never
+has to "average itself away" across the document:
+
+```csharp
+using LexiSharp.Core;
+using LexiSharp.Hybrid;
+
+var tokenVectors = new Dictionary<string, IReadOnlyList<ReadOnlyMemory<float>>>
+{
+    ["doc-1"] = doc1TokenEmbeddings, // token embeddings pre-computed at index time
+    ["doc-2"] = doc2TokenEmbeddings,
+};
+
+IReranker maxsim = new MaxSimReranker(
+    myTokenEmbedder,                 // ITokenEmbeddingProvider (core seam, consumer-provided)
+    tokenVectors,
+    limit: 5,
+    minimumScore: 0.0);
+```
+
+`MaxSimReranker` scores each candidate as `Σₜ max_tok cosine(q_t, d_tok)` — for each query token,
+the best cosine against any of the candidate's token embeddings — drops `0`/NaN/infinity scores
+and ranks by total. It is the middle ground between whole-document cosine and the full
+pairwise pass of a cross-encoder.
+
 ### Metadata filters
 
 Gate the corpus with structured predicates over `SearchDocument.Fields` — every filter must
@@ -265,6 +295,15 @@ A `Tokenizer` (stop words, n-grams, single-char terms) is reconstructed automati
 `ITokenizer` cannot be serialized: hand the same implementation to `Load` — a type-name check
 protects against rebuilding with the wrong pipeline. Stemmed tokenizers likewise require the
 original tokenizer at load time (stemmers are not serializable).
+
+The same package persists a sparse engine through `MessagePackSparseIndexPersistence`: the
+stored corpus is the documents **plus their learned weights**, so reloading bypasses the model —
+only queries need the `ISparseEmbeddingProvider` again:
+
+```csharp
+MessagePackSparseIndexPersistence.Save(sparseEngine, "splade.bin");
+var reloaded = MessagePackSparseIndexPersistence.Load("splade.bin", mySplade); // exact same search scores
+```
 
 ### Explainable scoring and BM25 tuning
 
@@ -335,8 +374,35 @@ trade recall for speed — exact cosine behavior is verified in the integration 
 
 By default the integration tests are skipped unless `POSTGRES_TEST_CONNECTION` points at a
 live instance (e.g. `Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp`).
-The vector tests additionally require the `vector` extension: use the `pgvector/pgvector:pg16`
-image (lexical tests only need stock PostgreSQL).
+The vector and sparse tests additionally require the `vector` extension: use the
+`pgvector/pgvector:pg16` image (lexical tests only need stock PostgreSQL).
+
+**Sparse (`PostgresSparseSearchEngine`)** — learned-sparse ANN over `pgvector sparsevec`
+(HNSW only — IVFFlat is unavailable for `sparsevec`), fed by your own sparse model:
+
+```csharp
+ITextSearchEngine sparse = new PostgresSparseSearchEngine(
+    connectionString,
+    mySpladeProvider,                                       // ISparseEmbeddingProvider, never LexiSharp
+    new PostgresSparseOptions
+    {
+        Vocabulary = vocabulary,                            // term → coordinate, fixed up front
+        Distance = SparseDistance.InnerProduct,             // default; dot product suits SPLADE
+    });
+
+sparse.Add(new SearchDocument("1", "the quick brown fox ..."));
+sparse.Search("a fast fox");   // scores: inner product→-dist, cosine→1-dist, L2/L1→1/(1+dist)
+```
+
+The engine installs (idempotently) the `vector` extension, adds a `sparse sparsevec(D)` column
+and an HNSW index on the same shared documents table. Because `sparsevec` is a positional
+format, the **vocabulary (term → coordinate) is an index-layout decision**: it must be fixed
+once and shared between the provider at index time and the one at query time. Terms outside the
+vocabulary are ignored; a query with no known term returns nothing. HNSW — unlike IVFFlat —
+works on empty tables and supports inserts, so there is no "index after first batch" step.
+`sparsevec` caps a vector at 1000 non-zero elements. Scores are PostgreSQL-native and again
+depend on the chosen distance; route through `ReciprocalRankFusionMerger` when mixing with the
+lexical engine.
 
 **Fuzzy (`PostgresFuzzySearchEngine`)** — approximate, typo-tolerant matching over `pg_trgm`
 trigrams, with optional `fuzzystrmatch` (edit distance + phonetics):
@@ -432,8 +498,9 @@ Writes fan out to every engine. Three merge strategies are available:
 | `ReciprocalRankFusionMerger` | `Σ 1/(k + rank)` (k=60), rank-only | engines with **incomparable scales** — lexical + vector, ts_rank_cd vs BM25 (Postgres vs ParadeDB vs in-memory) |
 | `WeightedScoreResultMerger` | normalized per-engine score blend | native scores trusted, per-engine weights wanted |
 
-Reciprocal Rank Fusion never looks at scores, so it is the natural bridge for the future
-embedding-backed engines: cosines from any model land in the same formula without calibration.
+Reciprocal Rank Fusion never looks at scores, so it is the natural bridge between
+incomparable engines — the sparse and dense embedding backends land in the same formula
+without calibration.
 
 **Embeddings are an agreed seam, not a feature here**: `IEmbeddingProvider` (core) describes how a
 consumer project (ONNX model, model server, ...) would produce vectors — LexiSharp never
@@ -465,27 +532,33 @@ var results = engine.Search("learned sparse retrieval");
 Like `IEmbeddingProvider`, `ISparseEmbeddingProvider` is a pure seam in the core: the ONNX model,
 tokenizer and vocabulary live in the consumer. Weights are expected non-negative (ReLU-like);
 non-positive values are treated as "term absent". The engine implements `ITextSearchEngine`, so
-it drops straight into `HybridTextSearchEngine` and merges with BM25/dense engines via
-`ReciprocalRankFusionMerger`.
+it drops straight into `HybridTextSearchEngine` where it merges with BM25 and dense engines via
+`ReciprocalRankFusionMerger` — RRF keeps sparse-only hits (matching terms the lexical scorer and
+the dense cosine disagree on) that a BM25 re-scoring merge would drop.
+
+The engine never re-embeds on reload: `Export()` / `Import()` decouple inference from
+persistence, `MessagePackSparseIndexPersistence` serializes the stored weights directly, and
+`PostgresSparseSearchEngine` is the same model over `pgvector sparsevec`. In every backend, only
+**queries** keep needing the provider after the corpus is loaded.
 
 ### Reranking stage
 
 The reranking stage composes with all of it: wrap the hybrid in a
 `RerankedTextSearchEngine` (core decorator) and pass a `CascadeRerankPipeline`, a
-`MaximalMarginalRelevanceReranker` or a `CrossEncoderReranker` to add a precision or diversity
-pass on top of the fused ranking — the same two-stage retrieve-then-rerank shape, one line of
-composition.
+`MaximalMarginalRelevanceReranker`, a `CrossEncoderReranker` or a `MaxSimReranker` to add a
+precision or diversity pass on top of the fused ranking — the same two-stage
+retrieve-then-rerank shape, one line of composition.
 
 ## Architecture
 
 ```
 Package            Responsibilities
 ─────────────────────────────────────────────────────────────────────────────
-LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider + ISparseEmbeddingProvider + sparse engine + boost/rerank decorators + filters + similarity + keywords + metrics
-LexiSharp.Postgres  PostgreSQL providers: tsvector+unaccent (lexical), pgvector ANN (vector), pg_trgm+fuzzystrmatch (fuzzy)
+LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider + ISparseEmbeddingProvider + sparse engine (export/import) + boost/rerank decorators + filters + similarity + keywords + metrics
+LexiSharp.Postgres  PostgreSQL providers: tsvector+unaccent (lexical), pgvector ANN (vector), pgvector sparsevec (sparse), pg_trgm+fuzzystrmatch (fuzzy)
 LexiSharp.ParadeDB   true BM25 provider on the pg_search (Tantivy) extension
-LexiSharp.Hybrid    federated engine + mergers (RRF, weighted, reranking) + rerankers (MMR, cascade, cross-encoder)
-LexiSharp.MessagePack   MessagePack (binary) persistence for the in-memory index
+LexiSharp.Hybrid    federated engine + mergers (RRF, weighted, reranking) + rerankers (MMR, cascade, cross-encoder, MaxSim)
+LexiSharp.MessagePack   MessagePack (binary) persistence for the in-memory index and the sparse engine
 ```
 
 Within the core package, separation of concerns mirrors the recommendations the library
@@ -511,8 +584,9 @@ dotnet run  --project bench/LexiSharp.Benchmarks  # BenchmarkDotNet suite
 ```
 
 Postgres/ParadeDB integration tests run against whatever `POSTGRES_TEST_CONNECTION` points to:
-`pgvector/pgvector:pg16` covers the lexical + vector + fuzzy suites,
-`paradedb/paradedb:pg16` covers the lexical + ParadeDB (BM25) + fuzzy suites. The fuzzy tests
+`pgvector/pgvector:pg16` covers the lexical + vector + sparse + fuzzy suites,
+`paradedb/paradedb:pg16` covers the lexical + ParadeDB (BM25) + fuzzy suites. The sparse tests
+self-skip when the `vector` extension is unavailable. The fuzzy tests
 self-skip when `pg_trgm` (and `fuzzystrmatch`, when exercised) are unavailable.
 
 ## License
