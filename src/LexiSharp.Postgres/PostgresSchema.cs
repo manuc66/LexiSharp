@@ -18,12 +18,14 @@ public static class PostgresSchema
         PostgresIndexOptions options,
         CancellationToken cancellationToken = default)
     {
+        await PostgresExtensionInstaller.InstallAsync(
+            connection, "CREATE EXTENSION IF NOT EXISTS unaccent;", cancellationToken).ConfigureAwait(false);
+
         await using var command = connection.CreateCommand();
 
         string indexName = PostgresIndexOptions.QuoteIdentifier($"{options.Table}_tsv_gin");
 
         command.CommandText = $"""
-            CREATE EXTENSION IF NOT EXISTS unaccent;
             CREATE TABLE IF NOT EXISTS {options.QualifiedTableName} (
                 id       text PRIMARY KEY,
                 content  text NOT NULL,

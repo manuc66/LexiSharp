@@ -85,14 +85,11 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable
 
         var baseOptions = new PostgresIndexOptions { Schema = _options.Schema, Table = _options.Table };
 
-        await using (var command = connection.CreateCommand())
-        {
-            string extension = _options.UseLevenshteinRefinement || _options.IncludePhonetic
-                ? "CREATE EXTENSION IF NOT EXISTS pg_trgm; CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;"
-                : "CREATE EXTENSION IF NOT EXISTS pg_trgm;";
-            command.CommandText = extension;
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
+        string extension = _options.UseLevenshteinRefinement || _options.IncludePhonetic
+            ? "CREATE EXTENSION IF NOT EXISTS pg_trgm; CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;"
+            : "CREATE EXTENSION IF NOT EXISTS pg_trgm;";
+
+        await PostgresExtensionInstaller.InstallAsync(connection, extension, cancellationToken).ConfigureAwait(false);
 
         await PostgresSchema.CreateDocumentTableAsync(connection, baseOptions, cancellationToken).ConfigureAwait(false);
 

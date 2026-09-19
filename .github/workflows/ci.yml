@@ -67,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        image: pgvector/pgvector:pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: lexisharp
@@ -98,7 +98,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: paradedb/paradedb:pg16
+        image: paradedb/paradedb:pg16@sha256:ac8ad72f57da6fa35738d346b9970811a4ab9ce0ba7f183bea27e0ad7b037222
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: lexisharp

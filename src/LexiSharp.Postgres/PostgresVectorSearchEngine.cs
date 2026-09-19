@@ -92,11 +92,8 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDisposable
 
         var baseOptions = new PostgresIndexOptions { Schema = _options.Schema, Table = _options.Table };
 
-        await using (var command = connection.CreateCommand())
-        {
-            command.CommandText = "CREATE EXTENSION IF NOT EXISTS vector;";
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
+        await PostgresExtensionInstaller.InstallAsync(
+            connection, "CREATE EXTENSION IF NOT EXISTS vector;", cancellationToken).ConfigureAwait(false);
 
         await PostgresSchema.CreateDocumentTableAsync(connection, baseOptions, cancellationToken).ConfigureAwait(false);
 

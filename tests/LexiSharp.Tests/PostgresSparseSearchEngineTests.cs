@@ -134,6 +134,8 @@ public class PostgresSparseSearchEngineTests
             ["e1"] = new Dictionary<string, float> { ["apple"] = 3f },
             ["e2"] = new Dictionary<string, float> { ["apple"] = 2f },
             ["e3"] = new Dictionary<string, float> { ["apple"] = 5f },
+            // The provider is keyed by query text too: embed the query "apple".
+            ["apple"] = new Dictionary<string, float> { ["apple"] = 2f },
         };
 
         using var engine = NewEngine(
@@ -148,11 +150,12 @@ public class PostgresSparseSearchEngineTests
 
             var results = engine.Search("apple");
 
-            // distances vs {apple:2}: e2 = 0, e1 = 1, e3 = 9 → similarities 1, 1/2, 1/10.
+            // pgvector <-> is the euclidean distance: vs {apple:2} the distances are
+            // e2 = 0, e1 = 1, e3 = 3 → similarities 1, 1/2, 1/4.
             Assert.Equal(new[] { "e2", "e1", "e3" }, results.Select(r => r.DocumentId).ToArray());
             Assert.Equal(1.0, results[0].Score, 4);
             Assert.Equal(0.5, results[1].Score, 4);
-            Assert.Equal(0.1, results[2].Score, 4);
+            Assert.Equal(0.25, results[2].Score, 4);
         }
         finally
         {

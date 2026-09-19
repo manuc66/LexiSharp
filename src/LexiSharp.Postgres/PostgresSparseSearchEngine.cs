@@ -90,11 +90,8 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable
 
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
-        await using (var command = connection.CreateCommand())
-        {
-            command.CommandText = "CREATE EXTENSION IF NOT EXISTS vector;";
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
+        await PostgresExtensionInstaller.InstallAsync(
+            connection, "CREATE EXTENSION IF NOT EXISTS vector;", cancellationToken).ConfigureAwait(false);
 
         var baseOptions = new PostgresIndexOptions { Schema = _options.Schema, Table = _options.Table };
         await PostgresSchema.CreateDocumentTableAsync(connection, baseOptions, cancellationToken).ConfigureAwait(false);
