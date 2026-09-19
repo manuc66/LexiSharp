@@ -14,6 +14,6 @@ public enum TuningMetric
     /// <summary>F1@k, the harmonic mean of precision and recall (see <see cref="RetrievalMetrics.F1AtK"/>).</summary>
     F1,
 
-    /// <summary>nDCG@k with binary relevance (see <see cref="RetrievalMetrics.NdcgAtK"/>).</summary>
+    /// <summary>nDCG@k with binary relevance (see <see cref="RetrievalMetrics.NdcgAtK(IReadOnlyCollection{string}, IReadOnlyCollection{string}, int)"/>).</summary>
     Ndcg,
 }
