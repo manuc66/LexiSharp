@@ -55,8 +55,8 @@ public class CascadeRerankPipelineTests
         pipeline.Rerank("q", new[] { R("a", DocA), R("b", DocB), R("c", DocC), R("d", DocD) });
 
         // Stage 1 saw everything; stage 2 only the 2 strongest candidates of stage 1's order.
-        Assert.Equal(1, first.ReceivedCounts.Count);
-        Assert.Equal(1, second.ReceivedCounts.Count);
+        Assert.Single(first.ReceivedCounts);
+        Assert.Single(second.ReceivedCounts);
         Assert.Equal(4, first.ReceivedCounts[0]);
         Assert.Equal(2, second.ReceivedCounts[0]);
     }

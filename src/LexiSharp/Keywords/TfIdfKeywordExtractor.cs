@@ -12,7 +12,8 @@ namespace LexiSharp.Keywords;
 /// tags, but unable to tell "important here" from "common everywhere". Build it over an
 /// <see cref="ITextIndex"/> (the same one the search engine uses, or a sample of the domain)
 /// and corpus-frequent words are demoted by the smoothed IDF
-/// <c>log((N + 1) / (df + 1)) + 1</c> — the same weighting the <see cref="TfIdfScorer"/> uses.
+/// <c>log((N + 1) / (df + 1)) + 1</c> — the same weighting the
+/// <see cref="LexiSharp.Ranking.TfIdfScorer"/> uses.
 /// Terms never seen by the corpus get the maximum IDF, so proper nouns surface first.
 /// </remarks>
 public sealed class TfIdfKeywordExtractor : IKeywordExtractor
