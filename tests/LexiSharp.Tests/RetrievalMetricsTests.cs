@@ -168,4 +168,51 @@ public class RetrievalMetricsTests
         Assert.Throws<ArgumentOutOfRangeException>(() => RetrievalMetrics.F1AtK(Retrieved, Relevant, 0));
         Assert.Throws<ArgumentOutOfRangeException>(() => RetrievalMetrics.NdcgAtK(Retrieved, Relevant, -1));
     }
+
+    [Fact]
+    public void Ndcg_DuplicatedRelevantIds_NeverScoreAboveOne()
+    {
+        // An engine returning the same relevant document twice must not inflate DCG above IDCG.
+        var retrieved = new[] { "a", "a", "b" };
+        var relevant = new[] { "a", "b" };
+
+        Assert.Equal(1, RetrievalMetrics.NdcgAtK(retrieved, relevant, 3), 12);
+    }
+
+    [Fact]
+    public void AveragePrecision_DuplicatedRelevantIds_ScoreOnce()
+    {
+        var retrieved = new[] { "a", "a" };
+
+        Assert.Equal(1, RetrievalMetrics.AveragePrecisionAtK(retrieved, new[] { "a" }, 5), 12);
+    }
+
+    [Fact]
+    public void Metrics_DuplicatesBehaveLikeFirstOccurrenceOnly()
+    {
+        var withDups = new[] { "a", "a", "b", "d", "b" };
+        var distinct = new[] { "a", "b", "d" };
+        var relevant = new[] { "a", "b", "c" };
+        var graded = new Dictionary<string, double> { ["a"] = 2, ["b"] = 1, ["d"] = 3 };
+
+        Assert.Equal(
+            RetrievalMetrics.NdcgAtK(distinct, relevant, 5),
+            RetrievalMetrics.NdcgAtK(withDups, relevant, 5), 12);
+        Assert.Equal(
+            RetrievalMetrics.NdcgAtK(distinct, graded, 5),
+            RetrievalMetrics.NdcgAtK(withDups, graded, 5), 12);
+        Assert.Equal(
+            RetrievalMetrics.ReciprocalRankAtK(distinct, relevant, 5),
+            RetrievalMetrics.ReciprocalRankAtK(withDups, relevant, 5), 12);
+        Assert.Equal(
+            RetrievalMetrics.AveragePrecisionAtK(distinct, relevant, 5),
+            RetrievalMetrics.AveragePrecisionAtK(withDups, relevant, 5), 12);
+    }
+
+    [Fact]
+    public void GradedNdcg_RejectsInfiniteGains()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => RetrievalMetrics.NdcgAtK(Retrieved, new Dictionary<string, double> { ["a"] = double.PositiveInfinity }, 3));
+    }
 }

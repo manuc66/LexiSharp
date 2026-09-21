@@ -21,8 +21,8 @@ public sealed class QueryLikelihoodScorer : ITextScorer
     /// <param name="lambda">Collection-model weight in <c>(0, 1]</c>. Closer to 0 ⇒ smoother, more dependent on document.</param>
     public QueryLikelihoodScorer(double lambda = 0.2)
     {
-        if (lambda is <= 0 or > 1)
-            throw new ArgumentOutOfRangeException(nameof(lambda), lambda, "lambda must be within (0, 1].");
+        if (double.IsNaN(lambda) || lambda is <= 0 or > 1)
+            throw new ArgumentOutOfRangeException(nameof(lambda), lambda, "lambda must be finite and within (0, 1].");
 
         _lambda = lambda;
     }

@@ -113,5 +113,16 @@ public class ReciprocalRankFusionMergerTests
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => new ReciprocalRankFusionMerger(k: 0));
         Assert.Throws<ArgumentOutOfRangeException>(() => new ReciprocalRankFusionMerger(60, -1.0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ReciprocalRankFusionMerger(k: double.NaN));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ReciprocalRankFusionMerger(k: double.PositiveInfinity));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ReciprocalRankFusionMerger(60, double.NaN));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ReciprocalRankFusionMerger(60, double.PositiveInfinity));
+    }
+
+    [Fact]
+    public void Merge_NoEngines_ReturnsEmpty()
+    {
+        Assert.Empty(new ReciprocalRankFusionMerger()
+            .Merge(Array.Empty<IReadOnlyList<SearchResult>>(), "query"));
     }
 }

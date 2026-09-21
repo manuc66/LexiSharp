@@ -23,8 +23,10 @@ public sealed class Bm25Scorer : ITextScorer, IScoreExplainer
     /// <param name="b">Document-length normalization, in <c>[0, 1]</c>. <c>0</c> disables normalization.</param>
     public Bm25Scorer(double k1 = 1.5, double b = 0.75)
     {
-        if (k1 < 0) throw new ArgumentOutOfRangeException(nameof(k1), k1, "k1 must be non-negative.");
-        if (b is < 0 or > 1) throw new ArgumentOutOfRangeException(nameof(b), b, "b must be within [0, 1].");
+        if (double.IsNaN(k1) || double.IsInfinity(k1) || k1 < 0)
+            throw new ArgumentOutOfRangeException(nameof(k1), k1, "k1 must be non-negative and finite.");
+        if (double.IsNaN(b) || double.IsInfinity(b) || b is < 0 or > 1)
+            throw new ArgumentOutOfRangeException(nameof(b), b, "b must be within [0, 1] and finite.");
 
         _k1 = k1;
         _b = b;
@@ -35,8 +37,10 @@ public sealed class Bm25Scorer : ITextScorer, IScoreExplainer
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
-        if (parameters.K1 < 0) throw new ArgumentOutOfRangeException(nameof(parameters), parameters, "k1 must be non-negative.");
-        if (parameters.B is < 0 or > 1) throw new ArgumentOutOfRangeException(nameof(parameters), parameters, "b must be within [0, 1].");
+        if (double.IsNaN(parameters.K1) || double.IsInfinity(parameters.K1) || parameters.K1 < 0)
+            throw new ArgumentOutOfRangeException(nameof(parameters), parameters, "k1 must be non-negative and finite.");
+        if (double.IsNaN(parameters.B) || double.IsInfinity(parameters.B) || parameters.B is < 0 or > 1)
+            throw new ArgumentOutOfRangeException(nameof(parameters), parameters, "b must be within [0, 1] and finite.");
 
         _k1 = parameters.K1;
         _b = parameters.B;

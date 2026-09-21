@@ -89,6 +89,29 @@ public class WeightedScoreResultMergerTests
         Assert.Throws<ArgumentOutOfRangeException>(() => new WeightedScoreResultMerger(1.0, -0.5));
 
     [Fact]
+    public void Ctor_RejectsNonFiniteWeights()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new WeightedScoreResultMerger(double.NaN));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new WeightedScoreResultMerger(1.0, double.PositiveInfinity));
+    }
+
+    [Fact]
+    public void Merge_NanOrInfiniteScores_DoNotPoisonTheBlend()
+    {
+        var engineA = new[] { R("a", 2.0), R("b", double.PositiveInfinity) };
+        var engineB = new[] { R("b", double.NaN), R("c", 4.0) };
+
+        var merged = new WeightedScoreResultMerger()
+            .Merge(new[] { engineA, engineB }, "query").ToList();
+
+        // Engine A normalizes by 2 (the infinite "b" is skipped): a → 1.0.
+        // Engine B normalizes by 4 (the NaN "b" is skipped): c → 1.0.
+        Assert.Equal(new[] { "a", "c" }, merged.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(1.0, merged[0].Score, 9);
+        Assert.Equal(1.0, merged[1].Score, 9);
+    }
+
+    [Fact]
     public void Merge_WrongWeightCount_Throws()
     {
         var engineA = new[] { R("a", 1.0) };

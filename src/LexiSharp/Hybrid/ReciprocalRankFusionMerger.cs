@@ -36,11 +36,11 @@ public sealed class ReciprocalRankFusionMerger : IResultMerger
         double k = 60,
         params double[] weights)
     {
-        if (k <= 0)
-            throw new ArgumentOutOfRangeException(nameof(k), k, "k must be positive.");
+        if (double.IsNaN(k) || double.IsInfinity(k) || k <= 0)
+            throw new ArgumentOutOfRangeException(nameof(k), k, "k must be positive and finite.");
 
-        if (weights.Any(w => w < 0))
-            throw new ArgumentOutOfRangeException(nameof(weights), "Weights must be non-negative.");
+        if (weights.Any(w => double.IsNaN(w) || double.IsInfinity(w) || w < 0))
+            throw new ArgumentOutOfRangeException(nameof(weights), "Weights must be non-negative and finite.");
 
         _k = k;
         _weights = weights.Length > 0 ? weights : new[] { 1.0 };

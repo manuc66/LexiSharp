@@ -122,7 +122,18 @@ public class ScorerTests
     public void Bm25_ValidatesParameters()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => new Bm25Scorer(k1: -1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new Bm25Scorer(k1: double.NaN));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new Bm25Scorer(k1: double.PositiveInfinity));
         Assert.Throws<ArgumentOutOfRangeException>(() => new Bm25Scorer(b: 1.5));
         Assert.Throws<ArgumentOutOfRangeException>(() => new Bm25Scorer(b: -0.1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new Bm25Scorer(b: double.NaN));
+    }
+
+    [Fact]
+    public void QueryLikelihood_RejectsNonFiniteOrOutOfRangeLambda()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new QueryLikelihoodScorer(0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new QueryLikelihoodScorer(1.1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new QueryLikelihoodScorer(double.NaN));
     }
 }

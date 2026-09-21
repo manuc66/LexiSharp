@@ -8,10 +8,10 @@ namespace LexiSharp.Hybrid;
 /// <param name="StageLimit">
 /// Maximum number of candidates forwarded from one stage to the next; <c>null</c> disables the
 /// intermediate cuts. Cutting after every stage is what makes the later — usually more expensive
-/// — stages cheap.
+/// — stages cheap. Must be <c>null</c> or at least <c>1</c>.
 /// </param>
-/// <param name="FinalLimit">Maximum number of results kept after the last stage; <c>null</c> keeps all.</param>
-/// <param name="MinimumScore">Results scoring below this after the last stage are dropped.</param>
+/// <param name="FinalLimit">Maximum number of results kept after the last stage; <c>null</c> keeps all. Must be <c>null</c> or at least <c>1</c>.</param>
+/// <param name="MinimumScore">Results scoring below this after the last stage are dropped; must not be NaN.</param>
 public sealed record CascadeRerankOptions(
     int? StageLimit = null,
     int? FinalLimit = null,
@@ -60,6 +60,15 @@ public sealed class CascadeRerankPipeline : IReranker
 
         _stages = materialized;
         _options = options ?? CascadeRerankOptions.Default;
+
+        if (_options.StageLimit is < 1)
+            throw new ArgumentOutOfRangeException(nameof(options), _options.StageLimit, "StageLimit must be null or at least 1.");
+
+        if (_options.FinalLimit is < 1)
+            throw new ArgumentOutOfRangeException(nameof(options), _options.FinalLimit, "FinalLimit must be null or at least 1.");
+
+        if (double.IsNaN(_options.MinimumScore))
+            throw new ArgumentOutOfRangeException(nameof(options), _options.MinimumScore, "MinimumScore must not be NaN.");
     }
 
     /// <inheritdoc />

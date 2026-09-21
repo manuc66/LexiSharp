@@ -24,8 +24,10 @@ namespace LexiSharp.Hybrid;
 /// </para>
 /// <para>
 /// Ties are broken deterministically by keeping the earliest candidate in the incoming order,
-/// so equal inputs always yield equal outputs. The candidate list is quadratic work in the
-/// worst case, which is fine for the shortlists reranking is meant for.
+/// so equal inputs always yield equal outputs. Negative incoming scores compete too: relevance
+/// turns negative below the best score, and when no score exceeds <c>0</c> every relevance is
+/// forced to <c>0</c> so selection falls back to pure diversity order. The candidate list is
+/// quadratic work in the worst case, which is fine for the shortlists reranking is meant for.
 /// </para>
 /// </remarks>
 public sealed class MaximalMarginalRelevanceReranker : IReranker

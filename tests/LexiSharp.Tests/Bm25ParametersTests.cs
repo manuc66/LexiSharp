@@ -60,5 +60,7 @@ public class Bm25ParametersTests
         Assert.Throws<ArgumentNullException>(() => new Bm25Scorer(parameters: null!));
         Assert.Throws<ArgumentOutOfRangeException>(() => new Bm25Scorer(new Bm25Parameters(-0.5, 0.75)));
         Assert.Throws<ArgumentOutOfRangeException>(() => new Bm25Scorer(new Bm25Parameters(1.5, 1.5)));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new Bm25Scorer(new Bm25Parameters(double.NaN, 0.75)));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new Bm25Scorer(new Bm25Parameters(1.2, double.NaN)));
     }
 }
