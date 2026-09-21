@@ -20,6 +20,8 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+    <PackageReference Include="FsCheck" Version="3.4.0" />
+    <PackageReference Include="FsCheck.Xunit" Version="3.4.0" />
   </ItemGroup>
 
   <ItemGroup>
