@@ -6,9 +6,11 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
-        string dataDir = Path.Combine("data", "nfcorpus");
+        string dataDir = Path.Combine(AppContext.BaseDirectory, "../../../data/nfcorpus");
         int topK = 10;
         int? limit = null;
+        int denseSeq = 256;
+        bool dense = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -23,6 +25,12 @@ public static class Program
                 case "--limit" when i + 1 < args.Length:
                     limit = ParsePositive(args[++i], "--limit");
                     break;
+                case "--dense-seq" when i + 1 < args.Length:
+                    denseSeq = ParsePositive(args[++i], "--dense-seq");
+                    break;
+                case "--dense":
+                    dense = true;
+                    break;
                 case "--help":
                 case "-h":
                     PrintHelp();
@@ -34,8 +42,11 @@ public static class Program
             }
         }
 
-        Console.WriteLine("LexiSharp evaluation harness — BEIR/NFCorpus");
-        Console.WriteLine($"Data directory: {Path.GetFullPath(dataDir)}");
+        dataDir = Path.GetFullPath(dataDir);
+
+        Console.WriteLine("LexiSharp evaluation harness — BEIR corpora");
+        Console.WriteLine($"Data directory: {dataDir}");
+        Console.WriteLine();
 
         var corpus = await BeirLoader.LoadOrDownloadAsync(dataDir);
 
@@ -43,7 +54,23 @@ public static class Program
 
         Console.WriteLine($"Corpus: {corpus.Documents.Count} documents, {corpus.Queries.Count} queries, {testQueries} test queries with relevance; evaluating {testQueries}.");
 
-        var (results, tunedDescription) = Evaluation.Run(corpus, topK, limit);
+        DenseVectors? denseVectors = null;
+
+        if (dense)
+        {
+            denseVectors = await DenseEmbedder.TryBuildAsync(
+                corpus, dataDir, Path.Combine(Path.GetDirectoryName(dataDir)!, "models"), denseSeq, CancellationToken.None);
+
+            Console.WriteLine("Dense configs enabled (multilingual-e5-small, Xenova ONNX export — MIT, weights from intfloat/multilingual-e5-small).");
+            Console.WriteLine();
+        }
+        else
+        {
+            Console.WriteLine("Dense configs disabled — re-run with --dense to add multilingual-e5-small (CPU, first run downloads the model and encodes the corpus).");
+            Console.WriteLine();
+        }
+
+        var (results, tunedDescription) = Evaluation.Run(corpus, topK, limit, denseVectors);
 
         PrintTable(results, topK);
         PrintReference();
@@ -100,12 +127,16 @@ public static class Program
     private static void PrintHelp()
     {
         Console.WriteLine("""
-            Usage: LexiSharp.Eval [--data <dir>] [--top-k <n>] [--limit <n>]
+            Usage: LexiSharp.Eval [--data <dir>] [--top-k <n>] [--limit <n>] [--dense] [--dense-seq <n>]
 
-              --data <dir>   Directory for the dataset (default: ./data/nfcorpus).
+              --data <dir>   Directory containing the BEIR dataset (default: <project>/data/nfcorpus).
                              Downloaded and checksum-verified on first run.
               --top-k <n>    Retrieval depth and metric cutoff (default: 10).
               --limit <n>    Evaluate only the first n test queries (smoke runs).
+              --dense        Add dense retrieval configs using multilingual-e5-small (ONNX Runtime).
+                             First run downloads the model and encodes corpus+queries on CPU
+                             (threads capped at 4); embeddings are cached for later runs.
+              --dense-seq <n>  Max tokens per sequence when embedding (default: 256). Lower = faster.
               --help, -h     Show this help.
             """);
     }

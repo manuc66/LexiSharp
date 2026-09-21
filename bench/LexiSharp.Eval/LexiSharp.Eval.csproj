@@ -15,4 +15,9 @@
     <ProjectReference Include="../../src/LexiSharp/LexiSharp.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.30.0" />
+    <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.0-preview.1.25125.4" />
+  </ItemGroup>
+
 </Project>
