@@ -24,7 +24,7 @@ internal static class Evaluation
     private static readonly Tokenizer Tokenizer = Tokenizer.Default;
 
     public static (IReadOnlyList<ConfigResult> Results, string TunedDescription) Run(
-        BeirCorpus corpus, int topK, int? limit)
+        BeirCorpus corpus, int topK, int? limit, DenseVectors? dense = null)
     {
         var queries = corpus.Queries
             .Where(query => corpus.TestRelevance.ContainsKey(query.Id))
@@ -49,9 +49,23 @@ internal static class Evaluation
                 new ReciprocalRankFusionMerger())),
         };
 
+        var buildersList = builders.ToList();
+
+        if (dense is not null)
+        {
+            var denseEngine = new DenseTextSearchEngine(corpus, dense);
+            var bm25 = Ranked(documents, new Bm25Scorer(1.5, 0.75));
+
+            buildersList.Add(("Dense multilingual-e5-small", () => denseEngine));
+            buildersList.Add(("Hybrid BM25+Dense weighted", () => new HybridTextSearchEngine(
+                new ITextSearchEngine[] { bm25, denseEngine }, new WeightedScoreResultMerger(1.0, 1.0))));
+            buildersList.Add(("Hybrid BM25+Dense RRF", () => new HybridTextSearchEngine(
+                new ITextSearchEngine[] { bm25, denseEngine }, new ReciprocalRankFusionMerger())));
+        }
+
         var results = new List<ConfigResult>();
 
-        foreach (var (name, factory) in builders)
+        foreach (var (name, factory) in buildersList)
             results.Add(RunConfig(name, factory(), queries, topK));
 
         string tunedDescription = RunTuned(documents, corpus, queries, topK, results);
