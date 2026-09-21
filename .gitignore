@@ -5,3 +5,9 @@ obj/
 .idea/
 BenchmarkDotNet.Artifacts/
 TestResults/
+bench/LexiSharp.Eval/data/
+
+# CocoIndex pipeline (Python subproject)
+cocoindex/.venv/
+cocoindex/run/
+cocoindex/*.sqlite
