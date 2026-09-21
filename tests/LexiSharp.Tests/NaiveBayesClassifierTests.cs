@@ -124,4 +124,41 @@ public class NaiveBayesClassifierTests
         Assert.Empty(classifier.Predict("invoice", 0));
         Assert.Single(classifier.Predict("invoice", 1));
     }
+
+    [Fact]
+    public void Predict_EqualProbabilities_OrderByCategory()
+    {
+        const string pattern = "aaa bbb ccc";
+        var classifier = new NaiveBayesClassifier();
+        classifier.Train(new[]
+        {
+            new SearchDocument("1", pattern, Category: "b"),
+            new SearchDocument("2", "ddd eee fff", Category: "a"),
+            new SearchDocument("3", "ggg hhh iii", Category: "c"),
+        });
+
+        var results = classifier.Predict("zzz www", limit: 3);
+
+        // Nothing matches and priors are uniform: deterministic order by category name.
+        Assert.Equal(new[] { "a", "b", "c" }, results.Select(r => r.Category).ToArray());
+        Assert.All(results, r => Assert.Equal(1.0 / 3, r.Probability, precision: 10));
+    }
+
+    [Fact]
+    public void Predict_TrailingEmptyClasses_StayFinite()
+    {
+        var classifier = new NaiveBayesClassifier();
+        classifier.Train(new[]
+        {
+            new SearchDocument("1", "", Category: "A"),
+            new SearchDocument("2", "", Category: "B"),
+            new SearchDocument("3", "real tokens", Category: "C"),
+        });
+
+        var results = classifier.Predict("anything", limit: 3);
+
+        Assert.Equal(3, results.Count);
+        Assert.All(results, r => Assert.False(double.IsNaN(r.Probability)));
+        Assert.Equal(1.0, results.Sum(r => r.Probability), precision: 10);
+    }
 }

@@ -128,4 +128,15 @@ public class CascadeRerankPipelineTests
         Assert.Throws<ArgumentException>(() => new CascadeRerankPipeline(new IReranker[] { null! }));
         Assert.Throws<ArgumentNullException>(() => new CascadeRerankPipeline(null!));
     }
+
+    [Fact]
+    public void Ctor_RejectsInvalidOptions()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new CascadeRerankPipeline(new[] { new PassthroughReranker() }, new CascadeRerankOptions(StageLimit: 0)));
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new CascadeRerankPipeline(new[] { new PassthroughReranker() }, new CascadeRerankOptions(FinalLimit: -1)));
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new CascadeRerankPipeline(new[] { new PassthroughReranker() }, new CascadeRerankOptions(MinimumScore: double.NaN)));
+    }
 }

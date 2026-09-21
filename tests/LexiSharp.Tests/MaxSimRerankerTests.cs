@@ -162,6 +162,32 @@ public class MaxSimRerankerTests
     }
 
     [Fact]
+    public void Rerank_DropsCandidatesWithInconsistentDimensions()
+    {
+        // Query tokens are 2-D; "3" stores 1-D vectors — a different model, not a score.
+        var model = new StubTokenizer(_ => Tokens(V(1f, 0f)));
+        var vectors = new Dictionary<string, IReadOnlyList<ReadOnlyMemory<float>>>
+        {
+            ["1"] = Tokens(V(1f, 0f)),
+            ["3"] = Tokens(V(1f)),
+        };
+
+        var reranker = new MaxSimReranker(model, vectors);
+
+        var results = reranker.Rerank("q", new[] { R("1", Doc1, 1), R("3", Doc3, 1) });
+
+        Assert.Single(results, r => r.DocumentId == "1");
+    }
+
+    [Fact]
+    public void Ctor_RejectsNaNMinimumScore() =>
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new MaxSimReranker(
+                new StubTokenizer(_ => Tokens(V(1f))),
+                new Dictionary<string, IReadOnlyList<ReadOnlyMemory<float>>> { ["1"] = Tokens(V(1f)) },
+                minimumScore: double.NaN));
+
+    [Fact]
     public void Ctor_ValidatesArguments()
     {
         Assert.Throws<ArgumentNullException>(() => new MaxSimReranker(null!, new Dictionary<string, IReadOnlyList<ReadOnlyMemory<float>>>()));

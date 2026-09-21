@@ -147,4 +147,33 @@ public class MaximalMarginalRelevanceRerankerTests
         Assert.Throws<ArgumentOutOfRangeException>(
             () => new MaximalMarginalRelevanceReranker(DefaultVectors, limit: 0));
     }
+
+    [Fact]
+    public void Rerank_NegativeScores_AreKeptBelowAnyPositiveScore()
+    {
+        var reranker = new MaximalMarginalRelevanceReranker(DefaultVectors, lambda: 0.7);
+
+        var results = reranker.Rerank("q", new[]
+        {
+            R("1", Doc1, -1.0), R("2", Doc2, -0.5), R("3", Doc3, 1.0),
+        });
+
+        // maxScore = 1.0: "3" leads; "1"/"2" get negative relevance, yet keep their rank.
+        Assert.Equal(new[] { "3", "2", "1" }, results.Select(r => r.DocumentId).ToArray());
+    }
+
+    [Fact]
+    public void Rerank_AllNonPositiveScores_FallBackToDiversityOrder()
+    {
+        var reranker = new MaximalMarginalRelevanceReranker(DefaultVectors, lambda: 0.7);
+
+        var results = reranker.Rerank("q", new[]
+        {
+            R("1", Doc1, -1.0), R("2", Doc2, -0.5), R("3", Doc3, -0.3),
+        });
+
+        // Every relevance is forced to 0 (no score exceeds 0): selection is pure diversity —
+        // first pick is the earliest candidate, then the orthogonal "3" beats the near-duplicate "2".
+        Assert.Equal(new[] { "1", "3", "2" }, results.Select(r => r.DocumentId).ToArray());
+    }
 }

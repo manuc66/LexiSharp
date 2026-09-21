@@ -236,4 +236,23 @@ public class BoostedTextSearchEngineTests
         Assert.Empty(results);
         Assert.Equal(0, inner.SearchCalls);
     }
+
+    [Fact]
+    public void Search_BoostedTie_BreaksByDocumentId()
+    {
+        // Both documents reach the same boosted score although the inner engine orders "b" first.
+        var inner = new StubEngine
+        {
+            Results = new List<SearchResult>
+            {
+                new("b", 1.0, new SearchDocument("b", "same")),
+                new("a", 1.0, new SearchDocument("a", "same")),
+            },
+        };
+        var boosted = new BoostedTextSearchEngine(inner, r => 1.0);
+
+        var results = boosted.Search("query");
+
+        Assert.Equal(new[] { "a", "b" }, results.Select(r => r.DocumentId));
+    }
 }

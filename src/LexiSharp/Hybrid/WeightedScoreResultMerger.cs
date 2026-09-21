@@ -11,6 +11,8 @@ namespace LexiSharp.Hybrid;
 /// Use this when the source rankings are trusted as-is (e.g. PostgreSQL <c>ts_rank</c>) and you
 /// only need a sensible global ordering, or when the engines sit on deliberately different
 /// semantics (lexical vs vector similarity). Weights default to <c>1</c> for every engine.
+/// A per-engine score that is NaN or infinite never poisons the blend: it is dropped from that
+/// engine's normalization and from every document it would have contributed to.
 /// </remarks>
 public sealed class WeightedScoreResultMerger : IResultMerger
 {
@@ -22,8 +24,8 @@ public sealed class WeightedScoreResultMerger : IResultMerger
     /// </param>
     public WeightedScoreResultMerger(params double[] weights)
     {
-        if (weights.Any(w => w < 0))
-            throw new ArgumentOutOfRangeException(nameof(weights), "Weights must be non-negative.");
+        if (weights.Any(w => double.IsNaN(w) || double.IsInfinity(w) || w < 0))
+            throw new ArgumentOutOfRangeException(nameof(weights), "Weights must be non-negative and finite.");
 
         _weights = weights.Length > 0 ? weights : new[] { 1.0 };
     }
@@ -60,7 +62,12 @@ public sealed class WeightedScoreResultMerger : IResultMerger
             double max = 0;
 
             foreach (var result in perEngineResults[i])
+            {
+                if (double.IsNaN(result.Score) || double.IsInfinity(result.Score))
+                    continue;
+
                 max = Math.Max(max, result.Score);
+            }
 
             normalization[i] = max;
         }
@@ -73,6 +80,9 @@ public sealed class WeightedScoreResultMerger : IResultMerger
 
             foreach (var result in perEngineResults[i])
             {
+                if (double.IsNaN(result.Score) || double.IsInfinity(result.Score))
+                    continue;
+
                 double normalized = divisor > 0 ? result.Score / divisor : 0;
 
                 if (merged.TryGetValue(result.DocumentId, out var existing))

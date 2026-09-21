@@ -83,12 +83,14 @@ public sealed class Bm25ParameterTuner
 
         foreach (double k1 in k1Grid)
         {
-            if (k1 < 0) throw new ArgumentOutOfRangeException(nameof(k1Values), k1, "k1 values must be non-negative.");
+            if (double.IsNaN(k1) || double.IsInfinity(k1) || k1 < 0)
+                throw new ArgumentOutOfRangeException(nameof(k1Values), k1, "k1 values must be non-negative and finite.");
         }
 
         foreach (double b in bGrid)
         {
-            if (b is < 0 or > 1) throw new ArgumentOutOfRangeException(nameof(bValues), b, "b values must be within [0, 1].");
+            if (double.IsNaN(b) || double.IsInfinity(b) || b is < 0 or > 1)
+                throw new ArgumentOutOfRangeException(nameof(bValues), b, "b values must be within [0, 1] and finite.");
         }
 
         var grid = new List<Bm25GridPoint>(k1Grid.Length * bGrid.Length);

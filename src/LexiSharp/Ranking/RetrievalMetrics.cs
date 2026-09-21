@@ -9,6 +9,8 @@ namespace LexiSharp.Ranking;
 /// <list type="bullet">
 /// <item><description><c>retrievedIds</c> is the ranked list returned by an engine (best first), already truncated at <c>k</c>.</description></item>
 /// <item><description>Precision counts unfilled result slots as misses: <c>P@k = |retrieved ∩ relevant| / k</c>.</description></item>
+/// <item><description>An id present more than once in <c>retrievedIds</c> only counts once (its first/earliest
+/// occurrence), so nDCG never exceeds 1 for a consistent ranking.</description></item>
 /// <item><description>Queries with an empty relevant set score 0 on every metric; callers that average over a
 /// validation set typically skip them (as <see cref="Bm25ParameterTuner"/> does).</description></item>
 /// </list>
@@ -63,14 +65,22 @@ public static class RetrievalMetrics
             return 0;
 
         var relevant = new HashSet<string>(relevantIds, StringComparer.Ordinal);
-
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         double dcg = 0;
-        int depth = Math.Min(k, retrievedIds.Count);
+        int rank = 1;
 
-        for (int rank = 1; rank <= depth; rank++)
+        foreach (var id in retrievedIds)
         {
-            if (relevant.Contains(retrievedIds.ElementAt(rank - 1)))
+            if (rank > k)
+                break;
+
+            if (!seen.Add(id))
+                continue;
+
+            if (relevant.Contains(id))
                 dcg += 1.0 / Math.Log2(rank + 1);
+
+            rank++;
         }
 
         double idcg = IdealDcg(Math.Min(k, relevantIds.Count));
@@ -93,12 +103,16 @@ public static class RetrievalMetrics
             return 0;
 
         var relevant = new HashSet<string>(relevantIds, StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         int rank = 1;
 
         foreach (var id in retrievedIds)
         {
             if (rank > k)
                 break;
+
+            if (!seen.Add(id))
+                continue;
 
             if (relevant.Contains(id))
                 return 1.0 / rank;
@@ -124,6 +138,7 @@ public static class RetrievalMetrics
             return 0;
 
         var relevant = new HashSet<string>(relevantIds, StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         int matches = 0;
         double precisionSum = 0;
         int rank = 1;
@@ -132,6 +147,9 @@ public static class RetrievalMetrics
         {
             if (rank > k)
                 break;
+
+            if (!seen.Add(id))
+                continue;
 
             if (relevant.Contains(id))
             {
@@ -159,17 +177,26 @@ public static class RetrievalMetrics
         if (gradedRelevance.Count == 0)
             return 0;
 
-        if (gradedRelevance.Values.Any(gain => double.IsNaN(gain) || gain < 0))
+        if (gradedRelevance.Values.Any(gain => double.IsNaN(gain) || double.IsInfinity(gain) || gain < 0))
             throw new ArgumentOutOfRangeException(nameof(gradedRelevance), "Relevance gains must be non-negative and finite.");
 
         var graded = new Dictionary<string, double>(gradedRelevance, StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         double dcg = 0;
-        int depth = Math.Min(k, retrievedIds.Count);
+        int rank = 1;
 
-        for (int rank = 1; rank <= depth; rank++)
+        foreach (var id in retrievedIds)
         {
-            if (graded.TryGetValue(retrievedIds.ElementAt(rank - 1), out var gain) && gain > 0)
+            if (rank > k)
+                break;
+
+            if (!seen.Add(id))
+                continue;
+
+            if (graded.TryGetValue(id, out var gain) && gain > 0)
                 dcg += (Math.Pow(2, gain) - 1) / Math.Log2(rank + 1);
+
+            rank++;
         }
 
         double idcg = IdealDcg(graded.Values.OrderByDescending(gain => gain), k);
@@ -180,10 +207,20 @@ public static class RetrievalMetrics
     private static int CountMatches(IReadOnlyCollection<string> retrievedIds, IReadOnlyCollection<string> relevantIds, int k)
     {
         var relevant = new HashSet<string>(relevantIds, StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         int matches = 0;
+        int rank = 0;
 
-        foreach (var id in retrievedIds.Take(k))
+        foreach (var id in retrievedIds)
         {
+            if (rank >= k)
+                break;
+
+            if (!seen.Add(id))
+                continue;
+
+            rank++;
+
             if (relevant.Contains(id))
                 matches++;
         }

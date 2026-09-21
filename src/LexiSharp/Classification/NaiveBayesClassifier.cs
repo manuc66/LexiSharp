@@ -12,6 +12,10 @@ namespace LexiSharp.Classification;
 /// smoothing over the shared training vocabulary. Documents without a
 /// <see cref="SearchDocument.Category"/> are ignored during training.
 /// </remarks>
+/// <remarks>
+/// Categories with equal probability are ordered by category name, so the output of
+/// <see cref="Predict"/> is deterministic for a given model.
+/// </remarks>
 public sealed class NaiveBayesClassifier : ITextClassifier
 {
     private readonly ITokenizer _tokenizer;
@@ -93,7 +97,8 @@ public sealed class NaiveBayesClassifier : ITextClassifier
         {
             string category = pair.Key;
             var classTerms = pair.Value;
-            int classTokenCount = _classTokenCounts[category];
+            int classTokenCount = 0;
+            _classTokenCounts.TryGetValue(category, out classTokenCount);
             double smoothingDenominator = classTokenCount + _vocabularySize;
 
             _classDocumentCounts.TryGetValue(category, out int classDocumentCount);
@@ -145,8 +150,10 @@ public sealed class NaiveBayesClassifier : ITextClassifier
             ranked.Add(new ClassificationResult(categories[i], probabilities[i] / sum));
         }
 
-        ranked.Sort((a, b) => b.Probability.CompareTo(a.Probability));
-
-        return ranked.Take(limit).ToList();
+        return ranked
+            .OrderByDescending(r => r.Probability)
+            .ThenBy(r => r.Category, StringComparer.Ordinal)
+            .Take(limit)
+            .ToList();
     }
 }

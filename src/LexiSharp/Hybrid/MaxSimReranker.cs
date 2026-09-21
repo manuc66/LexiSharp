@@ -21,8 +21,10 @@ namespace LexiSharp.Hybrid;
 /// the reranker as a read-only dictionary (the same shape <see cref="MaximalMarginalRelevanceReranker"/>
 /// uses for its vectors); queries are embedded at rerank time through
 /// <see cref="Core.ITokenEmbeddingProvider"/>. Candidates without document vectors cannot be
-/// scored and are dropped, as are scores that are <c>0</c>, NaN or infinite. The input list is
-/// never mutated; when the query yields no tokens, the incoming order is kept untouched.
+/// scored and are dropped, as are candidates whose token embeddings were produced at a different
+/// dimensionality than the query tokens (an inconsistent model, not a score). Scores that are
+/// <c>0</c>, NaN or infinite are dropped as well. The input list is never mutated; when the
+/// query yields no tokens, the incoming order is kept untouched.
 /// </para>
 /// </remarks>
 public sealed class MaxSimReranker : IReranker
@@ -52,6 +54,9 @@ public sealed class MaxSimReranker : IReranker
 
         if (limit is < 1)
             throw new ArgumentOutOfRangeException(nameof(limit), limit, "limit must be at least 1.");
+
+        if (double.IsNaN(minimumScore))
+            throw new ArgumentOutOfRangeException(nameof(minimumScore), minimumScore, "minimumScore must not be NaN.");
 
         _model = model;
         _documentVectors = documentVectors;
@@ -86,6 +91,12 @@ public sealed class MaxSimReranker : IReranker
                 continue;
             }
 
+            // A model trained on another embedding dimensionality is a data error, not a score:
+            // drop the candidate rather than throwing mid-rerank. Query tokens are assumed to be
+            // uniform (the model contract); each document token is checked instead.
+            if (!AllSameDimension(queryTokens, documentTokens))
+                continue;
+
             double score = MaxSim(queryTokens, documentTokens);
 
             if (double.IsNaN(score) || double.IsInfinity(score) || score <= 0)
@@ -101,6 +112,21 @@ public sealed class MaxSimReranker : IReranker
             .OrderByDescending(x => x.Score)
             .Take(_limit ?? reranked.Count)
             .ToList();
+    }
+
+    private static bool AllSameDimension(
+        IReadOnlyList<ReadOnlyMemory<float>> queryTokens,
+        IReadOnlyList<ReadOnlyMemory<float>> documentTokens)
+    {
+        int dimension = queryTokens[0].Span.Length;
+
+        foreach (var token in documentTokens)
+        {
+            if (token.Span.Length != dimension)
+                return false;
+        }
+
+        return true;
     }
 
     private static double MaxSim(

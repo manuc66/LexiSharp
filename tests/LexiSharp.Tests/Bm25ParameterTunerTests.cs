@@ -131,8 +131,12 @@ public class Bm25ParameterTunerTests
 
         Assert.Throws<ArgumentOutOfRangeException>(() => tuner.Tune(topK: 0));
         Assert.Throws<ArgumentOutOfRangeException>(() => tuner.Tune(k1Values: [-1.0]));
+        Assert.Throws<ArgumentOutOfRangeException>(() => tuner.Tune(k1Values: [double.NaN]));
+        Assert.Throws<ArgumentOutOfRangeException>(() => tuner.Tune(k1Values: [double.PositiveInfinity]));
         Assert.Throws<ArgumentOutOfRangeException>(() => tuner.Tune(bValues: [1.5]));
         Assert.Throws<ArgumentOutOfRangeException>(() => tuner.Tune(bValues: [-0.1]));
+        Assert.Throws<ArgumentOutOfRangeException>(() => tuner.Tune(bValues: [double.NaN]));
+        Assert.Throws<ArgumentOutOfRangeException>(() => tuner.Tune(bValues: [double.NegativeInfinity]));
         Assert.Throws<ArgumentException>(() => tuner.Tune(k1Values: []));
         Assert.Throws<ArgumentException>(() => tuner.Tune(bValues: Array.Empty<double>()));
     }
