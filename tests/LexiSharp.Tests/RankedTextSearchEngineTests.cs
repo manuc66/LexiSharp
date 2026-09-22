@@ -458,6 +458,150 @@ public class RankedTextSearchEngineTests
         Assert.Equal(literal!.TotalScore, withOperator!.TotalScore, 12);
     }
 
+    private static RankedTextSearchEngine CreateEngineWithSynonyms(
+        IEnumerable<SearchDocument> docs,
+        SynonymMap synonyms)
+    {
+        var engine = new RankedTextSearchEngine(
+            new InMemoryTextIndex(),
+            new Bm25Scorer(),
+            synonyms: synonyms);
+        engine.Index(docs);
+        return engine;
+    }
+
+    [Fact]
+    public void Search_OneWaySynonym_MatchesTheTargetButNotTheReverse()
+    {
+        var docs = new[]
+        {
+            new SearchDocument("1", "the automobile is fast"),
+            new SearchDocument("2", "a car parked outside"),
+            new SearchDocument("3", "unrelated content here"),
+        };
+        var synonyms = new SynonymMap().Add("car", "automobile");
+
+        var forward = CreateEngineWithSynonyms(docs, synonyms).Search("car", new SearchOptions(Limit: 10));
+        Assert.Equal(2, forward.Count);
+        Assert.Contains(forward, r => r.DocumentId == "1");
+        Assert.Contains(forward, r => r.DocumentId == "2");
+
+        // One-way: "automobile" does not pull "car" back in.
+        var reverse = CreateEngineWithSynonyms(docs, synonyms).Search("automobile", new SearchOptions(Limit: 10));
+        var hit = Assert.Single(reverse);
+        Assert.Equal("1", hit.DocumentId);
+    }
+
+    [Fact]
+    public void Search_EquivalenceGroup_MatchesEveryMemberBothWays()
+    {
+        var docs = new[]
+        {
+            new SearchDocument("1", "a car parked"),
+            new SearchDocument("2", "an automobile parked"),
+            new SearchDocument("3", "an auto parked"),
+            new SearchDocument("4", "a truck parked"),
+        };
+        var synonyms = new SynonymMap().AddEquivalent("car", "automobile", "auto");
+
+        foreach (var query in new[] { "car", "automobile", "auto" })
+        {
+            var results = CreateEngineWithSynonyms(docs, synonyms)
+                .Search(query, new SearchOptions(Limit: 10));
+
+            Assert.Equal(
+                new[] { "1", "2", "3" },
+                results.Select(r => r.DocumentId).OrderBy(x => x, StringComparer.Ordinal));
+        }
+    }
+
+    [Fact]
+    public void Search_SynonymExpansion_IsOneLevelAndNonTransitive()
+    {
+        var docs = new[]
+        {
+            new SearchDocument("1", "alpha here"),
+            new SearchDocument("2", "beta here"),
+            new SearchDocument("3", "gamma here"),
+        };
+        var synonyms = new SynonymMap()
+            .Add("alpha", "beta")
+            .Add("beta", "gamma");
+
+        var fromAlpha = CreateEngineWithSynonyms(docs, synonyms)
+            .Search("alpha", new SearchOptions(Limit: 10));
+        Assert.Equal(2, fromAlpha.Count); // alpha + beta, never gamma
+
+        var fromBeta = CreateEngineWithSynonyms(docs, synonyms)
+            .Search("beta", new SearchOptions(Limit: 10));
+        Assert.Equal(2, fromBeta.Count); // beta + gamma, never alpha (edge was one-way)
+    }
+
+    [Fact]
+    public void Search_Synonyms_DoNotApplyInsidePhrases()
+    {
+        var docs = new[]
+        {
+            new SearchDocument("1", "a fast car here"),
+            new SearchDocument("2", "a fast auto here"),
+        };
+        var synonyms = new SynonymMap().AddEquivalent("car", "auto");
+
+        var engine = CreateEngineWithSynonyms(docs, synonyms);
+
+        // The phrase gate uses the literal phrase terms: "auto" does not satisfy "car".
+        var results = engine.Search("\"fast car\"", new SearchOptions(Limit: 10));
+        var hit = Assert.Single(results);
+        Assert.Equal("1", hit.DocumentId);
+
+        // The free term around it does expand.
+        var free = engine.Search("fast car", new SearchOptions(Limit: 10));
+        Assert.Equal(2, free.Count);
+    }
+
+    [Fact]
+    public void Constructor_SynonymEntryNotReducingToOneTerm_Throws()
+    {
+        var index = new InMemoryTextIndex();
+
+        var multiToken = Assert.Throws<ArgumentException>(() =>
+            new RankedTextSearchEngine(index, new Bm25Scorer(), synonyms: new SynonymMap().Add("car engine", "motor")));
+        Assert.Contains("car engine", multiToken.Message);
+
+        // A single character is dropped by the default tokenizer: zero terms, same rejection.
+        Assert.Throws<ArgumentException>(() =>
+            new RankedTextSearchEngine(index, new Bm25Scorer(), synonyms: new SynonymMap().Add("x", "motor")));
+
+        Assert.Throws<ArgumentException>(() =>
+            new RankedTextSearchEngine(index, new Bm25Scorer(), synonyms: new SynonymMap().AddEquivalent("only")));
+    }
+
+    [Fact]
+    public void Constructor_EmptySynonymMap_BehavesLikeNoMap()
+    {
+        var engine = new RankedTextSearchEngine(
+            new InMemoryTextIndex(),
+            new Bm25Scorer(),
+            synonyms: new SynonymMap());
+        engine.Index(Docs);
+
+        Assert.Equal(2, engine.Search("textual search", new SearchOptions(Limit: 10)).Count);
+    }
+
+    [Fact]
+    public void Engine_Explain_UsesTheSameSynonymExpansion()
+    {
+        var docs = new[] { new SearchDocument("1", "an auto parked") };
+        var engine = CreateEngineWithSynonyms(docs, new SynonymMap().Add("car", "auto"));
+
+        var viaSynonym = engine.Explain("1", "car");
+        var literal = engine.Explain("1", "auto");
+
+        Assert.NotNull(viaSynonym);
+        Assert.NotNull(literal);
+        Assert.Equal(literal!.TotalScore, viaSynonym!.TotalScore, 12);
+    }
+
     /// <summary>An <see cref="ITextIndex"/> without <see cref="IVocabularyIndex"/> — exercises the literal-fallback path.</summary>
     private sealed class NoVocabularyIndex : ITextIndex
     {
