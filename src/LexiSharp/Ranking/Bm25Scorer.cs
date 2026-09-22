@@ -64,7 +64,7 @@ public sealed class Bm25Scorer : ITextScorer, IScoreExplainer, ITermOverlapScore
 
         double score = 0;
 
-        foreach (var term in TermDeduplicator.Distinct(queryTerms))
+        foreach (var term in queryTerms is DistinctTermList ? queryTerms : TermDeduplicator.Distinct(queryTerms))
         {
             int tf = index.TermFrequency(documentId, term);
 
@@ -106,7 +106,7 @@ public sealed class Bm25Scorer : ITextScorer, IScoreExplainer, ITermOverlapScore
 
         if (documentCount > 0 && documentLength > 0 && averageLength > 0)
         {
-            foreach (var term in TermDeduplicator.Distinct(queryTerms))
+            foreach (var term in queryTerms is DistinctTermList ? queryTerms : TermDeduplicator.Distinct(queryTerms))
             {
                 int tf = index.TermFrequency(documentId, term);
 

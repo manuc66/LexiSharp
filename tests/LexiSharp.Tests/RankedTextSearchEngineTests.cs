@@ -58,6 +58,30 @@ public class RankedTextSearchEngineTests
     }
 
     [Fact]
+    public void Search_BreaksScoreTiesByCorpusOrderAtTheLimit()
+    {
+        // All four documents match the boolean query with the exact same score (1).
+        // The stable descending sort keeps the earliest-enumerated ones when the limit
+        // cuts into a run of equal scores.
+        var engine = CreateEngine(
+            new[]
+            {
+                new SearchDocument("a", "shared alpha"),
+                new SearchDocument("b", "shared beta"),
+                new SearchDocument("g", "shared gamma"),
+                new SearchDocument("d", "shared delta"),
+            },
+            new BooleanScorer(BooleanMatch.AnyTerm));
+
+        var results = engine.Search("shared", new SearchOptions(Limit: 2));
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal(1.0, results[0].Score);
+        Assert.Equal(1.0, results[1].Score);
+        Assert.Equal(new[] { "a", "b" }, results.Select(r => r.DocumentId));
+    }
+
+    [Fact]
     public void Search_WithOnlyStopWords_ReturnsNothing()
     {
         var tokenizer = new Tokenizer(new TokenizerOptions { RemoveStopWords = true });
