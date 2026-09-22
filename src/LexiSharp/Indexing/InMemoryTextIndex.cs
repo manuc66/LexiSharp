@@ -11,7 +11,7 @@ namespace LexiSharp.Indexing;
 /// <remarks>
 /// Not thread-safe; mutate it from a single thread (or synchronize externally).
 /// </remarks>
-public sealed class InMemoryTextIndex : ICandidateIndex
+public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
 {
     private readonly ITokenizer _tokenizer;
 
@@ -47,6 +47,9 @@ public sealed class InMemoryTextIndex : ICandidateIndex
 
     /// <inheritdoc />
     public int VocabularySize => _postings.Count;
+
+    /// <inheritdoc />
+    public IEnumerable<string> Vocabulary => _postings.Keys;
 
     /// <inheritdoc />
     public long CorpusTokenCount => _totalTokens;

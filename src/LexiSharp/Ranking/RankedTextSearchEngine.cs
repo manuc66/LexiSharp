@@ -1,5 +1,6 @@
 using LexiSharp.Core;
 using LexiSharp.Linguistics;
+using LexiSharp.Similarity;
 
 namespace LexiSharp.Ranking;
 
@@ -24,9 +25,24 @@ namespace LexiSharp.Ranking;
 /// free terms never hard-filter a mixed query. Phrase checks assume a plain token stream:
 /// n-gram tokenizers emit overlapping tokens and break the consecutive-position guarantee.
 /// </para>
+/// <para>
+/// Free-text atoms may also carry <b>expansion operators</b>: <c>term*</c> matches every
+/// vocabulary term starting with <c>term</c> (ordinal prefix), <c>term~</c>/<c>term~N</c>
+/// fuzzy-matches within N edits (default 1, clamped to 0–2). Expansion runs at search time
+/// against an <see cref="IVocabularyIndex"/>, keeps at most
+/// <see cref="MaxExpansionsPerAtom"/> terms per atom — highest document frequency first,
+/// then ordinal order — and never applies inside quotes. An index without vocabulary support
+/// falls back to the atom's literal base term.
+/// </para>
 /// </remarks>
 public sealed class RankedTextSearchEngine : ITextSearchEngine
 {
+    /// <summary>
+    /// Upper bound on how many vocabulary terms a single prefix/fuzzy atom may contribute to
+    /// the query, after the document-frequency/ordinal ranking.
+    /// </summary>
+    public const int MaxExpansionsPerAtom = 64;
+
     private readonly ITextIndex _index;
     private readonly ITextScorer _scorer;
     private readonly ITokenizer _tokenizer;
@@ -82,10 +98,15 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
 
         var parsed = QueryParser.Parse(query, _tokenizer);
 
-        if (parsed.AllTerms.Count == 0 || _index.Count == 0)
+        if (_index.Count == 0)
             return Array.Empty<SearchResult>();
 
-        var distinctQueryTerms = DistinctTermList.Wrap(TermDeduplicator.Distinct(parsed.AllTerms));
+        var queryTerms = ResolveQueryTerms(parsed);
+
+        if (queryTerms.Count == 0)
+            return Array.Empty<SearchResult>();
+
+        var distinctQueryTerms = DistinctTermList.Wrap(TermDeduplicator.Distinct(queryTerms));
 
         // Precompute the query-level corpus constants (idf, collection probabilities, ...) once
         // per search instead of per candidate document when the scorer supports it.
@@ -255,13 +276,109 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
     }
 
     /// <summary>
+    /// Resolves prefix/fuzzy atoms against the index vocabulary — or falls back to their
+    /// literal base term when the index cannot enumerate its vocabulary — on top of the
+    /// literal terms the parser produced.
+    /// </summary>
+    private IReadOnlyList<string> ResolveQueryTerms(ParsedQuery parsed)
+    {
+        if (!parsed.HasExpansions)
+            return parsed.AllTerms;
+
+        var terms = new List<string>(parsed.AllTerms);
+        var vocabulary = _index as IVocabularyIndex;
+
+        for (int i = 0; i < parsed.Expansions.Count; i++)
+        {
+            var expansion = parsed.Expansions[i];
+
+            if (vocabulary is null)
+            {
+                terms.Add(expansion.BaseTerm);
+                continue;
+            }
+
+            if (expansion.Kind == QueryExpansionKind.Prefix)
+                ExpandPrefix(terms, vocabulary, expansion);
+            else
+                ExpandFuzzy(terms, vocabulary, expansion);
+        }
+
+        return terms;
+    }
+
+    /// <summary>
+    /// Appends every vocabulary term starting with the base (ordinal), highest document
+    /// frequency first then ordinal order, capped at <see cref="MaxExpansionsPerAtom"/>.
+    /// </summary>
+    private static void ExpandPrefix(List<string> terms, IVocabularyIndex index, QueryExpansion expansion)
+    {
+        var matches = new List<string>();
+
+        foreach (var term in index.Vocabulary)
+        {
+            if (term.StartsWith(expansion.BaseTerm, StringComparison.Ordinal))
+                matches.Add(term);
+        }
+
+        matches.Sort((a, b) =>
+        {
+            int byFrequency = index.DocumentFrequency(b).CompareTo(index.DocumentFrequency(a));
+            return byFrequency != 0 ? byFrequency : string.CompareOrdinal(a, b);
+        });
+
+        int count = Math.Min(matches.Count, MaxExpansionsPerAtom);
+
+        for (int i = 0; i < count; i++)
+            terms.Add(matches[i]);
+    }
+
+    /// <summary>
+    /// Appends every vocabulary term within <see cref="QueryExpansion.MaxEdits"/> Levenshtein
+    /// edits of the base — closest first, then highest document frequency, then ordinal —
+    /// capped at <see cref="MaxExpansionsPerAtom"/>.
+    /// </summary>
+    private static void ExpandFuzzy(List<string> terms, IVocabularyIndex index, QueryExpansion expansion)
+    {
+        var candidates = new List<(string Term, int Distance)>();
+
+        foreach (var term in index.Vocabulary)
+        {
+            // Cheap length gate before the O(m·n) distance: |len difference| ≤ budget.
+            if (Math.Abs(term.Length - expansion.BaseTerm.Length) > expansion.MaxEdits)
+                continue;
+
+            int distance = LevenshteinDistance.Distance(expansion.BaseTerm, term);
+
+            if (distance <= expansion.MaxEdits)
+                candidates.Add((term, distance));
+        }
+
+        candidates.Sort((a, b) =>
+        {
+            int byDistance = a.Distance.CompareTo(b.Distance);
+            if (byDistance != 0)
+                return byDistance;
+
+            int byFrequency = index.DocumentFrequency(b.Term).CompareTo(index.DocumentFrequency(a.Term));
+            return byFrequency != 0 ? byFrequency : string.CompareOrdinal(a.Term, b.Term);
+        });
+
+        int count = Math.Min(candidates.Count, MaxExpansionsPerAtom);
+
+        for (int i = 0; i < count; i++)
+            terms.Add(candidates[i].Term);
+    }
+
+    /// <summary>
     /// Explains why a document received the score it did for a query, by delegating to the
     /// scorer's <see cref="IScoreExplainer"/> capability when it has one.
     /// </summary>
     /// <param name="documentId">Id of the document to explain.</param>
     /// <param name="query">
     /// The raw query; parsed with <see cref="QueryParser"/> like <see cref="Search"/> (quoted
-    /// segments contribute their terms) and tokenized with the engine's tokenizer.
+    /// segments contribute their terms, expansion atoms resolve against the vocabulary) and
+    /// tokenized with the engine's tokenizer.
     /// </param>
     /// <returns>
     /// A <see cref="ScoreExplanation"/>, or <c>null</c> when the active scorer cannot explain
@@ -274,7 +391,10 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
         if (_scorer is not IScoreExplainer explainer || !_index.Contains(documentId))
             return null;
 
-        return explainer.Explain(documentId, QueryParser.Parse(query, _tokenizer).AllTerms, _index);
+        return explainer.Explain(
+            documentId,
+            ResolveQueryTerms(QueryParser.Parse(query, _tokenizer)),
+            _index);
     }
 
     /// <summary>

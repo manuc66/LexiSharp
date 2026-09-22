@@ -129,4 +129,94 @@ public class QueryParserTests
     {
         Assert.Throws<ArgumentNullException>(() => QueryParser.SplitRaw(null!));
     }
+
+    [Fact]
+    public void Parse_PrefixAtom_RecordsExpansionAndNoLiteralTerm()
+    {
+        var parsed = QueryParser.Parse("neural*", Tokenizer.Default);
+
+        Assert.Empty(parsed.FreeTerms);
+        Assert.Empty(parsed.AllTerms); // expansions resolve later, against the vocabulary
+        var expansion = Assert.Single(parsed.Expansions);
+        Assert.Equal(new QueryExpansion("neural", QueryExpansionKind.Prefix), expansion);
+        Assert.True(parsed.HasExpansions);
+    }
+
+    [Fact]
+    public void Parse_MixedPlainPrefixAndPhrase_SplitsAllThree()
+    {
+        var parsed = QueryParser.Parse("learn neural* \"machine learning\"", Tokenizer.Default);
+
+        Assert.Equal(new[] { "learn" }, parsed.FreeTerms);
+        Assert.Equal(new[] { "learn", "machine", "learning" }, parsed.AllTerms); // free + phrase, expansions later
+        var phrase = Assert.Single(parsed.Phrases);
+        Assert.Equal(new[] { "machine", "learning" }, phrase);
+        var expansion = Assert.Single(parsed.Expansions);
+        Assert.Equal("neural", expansion.BaseTerm);
+        Assert.Equal(QueryExpansionKind.Prefix, expansion.Kind);
+    }
+
+    [Fact]
+    public void Parse_FuzzyAtom_DefaultsToOneEditAndClampsTheCount()
+    {
+        AssertExpansion("catt~", QueryExpansionKind.Fuzzy, 1);
+        AssertExpansion("catt~2", QueryExpansionKind.Fuzzy, 2);
+        AssertExpansion("catt~9", QueryExpansionKind.Fuzzy, 2);
+        AssertExpansion("catt~10", QueryExpansionKind.Fuzzy, 2);
+        AssertExpansion("catt~0", QueryExpansionKind.Fuzzy, 0);
+        AssertExpansion("neural*", QueryExpansionKind.Prefix, 1);
+    }
+
+    [Fact]
+    public void Parse_ExpansionBaseThatTokenizesToNothing_IsPlain()
+    {
+        var parsed = QueryParser.Parse("a* bb", Tokenizer.Default);
+
+        Assert.Empty(parsed.Expansions);
+        // Byte-for-byte the plain tokenization: the dropped single char leaves nothing.
+        Assert.Equal(Tokenizer.Default.Tokenize("a* bb"), parsed.FreeTerms);
+        Assert.Equal(new[] { "bb" }, parsed.FreeTerms);
+    }
+
+    [Fact]
+    public void Parse_ExpansionMarkerNotAfterAWordChar_IsPlain()
+    {
+        var parsed = QueryParser.Parse("foo ~bar", Tokenizer.Default);
+
+        Assert.Empty(parsed.Expansions);
+        Assert.Equal(new[] { "foo", "bar" }, parsed.FreeTerms);
+    }
+
+    [Fact]
+    public void Parse_ExpansionInsideQuotes_IsLiteral()
+    {
+        var parsed = QueryParser.Parse("\"neural*\"", Tokenizer.Default);
+
+        Assert.Empty(parsed.Expansions);
+        var phrase = Assert.Single(parsed.Phrases);
+        Assert.Equal(new[] { "neural" }, phrase);
+    }
+
+    [Fact]
+    public void Parse_ExpansionAfterPhrase_OnlyAppliesToFreeText()
+    {
+        var parsed = QueryParser.Parse("\"machine learning\" net*", Tokenizer.Default);
+
+        Assert.Empty(parsed.FreeTerms);
+        var phrase = Assert.Single(parsed.Phrases);
+        Assert.Equal(new[] { "machine", "learning" }, phrase);
+        var expansion = Assert.Single(parsed.Expansions);
+        Assert.Equal("net", expansion.BaseTerm);
+        Assert.Equal(QueryExpansionKind.Prefix, expansion.Kind);
+    }
+
+    private static void AssertExpansion(string query, QueryExpansionKind kind, int maxEdits)
+    {
+        var parsed = QueryParser.Parse(query, Tokenizer.Default);
+
+        Assert.Empty(parsed.FreeTerms);
+        var expansion = Assert.Single(parsed.Expansions);
+        Assert.Equal(kind, expansion.Kind);
+        Assert.Equal(maxEdits, expansion.MaxEdits);
+    }
 }
