@@ -107,8 +107,12 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine
     public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(query);
-        return RunQuery(query, options ?? SearchOptions.Default, null);
+        return Search(query.AsSpan(), options);
     }
+
+    /// <inheritdoc />
+    public IReadOnlyList<SearchResult> Search(ReadOnlySpan<char> query, SearchOptions? options = null) =>
+        RunQuery(query, options ?? SearchOptions.Default, null);
 
     /// <inheritdoc />
     public FacetedSearchResult SearchWithFacets(
@@ -117,7 +121,15 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine
         IReadOnlyList<string>? facetFields = null)
     {
         ArgumentNullException.ThrowIfNull(query);
+        return SearchWithFacets(query.AsSpan(), options, facetFields);
+    }
 
+    /// <inheritdoc />
+    public FacetedSearchResult SearchWithFacets(
+        ReadOnlySpan<char> query,
+        SearchOptions? options = null,
+        IReadOnlyList<string>? facetFields = null)
+    {
         var collector = facetFields is { Count: > 0 } ? new FacetCollector(facetFields) : null;
         var results = RunQuery(query, options ?? SearchOptions.Default, collector);
 
@@ -131,7 +143,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine
     /// every candidate, optionally count facet values for the documents that match
     /// (<paramref name="facets"/>), and cut the requested page from the bounded top window.
     /// </summary>
-    private IReadOnlyList<SearchResult> RunQuery(string query, SearchOptions options, FacetCollector? facets)
+    private IReadOnlyList<SearchResult> RunQuery(ReadOnlySpan<char> query, SearchOptions options, FacetCollector? facets)
     {
         if (options.IsEmpty)
             return Array.Empty<SearchResult>();
@@ -318,11 +330,11 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine
     }
 
     /// <summary>
-    /// Shared by <see cref="Search"/> and <see cref="Explain"/>: parse the raw query, then
+    /// Shared by <see cref="Search(string, SearchOptions)"/> and <see cref="Explain(string, string)"/>: parse the raw query, then
     /// resolve synonyms and vocabulary expansions into the concrete scoring terms. The
     /// parsed form still carries the literal phrase constraints for the positional gate.
     /// </summary>
-    private (ParsedQuery Parsed, IReadOnlyList<string> Terms) BuildQuery(string query)
+    private (ParsedQuery Parsed, IReadOnlyList<string> Terms) BuildQuery(ReadOnlySpan<char> query)
     {
         var parsed = QueryParser.Parse(query, _tokenizer);
         return (parsed, ResolveQueryTerms(parsed));
@@ -517,7 +529,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine
     /// <param name="documentId">Id of the document to explain.</param>
     /// <param name="query">
     /// The raw query; parsed and resolved with the same <see cref="BuildQuery"/> path as
-    /// <see cref="Search"/> (quoted segments contribute their terms, synonyms and expansion
+    /// <see cref="Search(string, SearchOptions)"/> (quoted segments contribute their terms, synonyms and expansion
     /// atoms resolve against the map/vocabulary) and tokenized with the engine's tokenizer.
     /// </param>
     /// <returns>
@@ -527,7 +539,21 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine
     public ScoreExplanation? Explain(string documentId, string query)
     {
         ArgumentNullException.ThrowIfNull(query);
+        return Explain(documentId, query.AsSpan());
+    }
 
+    /// <summary>
+    /// Explains why a document received the score it did for a query, without materializing
+    /// the query as a string.
+    /// </summary>
+    /// <param name="documentId">Id of the document to explain.</param>
+    /// <param name="query">The raw query; parsed and resolved like <see cref="Search(ReadOnlySpan{char}, SearchOptions?)"/>.</param>
+    /// <returns>
+    /// A <see cref="ScoreExplanation"/>, or <c>null</c> when the active scorer cannot explain
+    /// itself (it does not implement <see cref="IScoreExplainer"/>) or the document is unknown.
+    /// </returns>
+    public ScoreExplanation? Explain(string documentId, ReadOnlySpan<char> query)
+    {
         if (_scorer is not IScoreExplainer explainer || !_index.Contains(documentId))
             return null;
 
@@ -555,7 +581,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine
 
     /// <summary>
     /// Per-field value counts over the documents that pass every match gate — independent of
-    /// the Offset/Limit window. Built once per <see cref="SearchWithFacets"/> call.
+    /// the Offset/Limit window. Built once per <see cref="SearchWithFacets(string, SearchOptions, IReadOnlyList{string})"/> call.
     /// </summary>
     private sealed class FacetCollector
     {

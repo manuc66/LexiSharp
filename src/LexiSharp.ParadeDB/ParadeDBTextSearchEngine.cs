@@ -17,7 +17,7 @@ namespace LexiSharp.ParadeDB;
     /// <see href="https://paradedb.com">ParadeDB</see>); the ParadeDB Docker image preloads it.
     /// </para>
     /// <para>
-    /// Double-quoted segments are parsed as phrase queries (<see cref="QueryParser.SplitRaw"/>)
+    /// Double-quoted segments are parsed as phrase queries (<see cref="QueryParser.SplitRaw(string)"/>)
     /// and translated to the native <c>###</c> operator (tokens in consecutive positions) —
     /// <c>|||</c> only tokenizes into a disjunction and would silently ignore the quotes. Like
     /// the stock in-memory engine, free terms around a phrase never hard-filter a mixed query:

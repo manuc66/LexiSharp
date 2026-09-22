@@ -79,6 +79,11 @@ or ML model** — pure lexical statistics.
 - **Facets** (`IFacetedSearchEngine`): `SearchWithFacets` returns the ranked page plus value
   counts per requested `Fields` entry over the whole match set — independent of
   `Offset`/`Limit`, ordered by count then value.
+- **Span-first API**: the text entry points — `ITokenizer.Tokenize`/`TokenizeWithSpans`,
+  `QueryParser.Parse`/`SplitRaw`, `ITextSearchEngine.Search`,
+  `IFacetedSearchEngine.SearchWithFacets` and `RankedTextSearchEngine.Explain` — each have a
+  `ReadOnlySpan<char>` overload that avoids materializing the query as a string; default
+  interface implementations forward to the string path so existing implementers keep working.
 - **Lexical similarity** (`LexiSharp.Similarity`): pairwise token-set measures (Jaccard,
   Sørensen–Dice) over the library tokenizer, a `pg_trgm`-style character trigram similarity,
   and a rolling Levenshtein edit distance — near-duplicate detection and fuzzy matching with
@@ -418,6 +423,25 @@ passes the metadata filters, the phrase gates and the score thresholds — the w
 independently of `Offset`/`Limit`, which only cut `Results`. A document missing a field does
 not count for it (`Category` is never faceted), and fields no matching document carries are
 omitted from `Buckets`. Stock engine only.
+
+### Span-first API
+
+The text entry points accept `ReadOnlySpan<char>`, so a query already living in a buffer need
+not be copied into a `string` first:
+
+```csharp
+ReadOnlySpan<char> query = buffer.AsSpan(offset, length);
+
+var parsed = QueryParser.Parse(query, Tokenizer.Default);
+IReadOnlyList<SearchResult> hits = engine.Search(query, new SearchOptions(Limit: 10));
+FacetedSearchResult page = engine.SearchWithFacets(query, facetFields: ["kind"]);
+ScoreExplanation? why = engine.Explain("doc-1", query);
+```
+
+Every overload is equivalent to its `string` counterpart. `Tokenizer` runs the same pipeline
+directly over the span (SIMD ASCII runs, rune decoding only on the non-ASCII path); other
+implementers fall back to the default interface method, which copies the span and forwards. A
+`null` literal still binds to the `string` overload, so the span path is null-free.
 
 ### Lexical similarity and keyword extraction
 

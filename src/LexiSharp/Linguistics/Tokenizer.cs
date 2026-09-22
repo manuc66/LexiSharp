@@ -19,8 +19,8 @@ namespace LexiSharp.Linguistics;
 /// <item><description>Optional stop word removal and/or stemming through a consumer-provided <see cref="IStemmer"/>.</description></item>
 /// <item><description>Optional grouping into term n-grams (« machine learning » becomes <c>machine learning</c>).</description></item>
 /// </list>
-/// <see cref="TokenizeWithSpans"/> runs the same pipeline while tracking source offsets;
-/// <see cref="Tokenize"/> is its projection onto the terms alone.
+/// <see cref="TokenizeWithSpans(string)"/> runs the same pipeline while tracking source offsets;
+/// <see cref="Tokenize(string)"/> is its projection onto the terms alone.
 /// </remarks>
 public sealed class Tokenizer : ISpanTokenizer
 {
@@ -47,7 +47,10 @@ public sealed class Tokenizer : ISpanTokenizer
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<string> Tokenize(string text)
+    public IReadOnlyList<string> Tokenize(string text) => Tokenize(text.AsSpan());
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> Tokenize(ReadOnlySpan<char> text)
     {
         var spans = TokenizeWithSpans(text);
 
@@ -63,9 +66,12 @@ public sealed class Tokenizer : ISpanTokenizer
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<TokenSpan> TokenizeWithSpans(string text)
+    public IReadOnlyList<TokenSpan> TokenizeWithSpans(string text) => TokenizeWithSpans(text.AsSpan());
+
+    /// <inheritdoc />
+    public IReadOnlyList<TokenSpan> TokenizeWithSpans(ReadOnlySpan<char> text)
     {
-        if (string.IsNullOrEmpty(text))
+        if (text.IsEmpty)
             return Array.Empty<TokenSpan>();
 
         var words = SplitWords(text);
@@ -81,7 +87,7 @@ public sealed class Tokenizer : ISpanTokenizer
         return BuildNgrams(spans);
     }
 
-    private List<SourceWord> SplitWords(string text)
+    private List<SourceWord> SplitWords(ReadOnlySpan<char> text)
     {
         var words = new List<SourceWord>(32);
         var word = new StringBuilder(16);
@@ -93,7 +99,7 @@ public sealed class Tokenizer : ISpanTokenizer
         {
             // SIMD: locate the first character that is not an ASCII letter/digit.
             // Runs of ASCII word characters are consumed in bulk below.
-            int relativeEnd = text.AsSpan(position).IndexOfAnyExcept(AsciiWordChars);
+            int relativeEnd = text[position..].IndexOfAnyExcept(AsciiWordChars);
             int asciiRunEnd = relativeEnd < 0 ? text.Length : position + relativeEnd;
 
             if (asciiRunEnd > position)
@@ -101,7 +107,7 @@ public sealed class Tokenizer : ISpanTokenizer
                 if (word.Length == 0)
                     wordStart = position;
 
-                word.Append(text.AsSpan(position, asciiRunEnd - position));
+                word.Append(text.Slice(position, asciiRunEnd - position));
                 position = asciiRunEnd;
             }
 
@@ -109,7 +115,10 @@ public sealed class Tokenizer : ISpanTokenizer
                 break;
 
             // Only non-ASCII characters and ASCII separators reach this point.
-            var rune = Rune.GetRuneAt(text, position);
+            var status = Rune.DecodeFromUtf16(text[position..], out var rune, out _);
+
+            if (status != OperationStatus.Done)
+                throw new ArgumentException("The input contains an invalid Unicode code point.", nameof(text));
 
             if (Rune.IsLetterOrDigit(rune))
             {

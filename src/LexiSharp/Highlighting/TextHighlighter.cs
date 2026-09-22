@@ -8,7 +8,7 @@ namespace LexiSharp.Highlighting;
 /// labels) or padded, word-snapped snippets for long documents.
 /// </summary>
 /// <remarks>
-/// Matching runs through <see cref="ISpanTokenizer.TokenizeWithSpans"/> on the document, so
+/// Matching runs through <see cref="ISpanTokenizer.TokenizeWithSpans(string)"/> on the document, so
 /// hits land on token boundaries and share the library's normalization (case, accents, stop
 /// words, stemming, n-grams). Query terms are compared ordinally against the document's
 /// normalized terms — tokenize the query with the same tokenizer first (e.g.
