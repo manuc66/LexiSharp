@@ -433,6 +433,83 @@ public class NaiveBayesClassifierTests
         }
     }
 
+    // Reference: scikit-learn 1.9.1 ComplementNB(alpha=1.0, fit_prior=True, norm=False) on the
+    // exact corpus below. Gold probabilities come from that implementation (features spelled out
+    // as count vectors; no tokenizer ambiguity), not from this code.
+    [Fact]
+    public void Complement_Parity_WithScikitLearnReferenceScoring()
+    {
+        SearchDocument[] corpus =
+        {
+            new("1", "cat chat", Category: "A"),
+            new("2", "cat chat cat", Category: "A"),
+            new("3", "chat cat", Category: "A"),
+            new("4", "cat chat chat", Category: "A"),
+            new("5", "cat", Category: "A"),
+            new("6", "cat chat gopher", Category: "A"),
+            new("7", "dog dog cat", Category: "B"),
+            new("8", "dog cat dog", Category: "B"),
+            new("9", "dog duck", Category: "B"),
+            new("10", "mole gopher", Category: "C"),
+            new("11", "duck mole", Category: "C"),
+            new("12", "gopher gopher mole", Category: "C"),
+        };
+
+        var classifier = new NaiveBayesClassifier(
+            tokenizer: null,
+            options: new NaiveBayesOptions { Complement = true });
+        classifier.Train(corpus);
+
+        (string Query, string Best, double[] Proba)[] queries =
+        {
+            ("dog", "B", new[] { 0.09952606635071089, 0.7677725118483412, 0.13270142180094788 }),
+            ("cat dog", "B", new[] { 0.190377517321764, 0.7080878067732954, 0.10153467590494078 }),
+            ("gopher mole", "C", new[] { 0.06044242208272798, 0.07993201940736272, 0.8596255585099094 }),
+            ("duck", "C", new[] { 0.20289855072463767, 0.39130434782608686, 0.4057971014492754 }),
+            ("cat", "A", new[] { 0.5313092979127134, 0.2561669829222011, 0.21252371916508533 }),
+            ("cat cat", "A", new[] { 0.7181525891049657, 0.16694299663823975, 0.11490441425679446 }),
+            ("gopher", "C", new[] { 0.21298174442190662, 0.21906693711967543, 0.5679513184584178 }),
+        };
+
+        foreach (var query in queries)
+        {
+            var results = classifier.Predict(query.Query, limit: 3).ToDictionary(r => r.Category, r => r.Probability);
+
+            Assert.Equal(query.Best, classifier.PredictBest(query.Query));
+            Assert.Equal(new[] { "A", "B", "C" }, classifier.Predict(query.Query, limit: 3).Select(r => r.Category).OrderBy(c => c, StringComparer.Ordinal));
+
+            Assert.Equal(query.Proba[0], results["A"], precision: 6);
+            Assert.Equal(query.Proba[1], results["B"], precision: 6);
+            Assert.Equal(query.Proba[2], results["C"], precision: 6);
+        }
+    }
+
+    // Complement Naive Bayes learns a class from its *exclusion*; when the majority class is
+    // polluted by the minority's vocabulary, the standard prior can hide the minority — the
+    // complement form restores it. Gold (scikit-learn 1.9.1): MultinomialNB picks A (0.558 vs
+    // 0.325), ComplementNB picks B (0.584 vs 0.126).
+    [Fact]
+    public void Complement_RescuesTheRareClass_WhenTheMajorityPollutesTheEvidence()
+    {
+        SearchDocument[] corpus = Enumerable.Range(0, 10)
+            .Select(i => new SearchDocument(i.ToString(), "noise alpha", Category: "A"))
+            .Concat(new[]
+            {
+                new SearchDocument("A10", "noise beta", Category: "B"),
+                new SearchDocument("A11", "gamma", Category: "C"),
+            })
+            .ToArray();
+
+        var standard = new NaiveBayesClassifier();
+        standard.Train(corpus);
+
+        var complement = new NaiveBayesClassifier(options: new NaiveBayesOptions { Complement = true });
+        complement.Train(corpus);
+
+        Assert.Equal("A", standard.PredictBest("beta noise"));
+        Assert.Equal("B", complement.PredictBest("beta noise"));
+    }
+
     private sealed class ReferenceModel
     {
         public Dictionary<string, double> ClassCounts { get; } = new();

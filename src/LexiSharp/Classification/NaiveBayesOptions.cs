@@ -72,6 +72,21 @@ public sealed record NaiveBayesOptions
     /// </summary>
     public bool SkipOutOfVocabularyTokens { get; init; }
 
+    /// <summary>
+    /// When true, the classifier learns each class from the documents of the *other* classes
+    /// (Complement Naive Bayes, Rennie et al., ICML 2003) and scores a query through the
+    /// likelihood of its terms under every class's complement. The crop with the smallest
+    /// complement likelihood wins, so a query is attributed to the class whose training data is
+    /// <em>least</em> compatible with it — which resists skewed priors better than standard
+    /// multinomial scoring. Semantics match scikit-learn's <c>ComplementNB</c>: the per-term
+    /// smoothing uses <see cref="Alpha"/> over the whole vocabulary, the winner maximizes
+    /// <c>score(c) = Σ_t count(t) · w(t) · (−log P(t | c̄))</c>, probabilities are the softmax of
+    /// that score, and class priors do not participate (as in the reference implementation).
+    /// <see cref="IdfMode"/> and <see cref="SkipOutOfVocabularyTokens"/> apply as usual. Default:
+    /// <c>false</c> (classic multinomial behavior).
+    /// </summary>
+    public bool Complement { get; init; }
+
     internal bool IsValid =>
         Temperature > 0 && !double.IsNaN(Temperature) && !double.IsInfinity(Temperature)
         && Alpha > 0 && !double.IsNaN(Alpha) && !double.IsInfinity(Alpha);
