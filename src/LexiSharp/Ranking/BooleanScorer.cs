@@ -46,11 +46,12 @@ public sealed class BooleanScorer : ITermOverlapScorer
 
     private static bool MatchAll(string documentId, IReadOnlyList<string> terms, ITextIndex index)
     {
-        // Per-document hot path: a LINQ All() here allocates an enumerator for every scored
-        // document, so the short-circuit loop is deliberate.
-        foreach (var term in terms) // NOSONAR:S3267
+        // Per-document hot path, run once for every candidate document. Iterating by index
+        // avoids the boxed enumerator a foreach over the IReadOnlyList<string> interface
+        // would allocate per document.
+        for (int i = 0; i < terms.Count; i++)
         {
-            if (index.TermFrequency(documentId, term) == 0)
+            if (index.TermFrequency(documentId, terms[i]) == 0)
                 return false;
         }
 
@@ -59,10 +60,10 @@ public sealed class BooleanScorer : ITermOverlapScorer
 
     private static bool MatchAny(string documentId, IReadOnlyList<string> terms, ITextIndex index)
     {
-        // Same reasoning as MatchAll: keep the allocation-free loop.
-        foreach (var term in terms) // NOSONAR:S3267
+        // Same reasoning as MatchAll: keep the allocation-free indexed loop.
+        for (int i = 0; i < terms.Count; i++)
         {
-            if (index.TermFrequency(documentId, term) > 0)
+            if (index.TermFrequency(documentId, terms[i]) > 0)
                 return true;
         }
 

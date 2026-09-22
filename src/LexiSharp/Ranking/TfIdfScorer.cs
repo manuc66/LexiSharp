@@ -29,8 +29,13 @@ public sealed class TfIdfScorer : ITermOverlapScorer, IQueryPlannableScorer
 
         double score = 0;
 
-        foreach (var term in queryTerms is DistinctTermList ? queryTerms : TermDeduplicator.Distinct(queryTerms))
+        // Indexed loop over the IReadOnlyList<string> interface: a foreach would box the
+        // enumerator once per scored document.
+        var terms = queryTerms is DistinctTermList ? queryTerms : TermDeduplicator.Distinct(queryTerms);
+
+        for (int i = 0; i < terms.Count; i++)
         {
+            string term = terms[i];
             int tf = index.TermFrequency(documentId, term);
 
             if (tf == 0)
