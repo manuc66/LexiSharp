@@ -14,7 +14,7 @@ namespace LexiSharp.Ranking;
 /// log-probabilities (negative for matching documents); a document sharing no term with
 /// the query scores exactly <c>0</c>, so the engine's « score 0 means no match » rule applies.
 /// </remarks>
-public sealed class QueryLikelihoodScorer : ITextScorer, ITermOverlapScorer
+public sealed class QueryLikelihoodScorer : ITextScorer, ITermOverlapScorer, IQueryPlannableScorer
 {
     private readonly double _lambda;
 
@@ -66,5 +66,82 @@ public sealed class QueryLikelihoodScorer : ITextScorer, ITermOverlapScorer
 
         // Honor the "score 0 means no match" convention used by the search engine.
         return sharesTerm ? score : 0;
+    }
+
+    ISearchQueryPlan IQueryPlannableScorer.CreatePlan(IReadOnlyList<string> queryTerms, ITextIndex index)
+    {
+        ArgumentNullException.ThrowIfNull(queryTerms);
+        ArgumentNullException.ThrowIfNull(index);
+
+        return new QueryLikelihoodQueryPlan(queryTerms, index, _lambda);
+    }
+
+    private sealed class QueryLikelihoodQueryPlan : ISearchQueryPlan
+    {
+        private readonly ITextIndex _index;
+        private readonly string[] _terms;
+        private readonly double[] _collectionProbability;
+        private readonly double _lambda;
+
+        public QueryLikelihoodQueryPlan(IReadOnlyList<string> queryTerms, ITextIndex index, double lambda)
+        {
+            _index = index;
+            _lambda = lambda;
+
+            long collectionTokens = index.CorpusTokenCount;
+
+            int retained = 0;
+            var terms = new string[queryTerms.Count];
+            var probabilities = new double[queryTerms.Count];
+
+            foreach (var term in queryTerms)
+            {
+                // Terms unseen in the whole corpus carry no information.
+                int cf = index.CorpusFrequency(term);
+                if (cf == 0 || collectionTokens == 0)
+                    continue;
+
+                terms[retained] = term;
+                probabilities[retained] = (double)cf / collectionTokens;
+                retained++;
+            }
+
+            if (retained < queryTerms.Count)
+            {
+                Array.Resize(ref terms, retained);
+                Array.Resize(ref probabilities, retained);
+            }
+
+            _terms = terms;
+            _collectionProbability = probabilities;
+        }
+
+        /// <inheritdoc />
+        public double Score(string documentId)
+        {
+            int documentLength = _index.DocumentLength(documentId);
+
+            if (documentLength == 0)
+                return 0;
+
+            double score = 0;
+            bool sharesTerm = false;
+
+            for (int i = 0; i < _terms.Length; i++)
+            {
+                int tf = _index.TermFrequency(documentId, _terms[i]);
+
+                if (tf > 0)
+                    sharesTerm = true;
+
+                double documentProbability = (double)tf / documentLength;
+                double probability =
+                    (1.0 - _lambda) * documentProbability + _lambda * _collectionProbability[i];
+                score += Math.Log(probability);
+            }
+
+            // Honor the "score 0 means no match" convention used by the search engine.
+            return sharesTerm ? score : 0;
+        }
     }
 }

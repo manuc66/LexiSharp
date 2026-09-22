@@ -14,7 +14,7 @@ namespace LexiSharp.Ranking;
 /// audited term by term (see <see cref="Explain"/>).
 /// </para>
 /// </remarks>
-public sealed class Bm25Scorer : ITextScorer, IScoreExplainer, ITermOverlapScorer
+public sealed class Bm25Scorer : ITextScorer, IScoreExplainer, ITermOverlapScorer, IQueryPlannableScorer
 {
     private readonly double _k1;
     private readonly double _b;
@@ -80,6 +80,72 @@ public sealed class Bm25Scorer : ITextScorer, IScoreExplainer, ITermOverlapScore
         }
 
         return score;
+    }
+
+    ISearchQueryPlan IQueryPlannableScorer.CreatePlan(IReadOnlyList<string> queryTerms, ITextIndex index)
+    {
+        ArgumentNullException.ThrowIfNull(queryTerms);
+        ArgumentNullException.ThrowIfNull(index);
+
+        return new Bm25QueryPlan(queryTerms, index, _k1, _b);
+    }
+
+    private sealed class Bm25QueryPlan : ISearchQueryPlan
+    {
+        private readonly ITextIndex _index;
+        private readonly string[] _terms;
+        private readonly double[] _idf;
+        private readonly double _avgLength;
+        private readonly double _k1;
+        private readonly double _b;
+
+        public Bm25QueryPlan(IReadOnlyList<string> queryTerms, ITextIndex index, double k1, double b)
+        {
+            _index = index;
+            _terms = new string[queryTerms.Count];
+            _idf = new double[queryTerms.Count];
+            _k1 = k1;
+            _b = b;
+            _avgLength = index.AverageDocumentLength;
+
+            int documentCount = index.Count;
+
+            for (int i = 0; i < queryTerms.Count; i++)
+            {
+                string term = queryTerms[i];
+                _terms[i] = term;
+
+                if (documentCount == 0)
+                    continue;
+
+                int df = index.DocumentFrequency(term);
+                _idf[i] = Math.Log(1.0 + (documentCount - df + 0.5) / (df + 0.5));
+            }
+        }
+
+        /// <inheritdoc />
+        public double Score(string documentId)
+        {
+            int documentLength = _index.DocumentLength(documentId);
+
+            if (documentLength == 0 || _avgLength <= 0)
+                return 0;
+
+            double normalization = 1.0 - _b + _b * documentLength / _avgLength;
+            double score = 0;
+
+            for (int i = 0; i < _terms.Length; i++)
+            {
+                int tf = _index.TermFrequency(documentId, _terms[i]);
+
+                if (tf == 0)
+                    continue;
+
+                score += _idf[i] * tf * (_k1 + 1.0) / (tf + _k1 * normalization);
+            }
+
+            return score;
+        }
     }
 
     /// <inheritdoc />
