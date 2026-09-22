@@ -12,6 +12,11 @@ public class RerankedTextSearchEngineTests
     private static readonly SearchDocument DocC = new("c", "gamma");
     private static readonly SearchDocument DocD = new("d", "delta");
 
+    private static readonly string[] CBAIds = new[] { "c", "b", "a" };
+    private static readonly string[] BAIds = new[] { "b", "a" };
+    private static readonly string[] ABCIds = new[] { "a", "b", "c" };
+    private static readonly string[] ZAIds = new[] { "z", "a" };
+
     private static SearchResult R(string id, SearchDocument doc, double score = 1.0) => new(id, score, doc);
 
     /// <summary>Stub engine returning a fixed list, counting calls and remembering the last options.</summary>
@@ -79,7 +84,7 @@ public class RerankedTextSearchEngineTests
         var results = engine.Search("alpha beta gamma");
 
         // BM25 favors "alpha" first; the reranker reverses its order.
-        Assert.Equal(new[] { "c", "b", "a" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(CBAIds, results.Select(r => r.DocumentId).ToArray());
     }
 
     [Fact]
@@ -109,7 +114,7 @@ public class RerankedTextSearchEngineTests
         var results = engine.Search("alpha beta");
 
         // Scores travel with the documents; only the order changed.
-        Assert.Equal(new[] { "b", "a" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(BAIds, results.Select(r => r.DocumentId).ToArray());
         Assert.True(results[0].Score > 0);
         Assert.Equal(results.Select(r => r.Score).OrderByDescending(x => x).ToList(),
             results.Select(r => r.Score).ToList());
@@ -178,7 +183,7 @@ public class RerankedTextSearchEngineTests
 
         var results = engine.Search("q", new SearchOptions(Limit: 3));
 
-        Assert.Equal(new[] { "a", "b", "c" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(ABCIds, results.Select(r => r.DocumentId).ToArray());
     }
 
     [Fact]
@@ -194,7 +199,7 @@ public class RerankedTextSearchEngineTests
 
         var results = engine.Search("q");
 
-        Assert.Equal(new[] { "z", "a" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(ZAIds, results.Select(r => r.DocumentId).ToArray());
     }
 
     [Fact]

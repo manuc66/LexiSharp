@@ -13,6 +13,10 @@ public class InMemoryTextIndexTests
         return index;
     }
 
+    private static readonly string[] RedBlueRedTerms = new[] { "red", "blue", "red" };
+    private static readonly int[] RedPositions = new[] { 0, 2 };
+    private static readonly int[] BluePositions = new[] { 1 };
+
     [Fact]
     public void Add_TracksTermAndDocumentFrequency()
     {
@@ -49,7 +53,7 @@ public class InMemoryTextIndexTests
     {
         var index = Create(("1", "red blue red"));
 
-        Assert.Equal(new[] { "red", "blue", "red" }, index.GetTerms("1"));
+        Assert.Equal(RedBlueRedTerms, index.GetTerms("1"));
     }
 
     [Fact]
@@ -57,8 +61,8 @@ public class InMemoryTextIndexTests
     {
         var index = Create(("1", "red blue red"));
 
-        Assert.Equal(new[] { 0, 2 }, index.GetTermPositions("1", "red"));
-        Assert.Equal(new[] { 1 }, index.GetTermPositions("1", "blue"));
+        Assert.Equal(RedPositions, index.GetTermPositions("1", "red"));
+        Assert.Equal(BluePositions, index.GetTermPositions("1", "blue"));
         Assert.Empty(index.GetTermPositions("1", "green"));
     }
 

@@ -36,6 +36,9 @@ public class PostgresSparseSearchEngineTests
             ["blue sky"] = new Dictionary<string, float> { ["blue"] = 2f }, // "sky" outside the vocabulary
         };
 
+    private static readonly string[] RedGreenIds = new[] { "red", "green" };
+    private static readonly string[] E2E1E3Ids = new[] { "e2", "e1", "e3" };
+
     private static string? ConnectionString =>
         Environment.GetEnvironmentVariable("POSTGRES_TEST_CONNECTION");
 
@@ -117,7 +120,7 @@ public class PostgresSparseSearchEngineTests
             var results = engine.Search("red apple");
 
             // scores via <#>: red = 1·1 + 2·2 = 5, green = 2·2 = 4, blue = 0 (dropped).
-            Assert.Equal(new[] { "red", "green" }, results.Select(r => r.DocumentId).ToArray());
+            Assert.Equal(RedGreenIds, results.Select(r => r.DocumentId).ToArray());
             Assert.Equal(5.0, results[0].Score, 4);
             Assert.Equal(4.0, results[1].Score, 4);
         });
@@ -152,7 +155,7 @@ public class PostgresSparseSearchEngineTests
 
             // pgvector <-> is the euclidean distance: vs {apple:2} the distances are
             // e2 = 0, e1 = 1, e3 = 3 → similarities 1, 1/2, 1/4.
-            Assert.Equal(new[] { "e2", "e1", "e3" }, results.Select(r => r.DocumentId).ToArray());
+            Assert.Equal(E2E1E3Ids, results.Select(r => r.DocumentId).ToArray());
             Assert.Equal(1.0, results[0].Score, 4);
             Assert.Equal(0.5, results[1].Score, 4);
             Assert.Equal(0.25, results[2].Score, 4);

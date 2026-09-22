@@ -20,19 +20,22 @@ public class QueryPlanParityTests
         "candidatemark", // shared by several generated queries below
     };
 
-    public static IEnumerable<object[]> Scorers()
-    {
-        yield return new object[] { new Bm25Scorer() };
-        yield return new object[] { new Bm25Scorer(0.9, 0.4) };
-        yield return new object[] { new TfIdfScorer() };
-        yield return new object[] { new QueryLikelihoodScorer() };
-        yield return new object[] { new QueryLikelihoodScorer(0.7) };
-    }
-
     [Theory]
-    [MemberData(nameof(Scorers))]
-    public void Plan_MatchesScore_Bitwise(ITextScorer scorer)
+    [InlineData("bm25")]
+    [InlineData("bm25-tuned")]
+    [InlineData("tfidf")]
+    [InlineData("ql")]
+    [InlineData("ql-tuned")]
+    public void Plan_MatchesScore_Bitwise(string scorerKind)
     {
+        ITextScorer scorer = scorerKind switch
+        {
+            "bm25" => new Bm25Scorer(),
+            "bm25-tuned" => new Bm25Scorer(0.9, 0.4),
+            "tfidf" => new TfIdfScorer(),
+            "ql" => new QueryLikelihoodScorer(),
+            _ => new QueryLikelihoodScorer(0.7),
+        };
         var index = new InMemoryTextIndex();
         index.Index(Corpus.Select((text, i) => new SearchDocument(i.ToString(), text)));
 

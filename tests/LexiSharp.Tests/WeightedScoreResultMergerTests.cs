@@ -9,6 +9,9 @@ public class WeightedScoreResultMergerTests
     private static SearchResult R(string id, double score) =>
         new(id, score, new SearchDocument(id, id));
 
+    private static readonly string[] ExpectedIdsAbc = new[] { "a", "b", "c" };
+    private static readonly string[] ExpectedIdsAc = new[] { "a", "c" };
+
     [Fact]
     public void Merge_NormalizesPerEngineThenBlendsWithWeights()
     {
@@ -18,7 +21,7 @@ public class WeightedScoreResultMergerTests
         var merged = new WeightedScoreResultMerger(1.0, 1.0)
             .Merge(new[] { engineA, engineB }, "query").ToList();
 
-        Assert.Equal(new[] { "a", "b", "c" }, merged.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(ExpectedIdsAbc, merged.Select(r => r.DocumentId).ToArray());
         // a: 10/10 + 2/2 = 2.0 ; b: 5/10 + 1/2 = 1.0 ; c: 0 + 0.5/2 = 0.25
         Assert.Equal(2.0, merged[0].Score, 9);
         Assert.Equal(1.0, merged[1].Score, 9);
@@ -35,7 +38,7 @@ public class WeightedScoreResultMergerTests
             .Merge(new[] { engineA, engineB }, "query").ToList();
 
         // Only engine B (normalized by its max 2.0) survives.
-        Assert.Equal(new[] { "a", "c" }, merged.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(ExpectedIdsAc, merged.Select(r => r.DocumentId).ToArray());
         Assert.Equal(1.0, merged[0].Score, 9);
         Assert.Equal(0.25, merged[1].Score, 9);
     }
@@ -106,7 +109,7 @@ public class WeightedScoreResultMergerTests
 
         // Engine A normalizes by 2 (the infinite "b" is skipped): a → 1.0.
         // Engine B normalizes by 4 (the NaN "b" is skipped): c → 1.0.
-        Assert.Equal(new[] { "a", "c" }, merged.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(ExpectedIdsAc, merged.Select(r => r.DocumentId).ToArray());
         Assert.Equal(1.0, merged[0].Score, 9);
         Assert.Equal(1.0, merged[1].Score, 9);
     }

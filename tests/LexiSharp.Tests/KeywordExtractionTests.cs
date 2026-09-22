@@ -9,6 +9,7 @@ namespace LexiSharp.Tests;
 public class KeywordExtractionTests
 {
     private static readonly Tokenizer StopWordTokenizer = new(new TokenizerOptions { RemoveStopWords = true });
+    private static readonly string[] ExpectedTermsQuasarApple = new[] { "quasar", "apple" };
 
     private static TfIdfKeywordExtractor CreateExtractor(ITextIndex? corpus = null) =>
         new(corpus, StopWordTokenizer);
@@ -54,7 +55,7 @@ public class KeywordExtractionTests
         var keywords = extractor.Extract("apple quasar", topN: 2);
 
         // "apple" repeats but is corpus-common; "quasar" is corpus-rare: it wins despite tf = 1.
-        Assert.Equal(new[] { "quasar", "apple" }, keywords.Select(k => k.Term).ToArray());
+        Assert.Equal(ExpectedTermsQuasarApple, keywords.Select(k => k.Term).ToArray());
     }
 
     [Fact]

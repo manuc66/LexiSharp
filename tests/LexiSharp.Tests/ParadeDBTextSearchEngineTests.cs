@@ -7,6 +7,10 @@ namespace LexiSharp.Tests;
 
 public class ParadeDBTextSearchEngineTests
 {
+    private static readonly string[] DenseScarceSingleIds = new[] { "dense", "scarce", "single" };
+    private static readonly string[] CatFoxIds = new[] { "cat", "fox" };
+    private static readonly string[] ABCIds = new[] { "a", "b", "c" };
+
     private static string? ConnectionString =>
         Environment.GetEnvironmentVariable("POSTGRES_TEST_CONNECTION");
 
@@ -87,7 +91,7 @@ public class ParadeDBTextSearchEngineTests
 
             var results = engine.Search("fox");
 
-            Assert.Equal(new[] { "dense", "scarce", "single" }, results.Select(r => r.DocumentId).ToArray());
+            Assert.Equal(DenseScarceSingleIds, results.Select(r => r.DocumentId).ToArray());
             Assert.All(results, r => Assert.True(r.Score > 0, $"score for {r.DocumentId} should be positive"));
         }
         finally
@@ -111,7 +115,7 @@ public class ParadeDBTextSearchEngineTests
 
             var results = engine.Search("fox cat");
 
-            Assert.Equal(new[] { "cat", "fox" }.OrderBy(x => x), results.Select(r => r.DocumentId).OrderBy(x => x));
+            Assert.Equal(CatFoxIds.OrderBy(x => x), results.Select(r => r.DocumentId).OrderBy(x => x));
         }
         finally
         {
@@ -158,7 +162,7 @@ public class ParadeDBTextSearchEngineTests
 
             var results = engine.Search("identical content");
 
-            Assert.Equal(new[] { "a", "b", "c" }, results.Select(r => r.DocumentId).ToArray());
+            Assert.Equal(ABCIds, results.Select(r => r.DocumentId).ToArray());
         }
         finally
         {

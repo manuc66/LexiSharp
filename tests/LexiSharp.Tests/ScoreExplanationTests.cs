@@ -18,6 +18,9 @@ public class ScoreExplanationTests
         return new Fixture(index, doc1, doc2);
     }
 
+    private static readonly string[] QueryAlphaGamma = new[] { "alpha", "gamma" };
+    private static readonly string[] QueryAlpha = new[] { "alpha" };
+
     [Fact]
     public void Bm25_Explain_ReproducesTheScoreAndBreaksDownTerms()
     {
@@ -58,7 +61,7 @@ public class ScoreExplanationTests
         var (index, doc1, _) = CreateFixture();
         var scorer = new Bm25Scorer();
 
-        var explanation = scorer.Explain(doc1.Id, new[] { "alpha", "gamma" }, index);
+        var explanation = scorer.Explain(doc1.Id, QueryAlphaGamma, index);
 
         Assert.Contains(explanation.Terms, t => t.Term == "alpha");
         Assert.DoesNotContain(explanation.Terms, t => t.Term == "gamma");
@@ -68,7 +71,7 @@ public class ScoreExplanationTests
     public void Bm25_Explain_EmptyDocumentAndEmptyIndexAreSafe()
     {
         var empty = new InMemoryTextIndex();
-        var explanation = new Bm25Scorer().Explain("ghost", new[] { "alpha" }, empty);
+        var explanation = new Bm25Scorer().Explain("ghost", QueryAlpha, empty);
 
         Assert.Equal(0, explanation.TotalScore);
         Assert.Empty(explanation.Terms);

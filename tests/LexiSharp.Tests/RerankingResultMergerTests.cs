@@ -10,6 +10,8 @@ public class RerankingResultMergerTests
     private static SearchResult R(string id, string text, double score) =>
         new(id, score, new SearchDocument(id, text));
 
+    private static readonly string[] ExpectedIdsAcb = new[] { "a", "c", "b" };
+
     [Fact]
     public void Merge_ReScoresUnionAgainstSharedIndex()
     {
@@ -31,7 +33,7 @@ public class RerankingResultMergerTests
         // terms so it must come first; between the single-term matches, "c" (4 tokens)
         // outranks "b" (5 tokens, "a" dropped as a single-character term) because of the
         // length normalization.
-        Assert.Equal(new[] { "a", "c", "b" }, merged.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(ExpectedIdsAcb, merged.Select(r => r.DocumentId).ToArray());
         Assert.All(merged, r => Assert.True(r.Score > 0));
     }
 

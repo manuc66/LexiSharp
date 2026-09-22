@@ -23,6 +23,9 @@ public class SparseTextSearchEngineTests
     private static readonly IReadOnlyDictionary<string, float> Empty =
         new Dictionary<string, float>();
 
+    private static readonly string[] C2C1Ids = new[] { "c2", "c1" };
+    private static readonly string[] ABIds = new[] { "a", "b" };
+
     // Learned-weigghts corpus: strong overlap on "cat", weaker on "dog", nothing on "fish".
     private static IReadOnlyDictionary<string, float> Embed(string text) => text switch
     {
@@ -54,7 +57,7 @@ public class SparseTextSearchEngineTests
         // score(c1) = 1·1 = 1 (cat term), score(c2) = 1·2 = 2 (cat term).
         var results = engine.Search("q-cat");
 
-        Assert.Equal(new[] { "c2", "c1" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(C2C1Ids, results.Select(r => r.DocumentId).ToArray());
         Assert.Equal(2.0, results[0].Score, 1e-9);
         Assert.Equal(1.0, results[1].Score, 1e-9);
 
@@ -103,7 +106,7 @@ public class SparseTextSearchEngineTests
         var filter = new MetadataFilter("topic", MetadataFilterOperator.Equal, "animals");
         var results = engine.Search("q-cat", new SearchOptions(Limit: 10, Filters: new[] { filter }));
 
-        Assert.Equal(new[] { "c2", "c1" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(C2C1Ids, results.Select(r => r.DocumentId).ToArray());
     }
 
     [Fact]
@@ -132,7 +135,7 @@ public class SparseTextSearchEngineTests
         // Both docs reach 2 = (1·2) vs (1·1 + 1·1): ties resolve by document id.
         var results = engine.Search("q");
 
-        Assert.Equal(new[] { "a", "b" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(ABIds, results.Select(r => r.DocumentId).ToArray());
         Assert.All(results, r => Assert.Equal(2.0, r.Score, 1e-9));
     }
 

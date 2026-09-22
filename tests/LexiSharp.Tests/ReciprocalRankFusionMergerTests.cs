@@ -24,6 +24,9 @@ public class ReciprocalRankFusionMergerTests
     private static readonly SearchDocument DocX = new("x", "apple");
     private static readonly SearchDocument DocY = new("y", "banana");
     private static readonly SearchDocument DocZ = new("z", "cherry");
+    private static readonly string[] ExpectedIdsYxz = new[] { "y", "x", "z" };
+    private static readonly string[] ExpectedIdsXy = new[] { "x", "y" };
+    private static readonly string[] ExpectedIdsXyz = new[] { "x", "y", "z" };
 
     private static SearchResult R(string id, SearchDocument doc) => new(id, 1.0, doc);
 
@@ -43,7 +46,7 @@ public class ReciprocalRankFusionMergerTests
 
         var results = hybrid.Search("query");
 
-        Assert.Equal(new[] { "y", "x", "z" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(ExpectedIdsYxz, results.Select(r => r.DocumentId).ToArray());
         Assert.Equal(1.0 / 61.0 + 1.0 / 62.0, results[0].Score, 9);
         Assert.Equal(1.0 / 61.0, results[1].Score, 9);
         Assert.Equal(1.0 / 62.0, results[2].Score, 9);
@@ -62,7 +65,7 @@ public class ReciprocalRankFusionMergerTests
         var results = hybrid.Search("query").ToList();
 
         // Only engine A contributes: x at rank 1, y at rank 2; z never appears in A.
-        Assert.Equal(new[] { "x", "y" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(ExpectedIdsXy, results.Select(r => r.DocumentId).ToArray());
         Assert.Equal(1.0 / 61.0, results[0].Score, 9);
         Assert.Equal(1.0 / 62.0, results[1].Score, 9);
     }
@@ -78,7 +81,7 @@ public class ReciprocalRankFusionMergerTests
 
         var results = hybrid.Search("query");
 
-        Assert.Equal(new[] { "x", "y", "z" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(ExpectedIdsXyz, results.Select(r => r.DocumentId).ToArray());
         Assert.Equal(new[] { 1.0 / 61.0, 1.0 / 62.0, 1.0 / 63.0 },
             results.Select(r => r.Score).ToArray());
     }

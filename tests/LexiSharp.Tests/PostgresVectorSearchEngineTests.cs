@@ -36,6 +36,18 @@ public class PostgresVectorSearchEngineTests
             ["pure red"] = new[] { 1f, 0f, 0f, 0f },
         };
 
+    private static readonly string[] GreenRedIds = new[] { "green", "red" };
+    private static readonly string[] L2ResultIds = new[] { "e1", "e3", "e2" };
+    private static readonly float[] RedAppleVector = new[] { 1f, 0f };
+    private static readonly float[] BlueSkyVector = new[] { 0f, 1f };
+    private static readonly string[] AlphaBravoCharlieIds = new[] { "alpha", "bravo", "charlie" };
+    private static readonly string[] TitleColumn = new[] { "title" };
+    private static readonly string[] D1OnlyIds = new[] { "d1" };
+    private static readonly string[] DescriptionColumn = new[] { "description" };
+    private static readonly string[] D2OnlyIds = new[] { "d2" };
+    private static readonly string[] D1D2Ids = new[] { "d1", "d2" };
+    private static readonly string[] NopeColumn = new[] { "nope" };
+
     private static string? ConnectionString =>
         Environment.GetEnvironmentVariable("POSTGRES_TEST_CONNECTION");
 
@@ -107,7 +119,7 @@ public class PostgresVectorSearchEngineTests
             var near = engine.Search("red or green");
 
             Assert.Equal(
-                new[] { "green", "red" }.OrderBy(x => x),
+                GreenRedIds.OrderBy(x => x),
                 near.Select(r => r.DocumentId).OrderBy(x => x));
             Assert.All(near, r => Assert.Equal(Cos45, r.Score, 4));
 
@@ -143,7 +155,7 @@ public class PostgresVectorSearchEngineTests
 
             var results = engine.Search("q");
 
-            Assert.Equal(new[] { "e1", "e3", "e2" }, results.Select(r => r.DocumentId).ToArray());
+            Assert.Equal(L2ResultIds, results.Select(r => r.DocumentId).ToArray());
         }
         finally
         {
@@ -247,8 +259,8 @@ public class PostgresVectorSearchEngineTests
 
         var embeddings = new StubEmbeddingProvider(new Dictionary<string, float[]>
         {
-            ["red apple"] = new[] { 1f, 0f },
-            ["blue sky"] = new[] { 0f, 1f },
+            ["red apple"] = RedAppleVector,
+            ["blue sky"] = BlueSkyVector,
         });
 
         using var engine = NewEngine(
@@ -287,10 +299,10 @@ public class PostgresVectorSearchEngineTests
             engine.Add(Doc("charlie", "blue sky"));
 
             Assert.Equal(
-                new[] { "alpha", "bravo", "charlie" },
+                AlphaBravoCharlieIds,
                 engine.ListDocumentIds().ToArray());
             Assert.Equal(
-                new[] { "alpha", "bravo", "charlie" },
+                AlphaBravoCharlieIds,
                 engine.ListDocumentIds(batchSize: 1).ToArray());
 
             Assert.Throws<ArgumentOutOfRangeException>(() => engine.ListDocumentIds(0));
@@ -407,16 +419,16 @@ public class PostgresVectorSearchEngineTests
                 TextFields: new Dictionary<string, string> { ["title"] = "bravo two", ["description"] = "alpha one" }));
 
             // "alpha one" lives in d1's title and d2's description.
-            var byTitle = engine.SearchWithColumns("alpha one", new[] { "title" });
-            Assert.Equal(new[] { "d1" }, byTitle.Select(r => r.DocumentId).ToArray());
+            var byTitle = engine.SearchWithColumns("alpha one", TitleColumn);
+            Assert.Equal(D1OnlyIds, byTitle.Select(r => r.DocumentId).ToArray());
 
-            var byDescription = engine.SearchWithColumns("alpha one", new[] { "description" });
-            Assert.Equal(new[] { "d2" }, byDescription.Select(r => r.DocumentId).ToArray());
+            var byDescription = engine.SearchWithColumns("alpha one", DescriptionColumn);
+            Assert.Equal(D2OnlyIds, byDescription.Select(r => r.DocumentId).ToArray());
 
             // Searching without column selection OR-fuses every configured column by best similarity.
             var all = engine.Search("alpha one");
             Assert.Equal(
-                new[] { "d1", "d2" }.OrderBy(x => x),
+                D1D2Ids.OrderBy(x => x),
                 all.Select(r => r.DocumentId).OrderBy(x => x));
             Assert.All(all, r => Assert.Equal(1.0, r.Score, 6));
         }
@@ -472,7 +484,7 @@ public class PostgresVectorSearchEngineTests
 
         try
         {
-            Assert.Throws<ArgumentException>(() => engine.SearchWithColumns("alpha one", new[] { "nope" }));
+            Assert.Throws<ArgumentException>(() => engine.SearchWithColumns("alpha one", NopeColumn));
             Assert.Throws<ArgumentException>(() => engine.SearchWithColumns("alpha one", Array.Empty<string>()));
         }
         finally

@@ -7,6 +7,9 @@ namespace LexiSharp.Tests;
 
 public class NaiveBayesClassifierTests
 {
+    private static readonly string[] LowestToHighestCategory = { "a", "b", "c" };
+    private static readonly string[] OrdinalSortedCategories = { "A", "B", "C" };
+
     private static readonly SearchDocument[] Training =
     {
         new("1", "internet connection problem", Category: "Support"),
@@ -141,7 +144,7 @@ public class NaiveBayesClassifierTests
         var results = classifier.Predict("zzz www", limit: 3);
 
         // Nothing matches and priors are uniform: deterministic order by category name.
-        Assert.Equal(new[] { "a", "b", "c" }, results.Select(r => r.Category).ToArray());
+        Assert.Equal(LowestToHighestCategory, results.Select(r => r.Category).ToArray());
         Assert.All(results, r => Assert.Equal(1.0 / 3, r.Probability, precision: 10));
     }
 
@@ -354,7 +357,7 @@ public class NaiveBayesClassifierTests
 
         var classifier = new NaiveBayesClassifier();
         classifier.Train(corpus);
-        IWeightedPredictor predictor = classifier;
+        NaiveBayesClassifier predictor = classifier;
 
         Assert.Equal("A", predictor.Predict(new[] { new WeightedToken("chat", 1.0), new WeightedToken("support", 0.9) }, 1)[0].Category);
         Assert.Equal("A", predictor.Predict(new[] { new WeightedToken("chat", 1.0), new WeightedToken("support", 0.4) }, 1)[0].Category);
@@ -372,7 +375,7 @@ public class NaiveBayesClassifierTests
 
         var classifier = new NaiveBayesClassifier();
         classifier.Train(corpus);
-        IWeightedPredictor predictor = classifier;
+        NaiveBayesClassifier predictor = classifier;
 
         // Zeroed-weighted token behaves as if absent: B wins on "support" alone.
         var results = predictor.Predict(new[] { new WeightedToken("chat", 0.0), WeightedToken.Full("support") }, 1);
@@ -476,7 +479,7 @@ public class NaiveBayesClassifierTests
             var results = classifier.Predict(query.Query, limit: 3).ToDictionary(r => r.Category, r => r.Probability);
 
             Assert.Equal(query.Best, classifier.PredictBest(query.Query));
-            Assert.Equal(new[] { "A", "B", "C" }, classifier.Predict(query.Query, limit: 3).Select(r => r.Category).OrderBy(c => c, StringComparer.Ordinal));
+            Assert.Equal(OrdinalSortedCategories, classifier.Predict(query.Query, limit: 3).Select(r => r.Category).OrderBy(c => c, StringComparer.Ordinal));
 
             Assert.Equal(query.Proba[0], results["A"], precision: 6);
             Assert.Equal(query.Proba[1], results["B"], precision: 6);
@@ -519,7 +522,7 @@ public class NaiveBayesClassifierTests
         public Dictionary<string, int> DocumentFrequency { get; } = new();
 
         public static ReferenceModel Build(
-            IEnumerable<SearchDocument> documents, ITokenizer tokenizer)
+            IEnumerable<SearchDocument> documents, Tokenizer tokenizer)
         {
             var model = new ReferenceModel();
 

@@ -16,6 +16,8 @@ public class MetadataFilterTests
         new Dictionary<string, string> { ["kind"] = "talk", ["year"] = "2024" });
 
     private static readonly SearchDocument Bare = new("b1", "no metadata at all");
+    private static readonly string[] ExpectedIdsA1 = new[] { "a1" };
+    private static readonly string[] ExpectedIdsT1 = new[] { "t1" };
 
     [Fact]
     public void Equal_MatchesExactValue()
@@ -97,7 +99,7 @@ public class MetadataFilterTests
 
         var results = engine.Search("vector search", options);
 
-        Assert.Equal(new[] { "a1" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(ExpectedIdsA1, results.Select(r => r.DocumentId).ToArray());
     }
 
     [Fact]
@@ -116,7 +118,7 @@ public class MetadataFilterTests
 
         var results = engine.Search("hybrid retrieval", options);
 
-        Assert.Equal(new[] { "t1" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(ExpectedIdsT1, results.Select(r => r.DocumentId).ToArray());
     }
 
     [Fact]
