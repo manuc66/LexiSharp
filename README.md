@@ -76,6 +76,9 @@ or ML model** — pure lexical statistics.
 - **Synonyms** (`SynonymMap`): one-way rewrites and bidirectional equivalence groups,
   tokenized at engine construction and applied to free query terms — one level deep
   (non-transitive), never inside quoted phrases.
+- **Facets** (`IFacetedSearchEngine`): `SearchWithFacets` returns the ranked page plus value
+  counts per requested `Fields` entry over the whole match set — independent of
+  `Offset`/`Limit`, ordered by count then value.
 - **Lexical similarity** (`LexiSharp.Similarity`): pairwise token-set measures (Jaccard,
   Sørensen–Dice) over the library tokenizer, a `pg_trgm`-style character trigram similarity,
   and a rolling Levenshtein edit distance — near-duplicate detection and fuzzy matching with
@@ -390,6 +393,31 @@ exactly one term (otherwise the constructor throws). Expansion is one level deep
 non-transitive — a synonym's own synonyms are never pulled in — and applies to free terms
 only: quoted phrases stay literal. Like the prefix/fuzzy operators, this is a stock-engine
 feature; the SQL backends do not rewrite queries.
+
+### Facets
+
+Get value counts for UI refinements alongside the ranked page:
+
+```csharp
+using LexiSharp.Core;
+
+IFacetedSearchEngine engine = new RankedTextSearchEngine(index, new Bm25Scorer());
+
+FacetedSearchResult page = engine.SearchWithFacets(
+    "fast car",
+    new SearchOptions(Limit: 10),
+    facetFields: ["kind", "lang"]);
+
+foreach (var bucket in page.Buckets)
+    foreach (var value in bucket.Values)          // count desc, then value ordinal
+        Console.WriteLine($"{bucket.Field}={value.Value}: {value.Count}");
+```
+
+`Results` is identical to `Search` for the same arguments. Counts cover every document that
+passes the metadata filters, the phrase gates and the score thresholds — the whole match set —
+independently of `Offset`/`Limit`, which only cut `Results`. A document missing a field does
+not count for it (`Category` is never faceted), and fields no matching document carries are
+omitted from `Buckets`. Stock engine only.
 
 ### Lexical similarity and keyword extraction
 
@@ -720,7 +748,7 @@ retrieve-then-rerank shape, one line of composition.
 ```
 Package            Responsibilities
 ─────────────────────────────────────────────────────────────────────────────
-LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider + ISparseEmbeddingProvider + sparse engine (export/import) + boost/rerank decorators + filters + highlighting + similarity + keywords + metrics + hybrid federation (RRF, weighted, cascade, cross-encoder, MMR, MaxSim)
+LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider + ISparseEmbeddingProvider + sparse engine (export/import) + boost/rerank decorators + filters + highlighting + facets + similarity + keywords + metrics + hybrid federation (RRF, weighted, cascade, cross-encoder, MMR, MaxSim)
 LexiSharp.Postgres  PostgreSQL providers: tsvector+unaccent (lexical), pgvector ANN (vector), pgvector sparsevec (sparse), pg_trgm+fuzzystrmatch (fuzzy)
 LexiSharp.ParadeDB   true BM25 provider on the pg_search (Tantivy) extension
 LexiSharp.MessagePack   MessagePack (binary) persistence for the in-memory index and the sparse engine
