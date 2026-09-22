@@ -29,8 +29,11 @@ namespace LexiSharp.Postgres;
 /// <see cref="AddAsync"/> and <see cref="SearchAsync"/> overloads.
 /// </para>
 /// </remarks>
-public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSearchEngine, IListableSearchEngine, IDisposable
+public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSearchEngine, IListableSearchEngine, IDisposable, IQuerySyntaxSupport
 {
+    /// <inheritdoc />
+    public QueryFeature SupportedQueryFeatures => QueryFeature.None;
+
     private const string LegacyEmbeddingColumn = "embedding";
 
     private readonly NpgsqlDataSource _dataSource;
@@ -402,6 +405,8 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
 
         if (options.IsEmpty || string.IsNullOrWhiteSpace(query) || columns.Count == 0)
             return SearchOutcome.Empty;
+
+        QuerySyntax.EnsureSupported(query, SupportedQueryFeatures, nameof(PostgresVectorSearchEngine));
 
         float[] queryVector = await EmbedAsync(query, EmbeddingUse.Query, cancellationToken).ConfigureAwait(false);
         string serialized = VectorText.Format(queryVector);

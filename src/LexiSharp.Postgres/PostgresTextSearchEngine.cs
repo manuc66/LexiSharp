@@ -36,8 +36,11 @@ namespace LexiSharp.Postgres;
 /// <c>embedding vector(n)</c> column and an HNSW/IVFFlat index when you opt into vector search.
 /// </para>
 /// </remarks>
-public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
+public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable, IQuerySyntaxSupport
 {
+    /// <inheritdoc />
+    public QueryFeature SupportedQueryFeatures => QueryFeature.Phrases;
+
     private readonly NpgsqlDataSource _dataSource;
     private readonly PostgresIndexOptions _options;
     private bool _schemaReady;
@@ -172,6 +175,8 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
 
         if (options.IsEmpty || string.IsNullOrWhiteSpace(query))
             return Array.Empty<SearchResult>();
+
+        QuerySyntax.EnsureSupported(query, SupportedQueryFeatures, nameof(PostgresTextSearchEngine));
 
         using var connection = _dataSource.OpenConnection();
 

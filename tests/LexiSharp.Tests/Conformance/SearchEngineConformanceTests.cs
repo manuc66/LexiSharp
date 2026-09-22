@@ -28,9 +28,6 @@ public abstract class SearchEngineConformanceTests
             disposable.Dispose();
     }
 
-    /// <summary>Optional features the backend supports; defaults to none.</summary>
-    protected virtual EngineCapabilities Capabilities => new();
-
     /// <summary>Whether the backend cannot run in this environment (missing connection/extension).</summary>
     protected virtual bool IsUnavailable => false;
 
@@ -168,30 +165,60 @@ public abstract class SearchEngineConformanceTests
     [SkippableFact]
     public void Phrase_GatesTheCorpusButFreeTermsOnlyScore()
     {
-        Skip.If(!Capabilities.Phrases, "Backend does not support phrase queries.");
+        Skip.If(IsUnavailable, UnavailableReason);
+        var engine = CreateEngine();
 
-        WithEngine(engine =>
+        try
         {
+            engine.Index(Corpus);
+
+            if (!Supports(engine, QueryFeature.Phrases))
+            {
+                // Unsupported syntax must fail fast, never be silently treated as plain text.
+                Assert.Throws<NotSupportedException>(() => engine.Search("neural \"machine learning\"", All));
+                return;
+            }
+
             // Phrase present in d1 (no "neural") and d2 (both); d6 has the free term but not the phrase.
             var ids = Ids(engine.Search("neural \"machine learning\"", All));
 
             Assert.Contains("d1", ids); // phrase-only: comes back even without the free term
             Assert.Contains("d2", ids); // both
             Assert.DoesNotContain("d6", ids); // free-only: never comes back
-        });
+        }
+        finally
+        {
+            DestroyEngine(engine);
+        }
     }
 
     [SkippableFact]
-    public void PrefixExpansion_MatchesIndexedTerms()
+    public void PrefixExpansion_MatchesIndexedTermsOrFailsFast()
     {
-        Skip.If(!Capabilities.Expansions, "Backend does not support expansion operators.");
+        Skip.If(IsUnavailable, UnavailableReason);
+        var engine = CreateEngine();
 
-        WithEngine(engine =>
+        try
         {
+            engine.Index(Corpus);
+
+            if (!Supports(engine, QueryFeature.Expansions))
+            {
+                Assert.Throws<NotSupportedException>(() => engine.Search("learn*", All));
+                return;
+            }
+
             var ids = Ids(engine.Search("learn*", All));
 
             Assert.Contains("d1", ids); // "learning"
             Assert.Contains("d3", ids);
-        });
+        }
+        finally
+        {
+            DestroyEngine(engine);
+        }
     }
+
+    private static bool Supports(ITextSearchEngine engine, QueryFeature feature) =>
+        engine is IQuerySyntaxSupport support && (support.SupportedQueryFeatures & feature) == feature;
 }

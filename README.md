@@ -340,7 +340,9 @@ break the consecutive-position guarantee.
 The SQL backends honor the same syntax natively: PostgreSQL through
 `websearch_to_tsquery`, ParadeDB through the `###` phrase operator (on that backend only
 phrases shape the match set when quotes are present — free terms stay out of `WHERE`, exactly
-mirroring the stock engine's scoring-only role for them).
+mirroring the stock engine's scoring-only role for them). An engine without phrase support
+(fuzzy, vector, sparse) rejects a quoted query with `NotSupportedException` rather than ignoring
+the quotes.
 
 ### Highlighting
 
@@ -381,8 +383,11 @@ an `IVocabularyIndex` (`InMemoryTextIndex` implements it), keeping at most 64 te
 highest document frequency first, then ordinal order. An index without vocabulary support
 falls back to the atom's literal base term, i.e. the behavior of a query without operators.
 Operators are only recognized when suffixed to word characters, never inside quoted phrases
-(a `"machine*"` phrase stays literal), and they are a LexiSharp query syntax — the SQL
-backends do not currently interpret them.
+(a `"machine*"` phrase stays literal). They are a LexiSharp query syntax, so an engine that does
+not interpret them rejects such a query with `NotSupportedException` instead of silently treating
+the operator as plain text — `IQuerySyntaxSupport.SupportedQueryFeatures` exposes each engine's
+supported matrix (`RankedTextSearchEngine`: phrases + expansions; PostgreSQL lexical and
+ParadeDB: phrases; fuzzy/vector/sparse: plain queries only).
 
 ### Synonyms
 
