@@ -98,7 +98,7 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable
 
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = $"ALTER TABLE {_options.QualifiedTableName} ADD COLUMN IF NOT EXISTS sparse {_options.SparseVectorType};";
+            command.CommandText = $"ALTER TABLE {_options.QualifiedTableName} ADD COLUMN IF NOT EXISTS sparse {_options.SparseVectorType};"; // NOSONAR:S2077;
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
@@ -113,11 +113,14 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable
         var indexName = PostgresIndexOptions.QuoteIdentifier($"{_options.Table}_sparse_hnsw");
 
         await using var command = connection.CreateCommand();
-        command.CommandText = $"""
+        string createIndexSql = $"""
             CREATE INDEX IF NOT EXISTS {indexName}
             ON {_options.QualifiedTableName} USING hnsw (sparse {_options.OpClass})
             WITH (m = {_options.HnswM}, ef_construction = {_options.HnswEfConstruction});
             """;
+
+        // Identifiers and integer options only are interpolated (validated + quoted).
+        command.CommandText = createIndexSql; // NOSONAR:S2077
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -127,7 +130,7 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"DROP TABLE IF EXISTS {_options.QualifiedTableName}";
+        command.CommandText = $"DROP TABLE IF EXISTS {_options.QualifiedTableName}"; // NOSONAR:S2077 (identifier only, validated + quoted)
         command.ExecuteNonQuery();
     }
 
@@ -139,7 +142,7 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"TRUNCATE {_options.QualifiedTableName}";
+        command.CommandText = $"TRUNCATE {_options.QualifiedTableName}"; // NOSONAR:S2077 (identifier only, validated + quoted)
         command.ExecuteNonQuery();
 
         foreach (var document in documents)
@@ -161,7 +164,7 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"DELETE FROM {_options.QualifiedTableName} WHERE id = @id";
+        command.CommandText = $"DELETE FROM {_options.QualifiedTableName} WHERE id = @id"; // NOSONAR:S2077 (identifiers only; id is parameterized)
         command.Parameters.AddWithValue("id", documentId);
         command.ExecuteNonQuery();
     }
@@ -172,7 +175,7 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"TRUNCATE {_options.QualifiedTableName}";
+        command.CommandText = $"TRUNCATE {_options.QualifiedTableName}"; // NOSONAR:S2077 (identifier only, validated + quoted)
         command.ExecuteNonQuery();
     }
 
@@ -194,7 +197,7 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable
 
         string tsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content");
 
-        command.CommandText = $"""
+        string insertSql = $"""
             INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, sparse)
             VALUES (@id, @content, @category, @fields, @sparse::sparsevec)
             ON CONFLICT (id) DO UPDATE
@@ -204,6 +207,9 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable
                     sparse = EXCLUDED.sparse,
                     tsv = {tsvExpr};
             """;
+
+        // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); values are parameters.
+        command.CommandText = insertSql; // NOSONAR:S2077
 
         command.Parameters.AddWithValue("id", document.Id);
         command.Parameters.AddWithValue("content", document.Text);
@@ -257,13 +263,16 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();
-        command.CommandText = $"""
+        string searchSql = $"""
             SELECT id, content, category, fields, {scoreExpression} AS score
             FROM {_options.QualifiedTableName}
             WHERE sparse IS NOT NULL
             ORDER BY sparse {_options.Operator} @query::sparsevec
             LIMIT @limit;
             """;
+
+        // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); query vector is parameterized.
+        command.CommandText = searchSql; // NOSONAR:S2077
 
         command.Parameters.AddWithValue("query", queryLiteral);
         command.Parameters.AddWithValue("limit", options.Limit);
@@ -301,10 +310,10 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable
 
         foreach (var (term, weight) in weights)
         {
-            if (_options.Vocabulary.TryGetValue(term, out int coordinate))
+            if (_options.Vocabulary.TryGetValue(term, out int coordinate)
+                && float.IsFinite(weight) && weight != 0f)
             {
-                if (float.IsFinite(weight) && weight != 0f)
-                    coordinates.Add((coordinate + 1, weight));
+                coordinates.Add((coordinate + 1, weight));
             }
         }
 

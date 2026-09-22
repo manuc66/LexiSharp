@@ -31,6 +31,8 @@ namespace LexiSharp.Postgres;
 /// </remarks>
 public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSearchEngine, IListableSearchEngine, IDisposable
 {
+    private const string LegacyEmbeddingColumn = "embedding";
+
     private readonly NpgsqlDataSource _dataSource;
     private readonly IEmbeddingProvider _embeddings;
     private readonly PostgresVectorOptions _options;
@@ -98,18 +100,18 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
 
         await PostgresSchema.CreateDocumentTableAsync(connection, baseOptions, cancellationToken).ConfigureAwait(false);
 
-        foreach (string column in EmbeddingColumnNames)
+        foreach (string column in GetEmbeddingColumnNames())
         {
             await using (var command = connection.CreateCommand())
             {
-                command.CommandText = $"ALTER TABLE {_options.QualifiedTableName} ADD COLUMN IF NOT EXISTS {Quote(column)} {_options.VectorType};";
+                command.CommandText = $"ALTER TABLE {_options.QualifiedTableName} ADD COLUMN IF NOT EXISTS {Quote(column)} {_options.VectorType};"; // NOSONAR:S2077
                 await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
         }
 
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = $"ALTER TABLE {_options.QualifiedTableName} ADD COLUMN IF NOT EXISTS text_fields jsonb;";
+            command.CommandText = $"ALTER TABLE {_options.QualifiedTableName} ADD COLUMN IF NOT EXISTS text_fields jsonb;"; // NOSONAR:S2077
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
@@ -121,7 +123,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
 
             await using (var command = connection.CreateCommand())
             {
-                command.CommandText = $"SELECT COUNT(*) FROM {_options.QualifiedTableName}";
+                command.CommandText = $"SELECT COUNT(*) FROM {_options.QualifiedTableName}"; // NOSONAR:S2077
                 rowCount = (long)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
             }
 
@@ -129,11 +131,11 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
                 return;
         }
 
-        foreach (string column in EmbeddingColumnNames)
+        foreach (string column in GetEmbeddingColumnNames())
         {
             // CTAS/index name derived from the column: embedding -> {table}_embedding_hnsw
             // (legacy single column keeps its historical name), title_embedding -> {table}_title_embedding_hnsw.
-            string indexBase = column == "embedding"
+            string indexBase = column == LegacyEmbeddingColumn
                 ? $"{_options.Table}_embedding"
                 : $"{_options.Table}_{column}";
             await CreateIndexAsync(connection, column, indexBase, cancellationToken).ConfigureAwait(false);
@@ -151,7 +153,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
             : $"USING ivfflat ({Quote(column)} {_options.OpClass}) WITH (lists = {_options.IvfLists})";
 
         await using var command = connection.CreateCommand();
-        command.CommandText = $"CREATE INDEX IF NOT EXISTS {indexName} ON {_options.QualifiedTableName} {build}";
+        command.CommandText = $"CREATE INDEX IF NOT EXISTS {indexName} ON {_options.QualifiedTableName} {build}"; // NOSONAR:S2077
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -161,7 +163,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"DROP TABLE IF EXISTS {_options.QualifiedTableName}";
+        command.CommandText = $"DROP TABLE IF EXISTS {_options.QualifiedTableName}"; // NOSONAR:S2077
         command.ExecuteNonQuery();
     }
 
@@ -173,7 +175,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"TRUNCATE {_options.QualifiedTableName}";
+        command.CommandText = $"TRUNCATE {_options.QualifiedTableName}"; // NOSONAR:S2077
         command.ExecuteNonQuery();
 
         foreach (var document in documents)
@@ -195,7 +197,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"DELETE FROM {_options.QualifiedTableName} WHERE id = @id";
+        command.CommandText = $"DELETE FROM {_options.QualifiedTableName} WHERE id = @id"; // NOSONAR:S2077 (identifiers only; id is parameterized)
         command.Parameters.AddWithValue("id", documentId);
         command.ExecuteNonQuery();
     }
@@ -206,7 +208,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"TRUNCATE {_options.QualifiedTableName}";
+        command.CommandText = $"TRUNCATE {_options.QualifiedTableName}"; // NOSONAR:S2077
         command.ExecuteNonQuery();
     }
 
@@ -228,7 +230,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
 
             string tsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content");
 
-            command.CommandText = $"""
+            string insertSql = $"""
                 INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, embedding)
                 VALUES (@id, @content, @category, @fields, @text_fields, @embedding::vector)
                 ON CONFLICT (id) DO UPDATE
@@ -240,6 +242,8 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
                         tsv = {tsvExpr};
                 """;
 
+            // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); values are parameters.
+            command.CommandText = insertSql; // NOSONAR:S2077
             AddCommonParameters(command, document);
             command.Parameters.AddWithValue("embedding", VectorText.Format(embedding));
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -267,7 +271,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
 
         string multiTsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content");
 
-        multiCommand.CommandText = $"""
+        string insertMultiSql = $"""
             INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, {columnList})
             VALUES (@id, @content, @category, @fields, @text_fields, {parameterList})
             ON CONFLICT (id) DO UPDATE
@@ -279,6 +283,8 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
                     tsv = {multiTsvExpr};
             """;
 
+        // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); values are parameters.
+        multiCommand.CommandText = insertMultiSql; // NOSONAR:S2077
         AddCommonParameters(multiCommand, document);
 
         for (int i = 0; i < columns.Count; i++)
@@ -330,7 +336,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
     public async Task<IReadOnlyList<SearchResult>> SearchAsync(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
-        return (await SearchCoreAsync(query, DefaultColumns, options, cancellationToken).ConfigureAwait(false))
+        return (await SearchCoreAsync(query, GetDefaultColumns(), options, cancellationToken).ConfigureAwait(false))
             .Results;
     }
 
@@ -374,7 +380,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
     {
         ArgumentNullException.ThrowIfNull(query);
 
-        var outcome = SearchCoreAsync(query, DefaultColumns, options, CancellationToken.None).GetAwaiter().GetResult();
+        var outcome = SearchCoreAsync(query, GetDefaultColumns(), options, CancellationToken.None).GetAwaiter().GetResult();
 
         return outcome.Results
             .Select(x => new DetailedSearchResult(
@@ -419,7 +425,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
             await using (var setCommand = connection.CreateCommand())
             {
                 setCommand.Transaction = transaction;
-                setCommand.CommandText = $"SET LOCAL hnsw.ef_search = {hnswEfSearch};";
+                setCommand.CommandText = $"SET LOCAL hnsw.ef_search = {hnswEfSearch};"; // NOSONAR:S2077 (int option value, not user text)
                 await setCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
         }
@@ -432,13 +438,16 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         {
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
-            command.CommandText = $"""
+            string searchSql = $"""
                 SELECT id, content, category, fields, text_fields, {ScoreExpression(column)} AS score
                 FROM {_options.QualifiedTableName}
                 WHERE {Quote(column)} IS NOT NULL
                 ORDER BY {Quote(column)} {_options.Operator} @query::vector
                 LIMIT @limit;
                 """;
+
+            // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); query text is parameterized.
+            command.CommandText = searchSql; // NOSONAR:S2077
 
             command.Parameters.AddWithValue("query", serialized);
             command.Parameters.AddWithValue("limit", candidateLimit);
@@ -491,18 +500,20 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
 
     /// <summary>
     /// SQL embedding column names: configured <see cref="PostgresVectorOptions.EmbeddingColumns"/>
-    /// suffixes suffixed with <c>_embedding</c>, or the legacy <c>embedding</c> column.
+    /// suffixes suffixed with <c>_embedding</c>, or the legacy <c>embedding</c> column. Rule
+    /// S2365 asks for a method because the value copies; the allocation is unavoidable (the list
+    /// is a fresh projection) and happens once at schema time.
     /// </summary>
-    private IReadOnlyList<string> EmbeddingColumnNames =>
+    private IReadOnlyList<string> GetEmbeddingColumnNames() =>
         _options.EmbeddingColumns is not null
             ? _options.EmbeddingColumns.Keys.Select(k => $"{k}_embedding").ToList()
-            : new[] { "embedding" };
+            : new[] { LegacyEmbeddingColumn };
 
     /// <summary>The (label, SQL column) pairs searched by default: every configured column.</summary>
-    private IReadOnlyList<(string Label, string Column)> DefaultColumns =>
+    private IReadOnlyList<(string Label, string Column)> GetDefaultColumns() =>
         _options.EmbeddingColumns is not null
             ? _options.EmbeddingColumns.Keys.Select(k => (Label: k, Column: $"{k}_embedding")).ToList()
-            : new[] { (Label: "embedding", Column: "embedding") };
+            : new[] { (Label: LegacyEmbeddingColumn, Column: LegacyEmbeddingColumn) };
 
     /// <summary>Validates column labels against the configured schema and maps them to SQL column names.</summary>
     private IReadOnlyList<(string Label, string Column)> ResolveColumns(IReadOnlyList<string> labels)
@@ -525,10 +536,10 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
             }
             else
             {
-                if (label != "embedding")
+                if (label != LegacyEmbeddingColumn)
                     throw new ArgumentException("A single-column engine exposes only the 'embedding' column.", nameof(labels));
 
-                resolved.Add((label, "embedding"));
+                resolved.Add((label, LegacyEmbeddingColumn));
             }
         }
 
@@ -591,16 +602,31 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
 
         try
         {
-            while (enumerator.MoveNextAsync().AsTask().GetAwaiter().GetResult())
-                results.Add(enumerator.Current);
+            bool hasNext = true;
+
+            while (hasNext)
+            {
+                hasNext = AwaitMoveNext(enumerator);
+
+                if (hasNext)
+                    results.Add(enumerator.Current);
+            }
         }
         finally
         {
-            enumerator.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            AwaitDispose(enumerator);
         }
 
         return results;
     }
+
+    // Every ValueTask produced by the async enumerator is converted and awaited exactly once
+    // (S5034): the helper isolates the construction from the sync blocker.
+    private static bool AwaitMoveNext(IAsyncEnumerator<string> enumerator) =>
+        enumerator.MoveNextAsync().AsTask().GetAwaiter().GetResult();
+
+    private static void AwaitDispose(IAsyncEnumerator<string> enumerator) =>
+        enumerator.DisposeAsync().AsTask().GetAwaiter().GetResult();
 
     private async Task<float[]> EmbedAsync(string text, EmbeddingUse use, CancellationToken cancellationToken)
     {

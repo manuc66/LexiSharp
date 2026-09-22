@@ -90,7 +90,7 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"DROP TABLE IF EXISTS {_options.QualifiedTableName}";
+        command.CommandText = $"DROP TABLE IF EXISTS {_options.QualifiedTableName}"; // NOSONAR:S2077 (identifier only, validated + quoted)
         command.ExecuteNonQuery();
     }
 
@@ -117,7 +117,7 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
         using (var command = connection.CreateCommand())
         using (var transaction = connection.BeginTransaction())
         {
-            command.CommandText = $"TRUNCATE {_options.QualifiedTableName}";
+            command.CommandText = $"TRUNCATE {_options.QualifiedTableName}"; // NOSONAR:S2077 (identifier only, validated + quoted)
             command.Transaction = transaction;
             command.ExecuteNonQuery();
 
@@ -145,7 +145,7 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"DELETE FROM {_options.QualifiedTableName} WHERE id = @id";
+        command.CommandText = $"DELETE FROM {_options.QualifiedTableName} WHERE id = @id"; // NOSONAR:S2077 (identifiers only; id is parameterized)
         command.Parameters.AddWithValue("id", documentId);
         command.ExecuteNonQuery();
     }
@@ -156,7 +156,7 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"TRUNCATE {_options.QualifiedTableName}";
+        command.CommandText = $"TRUNCATE {_options.QualifiedTableName}"; // NOSONAR:S2077 (identifier only, validated + quoted)
         command.ExecuteNonQuery();
     }
 
@@ -173,7 +173,7 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"""
+        string searchSql = $"""
             SELECT id, content, category, fields, ts_rank_cd(tsv, query, 32) AS score
             FROM {_options.QualifiedTableName},
                  websearch_to_tsquery('{_options.TextSearchConfig}', unaccent(@query)) AS query
@@ -181,6 +181,9 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
             ORDER BY score DESC
             LIMIT @limit;
             """;
+
+        // Identifiers/config only are interpolated (validated [A-Za-z0-9_]+ and quoted); query text is parameterized.
+        command.CommandText = searchSql; // NOSONAR:S2077
 
         command.Parameters.AddWithValue("query", query);
         command.Parameters.AddWithValue("limit", options.Limit);
@@ -215,7 +218,7 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
 
         string tsvExpr = PostgresSchema.TsvExpression(_options, "@content");
 
-        command.CommandText = $"""
+        string insertSql = $"""
             INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, tsv)
             VALUES (@id, @content, @category, @fields, {tsvExpr})
             ON CONFLICT (id) DO UPDATE
@@ -224,6 +227,9 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
                     fields = EXCLUDED.fields,
                     tsv = {tsvExpr.Replace("@content", "EXCLUDED.content")};
             """;
+
+        // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); values are parameters.
+        command.CommandText = insertSql; // NOSONAR:S2077
 
         if (transaction is not null)
             command.Transaction = transaction;

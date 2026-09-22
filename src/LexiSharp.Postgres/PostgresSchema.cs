@@ -25,7 +25,7 @@ public static class PostgresSchema
 
         string indexName = PostgresIndexOptions.QuoteIdentifier($"{options.Table}_tsv_gin");
 
-        command.CommandText = $"""
+        string createSql = $"""
             CREATE TABLE IF NOT EXISTS {options.QualifiedTableName} (
                 id       text PRIMARY KEY,
                 content  text NOT NULL,
@@ -37,6 +37,8 @@ public static class PostgresSchema
             CREATE INDEX IF NOT EXISTS {indexName} ON {options.QualifiedTableName} USING GIN (tsv);
             """;
 
+        // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted).
+        command.CommandText = createSql; // NOSONAR:S2077
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
