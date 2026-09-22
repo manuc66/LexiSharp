@@ -77,7 +77,7 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
         if (queryTerms.Count == 0 || _index.Count == 0)
             return Array.Empty<SearchResult>();
 
-        var results = new List<SearchResult>(Math.Min(_index.Count, options.Limit * 4));
+        var distinctQueryTerms = DistinctTermList.Wrap(TermDeduplicator.Distinct(queryTerms));
 
         // Convention: a score of exactly 0 means "not a match".
         // When the index can enumerate the documents sharing at least one query term
@@ -87,9 +87,15 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
         var candidateDocuments =
             _index is ICandidateIndex candidateIndex &&
             _scorer is ITermOverlapScorer &&
-            CandidatesCoverFractionOfCorpus(_index, queryTerms) < 0.5
-                ? candidateIndex.GetCandidateDocuments(queryTerms)
+            CandidatesCoverFractionOfCorpus(_index, distinctQueryTerms) < 0.5
+                ? candidateIndex.GetCandidateDocuments(distinctQueryTerms)
                 : _index.Documents;
+
+        // Bounded top-L accumulation, worst-first, reproducing the exact semantics of
+        // OrderByDescending(Score).Take(limit): ties keep their enumeration order. SearchResult
+        // objects are materialized only for the kept entries.
+        var top = new List<(double Score, SearchDocument Document, long Ordinal)>(options.Limit);
+        long ordinal = 0;
 
         foreach (var document in candidateDocuments)
         {
@@ -97,22 +103,69 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
             if (!options.PassesFilters(document))
                 continue;
 
-            double score = _scorer.Score(document.Id, queryTerms, _index);
+            double score = _scorer.Score(document.Id, distinctQueryTerms, _index);
 
-            if (double.IsNaN(score) || double.IsInfinity(score) || score == 0)
+            if (double.IsNaN(score) || double.IsInfinity(score) || score == 0 || score < options.MinimumScore)
                 continue;
 
-            if (score >= options.MinimumScore)
-            {
-                results.Add(new SearchResult(document.Id, score, document));
-            }
+            InsertRanked(top, options.Limit, (score, document, ordinal++));
         }
 
-        return results
-            .OrderByDescending(x => x.Score)
-            .Take(options.Limit)
-            .ToList();
+        var results = new SearchResult[top.Count];
+
+        for (int i = 0; i < results.Length; i++)
+        {
+            var entry = top[top.Count - 1 - i];
+            results[i] = new SearchResult(entry.Document.Id, entry.Score, entry.Document);
+        }
+
+        return results;
     }
+
+    /// <summary>
+    /// Inserts an entry into the worst-first top-L list, dropping the current worst when full.
+    /// An entry ranks above another when its score is higher, or its score is equal and it was
+    /// enumerated earlier — byte-for-byte the behavior of the stable descending sort.
+    /// </summary>
+    private static void InsertRanked(
+        List<(double Score, SearchDocument Document, long Ordinal)> top,
+        int limit,
+        (double Score, SearchDocument Document, long Ordinal) entry)
+    {
+        if (top.Count < limit)
+        {
+            top.Add(entry);
+
+            for (int j = top.Count - 1; j > 0; j--)
+            {
+                if (IsRankedAscending(top[j - 1], top[j]))
+                    break;
+
+                (top[j - 1], top[j]) = (top[j], top[j - 1]);
+            }
+
+            return;
+        }
+
+        if (IsRankedAscending(entry, top[0]))
+            return;
+
+        top[0] = entry;
+
+        for (int j = 0; j < top.Count - 1; j++)
+        {
+            if (IsRankedAscending(top[j], top[j + 1]))
+                break;
+
+            (top[j], top[j + 1]) = (top[j + 1], top[j]);
+        }
+    }
+
+    /// <summary>Whether <paramref name="lower"/> may sit before <paramref name="higher"/> in the worst-first list.</summary>
+    private static bool IsRankedAscending(
+        (double Score, SearchDocument Document, long Ordinal) lower,
+        (double Score, SearchDocument Document, long Ordinal) higher)
+        => lower.Score < higher.Score || (lower.Score == higher.Score && lower.Ordinal > higher.Ordinal);
 
     /// <summary>
     /// Explains why a document received the score it did for a query, by delegating to the

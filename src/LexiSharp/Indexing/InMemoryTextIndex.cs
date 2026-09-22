@@ -197,6 +197,22 @@ public sealed class InMemoryTextIndex : ITextIndex, ICandidateIndex
         if (terms.Count == 0 || _postings.Count == 0)
             yield break;
 
+        // A single term enumerates in document-insertion order, which is exactly the corpus
+        // order — no candidate set needed, indistinguishable from a full scan.
+        if (terms.Count == 1)
+        {
+            if (_postings.TryGetValue(terms[0], out var postings) && postings.Count > 0)
+            {
+                foreach (var documentId in postings.Keys)
+                {
+                    if (_documents.TryGetValue(documentId, out var document))
+                        yield return document;
+                }
+            }
+
+            yield break;
+        }
+
         var candidates = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var term in terms)

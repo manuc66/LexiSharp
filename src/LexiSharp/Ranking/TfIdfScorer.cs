@@ -29,7 +29,7 @@ public sealed class TfIdfScorer : ITextScorer, ITermOverlapScorer
 
         double score = 0;
 
-        foreach (var term in TermDeduplicator.Distinct(queryTerms))
+        foreach (var term in queryTerms is DistinctTermList ? queryTerms : TermDeduplicator.Distinct(queryTerms))
         {
             int tf = index.TermFrequency(documentId, term);
 

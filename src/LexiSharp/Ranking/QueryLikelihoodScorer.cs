@@ -45,7 +45,7 @@ public sealed class QueryLikelihoodScorer : ITextScorer, ITermOverlapScorer
         double score = 0;
         bool sharesTerm = false;
 
-        foreach (var term in TermDeduplicator.Distinct(queryTerms))
+        foreach (var term in queryTerms is DistinctTermList ? queryTerms : TermDeduplicator.Distinct(queryTerms))
         {
             int tf = index.TermFrequency(documentId, term);
             int cf = index.CorpusFrequency(term);
