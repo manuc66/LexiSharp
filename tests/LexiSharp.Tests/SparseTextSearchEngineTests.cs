@@ -83,6 +83,21 @@ public class SparseTextSearchEngineTests
     }
 
     [Fact]
+    public void Search_Offset_SkipsTopResults()
+    {
+        var engine = EngineOfSnapshot();
+
+        var all = engine.Search("q-cat", new SearchOptions(Limit: 10));
+        Assert.Equal(C2C1Ids, all.Select(r => r.DocumentId).ToArray());
+
+        var page = engine.Search("q-cat", new SearchOptions(Limit: 1, Offset: 1));
+        Assert.Single(page, r => r.DocumentId == "c1");
+
+        Assert.Empty(engine.Search("q-cat", new SearchOptions(Limit: 1, Offset: 5)));
+        Assert.Empty(engine.Search("q-cat", new SearchOptions(Limit: 1, Offset: -1)));
+    }
+
+    [Fact]
     public void Search_RespectsMinimumScore()
     {
         var engine = EngineOfSnapshot();

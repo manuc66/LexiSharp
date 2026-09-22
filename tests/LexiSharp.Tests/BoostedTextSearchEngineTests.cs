@@ -230,6 +230,44 @@ public class BoostedTextSearchEngineTests
     }
 
     [Fact]
+    public void Search_Offset_SkipsTheBoostedRanking()
+    {
+        var inner = new StubEngine { Results = Ranked(6).ToList() };
+        var boosted = new BoostedTextSearchEngine(inner, r => 1.0);
+
+        var all = boosted.Search("query", new SearchOptions(Limit: 10));
+        Assert.Equal(6, all.Count);
+
+        var page = boosted.Search("query", new SearchOptions(Limit: 2, Offset: 2));
+
+        Assert.Equal(
+            all.Skip(2).Take(2).Select(r => r.DocumentId),
+            page.Select(r => r.DocumentId));
+
+        Assert.Empty(boosted.Search("query", new SearchOptions(Limit: 2, Offset: 6)));
+        Assert.Empty(boosted.Search("query", new SearchOptions(Limit: 2, Offset: -1)));
+    }
+
+    [Fact]
+    public void Search_Offset_StillLetsDeepBoostReachThePage()
+    {
+        // Tight pool (maxCandidates = 2): the inner fetch must cover the skipped prefix too —
+        // Offset(3) + max(Limit, maxCandidates) = 5 candidates — so raw #5 (d5) is fetched and
+        // its boost can land it exactly on the page [3, 4). A pool of max(Limit, maxCandidates)
+        // alone (2 candidates) would leave the page empty.
+        var inner = new StubEngine { Results = Ranked(12).ToList() };
+        var boosted = new BoostedTextSearchEngine(
+            inner,
+            r => r.DocumentId == "d5" ? 1.1875 : 1.0, // 8 * 1.1875 = 9.5 → rank 3, between d3 (10) and d4 (9)
+            maxCandidates: 2);
+
+        var results = boosted.Search("query", new SearchOptions(Limit: 1, Offset: 3));
+
+        var hit = Assert.Single(results);
+        Assert.Equal("d5", hit.DocumentId);
+    }
+
+    [Fact]
     public void Search_LimitZero_DoesNotReachInnerEngine()
     {
         var inner = new StubEngine();

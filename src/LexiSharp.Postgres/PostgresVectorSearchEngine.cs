@@ -400,7 +400,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
     {
         options ??= SearchOptions.Default;
 
-        if (options.Limit <= 0 || string.IsNullOrWhiteSpace(query) || columns.Count == 0)
+        if (options.IsEmpty || string.IsNullOrWhiteSpace(query) || columns.Count == 0)
             return SearchOutcome.Empty;
 
         float[] queryVector = await EmbedAsync(query, EmbeddingUse.Query, cancellationToken).ConfigureAwait(false);
@@ -409,10 +409,11 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         // Multi-column searches need enough ANN candidates per column for the OR-fusion to be
         // meaningful: ramp the per-column LIMIT up so a column's noise does not starve the merge,
         // and keep it below/at the HNSW ef_search when one is configured (an ANN scan only ever
-        // yields ef_search rows).
+        // yields ef_search rows). The window (Offset + Limit) is always covered so the final
+        // Skip/Take can cut any page of the merged ranking.
         int candidateLimit = columns.Count == 1
-            ? options.Limit
-            : Math.Max(options.Limit, Math.Max(40, _options.HnswEfSearch ?? 0));
+            ? options.Window
+            : Math.Max(options.Window, Math.Max(40, _options.HnswEfSearch ?? 0));
 
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
@@ -486,6 +487,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         var results = bestScores
             .Where(x => x.Value >= options.MinimumScore)
             .OrderByDescending(x => x.Value)
+            .Skip(options.Offset)
             .Take(options.Limit)
             .Select(x => new SearchResult(x.Key, x.Value, documents[x.Key]))
             .ToList();

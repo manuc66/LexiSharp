@@ -69,7 +69,7 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
 
         options ??= SearchOptions.Default;
 
-        if (options.Limit <= 0)
+        if (options.IsEmpty)
             return Array.Empty<SearchResult>();
 
         var queryTerms = _tokenizer.Tokenize(query);
@@ -97,10 +97,11 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
                 ? candidateIndex.GetCandidateDocuments(distinctQueryTerms)
                 : _index.Documents;
 
-        // Bounded top-L accumulation, worst-first, reproducing the exact semantics of
-        // OrderByDescending(Score).Take(limit): ties keep their enumeration order. SearchResult
-        // objects are materialized only for the kept entries.
-        var top = new List<(double Score, SearchDocument Document, long Ordinal)>(options.Limit);
+        // Bounded top-Window accumulation, worst-first, reproducing the exact semantics of
+        // OrderByDescending(Score).Skip(offset).Take(limit): ties keep their enumeration order.
+        // SearchResult objects are materialized only for the kept entries.
+        int window = options.Window;
+        var top = new List<(double Score, SearchDocument Document, long Ordinal)>(Math.Min(window, 1024));
         long ordinal = 0;
 
         foreach (var document in candidateDocuments)
@@ -116,14 +117,18 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
             if (double.IsNaN(score) || double.IsInfinity(score) || score == 0 || score < options.MinimumScore)
                 continue;
 
-            InsertRanked(top, options.Limit, (score, document, ordinal++));
+            InsertRanked(top, window, (score, document, ordinal++));
         }
 
-        var results = new SearchResult[top.Count];
+        // The accumulated window holds at most Offset + Limit entries; skip the Offset prefix
+        // of the best-first view to cut the requested page.
+        int skip = Math.Min(options.Offset, top.Count);
+        int count = top.Count - skip;
+        var results = new SearchResult[count];
 
-        for (int i = 0; i < results.Length; i++)
+        for (int i = 0; i < count; i++)
         {
-            var entry = top[top.Count - 1 - i];
+            var entry = top[top.Count - 1 - (skip + i)];
             results[i] = new SearchResult(entry.Document.Id, entry.Score, entry.Document);
         }
 

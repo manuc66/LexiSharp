@@ -190,7 +190,7 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine
 
         options ??= SearchOptions.Default;
 
-        if (options.Limit <= 0 || string.IsNullOrWhiteSpace(query) || _documents.Count == 0)
+        if (options.IsEmpty || string.IsNullOrWhiteSpace(query) || _documents.Count == 0)
             return Array.Empty<SearchResult>();
 
         var queryVector = await _embeddings
@@ -238,6 +238,7 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine
         return results
             .OrderByDescending(x => x.Score)
             .ThenBy(x => x.DocumentId, StringComparer.Ordinal)
+            .Skip(options.Offset)
             .Take(options.Limit)
             .ToList();
     }

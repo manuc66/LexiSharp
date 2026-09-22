@@ -226,6 +226,38 @@ public class PostgresFuzzySearchEngineTests
     }
 
     [SkippableFact]
+    public void Search_Offset_PaginatesTheRanking()
+    {
+        Run(engine =>
+        {
+            // Every document shares trigrams with the query (all keep positive scores); the
+            // Nearest mode's `id ASC` tiebreak makes the ordering stable across requests.
+            engine.Add(Doc("a", "classic"));
+            engine.Add(Doc("b", "classics"));
+            engine.Add(Doc("c", "classical"));
+            engine.Add(Doc("d", "classical music"));
+            engine.Add(Doc("e", "classical music pieces"));
+
+            var all = engine.Search("classic", new SearchOptions(Limit: 10));
+            Assert.Equal(5, all.Count);
+
+            var page1 = engine.Search("classic", new SearchOptions(Limit: 2, Offset: 0));
+            var page2 = engine.Search("classic", new SearchOptions(Limit: 2, Offset: 2));
+            var page3 = engine.Search("classic", new SearchOptions(Limit: 2, Offset: 4));
+
+            Assert.Equal(2, page1.Count);
+            Assert.Equal(2, page2.Count);
+            Assert.Single(page3);
+            Assert.Equal(
+                all.Select(r => r.DocumentId),
+                page1.Concat(page2).Concat(page3).Select(r => r.DocumentId));
+
+            Assert.Empty(engine.Search("classic", new SearchOptions(Limit: 2, Offset: 5)));
+            Assert.Empty(engine.Search("classic", new SearchOptions(Limit: 2, Offset: -1)));
+        });
+    }
+
+    [SkippableFact]
     public void RemoveAndClear_AreReflectedInSearch()
     {
         Run(engine =>

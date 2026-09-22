@@ -171,7 +171,7 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
 
         options ??= SearchOptions.Default;
 
-        if (options.Limit <= 0 || string.IsNullOrWhiteSpace(query))
+        if (options.IsEmpty || string.IsNullOrWhiteSpace(query))
             return Array.Empty<SearchResult>();
 
         using var connection = _dataSource.OpenConnection();
@@ -189,7 +189,10 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
         command.CommandText = searchSql; // NOSONAR:S2077
 
         command.Parameters.AddWithValue("query", query);
-        command.Parameters.AddWithValue("limit", options.Limit);
+
+        // Fetch the whole window (Offset + Limit): score-based drops below happen in C# after
+        // the ordered prefix is read, then Skip/Take cuts the requested page.
+        command.Parameters.AddWithValue("limit", options.Window);
 
         var results = new List<SearchResult>();
 
@@ -209,7 +212,7 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
             results.Add(new SearchResult(document.Id, score, document));
         }
 
-        return results;
+        return results.Skip(options.Offset).Take(options.Limit).ToList();
     }
 
     /// <summary>Releases the underlying Npgsql data source.</summary>

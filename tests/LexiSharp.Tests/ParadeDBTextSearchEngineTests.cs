@@ -198,6 +198,44 @@ public class ParadeDBTextSearchEngineTests
     }
 
     [SkippableFact]
+    public void Search_Offset_PaginatesTheRanking()
+    {
+        SkipIfUnavailable();
+
+        using var engine = NewEngine();
+
+        try
+        {
+            engine.Add(Doc("dense", "fox fox fox"));
+            engine.Add(Doc("scarce", "the fox"));
+            engine.Add(Doc("single", "the quick brown fox"));
+            engine.Add(Doc("more", "the quick brown fox jumps"));
+            engine.Add(Doc("most", "the quick brown fox jumps over"));
+
+            var all = engine.Search("fox", new SearchOptions(Limit: 10));
+            Assert.Equal(5, all.Count);
+
+            var page1 = engine.Search("fox", new SearchOptions(Limit: 2, Offset: 0));
+            var page2 = engine.Search("fox", new SearchOptions(Limit: 2, Offset: 2));
+            var page3 = engine.Search("fox", new SearchOptions(Limit: 2, Offset: 4));
+
+            Assert.Equal(2, page1.Count);
+            Assert.Equal(2, page2.Count);
+            Assert.Single(page3);
+            Assert.Equal(
+                all.Select(r => r.DocumentId),
+                page1.Concat(page2).Concat(page3).Select(r => r.DocumentId));
+
+            Assert.Empty(engine.Search("fox", new SearchOptions(Limit: 2, Offset: 5)));
+            Assert.Empty(engine.Search("fox", new SearchOptions(Limit: 2, Offset: -1)));
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    [SkippableFact]
     public void Remove_And_Clear_DeleteDocuments()
     {
         SkipIfUnavailable();
