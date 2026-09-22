@@ -71,9 +71,28 @@ public sealed record PostgresVectorOptions
     /// <summary>
     /// Name of the <see cref="Core.SearchDocument.TextFields"/> entry that should be embedded in
     /// place of <see cref="Core.SearchDocument.Text"/>. When null (default), the whole
-    /// <see cref="Core.SearchDocument.Text"/> is embedded.
+    /// <see cref="Core.SearchDocument.Text"/> is embedded. Mutually exclusive with
+    /// <see cref="EmbeddingColumns"/>.
     /// </summary>
     public string? EmbeddingTextField { get; init; }
+
+    /// <summary>
+    /// Multiple named embedding columns, mapping a column suffix to the
+    /// <see cref="Core.SearchDocument.TextFields"/> entry it embeds (falling back to
+    /// <see cref="Core.SearchDocument.Text"/> when the entry is absent). Each column gets its own
+    /// <c>&lt;suffix&gt;_embedding vector(D)</c> column and ANN index on the shared table, so one
+    /// document row can carry several independent embeddings — e.g.
+    /// <c>{ "title" =&gt; "title", "description" =&gt; "description" }</c> for a Jira-like
+    /// title/description split. A search can then target a subset of columns
+    /// (<see cref="PostgresVectorSearchEngine.SearchWithColumns"/>) or all of them, merging by the
+    /// best per-column similarity and exposing each column's contribution through
+    /// <see cref="Core.IDetailedSearchEngine"/>.
+    /// <para>
+    /// When null (default), the legacy single <c>embedding</c> column is used instead. Mutually
+    /// exclusive with <see cref="EmbeddingTextField"/>.
+    /// </para>
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? EmbeddingColumns { get; init; }
 
     /// <summary>
     /// When true (default), the constructor installs the <c>vector</c> extension, the documents
@@ -84,7 +103,15 @@ public sealed record PostgresVectorOptions
     internal bool IsValid =>
         SafeName.IsMatch(Schema) && SafeName.IsMatch(Table)
         && Dimension > 0 && HnswM > 0 && HnswEfConstruction > 0 && IvfLists > 0
-        && (HnswEfSearch is null || HnswEfSearch > 0);
+        && (HnswEfSearch is null || HnswEfSearch > 0)
+        && !IsMixedEmbeddingConfiguration
+        && (EmbeddingColumns is null || EmbeddingColumns.Count > 0)
+        && (EmbeddingColumns?.All(column => SafeName.IsMatch(column.Key) && column.Value.Length > 0) ?? true);
+
+    /// <summary><see cref="EmbeddingTextField"/> and <see cref="EmbeddingColumns"/> are two
+    /// mutually exclusive ways to source the embedded text; configuring both is a programming error.</summary>
+    internal bool IsMixedEmbeddingConfiguration =>
+        EmbeddingTextField is not null && EmbeddingColumns is not null;
 
     /// <summary>Fully qualified table name, e.g. <c>public.lexisharp_documents</c>.</summary>
     public string QualifiedTableName => $"{PostgresIndexOptions.QuoteIdentifier(Schema)}.{PostgresIndexOptions.QuoteIdentifier(Table)}";

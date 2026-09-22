@@ -29,7 +29,7 @@ namespace LexiSharp.Postgres;
 /// <see cref="AddAsync"/> and <see cref="SearchAsync"/> overloads.
 /// </para>
 /// </remarks>
-public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IListableSearchEngine, IDisposable
+public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSearchEngine, IListableSearchEngine, IDisposable
 {
     private readonly NpgsqlDataSource _dataSource;
     private readonly IEmbeddingProvider _embeddings;
@@ -98,10 +98,13 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IListableSea
 
         await PostgresSchema.CreateDocumentTableAsync(connection, baseOptions, cancellationToken).ConfigureAwait(false);
 
-        await using (var command = connection.CreateCommand())
+        foreach (string column in EmbeddingColumnNames)
         {
-            command.CommandText = $"ALTER TABLE {_options.QualifiedTableName} ADD COLUMN IF NOT EXISTS embedding {_options.VectorType};";
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = $"ALTER TABLE {_options.QualifiedTableName} ADD COLUMN IF NOT EXISTS {Quote(column)} {_options.VectorType};";
+                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
 
         await using (var command = connection.CreateCommand())
@@ -126,17 +129,26 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IListableSea
                 return;
         }
 
-        await CreateIndexAsync(connection, cancellationToken).ConfigureAwait(false);
+        foreach (string column in EmbeddingColumnNames)
+        {
+            // CTAS/index name derived from the column: embedding -> {table}_embedding_hnsw
+            // (legacy single column keeps its historical name), title_embedding -> {table}_title_embedding_hnsw.
+            string indexBase = column == "embedding"
+                ? $"{_options.Table}_embedding"
+                : $"{_options.Table}_{column}";
+            await CreateIndexAsync(connection, column, indexBase, cancellationToken).ConfigureAwait(false);
+        }
+
         _schemaReady = true;
     }
 
-    private async Task CreateIndexAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
+    private async Task CreateIndexAsync(NpgsqlConnection connection, string column, string indexBase, CancellationToken cancellationToken)
     {
-        var indexName = PostgresIndexOptions.QuoteIdentifier($"{_options.Table}_embedding_{_options.IndexMethod.ToString().ToLowerInvariant()}");
+        var indexName = PostgresIndexOptions.QuoteIdentifier($"{indexBase}_{_options.IndexMethod.ToString().ToLowerInvariant()}");
 
         string build = _options.IndexMethod == VectorIndexMethod.Hnsw
-            ? $"USING hnsw (embedding {_options.OpClass}) WITH (m = {_options.HnswM}, ef_construction = {_options.HnswEfConstruction})"
-            : $"USING ivfflat (embedding {_options.OpClass}) WITH (lists = {_options.IvfLists})";
+            ? $"USING hnsw ({Quote(column)} {_options.OpClass}) WITH (m = {_options.HnswM}, ef_construction = {_options.HnswEfConstruction})"
+            : $"USING ivfflat ({Quote(column)} {_options.OpClass}) WITH (lists = {_options.IvfLists})";
 
         await using var command = connection.CreateCommand();
         command.CommandText = $"CREATE INDEX IF NOT EXISTS {indexName} ON {_options.QualifiedTableName} {build}";
@@ -203,30 +215,83 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IListableSea
     {
         ArgumentNullException.ThrowIfNull(document);
 
-        float[] embedding = await EmbedAsync(EmbeddingText(document), EmbeddingUse.Passage, cancellationToken).ConfigureAwait(false);
+        var sources = _options.EmbeddingColumns;
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        if (sources is null)
+        {
+            float[] embedding = await EmbedAsync(
+                EmbeddingSource(document, _options.EmbeddingTextField),
+                EmbeddingUse.Passage, cancellationToken).ConfigureAwait(false);
 
-        await using var command = connection.CreateCommand();
+            await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
 
-        string tsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content");
+            string tsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content");
 
-        command.CommandText = $"""
-            INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, embedding)
-            VALUES (@id, @content, @category, @fields, @text_fields, @embedding::vector)
+            command.CommandText = $"""
+                INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, embedding)
+                VALUES (@id, @content, @category, @fields, @text_fields, @embedding::vector)
+                ON CONFLICT (id) DO UPDATE
+                    SET content = EXCLUDED.content,
+                        category = EXCLUDED.category,
+                        fields = EXCLUDED.fields,
+                        text_fields = EXCLUDED.text_fields,
+                        embedding = EXCLUDED.embedding,
+                        tsv = {tsvExpr};
+                """;
+
+            AddCommonParameters(command, document);
+            command.Parameters.AddWithValue("embedding", VectorText.Format(embedding));
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        // One embedding per configured column, each sourced from its own TextFields entry.
+        var columns = sources.Keys.ToList();
+        var embeddings = new float[sources.Count][];
+
+        for (int i = 0; i < sources.Count; i++)
+        {
+            embeddings[i] = await EmbedAsync(
+                EmbeddingSource(document, sources[columns[i]]),
+                EmbeddingUse.Passage, cancellationToken).ConfigureAwait(false);
+        }
+
+        await using var multiConnection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        await using var multiCommand = multiConnection.CreateCommand();
+
+        string columnList = string.Join(", ", columns.Select(c => Quote($"{c}_embedding")));
+        string parameterList = string.Join(", ", columns.Select((_, i) => $"@e{i}::vector"));
+        string updateList = string.Join(", ",
+            columns.Select(c => $"{Quote($"{c}_embedding")} = EXCLUDED.{Quote($"{c}_embedding")}"));
+
+        string multiTsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content");
+
+        multiCommand.CommandText = $"""
+            INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, {columnList})
+            VALUES (@id, @content, @category, @fields, @text_fields, {parameterList})
             ON CONFLICT (id) DO UPDATE
                 SET content = EXCLUDED.content,
                     category = EXCLUDED.category,
                     fields = EXCLUDED.fields,
                     text_fields = EXCLUDED.text_fields,
-                    embedding = EXCLUDED.embedding,
-                    tsv = {tsvExpr};
+                    {updateList},
+                    tsv = {multiTsvExpr};
             """;
 
+        AddCommonParameters(multiCommand, document);
+
+        for (int i = 0; i < columns.Count; i++)
+            multiCommand.Parameters.AddWithValue($"e{i}", VectorText.Format(embeddings[i]));
+
+        await multiCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static void AddCommonParameters(NpgsqlCommand command, SearchDocument document)
+    {
         command.Parameters.AddWithValue("id", document.Id);
         command.Parameters.AddWithValue("content", document.Text);
         command.Parameters.AddWithValue("category", (object?)document.Category ?? DBNull.Value);
-        command.Parameters.AddWithValue("embedding", VectorText.Format(embedding));
 
         if (document.TextFields is not null)
         {
@@ -249,8 +314,6 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IListableSea
         {
             command.Parameters.AddWithValue("fields", DBNull.Value);
         }
-
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -267,16 +330,83 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IListableSea
     public async Task<IReadOnlyList<SearchResult>> SearchAsync(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
+        return (await SearchCoreAsync(query, DefaultColumns, options, cancellationToken).ConfigureAwait(false))
+            .Results;
+    }
 
+    /// <summary>
+    /// Searches only the given embedding columns (labels from
+    /// <see cref="PostgresVectorOptions.EmbeddingColumns"/>, or <c>"embedding"</c> on the legacy
+    /// single-column engine). Documents are ranked by their best similarity across the selected
+    /// columns — the same OR-fusion a caller feeding candidate sets to a local rerank expects.
+    /// </summary>
+    public async Task<IReadOnlyList<SearchResult>> SearchWithColumnsAsync(
+        string query,
+        IReadOnlyList<string> columns,
+        SearchOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(columns);
+
+        return (await SearchCoreAsync(query, ResolveColumns(columns), options, cancellationToken).ConfigureAwait(false))
+            .Results;
+    }
+
+    /// <inheritdoc cref="SearchWithColumnsAsync"/>
+    public IReadOnlyList<SearchResult> SearchWithColumns(
+        string query,
+        IReadOnlyList<string> columns,
+        SearchOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        return SearchWithColumnsAsync(query, columns, options).GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// Same search as <see cref="SearchAsync"/>, but every result also carries the per-embedding-column
+    /// similarity it achieved (<see cref="DetailedSearchResult.Contributions"/>, keyed by the column
+    /// label) alongside the merged best-column score. Part of the opt-in
+    /// <see cref="IDetailedSearchEngine"/> capability; on the legacy single-column engine the single
+    /// contribution is keyed <c>"embedding"</c>. Search and details always agree on the ordering.
+    /// </summary>
+    public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        var outcome = SearchCoreAsync(query, DefaultColumns, options, CancellationToken.None).GetAwaiter().GetResult();
+
+        return outcome.Results
+            .Select(x => new DetailedSearchResult(
+                x.DocumentId,
+                x.Score,
+                x.Document,
+                outcome.Contributions.GetValueOrDefault(x.DocumentId)
+                    ?? new Dictionary<string, double>()))
+            .ToList();
+    }
+
+    private async Task<SearchOutcome> SearchCoreAsync(
+        string query,
+        IReadOnlyList<(string Label, string Column)> columns,
+        SearchOptions? options,
+        CancellationToken cancellationToken)
+    {
         options ??= SearchOptions.Default;
 
-        if (options.Limit <= 0 || string.IsNullOrWhiteSpace(query))
-            return Array.Empty<SearchResult>();
+        if (options.Limit <= 0 || string.IsNullOrWhiteSpace(query) || columns.Count == 0)
+            return SearchOutcome.Empty;
 
         float[] queryVector = await EmbedAsync(query, EmbeddingUse.Query, cancellationToken).ConfigureAwait(false);
         string serialized = VectorText.Format(queryVector);
 
-        string scoreExpression = ScoreExpression();
+        // Multi-column searches need enough ANN candidates per column for the OR-fusion to be
+        // meaningful: ramp the per-column LIMIT up so a column's noise does not starve the merge,
+        // and keep it below/at the HNSW ef_search when one is configured (an ANN scan only ever
+        // yields ef_search rows).
+        int candidateLimit = columns.Count == 1
+            ? options.Limit
+            : Math.Max(options.Limit, Math.Max(40, _options.HnswEfSearch ?? 0));
 
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
@@ -294,48 +424,116 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IListableSea
             }
         }
 
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = $"""
-            SELECT id, content, category, fields, text_fields, {scoreExpression} AS score
-            FROM {_options.QualifiedTableName}
-            WHERE embedding IS NOT NULL
-            ORDER BY embedding {_options.Operator} @query::vector
-            LIMIT @limit;
-            """;
+        var contributions = new Dictionary<string, Dictionary<string, double>>(StringComparer.Ordinal);
+        var bestScores = new Dictionary<string, double>(StringComparer.Ordinal);
+        var documents = new Dictionary<string, SearchDocument>(StringComparer.Ordinal);
 
-        command.Parameters.AddWithValue("query", serialized);
-        command.Parameters.AddWithValue("limit", options.Limit);
-
-        var results = new List<SearchResult>();
-
-        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        foreach ((string label, string column) in columns)
         {
-            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = $"""
+                SELECT id, content, category, fields, text_fields, {ScoreExpression(column)} AS score
+                FROM {_options.QualifiedTableName}
+                WHERE {Quote(column)} IS NOT NULL
+                ORDER BY {Quote(column)} {_options.Operator} @query::vector
+                LIMIT @limit;
+                """;
+
+            command.Parameters.AddWithValue("query", serialized);
+            command.Parameters.AddWithValue("limit", candidateLimit);
+
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
             {
-                double score = reader.GetDouble(5);
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    double score = reader.GetDouble(5);
 
-                if (double.IsNaN(score) || double.IsInfinity(score) || score == 0)
-                    continue;
+                    if (double.IsNaN(score) || double.IsInfinity(score) || score == 0)
+                        continue;
 
-                if (score < options.MinimumScore)
-                    continue;
+                    var document = ReadDocument(reader);
 
-                var document = ReadDocument(reader);
-                results.Add(new SearchResult(document.Id, score, document));
+                    if (!contributions.TryGetValue(document.Id, out var sources))
+                    {
+                        sources = new Dictionary<string, double>(StringComparer.Ordinal);
+                        contributions[document.Id] = sources;
+                    }
+
+                    sources[label] = score;
+
+                    if (!bestScores.TryGetValue(document.Id, out double best) || score > best)
+                    {
+                        bestScores[document.Id] = score;
+                        documents[document.Id] = document;
+                    }
+                }
             }
         }
 
         if (transaction is not null)
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
-        return results;
+        var results = bestScores
+            .Where(x => x.Value >= options.MinimumScore)
+            .OrderByDescending(x => x.Value)
+            .Take(options.Limit)
+            .Select(x => new SearchResult(x.Key, x.Value, documents[x.Key]))
+            .ToList();
+
+        return new SearchOutcome(results, contributions);
     }
 
     /// <summary>Releases the underlying Npgsql data source.</summary>
     public void Dispose() => _dataSource.Dispose();
 
     internal string TestTableName => _options.Table;
+
+    /// <summary>
+    /// SQL embedding column names: configured <see cref="PostgresVectorOptions.EmbeddingColumns"/>
+    /// suffixes suffixed with <c>_embedding</c>, or the legacy <c>embedding</c> column.
+    /// </summary>
+    private IReadOnlyList<string> EmbeddingColumnNames =>
+        _options.EmbeddingColumns is not null
+            ? _options.EmbeddingColumns.Keys.Select(k => $"{k}_embedding").ToList()
+            : new[] { "embedding" };
+
+    /// <summary>The (label, SQL column) pairs searched by default: every configured column.</summary>
+    private IReadOnlyList<(string Label, string Column)> DefaultColumns =>
+        _options.EmbeddingColumns is not null
+            ? _options.EmbeddingColumns.Keys.Select(k => (Label: k, Column: $"{k}_embedding")).ToList()
+            : new[] { (Label: "embedding", Column: "embedding") };
+
+    /// <summary>Validates column labels against the configured schema and maps them to SQL column names.</summary>
+    private IReadOnlyList<(string Label, string Column)> ResolveColumns(IReadOnlyList<string> labels)
+    {
+        if (labels.Count == 0)
+            throw new ArgumentException("At least one embedding column must be selected.", nameof(labels));
+
+        var resolved = new List<(string Label, string Column)>(labels.Count);
+
+        foreach (string label in labels)
+        {
+            if (_options.EmbeddingColumns is not null)
+            {
+                if (!_options.EmbeddingColumns.ContainsKey(label))
+                    throw new ArgumentException(
+                        $"Unknown embedding column '{label}'. Configured columns: {string.Join(", ", _options.EmbeddingColumns.Keys)}.",
+                        nameof(labels));
+
+                resolved.Add((label, $"{label}_embedding"));
+            }
+            else
+            {
+                if (label != "embedding")
+                    throw new ArgumentException("A single-column engine exposes only the 'embedding' column.", nameof(labels));
+
+                resolved.Add((label, "embedding"));
+            }
+        }
+
+        return resolved;
+    }
 
     /// <inheritdoc />
     public async IAsyncEnumerable<string> ListDocumentIdsAsync(
@@ -417,27 +615,46 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IListableSea
     }
 
     /// <summary>
-    /// The text that gets embedded for a document: the configured <see cref="PostgresVectorOptions.EmbeddingTextField"/>
-    /// entry when it exists, otherwise the plain <see cref="SearchDocument.Text"/>. <see cref="SearchDocument.Text"/> is
-    /// still what lands in the <c>content</c> column (and thus the lexical <c>tsv</c>), so both engines stay consistent.
+    /// The text that gets embedded for a field: the named <see cref="SearchDocument.TextFields"/>
+    /// entry when it exists, otherwise the plain <see cref="SearchDocument.Text"/>. For the legacy
+    /// single column, <paramref name="textFieldKey"/> is <see cref="PostgresVectorOptions.EmbeddingTextField"/>.
+    /// <see cref="SearchDocument.Text"/> is always what lands in the <c>content</c> column (and
+    /// thus the lexical <c>tsv</c>), so both engines stay consistent whatever the embedding source.
     /// </summary>
-    private string EmbeddingText(SearchDocument document)
+    private static string EmbeddingSource(SearchDocument document, string? textFieldKey)
     {
-        string? text = document.TextFields is not null
-            && _options.EmbeddingTextField is string fieldName
-            && document.TextFields.TryGetValue(fieldName, out string? fieldValue)
-                ? fieldValue
-                : null;
+        if (textFieldKey is not null
+            && document.TextFields is not null
+            && document.TextFields.TryGetValue(textFieldKey, out string? fieldValue))
+        {
+            return fieldValue;
+        }
 
-        return text ?? document.Text;
+        return document.Text;
     }
 
-    private string ScoreExpression() => _options.Distance switch
+    private string ScoreExpression(string column)
     {
-        VectorDistance.L2 => "1 / (1 + (embedding <-> @query::vector))",
-        VectorDistance.InnerProduct => "- (embedding <#> @query::vector)",
-        _ => "1 - (embedding <=> @query::vector)",
-    };
+        string quoted = Quote(column);
+
+        return _options.Distance switch
+        {
+            VectorDistance.L2 => $"1 / (1 + ({quoted} <-> @query::vector))",
+            VectorDistance.InnerProduct => $"- ({quoted} <#> @query::vector)",
+            _ => $"1 - ({quoted} <=> @query::vector)",
+        };
+    }
+
+    private static string Quote(string identifier) => PostgresIndexOptions.QuoteIdentifier(identifier);
+
+    private sealed record SearchOutcome(
+        IReadOnlyList<SearchResult> Results,
+        IReadOnlyDictionary<string, Dictionary<string, double>> Contributions)
+    {
+        public static readonly SearchOutcome Empty = new(
+            Array.Empty<SearchResult>(),
+            new Dictionary<string, Dictionary<string, double>>());
+    }
 
     private static SearchDocument ReadDocument(NpgsqlDataReader reader)
     {
