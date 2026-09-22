@@ -434,15 +434,18 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         var contributions = new Dictionary<string, Dictionary<string, double>>(StringComparer.Ordinal);
         var bestScores = new Dictionary<string, double>(StringComparer.Ordinal);
         var documents = new Dictionary<string, SearchDocument>(StringComparer.Ordinal);
+        var filters = PostgresMetadataFilterSql.Build(options.Filters);
 
         foreach ((string label, string column) in columns)
         {
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
+            filters.Apply(command);
+
             string searchSql = $"""
                 SELECT id, content, category, fields, text_fields, {ScoreExpression(column)} AS score
                 FROM {_options.QualifiedTableName}
-                WHERE {Quote(column)} IS NOT NULL
+                WHERE {Quote(column)} IS NOT NULL{filters.Fragment}
                 ORDER BY {Quote(column)} {_options.Operator} @query::vector
                 LIMIT @limit;
                 """;

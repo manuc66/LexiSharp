@@ -177,6 +177,9 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
 
         using var command = connection.CreateCommand();
 
+        var filters = PostgresMetadataFilterSql.Build(options.Filters);
+        filters.Apply(command);
+
         // Mixed queries honor the same contract as the stock engine: quoted segments are a hard
         // corpus gate (each phrase must appear, AND-ed) while the free terms only contribute to
         // scoring. Gating on the whole query (websearch_to_tsquery) would wrongly require the
@@ -219,7 +222,7 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
         string searchSql = $"""
             SELECT id, content, category, fields, ts_rank_cd(tsv, {rankExpression}) AS score
             FROM {_options.QualifiedTableName}
-            WHERE ({gateCondition})
+            WHERE ({gateCondition}){filters.Fragment}
             ORDER BY score DESC
             LIMIT @limit;
             """;

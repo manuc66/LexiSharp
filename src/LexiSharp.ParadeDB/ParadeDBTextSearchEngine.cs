@@ -185,6 +185,9 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
 
         using var command = connection.CreateCommand();
 
+        var filters = PostgresMetadataFilterSql.Build(options.Filters);
+        filters.Apply(command);
+
         var segments = QueryParser.SplitRaw(query);
 
         if (segments.Phrases.Count == 0)
@@ -192,7 +195,7 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
             string matchSql = $"""
                 SELECT id, content, category, fields, pdb.score(id) AS score
                 FROM {_options.QualifiedTableName}
-                WHERE {_options.ContentField} ||| @query
+                WHERE {_options.ContentField} ||| @query{filters.Fragment}
                 ORDER BY pdb.score(id) DESC, id ASC
                 LIMIT @limit;
                 """;
@@ -217,7 +220,7 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
             string phraseSql = $"""
                 SELECT id, content, category, fields, pdb.score(id) AS score
                 FROM {_options.QualifiedTableName}
-                WHERE {string.Join(" AND ", phraseConditions)}
+                WHERE {string.Join(" AND ", phraseConditions)}{filters.Fragment}
                 ORDER BY pdb.score(id) DESC, id ASC
                 LIMIT @limit;
                 """;

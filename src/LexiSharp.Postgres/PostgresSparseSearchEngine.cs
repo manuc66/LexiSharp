@@ -263,10 +263,14 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();
+
+        var filters = PostgresMetadataFilterSql.Build(options.Filters);
+        filters.Apply(command);
+
         string searchSql = $"""
             SELECT id, content, category, fields, {scoreExpression} AS score
             FROM {_options.QualifiedTableName}
-            WHERE sparse IS NOT NULL
+            WHERE sparse IS NOT NULL{filters.Fragment}
             ORDER BY sparse {_options.Operator} @query::sparsevec
             LIMIT @limit;
             """;
