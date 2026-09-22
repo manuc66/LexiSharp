@@ -81,6 +81,9 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
         EnsureSchemaAsync().GetAwaiter().GetResult();
     }
 
+    /// <summary>For tests: the physical table name in use.</summary>
+    internal string TestTableName => _options.Table;
+
     /// <summary>
     /// Drops the documents table (and its GIN index). Useful for tests and clean teardowns.
     /// Does not drop the <c>unaccent</c> extension, which is instance-wide.

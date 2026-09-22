@@ -1,5 +1,6 @@
 using LexiSharp.Core;
 using LexiSharp.Postgres;
+using Npgsql;
 using Xunit;
 
 namespace LexiSharp.Tests;
@@ -44,7 +45,25 @@ public class PostgresTextSearchEngineTests
     {
         Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
 
-        Run(engine => { /* constructor already installed the schema with AutoCreateSchema */ });
+        Run(engine =>
+        {
+            using var connection = new NpgsqlConnection(ConnectionString!);
+            connection.Open();
+
+            using (var check = connection.CreateCommand())
+            {
+                check.CommandText = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = @table_name"; // NOSONAR:S2077
+                check.Parameters.AddWithValue("table_name", engine.TestTableName);
+                Assert.Equal(1L, check.ExecuteScalar());
+            }
+
+            using (var check = connection.CreateCommand())
+            {
+                check.CommandText = "SELECT COUNT(*) FROM pg_indexes WHERE tablename = @table_name AND indexdef ILIKE '%USING gin (%tsv%'"; // NOSONAR:S2077
+                check.Parameters.AddWithValue("table_name", engine.TestTableName);
+                Assert.Equal(1L, check.ExecuteScalar());
+            }
+        });
     }
 
     [SkippableFact]
