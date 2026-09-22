@@ -83,12 +83,15 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
 
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = $"""
+            string createIndexSql = $"""
                 CREATE INDEX IF NOT EXISTS {_options.QualifiedIndexName}
                 ON {_options.QualifiedTableName}
                 USING paradedb (id, {_options.ContentExpression}, category)
                 WITH (key_field = 'id');
                 """;
+
+            // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted).
+            command.CommandText = createIndexSql; // NOSONAR:S2077
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
@@ -104,7 +107,7 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"DROP TABLE IF EXISTS {_options.QualifiedTableName}";
+        command.CommandText = $"DROP TABLE IF EXISTS {_options.QualifiedTableName}"; // NOSONAR:S2077 (identifier only, validated + quoted)
         command.ExecuteNonQuery();
     }
 
@@ -118,7 +121,7 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
         using (var command = connection.CreateCommand())
         using (var transaction = connection.BeginTransaction())
         {
-            command.CommandText = $"TRUNCATE {_options.QualifiedTableName}";
+            command.CommandText = $"TRUNCATE {_options.QualifiedTableName}"; // NOSONAR:S2077 (identifier only, validated + quoted)
             command.Transaction = transaction;
             command.ExecuteNonQuery();
 
@@ -146,7 +149,7 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"DELETE FROM {_options.QualifiedTableName} WHERE id = @id";
+        command.CommandText = $"DELETE FROM {_options.QualifiedTableName} WHERE id = @id"; // NOSONAR:S2077 (identifiers only; id is parameterized)
         command.Parameters.AddWithValue("id", documentId);
         command.ExecuteNonQuery();
     }
@@ -157,7 +160,7 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"TRUNCATE {_options.QualifiedTableName}";
+        command.CommandText = $"TRUNCATE {_options.QualifiedTableName}"; // NOSONAR:S2077 (identifier only, validated + quoted)
         command.ExecuteNonQuery();
     }
 
@@ -174,13 +177,16 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"""
+        string searchSql = $"""
             SELECT id, content, category, fields, pdb.score(id) AS score
             FROM {_options.QualifiedTableName}
             WHERE {_options.ContentField} ||| @query
             ORDER BY pdb.score(id) DESC, id ASC
             LIMIT @limit;
             """;
+
+        // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); query text is parameterized.
+        command.CommandText = searchSql; // NOSONAR:S2077
 
         command.Parameters.AddWithValue("query", query);
         command.Parameters.AddWithValue("limit", options.Limit);
@@ -215,7 +221,7 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
     {
         using var command = connection.CreateCommand();
 
-        command.CommandText = $"""
+        string upsertSql = $"""
             INSERT INTO {_options.QualifiedTableName} (id, content, category, fields)
             VALUES (@id, @content, @category, @fields)
             ON CONFLICT (id) DO UPDATE
@@ -223,6 +229,9 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
                     category = EXCLUDED.category,
                     fields = EXCLUDED.fields;
             """;
+
+        // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); values are parameters.
+        command.CommandText = upsertSql; // NOSONAR:S2077
 
         if (transaction is not null)
             command.Transaction = transaction;

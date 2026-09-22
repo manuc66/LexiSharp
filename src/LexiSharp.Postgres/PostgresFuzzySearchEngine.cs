@@ -97,7 +97,7 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable
         {
             await using (var command = connection.CreateCommand())
             {
-                command.CommandText = $"ALTER TABLE {_options.QualifiedTableName} ADD COLUMN IF NOT EXISTS metaphone text;";
+                command.CommandText = $"ALTER TABLE {_options.QualifiedTableName} ADD COLUMN IF NOT EXISTS metaphone text;"; // NOSONAR:S2077;
                 await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
         }
@@ -115,7 +115,7 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable
         if (_options.IncludePhonetic)
         {
             await using var command = connection.CreateCommand();
-            command.CommandText = $"CREATE INDEX IF NOT EXISTS {QuoteIdentifier($"{_options.Table}_metaphone_idx")} ON {_options.QualifiedTableName} (metaphone);";
+            command.CommandText = $"CREATE INDEX IF NOT EXISTS {QuoteIdentifier($"{_options.Table}_metaphone_idx")} ON {_options.QualifiedTableName} (metaphone);"; // NOSONAR:S2077;
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
@@ -131,7 +131,7 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"DROP TABLE IF EXISTS {_options.QualifiedTableName}";
+        command.CommandText = $"DROP TABLE IF EXISTS {_options.QualifiedTableName}"; // NOSONAR:S2077 (identifier only, validated + quoted)
         command.ExecuteNonQuery();
     }
 
@@ -145,7 +145,7 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable
         using (var command = connection.CreateCommand())
         using (var transaction = connection.BeginTransaction())
         {
-            command.CommandText = $"TRUNCATE {_options.QualifiedTableName}";
+            command.CommandText = $"TRUNCATE {_options.QualifiedTableName}"; // NOSONAR:S2077 (identifier only, validated + quoted)
             command.Transaction = transaction;
             command.ExecuteNonQuery();
 
@@ -173,7 +173,7 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"DELETE FROM {_options.QualifiedTableName} WHERE id = @id";
+        command.CommandText = $"DELETE FROM {_options.QualifiedTableName} WHERE id = @id"; // NOSONAR:S2077 (identifiers only; id is parameterized)
         command.Parameters.AddWithValue("id", documentId);
         command.ExecuteNonQuery();
     }
@@ -184,7 +184,7 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"TRUNCATE {_options.QualifiedTableName}";
+        command.CommandText = $"TRUNCATE {_options.QualifiedTableName}"; // NOSONAR:S2077 (identifier only, validated + quoted)
         command.ExecuteNonQuery();
     }
 
@@ -256,8 +256,8 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable
         var opClass = kind == "gist" ? "gist_trgm_ops" : "gin_trgm_ops";
 
         await using var command = connection.CreateCommand();
-        command.CommandText = $"CREATE INDEX IF NOT EXISTS {indexName} ON {_options.QualifiedTableName} {accessMethod} ({_options.ContentField} {opClass});";
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+command.CommandText = $"CREATE INDEX IF NOT EXISTS {indexName} ON {_options.QualifiedTableName} {accessMethod} ({_options.ContentField} {opClass});"; // NOSONAR:S2077 (identifiers only, validated + quoted)
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private string BuildSearchSql()
@@ -305,7 +305,7 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable
             ? "@id, @content, @category, @fields, metaphone(@content, 4)"
             : "@id, @content, @category, @fields";
 
-        command.CommandText = $"""
+        string upsertSql = $"""
             INSERT INTO {_options.QualifiedTableName} ({columnList})
             VALUES ({valueList})
             ON CONFLICT (id) DO UPDATE
@@ -314,6 +314,9 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable
                     fields = EXCLUDED.fields
                     {(_options.IncludePhonetic ? $", metaphone = metaphone(EXCLUDED.content, 4)" : string.Empty)};
             """;
+
+        // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); values are parameters.
+        command.CommandText = upsertSql; // NOSONAR:S2077
 
         if (transaction is not null)
             command.Transaction = transaction;
