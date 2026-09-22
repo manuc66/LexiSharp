@@ -106,7 +106,7 @@ or ML model** — pure lexical statistics.
   Laplace smoothing, exposing a dedicated `ITextClassifier` interface.
 - **Configurable tokenizer**: Unicode NFKD normalization and diacritics removal,
   lowercasing, optional stop-word removal, optional n-grams, and a pluggable
-  `IStemmer` seam (no stemmer is bundled on purpose — bring your own, e.g. Snowball).
+  `IStemmer` seam (no stemmer ships with the library — bring your own, e.g. Snowball).
   Tokenization is SIMD-accelerated (`SearchValues` + `IndexOfAnyExcept`, with a
   `System.Text.Ascii` fast path in normalization).
 - **Optional backends**, shipped as separate packages:
@@ -382,7 +382,7 @@ highest document frequency first, then ordinal order. An index without vocabular
 falls back to the atom's literal base term, i.e. the behavior of a query without operators.
 Operators are only recognized when suffixed to word characters, never inside quoted phrases
 (a `"machine*"` phrase stays literal), and they are a LexiSharp query syntax — the SQL
-backends do not interpret them.
+backends do not currently interpret them.
 
 ### Synonyms
 
@@ -405,7 +405,7 @@ Entries are tokenized with the engine's tokenizer at construction and each must 
 exactly one term (otherwise the constructor throws). Expansion is one level deep and
 non-transitive — a synonym's own synonyms are never pulled in — and applies to free terms
 only: quoted phrases stay literal. Like the prefix/fuzzy operators, this is a stock-engine
-feature; the SQL backends do not rewrite queries.
+feature; the SQL backends do not currently rewrite queries.
 
 ### Facets
 
@@ -429,8 +429,8 @@ foreach (var bucket in page.Buckets)
 `Results` is identical to `Search` for the same arguments. Counts cover every document that
 passes the metadata filters, the phrase gates and the score thresholds — the whole match set —
 independently of `Offset`/`Limit`, which only cut `Results`. A document missing a field does
-not count for it (`Category` is never faceted), and fields no matching document carries are
-omitted from `Buckets`. Stock engine only.
+not count for it (`Category` is not faceted), and fields no matching document carries are
+omitted from `Buckets`. Currently stock-engine only.
 
 ### Span-first API
 
@@ -484,7 +484,7 @@ itself be a candidate inside another router). Because the selection is per query
 the selected engine lacks throws `NotSupportedException` rather than silently re-routing.
 `BoostedTextSearchEngine`/`RerankedTextSearchEngine` also forward `IQueryCostProbe` to their
 inner engine (they do not change how many candidates a query touches); their score-mutating
-wrapper deliberately does not surface facets/detailed/explain, whose contracts it cannot
+wrapper does not currently surface facets/detailed/explain, whose contracts it cannot
 preserve.
 
 ### Lexical similarity and keyword extraction
@@ -527,9 +527,9 @@ var reloaded = MessagePackTextIndexPersistence.Load("corpus.bin"); // identical 
 ```
 
 A `Tokenizer` (stop words, n-grams, single-char terms) is reconstructed automatically. A custom
-`ITokenizer` cannot be serialized: hand the same implementation to `Load` — a type-name check
-protects against rebuilding with the wrong pipeline. Stemmed tokenizers likewise require the
-original tokenizer at load time (stemmers are not serializable).
+`ITokenizer` is not currently serialized: hand the same implementation to `Load` — a type-name
+check protects against rebuilding with the wrong pipeline. Stemmed tokenizers likewise require
+the original tokenizer at load time (stemmers are not currently serializable).
 
 The same package persists a sparse engine through `MessagePackSparseIndexPersistence`: the
 stored corpus is the documents **plus their learned weights**, so reloading bypasses the model —
