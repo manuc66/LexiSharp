@@ -13,8 +13,10 @@ namespace LexiSharp.Classification;
 /// <see cref="SearchDocument.Category"/> are ignored during training.
 /// <para>
 /// The behavior is tunable through <see cref="NaiveBayesOptions"/>: a softmax
-/// <c>temperature</c> that sharpens or flattens the posterior, and an optional term
-/// <c>idf</c> weighting <c>log(1 + N / df(t))</c> that lets rarer vocabulary weigh more.
+/// <c>temperature</c> that sharpens or flattens the posterior, an <see cref="IdfMode"/> that
+/// discounts corpus-wide vocabulary, an <see cref="NaiveBayesOptions.Alpha"/> smoothing
+/// coefficient (optionally applied to the priors) and a mode that skips out-of-vocabulary
+/// query tokens instead of letting Laplace smoothing penalize them.
 /// </para>
 /// </remarks>
 /// <remarks>
@@ -160,19 +162,29 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
             var classTerms = pair.Value;
             int classTokenCount = 0;
             _classTokenCounts.TryGetValue(category, out classTokenCount);
-            double smoothingDenominator = classTokenCount + _vocabularySize;
+            double smoothingDenominator = classTokenCount + _options.Alpha * _vocabularySize;
 
             _classDocumentCounts.TryGetValue(category, out int classDocumentCount);
-            double logProbability = Math.Log((double)classDocumentCount / _documentCount);
+
+            double logPrior = _options.SmoothPriors
+                ? Math.Log((classDocumentCount + _options.Alpha)
+                           / (_documentCount + _options.Alpha * _classCount))
+                : Math.Log((double)classDocumentCount / _documentCount);
+
+            double logProbability = logPrior;
 
             foreach (var token in tokenList)
             {
+                if (_options.SkipOutOfVocabularyTokens && !IsInVocabulary(token.Token))
+                    continue;
+
                 classTerms.TryGetValue(token.Token, out int termCount);
 
                 if (smoothingDenominator > 0)
                 {
                     double idf = IdfWeight(token.Token);
-                    logProbability += token.Weight * idf * Math.Log((termCount + 1.0) / smoothingDenominator);
+                    logProbability += token.Weight * idf
+                        * Math.Log((termCount + _options.Alpha) / smoothingDenominator);
                 }
             }
 
@@ -184,18 +196,39 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
         return NormalizeAndRank(categories, logProbabilities, idx, limit);
     }
 
-    /// <summary><c>log(1 + N / df(term))</c> over the training corpus, or 1 when unweighted.</summary>
+    private bool IsInVocabulary(string term) =>
+        _termDocumentFrequencies.TryGetValue(term, out int docFrequency) && docFrequency > 0;
+
+    /// <summary>
+    /// Inverse-document-frequency weight for a term, per <see cref="NaiveBayesOptions.IdfMode"/>:
+    /// <c>DocumentCount</c> uses <c>log(1 + N / df)</c>, <c>ClassCount</c> uses
+    /// <c>max(0, log(C / df))</c>, <c>None</c> returns 1. Tokens never seen in the corpus are
+    /// corner cases only reachable when <see cref="NaiveBayesOptions.SkipOutOfVocabularyTokens"/>
+    /// is off; they are weighted like an unseen term (1.0 / 0.0 respectively).
+    /// </summary>
     private double IdfWeight(string term)
     {
-        if (!_options.IdfWeighting || _documentCount == 0)
-            return 1.0;
+        switch (_options.IdfMode)
+        {
+            case IdfMode.ClassCount:
+            {
+                if (!IsInVocabulary(term) || _classCount <= 0)
+                    return 0.0;
 
-        _termDocumentFrequencies.TryGetValue(term, out int docFrequency);
+                return Math.Max(0.0, Math.Log((double)_classCount / _termDocumentFrequencies[term]));
+            }
 
-        if (docFrequency <= 0)
-            return 1.0;
+            case IdfMode.DocumentCount:
+            {
+                if (_documentCount == 0 || !IsInVocabulary(term))
+                    return 1.0;
 
-        return Math.Log(1.0 + _documentCount / (double)docFrequency);
+                return Math.Log(1.0 + _documentCount / (double)_termDocumentFrequencies[term]);
+            }
+
+            default:
+                return 1.0;
+        }
     }
 
     private static IReadOnlyList<ClassificationResult> NormalizeAndRank(

@@ -139,9 +139,11 @@ The classifier is a `IWeightedPredictor` too (`classifier is IWeightedPredictor`
 spell-corrected token can carry less evidence than an exact match by passing
 `WeightedToken`s directly. `Predict`/`PredictBest` accept a set of `excludedCategories` to
 hide hot categories at runtime without retraining (probabilities renormalize over the rest).
-`NaiveBayesOptions` exposes a softmax `Temperature` (sharpening/flattening) and optional
-`IdfWeighting` (`log(1 + N/df)`). `Train` must not overlap any `Predict`; concurrent
-`Predict` calls are safe.
+`NaiveBayesOptions` tunes the scoring: a softmax `Temperature` (sharpening/flattening), an
+`IdfMode` (`None` / `DocumentCount` = `log(1 + N/df)` / `ClassCount` = `max(0, log(C/df))`),
+an `Alpha` smoothing coefficient (optionally applied to the priors through `SmoothPriors`) and
+`SkipOutOfVocabularyTokens` (ignore unknown query terms instead of a Laplace penalty). `Train`
+must not overlap any `Predict`; concurrent `Predict` calls are safe.
 
 ### Tokenizer customization
 
@@ -404,11 +406,16 @@ trade recall for speed — exact cosine behavior is verified in the integration 
 
 The embedding seam is role-aware: `PostgresVectorSearchEngine` embeds indexed documents with
 `EmbeddingUse.Passage` and queries with `EmbeddingUse.Query`, so asymmetric models (E5 prefixes
-and friends) work through the same single provider method. Two finer knobs live in the options
+and friends) work through the same single provider method. Finer knobs live in the options
 (see the class docs): `HnswEfSearch` (per-search candidate list; the engine wraps the query in
-a `SET LOCAL hnsw.ef_search` transaction) and `EmbeddingTextField` (embed a named
+a `SET LOCAL hnsw.ef_search` transaction), `EmbeddingTextField` (embed a named
 `SearchDocument.TextFields` entry instead of `Text`, leaving `content`/`tsv` untouched for the
-lexical engine). The engine also implements `IListableSearchEngine`, so the full set of stored
+lexical engine) and, for a title/description (or any multi-section) split,
+`EmbeddingColumns` — one `{suffix}_embedding vector(D)` column and ANN index per configured
+`TextFields` entry. A search then targets a subset of columns
+(`SearchWithColumns`) or all of them, OR-fusing candidates by best per-column similarity, and
+`SearchWithDetails` (`IDetailedSearchEngine`) exposes each column's contribution for UI badges
+or telemetry. The engine also implements `IListableSearchEngine`, so the full set of stored
 ids can be streamed (`ListDocumentIds` / `ListDocumentIdsAsync`, keyset pagination) to diff
 against an external ledger.
 
