@@ -37,8 +37,11 @@ namespace LexiSharp.Postgres;
 /// <see cref="TrgmSearchMode.Similarity"/> mode only).
 /// </para>
 /// </remarks>
-public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable
+public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable, IQuerySyntaxSupport
 {
+    /// <inheritdoc />
+    public QueryFeature SupportedQueryFeatures => QueryFeature.None;
+
     private readonly NpgsqlDataSource _dataSource;
     private readonly PostgresFuzzyOptions _options;
     private bool _schemaReady;
@@ -197,6 +200,8 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable
 
         if (options.IsEmpty || string.IsNullOrWhiteSpace(query))
             return Array.Empty<SearchResult>();
+
+        QuerySyntax.EnsureSupported(query, SupportedQueryFeatures, nameof(PostgresFuzzySearchEngine));
 
         using var connection = _dataSource.OpenConnection();
 

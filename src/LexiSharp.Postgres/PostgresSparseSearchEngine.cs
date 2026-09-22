@@ -30,8 +30,11 @@ namespace LexiSharp.Postgres;
 /// <see cref="AddAsync"/> and <see cref="SearchAsync"/> overloads.
 /// </para>
 /// </remarks>
-public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable
+public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable, IQuerySyntaxSupport
 {
+    /// <inheritdoc />
+    public QueryFeature SupportedQueryFeatures => QueryFeature.None;
+
     private readonly NpgsqlDataSource _dataSource;
     private readonly ISparseEmbeddingProvider _embeddings;
     private readonly PostgresSparseOptions _options;
@@ -250,6 +253,8 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable
 
         if (options.IsEmpty || string.IsNullOrWhiteSpace(query))
             return Array.Empty<SearchResult>();
+
+        QuerySyntax.EnsureSupported(query, SupportedQueryFeatures, nameof(PostgresSparseSearchEngine));
 
         var weights = await _embeddings.GetSparseEmbeddingAsync(query, EmbeddingUse.Query, cancellationToken).ConfigureAwait(false);
         var queryCoordinates = ToCoordinates(weights);

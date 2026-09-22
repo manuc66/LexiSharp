@@ -29,7 +29,6 @@ public class ParadeDBTextSearchEngineConformanceTests : SearchEngineConformanceT
         }
     });
 
-    protected override EngineCapabilities Capabilities => new(Phrases: true);
 
     protected override bool IsUnavailable => ConnectionString is null || !ExtensionAvailable.Value;
 

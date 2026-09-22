@@ -48,8 +48,11 @@ public sealed record SparseIndexEntry(
 /// only <i>queries</i> keep needing the model afterwards.
 /// </para>
 /// </remarks>
-public sealed class SparseTextSearchEngine : ITextSearchEngine
+public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupport
 {
+    /// <inheritdoc />
+    public QueryFeature SupportedQueryFeatures => QueryFeature.None;
+
     private readonly ISparseEmbeddingProvider _embeddings;
 
     private readonly Dictionary<string, SearchDocument> _documents = new(StringComparer.Ordinal);
@@ -190,7 +193,12 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine
 
         options ??= SearchOptions.Default;
 
-        if (options.IsEmpty || string.IsNullOrWhiteSpace(query) || _documents.Count == 0)
+        if (options.IsEmpty || string.IsNullOrWhiteSpace(query))
+            return Array.Empty<SearchResult>();
+
+        QuerySyntax.EnsureSupported(query, SupportedQueryFeatures, nameof(SparseTextSearchEngine));
+
+        if (_documents.Count == 0)
             return Array.Empty<SearchResult>();
 
         var queryVector = await _embeddings

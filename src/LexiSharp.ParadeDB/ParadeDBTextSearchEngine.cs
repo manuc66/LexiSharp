@@ -36,8 +36,11 @@ namespace LexiSharp.ParadeDB;
     /// single cross-engine ordering is required.
     /// </para>
     /// </remarks>
-public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
+public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, IQuerySyntaxSupport
 {
+    /// <inheritdoc />
+    public QueryFeature SupportedQueryFeatures => QueryFeature.Phrases;
+
     private readonly NpgsqlDataSource _dataSource;
     private readonly ParadeDBOptions _options;
     private bool _schemaReady;
@@ -180,6 +183,8 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
 
         if (options.IsEmpty || string.IsNullOrWhiteSpace(query))
             return Array.Empty<SearchResult>();
+
+        QuerySyntax.EnsureSupported(query, SupportedQueryFeatures, nameof(ParadeDBTextSearchEngine));
 
         using var connection = _dataSource.OpenConnection();
 

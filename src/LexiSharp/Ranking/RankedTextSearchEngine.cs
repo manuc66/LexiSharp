@@ -42,13 +42,16 @@ namespace LexiSharp.Ranking;
 /// must reduce to exactly one term or the constructor throws.
 /// </para>
 /// </remarks>
-public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostProbe, IExplainableSearchEngine
+public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostProbe, IExplainableSearchEngine, IQuerySyntaxSupport
 {
     /// <summary>
     /// Upper bound on how many vocabulary terms a single prefix/fuzzy atom may contribute to
     /// the query, after the document-frequency/ordinal ranking.
     /// </summary>
     public const int MaxExpansionsPerAtom = 64;
+
+    /// <inheritdoc />
+    public QueryFeature SupportedQueryFeatures => QueryFeature.Phrases | QueryFeature.Expansions;
 
     private readonly ITextIndex _index;
     private readonly ITextScorer _scorer;
