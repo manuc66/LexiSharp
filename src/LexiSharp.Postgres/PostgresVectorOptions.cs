@@ -81,9 +81,9 @@ public sealed record PostgresVectorOptions
     /// <see cref="Core.SearchDocument.TextFields"/> entry it embeds (falling back to
     /// <see cref="Core.SearchDocument.Text"/> when the entry is absent). Each column gets its own
     /// <c>&lt;suffix&gt;_embedding vector(D)</c> column and ANN index on the shared table, so one
-    /// document row can carry several independent embeddings — e.g.
-    /// <c>{ "title" =&gt; "title", "description" =&gt; "description" }</c> for a Jira-like
-    /// title/description split. A search can then target a subset of columns
+    /// document row can carry several independent embeddings — e.g. a
+    /// <c>{ "title" =&gt; "title", "description" =&gt; "description" }</c> split for a corpus with
+    /// free-text sections. A search can then target a subset of columns
     /// (<see cref="PostgresVectorSearchEngine.SearchWithColumns"/>) or all of them, merging by the
     /// best per-column similarity and exposing each column's contribution through
     /// <see cref="Core.IDetailedSearchEngine"/>.
