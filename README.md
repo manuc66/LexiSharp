@@ -316,8 +316,10 @@ var results = engine.Search("vector search", options);
 Comparisons are culture-invariant; greater/less-than go numeric when both sides parse as
 numbers, otherwise ordinal. Documents missing a field fail everything except `NotEqual`.
 Every backend honors the same contract: the in-memory engines evaluate the predicate before
-scoring, and the SQL backends (PostgreSQL, ParadeDB) push it down as a parameterized
-predicate over the `fields jsonb` column.
+scoring, and the PostgreSQL backends (lexical, fuzzy, vector, sparse) push it down as a
+parameterized predicate over the `fields jsonb` column. ParadeDB's custom planner rejects those
+predicate shapes next to its BM25 operator, so it filters in C# over the whole match set instead
+(same semantics, no pushdown).
 
 ### Phrase queries
 
