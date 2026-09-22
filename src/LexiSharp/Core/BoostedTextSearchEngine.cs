@@ -102,13 +102,11 @@ public sealed class BoostedTextSearchEngine : ITextSearchEngine
             if (double.IsNaN(boost.Add) || double.IsInfinity(boost.Add)
                 || double.IsNaN(boost.Multiply) || double.IsInfinity(boost.Multiply))
                 throw new ArgumentException(
-                    $"The boost must be finite, but got ({boost.Add}, {boost.Multiply}) for document '{candidate.DocumentId}'.",
-                    nameof(_boost));
+                    $"The boost must be finite, but got ({boost.Add}, {boost.Multiply}) for document '{candidate.DocumentId}'.");
 
             if (boost.Multiply < 0)
                 throw new ArgumentException(
-                    $"A negative multiplicative factor ({boost.Multiply}) would invert the ranking for document '{candidate.DocumentId}'. Use a damp in (0, 1) or a negative offset instead.",
-                    nameof(_boost));
+                    $"A negative multiplicative factor ({boost.Multiply}) would invert the ranking for document '{candidate.DocumentId}'. Use a damp in (0, 1) or a negative offset instead.");
 
             double boostedScore = candidate.Score * boost.Multiply + boost.Add;
 

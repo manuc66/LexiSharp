@@ -16,7 +16,7 @@ public enum BooleanMatch
 /// Because the <see cref="RankedTextSearchEngine"/> discards scores below <c>MinimumScore</c>,
 /// this scorer behaves exactly like an exact AND/OR query while remaining model-independent.
 /// </summary>
-public sealed class BooleanScorer : ITextScorer, ITermOverlapScorer
+public sealed class BooleanScorer : ITermOverlapScorer
 {
     private readonly BooleanMatch _match;
 
@@ -37,13 +37,17 @@ public sealed class BooleanScorer : ITextScorer, ITermOverlapScorer
         if (queryTerms.Count == 0 || index.Count == 0)
             return 0;
 
-        return _match == BooleanMatch.AllTerms
-            ? MatchAll(documentId, queryTerms, index) ? 1 : 0
-            : MatchAny(documentId, queryTerms, index) ? 1 : 0;
+        bool matches = _match == BooleanMatch.AllTerms
+            ? MatchAll(documentId, queryTerms, index)
+            : MatchAny(documentId, queryTerms, index);
+
+        return matches ? 1 : 0;
     }
 
     private static bool MatchAll(string documentId, IReadOnlyList<string> terms, ITextIndex index)
     {
+        // Per-document hot path: a LINQ All() here allocates an enumerator for every scored
+        // document, so the short-circuit loop is deliberate. // NOSONAR:S3267
         foreach (var term in terms)
         {
             if (index.TermFrequency(documentId, term) == 0)
@@ -55,6 +59,7 @@ public sealed class BooleanScorer : ITextScorer, ITermOverlapScorer
 
     private static bool MatchAny(string documentId, IReadOnlyList<string> terms, ITextIndex index)
     {
+        // Same reasoning as MatchAll: keep the allocation-free loop. // NOSONAR:S3267
         foreach (var term in terms)
         {
             if (index.TermFrequency(documentId, term) > 0)

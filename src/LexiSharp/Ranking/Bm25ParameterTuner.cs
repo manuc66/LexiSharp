@@ -81,17 +81,15 @@ public sealed class Bm25ParameterTuner
         if (k1Grid.Length == 0 || bGrid.Length == 0)
             throw new ArgumentException("Both the k1 and b grids must contain at least one value.");
 
-        foreach (double k1 in k1Grid)
-        {
-            if (double.IsNaN(k1) || double.IsInfinity(k1) || k1 < 0)
-                throw new ArgumentOutOfRangeException(nameof(k1Values), k1, "k1 values must be non-negative and finite.");
-        }
+        double invalidK1 = k1Grid.FirstOrDefault(k1 => !double.IsFinite(k1) || k1 < 0);
 
-        foreach (double b in bGrid)
-        {
-            if (double.IsNaN(b) || double.IsInfinity(b) || b is < 0 or > 1)
-                throw new ArgumentOutOfRangeException(nameof(bValues), b, "b values must be within [0, 1] and finite.");
-        }
+        if (invalidK1 != 0)
+            throw new ArgumentOutOfRangeException(nameof(k1Values), invalidK1, "k1 values must be non-negative and finite.");
+
+        double invalidB = bGrid.FirstOrDefault(b => !double.IsFinite(b) || b is < 0 or > 1);
+
+        if (invalidB != 0)
+            throw new ArgumentOutOfRangeException(nameof(bValues), invalidB, "b values must be within [0, 1] and finite.");
 
         var grid = new List<Bm25GridPoint>(k1Grid.Length * bGrid.Length);
         Bm25GridPoint best = new(double.NaN, double.NaN, double.NegativeInfinity);

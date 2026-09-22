@@ -72,25 +72,15 @@ public sealed class MaximalMarginalRelevanceReranker : IReranker
         if (candidates.Count == 0)
             return Array.Empty<SearchResult>();
 
-        double maxScore = 0;
+        double maxScore = candidates
+            .Where(c => double.IsFinite(c.Score))
+            .Select(c => c.Score)
+            .DefaultIfEmpty(0)
+            .Max();
 
-        foreach (var candidate in candidates)
-        {
-            if (!double.IsNaN(candidate.Score) && !double.IsInfinity(candidate.Score)
-                && candidate.Score > maxScore)
-            {
-                maxScore = candidate.Score;
-            }
-        }
-
-        var pool = new List<SearchResult>(candidates.Count);
-        foreach (var candidate in candidates)
-        {
-            if (double.IsNaN(candidate.Score) || double.IsInfinity(candidate.Score) || candidate.Score == 0)
-                continue;
-
-            pool.Add(candidate);
-        }
+        var pool = candidates
+            .Where(c => double.IsFinite(c.Score) && c.Score != 0)
+            .ToList();
 
         var selected = new List<SearchResult>(pool.Count);
         var selectedVectors = new List<ReadOnlyMemory<float>>();

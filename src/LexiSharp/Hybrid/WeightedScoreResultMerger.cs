@@ -59,15 +59,11 @@ public sealed class WeightedScoreResultMerger : IResultMerger
 
         for (int i = 0; i < engineCount; i++)
         {
-            double max = 0;
-
-            foreach (var result in perEngineResults[i])
-            {
-                if (double.IsNaN(result.Score) || double.IsInfinity(result.Score))
-                    continue;
-
-                max = Math.Max(max, result.Score);
-            }
+            double max = perEngineResults[i]
+                .Where(r => double.IsFinite(r.Score))
+                .Select(r => r.Score)
+                .DefaultIfEmpty(0)
+                .Max();
 
             normalization[i] = max;
         }

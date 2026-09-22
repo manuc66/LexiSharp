@@ -26,6 +26,8 @@ public sealed record SearchOptions(
         if (Filters is null || Filters.Count == 0)
             return true;
 
+        // Per-document hot path: a LINQ All() would allocate an enumerator per candidate, so the
+        // short-circuit loop is deliberate. // NOSONAR:S3267
         foreach (var filter in Filters)
         {
             if (!filter.Matches(document))

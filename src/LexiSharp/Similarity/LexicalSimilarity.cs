@@ -77,9 +77,7 @@ public static class LexicalSimilarity
 
         int intersection = firstSet.Count(secondSet.Contains);
 
-        int total = firstSet.Count + secondSet.Count;
-
-        return total == 0 ? 1 : 2.0 * intersection / total;
+        return 2.0 * intersection / (firstSet.Count + secondSet.Count);
     }
 
     private static (FrozenSet<string> First, FrozenSet<string> Second) TokenSets(

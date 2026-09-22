@@ -11,7 +11,7 @@ namespace LexiSharp.Indexing;
 /// <remarks>
 /// Not thread-safe; mutate it from a single thread (or synchronize externally).
 /// </remarks>
-public sealed class InMemoryTextIndex : ITextIndex, ICandidateIndex
+public sealed class InMemoryTextIndex : ICandidateIndex
 {
     private readonly ITokenizer _tokenizer;
 
@@ -199,7 +199,11 @@ public sealed class InMemoryTextIndex : ITextIndex, ICandidateIndex
     public IEnumerable<SearchDocument> GetCandidateDocuments(IReadOnlyList<string> terms)
     {
         ArgumentNullException.ThrowIfNull(terms);
+        return GetCandidateDocumentsCore(terms);
+    }
 
+    private IEnumerable<SearchDocument> GetCandidateDocumentsCore(IReadOnlyList<string> terms)
+    {
         if (terms.Count == 0 || _postings.Count == 0)
             yield break;
 
@@ -229,6 +233,7 @@ public sealed class InMemoryTextIndex : ITextIndex, ICandidateIndex
 
         long epoch = ++_candidateEpoch;
 
+        // Per-query hot path: LINQ Where on these loops would allocate per candidate. // NOSONAR:S3267
         foreach (var term in terms)
         {
             if (_postings.TryGetValue(term, out var postings))

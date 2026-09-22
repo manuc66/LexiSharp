@@ -89,6 +89,47 @@ public static class RetrievalMetrics
     }
 
     /// <summary>
+    /// nDCG@k with <b>graded</b> relevance: gains follow the exponential convention
+    /// <c>2^rel − 1</c>, and the ideal ranking is the best possible ordering of the available
+    /// relevance levels. Documents missing from the map count as relevance 0.
+    /// </summary>
+    public static double NdcgAtK(IReadOnlyCollection<string> retrievedIds, IReadOnlyDictionary<string, double> gradedRelevance, int k)
+    {
+        ArgumentNullException.ThrowIfNull(retrievedIds);
+        ArgumentNullException.ThrowIfNull(gradedRelevance);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(k);
+
+        if (gradedRelevance.Count == 0)
+            return 0;
+
+        if (gradedRelevance.Values.Any(gain => double.IsNaN(gain) || double.IsInfinity(gain) || gain < 0))
+            throw new ArgumentOutOfRangeException(nameof(gradedRelevance), "Relevance gains must be non-negative and finite.");
+
+        var graded = new Dictionary<string, double>(gradedRelevance, StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        double dcg = 0;
+        int rank = 1;
+
+        foreach (var id in retrievedIds)
+        {
+            if (rank > k)
+                break;
+
+            if (!seen.Add(id))
+                continue;
+
+            if (graded.TryGetValue(id, out var gain) && gain > 0)
+                dcg += (Math.Pow(2, gain) - 1) / Math.Log2(rank + 1);
+
+            rank++;
+        }
+
+        double idcg = IdealDcg(graded.Values.OrderByDescending(gain => gain), k);
+
+        return idcg == 0 ? 0 : dcg / idcg;
+    }
+
+    /// <summary>
     /// Reciprocal rank at <c>k</c>: <c>1 / rank</c> of the first relevant document within the
     /// first <c>k</c> positions, <c>0</c> when none appears. Average this over a validation set
     /// to get MRR (Mean Reciprocal Rank).
@@ -161,47 +202,6 @@ public static class RetrievalMetrics
         }
 
         return precisionSum / Math.Min(relevantIds.Count, k);
-    }
-
-    /// <summary>
-    /// nDCG@k with <b>graded</b> relevance: gains follow the exponential convention
-    /// <c>2^rel − 1</c>, and the ideal ranking is the best possible ordering of the available
-    /// relevance levels. Documents missing from the map count as relevance 0.
-    /// </summary>
-    public static double NdcgAtK(IReadOnlyCollection<string> retrievedIds, IReadOnlyDictionary<string, double> gradedRelevance, int k)
-    {
-        ArgumentNullException.ThrowIfNull(retrievedIds);
-        ArgumentNullException.ThrowIfNull(gradedRelevance);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(k);
-
-        if (gradedRelevance.Count == 0)
-            return 0;
-
-        if (gradedRelevance.Values.Any(gain => double.IsNaN(gain) || double.IsInfinity(gain) || gain < 0))
-            throw new ArgumentOutOfRangeException(nameof(gradedRelevance), "Relevance gains must be non-negative and finite.");
-
-        var graded = new Dictionary<string, double>(gradedRelevance, StringComparer.Ordinal);
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        double dcg = 0;
-        int rank = 1;
-
-        foreach (var id in retrievedIds)
-        {
-            if (rank > k)
-                break;
-
-            if (!seen.Add(id))
-                continue;
-
-            if (graded.TryGetValue(id, out var gain) && gain > 0)
-                dcg += (Math.Pow(2, gain) - 1) / Math.Log2(rank + 1);
-
-            rank++;
-        }
-
-        double idcg = IdealDcg(graded.Values.OrderByDescending(gain => gain), k);
-
-        return idcg == 0 ? 0 : dcg / idcg;
     }
 
     private static int CountMatches(IReadOnlyCollection<string> retrievedIds, IReadOnlyCollection<string> relevantIds, int k)

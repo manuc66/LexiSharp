@@ -14,7 +14,7 @@ namespace LexiSharp.Ranking;
 /// log-probabilities (negative for matching documents); a document sharing no term with
 /// the query scores exactly <c>0</c>, so the engine's « score 0 means no match » rule applies.
 /// </remarks>
-public sealed class QueryLikelihoodScorer : ITextScorer, ITermOverlapScorer, IQueryPlannableScorer
+public sealed class QueryLikelihoodScorer : ITermOverlapScorer, IQueryPlannableScorer
 {
     private readonly double _lambda;
 
