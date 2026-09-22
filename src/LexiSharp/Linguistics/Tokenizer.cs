@@ -19,17 +19,16 @@ namespace LexiSharp.Linguistics;
 /// <item><description>Optional stop word removal and/or stemming through a consumer-provided <see cref="IStemmer"/>.</description></item>
 /// <item><description>Optional grouping into term n-grams (« machine learning » becomes <c>machine learning</c>).</description></item>
 /// </list>
-/// <see cref="TokenizeWithSpans(string)"/> runs the same pipeline while tracking source offsets;
-/// <see cref="Tokenize(string)"/> is its projection onto the terms alone.
+/// A raw word is always a contiguous slice of the source, so scanning tracks a single
+/// <c>[start, end)</c> range and normalizes straight from the span — no intermediate word
+/// buffer. <see cref="TokenizeWithSpans(string)"/> runs the same scan while tracking source
+/// offsets; <see cref="Tokenize(string)"/> emits terms alone.
 /// </remarks>
 public sealed class Tokenizer : ISpanTokenizer
 {
     /// <summary>ASCII book characters (letters and digits); a 62-entry set eligible for SIMD search.</summary>
     private static readonly SearchValues<char> AsciiWordChars =
         SearchValues.Create("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
-
-    /// <summary>A raw split word with its half-open source range.</summary>
-    private readonly record struct SourceWord(string Text, int Start, int Length);
 
     private readonly TokenizerOptions _options;
     private readonly IReadOnlySet<string>? _stopWords;
@@ -52,17 +51,19 @@ public sealed class Tokenizer : ISpanTokenizer
     /// <inheritdoc />
     public IReadOnlyList<string> Tokenize(ReadOnlySpan<char> text)
     {
-        var spans = TokenizeWithSpans(text);
-
-        if (spans.Count == 0)
+        if (text.IsEmpty)
             return Array.Empty<string>();
 
-        var terms = new List<string>(spans.Count);
+        var terms = new List<string>(16);
+        Scan(text, terms, null);
 
-        for (int i = 0; i < spans.Count; i++)
-            terms.Add(spans[i].Term);
+        if (terms.Count == 0)
+            return Array.Empty<string>();
 
-        return terms;
+        if (!_useNgrams || terms.Count < 2)
+            return terms;
+
+        return BuildNgrams(terms);
     }
 
     /// <inheritdoc />
@@ -74,12 +75,11 @@ public sealed class Tokenizer : ISpanTokenizer
         if (text.IsEmpty)
             return Array.Empty<TokenSpan>();
 
-        var words = SplitWords(text);
+        var spans = new List<TokenSpan>(16);
+        Scan(text, null, spans);
 
-        if (words.Count == 0)
+        if (spans.Count == 0)
             return Array.Empty<TokenSpan>();
-
-        var spans = ProcessWords(words);
 
         if (!_useNgrams || spans.Count < 2)
             return spans;
@@ -87,12 +87,15 @@ public sealed class Tokenizer : ISpanTokenizer
         return BuildNgrams(spans);
     }
 
-    private List<SourceWord> SplitWords(ReadOnlySpan<char> text)
+    /// <summary>
+    /// Single pass over the source: locates words as half-open <c>[start, end)</c> ranges and
+    /// emits each into <paramref name="terms"/> and/or <paramref name="spans"/> (exactly one is
+    /// non-null). Normalization, stop-word removal and stemming happen at emission, straight
+    /// from the source slice.
+    /// </summary>
+    private void Scan(ReadOnlySpan<char> text, List<string>? terms, List<TokenSpan>? spans)
     {
-        var words = new List<SourceWord>(32);
-        var word = new StringBuilder(16);
-
-        int wordStart = 0;
+        int wordStart = -1;
         int position = 0;
 
         while (position < text.Length)
@@ -104,10 +107,9 @@ public sealed class Tokenizer : ISpanTokenizer
 
             if (asciiRunEnd > position)
             {
-                if (word.Length == 0)
+                if (wordStart < 0)
                     wordStart = position;
 
-                word.Append(text.Slice(position, asciiRunEnd - position));
                 position = asciiRunEnd;
             }
 
@@ -122,41 +124,69 @@ public sealed class Tokenizer : ISpanTokenizer
 
             if (Rune.IsLetterOrDigit(rune))
             {
-                if (word.Length == 0)
+                if (wordStart < 0)
                     wordStart = position;
-
-                word.Append(rune);
             }
-            else
+            else if (wordStart >= 0)
             {
-                FlushWord(word, words, _options.KeepSingleCharTerms, wordStart, position);
+                EmitWord(text, wordStart, position, terms, spans);
+                wordStart = -1;
             }
 
             position += rune.Utf16SequenceLength;
         }
 
-        FlushWord(word, words, _options.KeepSingleCharTerms, wordStart, position);
-        return words;
+        if (wordStart >= 0)
+            EmitWord(text, wordStart, text.Length, terms, spans);
     }
 
-    private List<TokenSpan> ProcessWords(List<SourceWord> words)
+    /// <summary>Normalizes, filters and stores one word range, honoring single-char/stop-word/stemming options.</summary>
+    private void EmitWord(ReadOnlySpan<char> text, int start, int end, List<string>? terms, List<TokenSpan>? spans)
     {
-        var spans = new List<TokenSpan>(words.Count);
+        int length = end - start;
 
-        foreach (var raw in words)
+        if (length < 2 && !_options.KeepSingleCharTerms)
+            return;
+
+        string term = Normalize(text.Slice(start, length));
+
+        if (_stopWords is not null && _stopWords.Contains(term))
+            return;
+
+        if (_options.Stemmer is not null)
+            term = _options.Stemmer.Stem(term);
+
+        terms?.Add(term);
+        spans?.Add(new TokenSpan(term, start, length));
+    }
+
+    /// <summary>Builds the n-gram term list (unigrams first, then longer grams) from a term list.</summary>
+    private List<string> BuildNgrams(List<string> terms)
+    {
+        var ngrams = new List<string>(terms.Count);
+
+        for (int n = _options.NGramMin; n <= _options.NGramMax && n <= terms.Count; n++)
         {
-            var term = Normalize(raw.Text);
+            if (n == 1)
+            {
+                for (int i = 0; i < terms.Count; i++)
+                    ngrams.Add(terms[i]);
 
-            if (_stopWords is not null && _stopWords.Contains(term))
                 continue;
+            }
 
-            if (_options.Stemmer is not null)
-                term = _options.Stemmer.Stem(term);
+            var parts = new string[n];
 
-            spans.Add(new TokenSpan(term, raw.Start, raw.Length));
+            for (int i = 0; i + n <= terms.Count; i++)
+            {
+                for (int j = 0; j < n; j++)
+                    parts[j] = terms[i + j];
+
+                ngrams.Add(string.Join(' ', parts));
+            }
         }
 
-        return spans;
+        return ngrams;
     }
 
     private List<TokenSpan> BuildNgrams(List<TokenSpan> spans)
@@ -192,24 +222,46 @@ public sealed class Tokenizer : ISpanTokenizer
         return ngrams;
     }
 
-    private static void FlushWord(StringBuilder word, List<SourceWord> into, bool keepSingleChar, int start, int end)
-    {
-        if (word.Length == 0)
-            return;
-
-        if (word.Length >= 2 || keepSingleChar)
-            into.Add(new SourceWord(word.ToString(), start, end - start));
-
-        word.Clear();
-    }
-
     /// <summary>Lowercases and removes diacritics from a single term.</summary>
     public static string Normalize(string term)
     {
-        // Fast path: fully ASCII terms need no decomposition or accent removal.
+        ArgumentNullException.ThrowIfNull(term);
+
+        // Fast path: fully ASCII terms need no decomposition or accent removal, and
+        // ToLowerInvariant returns the same instance when nothing needs folding.
         if (Ascii.IsValid(term))
             return term.ToLowerInvariant();
 
+        return NormalizeSlow(term);
+    }
+
+    /// <summary>Lowercases and removes diacritics from a single term given as a source slice.</summary>
+    public static string Normalize(ReadOnlySpan<char> term)
+    {
+        // Fast path: fully ASCII terms need no decomposition or accent removal.
+        if (Ascii.IsValid(term))
+            return NormalizeAscii(term);
+
+        return NormalizeSlow(term.ToString());
+    }
+
+    private static string NormalizeAscii(ReadOnlySpan<char> term)
+    {
+        for (int i = 0; i < term.Length; i++)
+        {
+            if (term[i] is >= 'A' and <= 'Z')
+            {
+                // Folding needed: materialize the slice, then lowercase it.
+                return term.ToString().ToLowerInvariant();
+            }
+        }
+
+        // Already lowercase: the source slice is the normalized term.
+        return term.ToString();
+    }
+
+    private static string NormalizeSlow(string term)
+    {
         var decomposed = term.Normalize(NormalizationForm.FormKD);
         var cleaned = new StringBuilder(decomposed.Length);
 
