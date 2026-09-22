@@ -288,6 +288,53 @@ public class PostgresVectorSearchEngineTests
     }
 
     [SkippableFact]
+    public void Search_Offset_PaginatesTheRanking()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        // All five vectors point in different directions from the query, so the cosine scores
+        // (and the ranking) are strictly decreasing: pages are stable across requests.
+        var vectors = new Dictionary<string, float[]>
+        {
+            ["q"] = new[] { 1f, 0f },
+            ["a"] = new[] { 1f, 0f },
+            ["b"] = new[] { 1f, 1f },
+            ["c"] = new[] { 1f, 2f },
+            ["d"] = new[] { 1f, 3f },
+            ["e"] = new[] { 1f, 4f },
+        };
+
+        using var engine = NewEngine(
+            new StubEmbeddingProvider(vectors),
+            new PostgresVectorOptions { Dimension = 2 });
+
+        try
+        {
+            foreach (string id in new[] { "a", "b", "c", "d", "e" })
+                engine.Add(Doc(id, id));
+
+            var all = engine.Search("q", new SearchOptions(Limit: 10));
+            Assert.Equal(5, all.Count);
+            Assert.Equal(new[] { "a", "b", "c", "d", "e" }, all.Select(r => r.DocumentId).ToArray());
+
+            var page1 = engine.Search("q", new SearchOptions(Limit: 2, Offset: 0));
+            var page2 = engine.Search("q", new SearchOptions(Limit: 2, Offset: 2));
+            var page3 = engine.Search("q", new SearchOptions(Limit: 2, Offset: 4));
+
+            Assert.Equal(new[] { "a", "b" }, page1.Select(r => r.DocumentId).ToArray());
+            Assert.Equal(new[] { "c", "d" }, page2.Select(r => r.DocumentId).ToArray());
+            Assert.Equal(new[] { "e" }, page3.Select(r => r.DocumentId).ToArray());
+
+            Assert.Empty(engine.Search("q", new SearchOptions(Limit: 2, Offset: 5)));
+            Assert.Empty(engine.Search("q", new SearchOptions(Limit: 2, Offset: -1)));
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    [SkippableFact]
     public void ListDocumentIds_ReturnsEveryStoredIdInStableOrder()
     {
         Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");

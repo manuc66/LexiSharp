@@ -169,4 +169,39 @@ public class PostgresTextSearchEngineTests
             Assert.Equal(5, some.Count);
         });
     }
+
+    [SkippableFact]
+    public void Search_Offset_PaginatesTheRanking()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        Run(engine =>
+        {
+            // Same two terms, growing gap: ts_rank_cd (cover density) strictly decreases with
+            // the distance between "alpha" and "beta", so the five scores — and thus the
+            // ranking — are unambiguous across queries.
+            for (int i = 0; i < 5; i++)
+            {
+                string fillers = i == 0 ? string.Empty : string.Join(' ', Enumerable.Repeat("fill", i)) + " ";
+                engine.Add(new SearchDocument($"d{i}", $"alpha {fillers}beta"));
+            }
+
+            var all = engine.Search("alpha beta", new SearchOptions(Limit: 10));
+            Assert.Equal(5, all.Count);
+
+            var page1 = engine.Search("alpha beta", new SearchOptions(Limit: 2, Offset: 0));
+            var page2 = engine.Search("alpha beta", new SearchOptions(Limit: 2, Offset: 2));
+            var page3 = engine.Search("alpha beta", new SearchOptions(Limit: 2, Offset: 4));
+
+            Assert.Equal(2, page1.Count);
+            Assert.Equal(2, page2.Count);
+            Assert.Single(page3);
+            Assert.Equal(
+                all.Select(r => r.DocumentId),
+                page1.Concat(page2).Concat(page3).Select(r => r.DocumentId));
+
+            Assert.Empty(engine.Search("alpha beta", new SearchOptions(Limit: 2, Offset: 5)));
+            Assert.Empty(engine.Search("alpha beta", new SearchOptions(Limit: 2, Offset: -1)));
+        });
+    }
 }

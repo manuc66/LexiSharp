@@ -59,6 +59,9 @@ or ML model** — pure lexical statistics.
 - **Metadata filters**: declarative, AND-composed filters over document fields
   (`MetadataFilterOperator`: equal, not-equal, contains, numeric-or-ordinal greater/less than)
   in `SearchOptions` — applied by the stock engine before any relevance math.
+- **Pagination**: `SearchOptions.Offset` cuts any window `[Offset, Offset + Limit)` of the
+  ranking — honored by the stock engine, the boost/rerank decorators, the hybrid merger
+  (the page comes from the merged ordering) and every SQL backend.
 - **Lexical similarity** (`LexiSharp.Similarity`): pairwise token-set measures (Jaccard,
   Sørensen–Dice) over the library tokenizer, a `pg_trgm`-style character trigram similarity,
   and a rolling Levenshtein edit distance — near-duplicate detection and fuzzy matching with

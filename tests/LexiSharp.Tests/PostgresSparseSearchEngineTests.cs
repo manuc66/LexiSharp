@@ -217,6 +217,49 @@ public class PostgresSparseSearchEngineTests
     }
 
     [SkippableFact]
+    public void Search_Offset_PaginatesTheRanking()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+        Skip.If(!VectorExtensionAvailable(), "vector extension unavailable.");
+
+        // L2 similarities vs {apple:2}: e2 = 1, e1 = 1/2, e3 = 1/4 — strictly decreasing.
+        var l2Docs = new Dictionary<string, IReadOnlyDictionary<string, float>>
+        {
+            ["e1"] = new Dictionary<string, float> { ["apple"] = 3f },
+            ["e2"] = new Dictionary<string, float> { ["apple"] = 2f },
+            ["e3"] = new Dictionary<string, float> { ["apple"] = 5f },
+            ["apple"] = new Dictionary<string, float> { ["apple"] = 2f },
+        };
+
+        using var engine = NewEngine(
+            new StubSparseProvider(l2Docs),
+            new PostgresSparseOptions { Distance = SparseDistance.L2 });
+
+        try
+        {
+            engine.Add(Doc("e1", "e1"));
+            engine.Add(Doc("e2", "e2"));
+            engine.Add(Doc("e3", "e3"));
+
+            var all = engine.Search("apple", new SearchOptions(Limit: 10));
+            Assert.Equal(E2E1E3Ids, all.Select(r => r.DocumentId).ToArray());
+
+            var page1 = engine.Search("apple", new SearchOptions(Limit: 2, Offset: 0));
+            var page2 = engine.Search("apple", new SearchOptions(Limit: 2, Offset: 2));
+
+            Assert.Equal(new[] { "e2", "e1" }, page1.Select(r => r.DocumentId).ToArray());
+            Assert.Equal(new[] { "e3" }, page2.Select(r => r.DocumentId).ToArray());
+
+            Assert.Empty(engine.Search("apple", new SearchOptions(Limit: 2, Offset: 3)));
+            Assert.Empty(engine.Search("apple", new SearchOptions(Limit: 2, Offset: -1)));
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    [SkippableFact]
     public void Constructor_EmptyVocabulary_Throws()
     {
         Assert.Throws<ArgumentException>(() =>

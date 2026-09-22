@@ -76,15 +76,20 @@ public sealed class RerankedTextSearchEngine : ITextSearchEngine
 
         options ??= SearchOptions.Default;
 
-        if (options.Limit <= 0)
+        if (options.IsEmpty)
             return Array.Empty<SearchResult>();
 
-        int candidateLimit = Math.Max(options.Limit, _maxCandidates);
+        // Same pooling rule as BoostedTextSearchEngine: the page is cut from the *reranked*
+        // ordering, so the inner pool covers the skipped prefix plus maxCandidates of depth
+        // beyond the page, and the inner call never applies Offset itself.
+        int basePool = Math.Max(options.Limit, _maxCandidates);
+        int candidateLimit = options.Offset > int.MaxValue - basePool ? int.MaxValue : options.Offset + basePool;
 
         // Do not pre-filter with MinimumScore here: it must apply to the *final* score, after
         // the reranker has spoken — a re-scored match can fall out, a promoted one can get in.
         var candidates = _inner.Search(query, options with
         {
+            Offset = 0,
             Limit = candidateLimit,
             MinimumScore = double.NegativeInfinity,
         });
@@ -95,10 +100,11 @@ public sealed class RerankedTextSearchEngine : ITextSearchEngine
         var reranked = _reranker.Rerank(query, candidates);
 
         // The reranker owns the order (best-first by contract); here we only drop broken or
-        // non-matching scores and trim, preserving its relative order.
+        // non-matching scores, then cut the requested page, preserving its relative order.
         return reranked
             .Where(x => !double.IsNaN(x.Score) && !double.IsInfinity(x.Score)
                         && x.Score != 0 && x.Score >= options.MinimumScore)
+            .Skip(options.Offset)
             .Take(options.Limit)
             .ToList();
     }

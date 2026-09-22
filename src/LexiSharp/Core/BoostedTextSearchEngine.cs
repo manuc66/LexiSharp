@@ -80,15 +80,22 @@ public sealed class BoostedTextSearchEngine : ITextSearchEngine
 
         options ??= SearchOptions.Default;
 
-        if (options.Limit <= 0)
+        if (options.IsEmpty)
             return Array.Empty<SearchResult>();
 
-        int candidateLimit = Math.Max(options.Limit, _maxCandidates);
+        // The final page is [Offset, Offset + Limit) of the boosted ranking, and boosting can
+        // promote any inner candidate into it — so the inner engine is asked for a pool covering
+        // the skipped prefix plus the deepest candidate the boost is allowed to reach
+        // (maxCandidates beyond the page).
+        int basePool = Math.Max(options.Limit, _maxCandidates);
+        int candidateLimit = options.Offset > int.MaxValue - basePool ? int.MaxValue : options.Offset + basePool;
 
         // Do not pre-filter with MinimumScore here: it must apply to the *boosted* score so a
-        // damped match can fall out and a boosted one can get in.
+        // damped match can fall out and a boosted one can get in. Same for Offset: the inner
+        // ranking is only a candidate pool; the skip is cut from the boosted ordering.
         var candidates = _inner.Search(query, options with
         {
+            Offset = 0,
             Limit = candidateLimit,
             MinimumScore = double.NegativeInfinity,
         });
@@ -122,6 +129,7 @@ public sealed class BoostedTextSearchEngine : ITextSearchEngine
         return results
             .OrderByDescending(x => x.Score)
             .ThenBy(x => x.DocumentId)
+            .Skip(options.Offset)
             .Take(options.Limit)
             .ToList();
     }

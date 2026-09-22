@@ -161,6 +161,37 @@ public class HybridTextSearchEngineTests
     }
 
     [Fact]
+    public void Search_Offset_SkipsPagesOfTheMergedRanking()
+    {
+        var engine = MemoryEngine(new[]
+        {
+            Doc("a", "tennis racket"),
+            Doc("b", "tennis"),
+            Doc("c", "racket"),
+            Doc("d", "poker casino betting"),
+            Doc("e", "mountain hiking"),
+        });
+
+        var hybrid = new HybridTextSearchEngine(new[] { engine });
+
+        var all = hybrid.Search("tennis racket", new SearchOptions(Limit: 10));
+        Assert.Equal(3, all.Count);
+
+        // The page comes from the merged global ordering, not from a delegate's shortlist.
+        var page = hybrid.Search("tennis racket", new SearchOptions(Limit: 2, Offset: 1));
+
+        Assert.Equal(
+            all.Skip(1).Take(2).Select(r => r.DocumentId),
+            page.Select(r => r.DocumentId));
+
+        var details = hybrid.SearchWithDetails("tennis racket", new SearchOptions(Limit: 2, Offset: 1));
+        Assert.Equal(page.Select(r => r.DocumentId), details.Select(r => r.DocumentId));
+
+        Assert.Empty(hybrid.Search("tennis racket", new SearchOptions(Limit: 2, Offset: 3)));
+        Assert.Empty(hybrid.Search("tennis racket", new SearchOptions(Limit: 2, Offset: -1)));
+    }
+
+    [Fact]
     public void SearchWithDetails_ExposesPerSourceContributions()
     {
         var lexical = MemoryEngine(new[] { Doc("a", "apple pie"), Doc("b", "apple crumble") });

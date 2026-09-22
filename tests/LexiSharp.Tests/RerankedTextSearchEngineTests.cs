@@ -222,6 +222,47 @@ public class RerankedTextSearchEngineTests
     }
 
     [Fact]
+    public void Search_Offset_CutsPageFromRerankedOrder()
+    {
+        var inner = new StubEngine
+        {
+            Results = { R("a", DocA, 4.0), R("b", DocB, 3.0), R("c", DocC, 2.0), R("d", DocD, 1.0) }
+        };
+        var engine = new RerankedTextSearchEngine(
+            inner,
+            new StubReranker(c => c.Reverse().ToList()),
+            maxCandidates: 10);
+
+        var all = engine.Search("q", new SearchOptions(Limit: 10));
+        Assert.Equal(new[] { "d", "c", "b", "a" }, all.Select(r => r.DocumentId).ToArray());
+
+        var page = engine.Search("q", new SearchOptions(Limit: 2, Offset: 1));
+
+        Assert.Equal(
+            all.Skip(1).Take(2).Select(r => r.DocumentId),
+            page.Select(r => r.DocumentId));
+        Assert.Equal(new[] { "c", "b" }, page.Select(r => r.DocumentId).ToArray());
+
+        Assert.Empty(engine.Search("q", new SearchOptions(Limit: 2, Offset: 4)));
+        Assert.Empty(engine.Search("q", new SearchOptions(Limit: 2, Offset: -1)));
+    }
+
+    [Fact]
+    public void Search_Offset_OverFetchesBeyondTheSkippedPrefix()
+    {
+        var inner = new StubEngine { Results = { R("a", DocA) } };
+        var engine = new RerankedTextSearchEngine(inner, new StubReranker(), maxCandidates: 3);
+
+        engine.Search("alpha", new SearchOptions(Limit: 2, Offset: 4));
+
+        // The inner engine pools from the top (Offset reset) with room for the skip:
+        // 4 + max(2, 3) = 7 candidates.
+        Assert.NotNull(inner.LastOptions);
+        Assert.Equal(0, inner.LastOptions.Offset);
+        Assert.Equal(7, inner.LastOptions.Limit);
+    }
+
+    [Fact]
     public void Search_RerankerReceivesQueryAndCandidates()
     {
         var inner = new StubEngine { Results = { R("a", DocA) } };

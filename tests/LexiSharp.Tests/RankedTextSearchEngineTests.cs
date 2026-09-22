@@ -29,6 +29,16 @@ public class RankedTextSearchEngineTests
 
     private static readonly string[] ABIds = new[] { "a", "b" };
 
+    // Same term frequency, growing length: BM25's length normalization gives four distinct
+    // scores, so the ranking (and its pages) is unambiguous.
+    private static readonly SearchDocument[] PaginationDocs =
+    {
+        new("p1", "common filler filler filler"),
+        new("p2", "common filler filler"),
+        new("p3", "common filler"),
+        new("p4", "common"),
+    };
+
     [Fact]
     public void Search_ReturnsRelevantDocumentsFirst()
     {
@@ -81,6 +91,67 @@ public class RankedTextSearchEngineTests
         Assert.Equal(1.0, results[0].Score);
         Assert.Equal(1.0, results[1].Score);
         Assert.Equal(ABIds, results.Select(r => r.DocumentId));
+    }
+
+    [Fact]
+    public void Search_Offset_SkipsTheTopOfTheRanking()
+    {
+        var engine = CreateEngine(PaginationDocs);
+
+        var all = engine.Search("common", new SearchOptions(Limit: 10));
+        Assert.Equal(4, all.Count);
+
+        var page = engine.Search("common", new SearchOptions(Limit: 2, Offset: 2));
+
+        Assert.Equal(
+            all.Skip(2).Take(2).Select(r => r.DocumentId),
+            page.Select(r => r.DocumentId));
+        Assert.Equal(
+            all.Skip(2).Take(2).Select(r => r.Score),
+            page.Select(r => r.Score));
+    }
+
+    [Fact]
+    public void Search_OffsetPages_PartitionTheFullRanking()
+    {
+        var engine = CreateEngine(PaginationDocs);
+
+        var all = engine.Search("common", new SearchOptions(Limit: 10));
+        Assert.Equal(4, all.Count);
+
+        var page1 = engine.Search("common", new SearchOptions(Limit: 2, Offset: 0));
+        var page2 = engine.Search("common", new SearchOptions(Limit: 2, Offset: 2));
+        var page3 = engine.Search("common", new SearchOptions(Limit: 2, Offset: 4));
+
+        Assert.Equal(
+            all.Select(r => r.DocumentId),
+            page1.Concat(page2).Concat(page3).Select(r => r.DocumentId));
+        Assert.Equal(2, page1.Count);
+        Assert.Equal(2, page2.Count);
+        Assert.Empty(page3);
+
+        Assert.Empty(engine.Search("common", new SearchOptions(Limit: 2, Offset: 42)));
+        Assert.Empty(engine.Search("common", new SearchOptions(Limit: 2, Offset: -1)));
+    }
+
+    [Fact]
+    public void Search_OffsetAppliesAfterMinimumScoreFiltering()
+    {
+        var engine = CreateEngine(PaginationDocs);
+
+        var all = engine.Search("common", new SearchOptions(Limit: 10));
+        double threshold = all[1].Score;
+        var filtered = all.Where(r => r.Score >= threshold).ToList();
+        Assert.True(filtered.Count >= 2);
+
+        // The page is cut from the *filtered* ranking: without the threshold the skip would
+        // land on a different document.
+        var page = engine.Search("common", new SearchOptions(
+            Limit: 10, MinimumScore: threshold, Offset: 1));
+
+        Assert.Equal(
+            filtered.Skip(1).Select(r => r.DocumentId),
+            page.Select(r => r.DocumentId));
     }
 
     [Fact]

@@ -136,16 +136,21 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
 
         options ??= SearchOptions.Default;
 
-        if (options.Limit <= 0)
+        if (options.IsEmpty)
             return Array.Empty<DetailedSearchResult>();
 
-        int candidateLimit = Math.Max(options.Limit, _minCandidatesPerEngine);
+        // The page is cut from the merged global ranking, not from each delegate's ordering:
+        // pool every engine up to Offset + max(Limit, minCandidates) with Offset disabled, then
+        // skip/trim after the merge so a document ranked deep locally can still own a global
+        // page slot.
+        int basePool = Math.Max(options.Limit, _minCandidatesPerEngine);
+        int candidateLimit = options.Offset > int.MaxValue - basePool ? int.MaxValue : options.Offset + basePool;
 
         var perEngine = new List<IReadOnlyList<SearchResult>>(_engines.Count);
 
         foreach (var engine in _engines)
         {
-            perEngine.Add(engine.Search(query, options with { Limit = candidateLimit }));
+            perEngine.Add(engine.Search(query, options with { Offset = 0, Limit = candidateLimit }));
         }
 
         var contributionsByDocument = new Dictionary<string, Dictionary<string, double>>(StringComparer.Ordinal);
@@ -172,6 +177,7 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
             .Where(x => !double.IsNaN(x.Score) && !double.IsInfinity(x.Score)
                         && x.Score >= options.MinimumScore && x.Score != 0)
             .OrderByDescending(x => x.Score)
+            .Skip(options.Offset)
             .Take(options.Limit)
             .Select(x => new DetailedSearchResult(
                 x.DocumentId,

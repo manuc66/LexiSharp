@@ -170,7 +170,7 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
 
         options ??= SearchOptions.Default;
 
-        if (options.Limit <= 0 || string.IsNullOrWhiteSpace(query))
+        if (options.IsEmpty || string.IsNullOrWhiteSpace(query))
             return Array.Empty<SearchResult>();
 
         using var connection = _dataSource.OpenConnection();
@@ -189,7 +189,11 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
         command.CommandText = searchSql; // NOSONAR:S2077
 
         command.Parameters.AddWithValue("query", query);
-        command.Parameters.AddWithValue("limit", options.Limit);
+
+        // Fetch the whole window (Offset + Limit): the C# side drops rows below MinimumScore
+        // afterwards, and score DESC makes those drops a suffix of the fetched prefix — so the
+        // Skip/Take below cuts the same page the in-memory engines would.
+        command.Parameters.AddWithValue("limit", options.Window);
 
         var results = new List<SearchResult>();
 
@@ -209,7 +213,7 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
             results.Add(new SearchResult(document.Id, score, document));
         }
 
-        return results;
+        return results.Skip(options.Offset).Take(options.Limit).ToList();
     }
 
     /// <summary>Releases the underlying Npgsql data source.</summary>

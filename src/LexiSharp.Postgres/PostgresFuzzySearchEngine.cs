@@ -195,7 +195,7 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable
 
         options ??= SearchOptions.Default;
 
-        if (options.Limit <= 0 || string.IsNullOrWhiteSpace(query))
+        if (options.IsEmpty || string.IsNullOrWhiteSpace(query))
             return Array.Empty<SearchResult>();
 
         using var connection = _dataSource.OpenConnection();
@@ -213,7 +213,11 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable
         using var command = connection.CreateCommand();
         command.CommandText = BuildSearchSql();
         command.Parameters.AddWithValue("query", query);
-        command.Parameters.AddWithValue("limit", options.Limit);
+
+        // Fetch the whole window (Offset + Limit): the C# side drops rows below MinimumScore
+        // afterwards, and the ORDER BY is score-equivalent (DESC, or distance ASC in Nearest
+        // mode) — so those drops are a suffix of the fetched prefix and Skip/Take cuts the page.
+        command.Parameters.AddWithValue("limit", options.Window);
 
         if (_options.UseLevenshteinRefinement)
             command.Parameters.AddWithValue("maxLevenshtein", _options.MaxLevenshteinDistance);
@@ -236,7 +240,7 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable
             results.Add(new SearchResult(document.Id, score, document));
         }
 
-        return results;
+        return results.Skip(options.Offset).Take(options.Limit).ToList();
     }
 
     /// <summary>Releases the underlying Npgsql data source.</summary>
