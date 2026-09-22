@@ -21,6 +21,10 @@ public sealed class InMemoryTextIndex : ITextIndex, ICandidateIndex
     private readonly Dictionary<string, int> _lengths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _corpusFrequencies = new(StringComparer.Ordinal);
 
+    private readonly Dictionary<SearchDocument, long> _candidateMarks =
+        new(ReferenceEqualityComparer.Instance);
+    private long _candidateEpoch;
+
     private long _totalTokens;
 
     public InMemoryTextIndex(ITokenizer? tokenizer = null)
@@ -136,6 +140,8 @@ public sealed class InMemoryTextIndex : ITextIndex, ICandidateIndex
         _tokens.Clear();
         _lengths.Clear();
         _corpusFrequencies.Clear();
+        _candidateMarks.Clear();
+        _candidateEpoch = 0;
         _totalTokens = 0;
     }
 
@@ -213,21 +219,28 @@ public sealed class InMemoryTextIndex : ITextIndex, ICandidateIndex
             yield break;
         }
 
-        var candidates = new HashSet<string>(StringComparer.Ordinal);
+        // Multi-term: stamp the union members by object identity instead of building a fresh
+        // string-keyed hash set per query. The marking dictionary is reused across queries and
+        // keyed by reference identity, so the re-enumeration over the corpus performs plain
+        // identity lookups (no string hashing) while the tied-break order stays the corpus
+        // order. Entries are never removed; a size cap protects long-lived churning indexes.
+        if (_candidateMarks.Count > _documents.Count + 1024)
+            _candidateMarks.Clear();
+
+        long epoch = ++_candidateEpoch;
 
         foreach (var term in terms)
         {
             if (_postings.TryGetValue(term, out var postings))
             {
                 foreach (var documentId in postings.Keys)
-                    candidates.Add(documentId);
+                    _candidateMarks[_documents[documentId]] = epoch;
             }
         }
 
-        // Re-enumeration in corpus order keeps tie-breaking identical to a full scan.
         foreach (var document in _documents.Values)
         {
-            if (candidates.Contains(document.Id))
+            if (_candidateMarks.TryGetValue(document, out long marked) && marked == epoch)
                 yield return document;
         }
     }
