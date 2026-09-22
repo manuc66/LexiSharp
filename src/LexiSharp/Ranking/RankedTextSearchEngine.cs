@@ -80,7 +80,18 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
         var results = new List<SearchResult>(Math.Min(_index.Count, options.Limit * 4));
 
         // Convention: a score of exactly 0 means "not a match".
-        foreach (var document in _index.Documents)
+        // When the index can enumerate the documents sharing at least one query term
+        // (ICandidateIndex) and the scorer provably returns 0 for every document that
+        // shares none (ITermOverlapScorer), score only those candidates: same results,
+        // same order, far fewer distance computations. Otherwise fall back to the full scan.
+        var candidateDocuments =
+            _index is ICandidateIndex candidateIndex &&
+            _scorer is ITermOverlapScorer &&
+            CandidatesCoverFractionOfCorpus(_index, queryTerms) < 0.5
+                ? candidateIndex.GetCandidateDocuments(queryTerms)
+                : _index.Documents;
+
+        foreach (var document in candidateDocuments)
         {
             // Structured filters gate the corpus before any relevance math is paid for.
             if (!options.PassesFilters(document))
@@ -121,5 +132,23 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
             return null;
 
         return explainer.Explain(documentId, _tokenizer.Tokenize(query), _index);
+    }
+
+    /// <summary>
+    /// Upper-bound estimate of the fraction of the corpus covered by the document union of
+    /// the query terms (the sum of per-term document frequencies), used to decide whether
+    /// scoring candidates is cheaper than scoring the whole corpus.
+    /// </summary>
+    private static double CandidatesCoverFractionOfCorpus(ITextIndex index, IReadOnlyList<string> queryTerms)
+    {
+        if (index.Count == 0)
+            return 1;
+
+        long documentUnionUpperBound = 0;
+
+        foreach (var term in queryTerms)
+            documentUnionUpperBound += index.DocumentFrequency(term);
+
+        return (double)documentUnionUpperBound / index.Count;
     }
 }

@@ -14,7 +14,7 @@ namespace LexiSharp.Ranking;
 /// audited term by term (see <see cref="Explain"/>).
 /// </para>
 /// </remarks>
-public sealed class Bm25Scorer : ITextScorer, IScoreExplainer
+public sealed class Bm25Scorer : ITextScorer, IScoreExplainer, ITermOverlapScorer
 {
     private readonly double _k1;
     private readonly double _b;
@@ -64,7 +64,7 @@ public sealed class Bm25Scorer : ITextScorer, IScoreExplainer
 
         double score = 0;
 
-        foreach (var term in queryTerms.Distinct(StringComparer.Ordinal))
+        foreach (var term in TermDeduplicator.Distinct(queryTerms))
         {
             int tf = index.TermFrequency(documentId, term);
 
@@ -106,7 +106,7 @@ public sealed class Bm25Scorer : ITextScorer, IScoreExplainer
 
         if (documentCount > 0 && documentLength > 0 && averageLength > 0)
         {
-            foreach (var term in queryTerms.Distinct(StringComparer.Ordinal))
+            foreach (var term in TermDeduplicator.Distinct(queryTerms))
             {
                 int tf = index.TermFrequency(documentId, term);
 

@@ -16,7 +16,7 @@ public enum BooleanMatch
 /// Because the <see cref="RankedTextSearchEngine"/> discards scores below <c>MinimumScore</c>,
 /// this scorer behaves exactly like an exact AND/OR query while remaining model-independent.
 /// </summary>
-public sealed class BooleanScorer : ITextScorer
+public sealed class BooleanScorer : ITextScorer, ITermOverlapScorer
 {
     private readonly BooleanMatch _match;
 
