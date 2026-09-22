@@ -66,6 +66,10 @@ or ML model** — pure lexical statistics.
   consecutive document positions (several phrases are AND-ed), while the free terms around
   them keep scoring — free terms never hard-filter a mixed query. Natively honored by the
   stock engine (index positions), PostgreSQL (`websearch_to_tsquery`) and ParadeDB (`###`).
+- **Highlighting** (`LexiSharp.Highlighting`): `TextHighlighter` wraps query matches in the
+  original text (`HighlightFull`) or returns padded, word-snapped snippets (`Highlight`) —
+  driven by the tokenizer's span mode (`TokenizeWithSpans`: term + `[Start, Length)` offsets
+  into the source).
 - **Lexical similarity** (`LexiSharp.Similarity`): pairwise token-set measures (Jaccard,
   Sørensen–Dice) over the library tokenizer, a `pg_trgm`-style character trigram similarity,
   and a rolling Levenshtein edit distance — near-duplicate detection and fuzzy matching with
@@ -315,6 +319,30 @@ The SQL backends honor the same syntax natively: PostgreSQL through
 `websearch_to_tsquery`, ParadeDB through the `###` phrase operator (on that backend only
 phrases shape the match set when quotes are present — free terms stay out of `WHERE`, exactly
 mirroring the stock engine's scoring-only role for them).
+
+### Highlighting
+
+Mark where a query matched inside a document — same normalization as the index, so hits land
+on token boundaries even when the source text differs in case or accents:
+
+```csharp
+using LexiSharp.Highlighting;
+
+var terms = Tokenizer.Default.Tokenize(query);   // or QueryParser.Parse(query, tokenizer).AllTerms
+
+string marked = TextHighlighter.HighlightFull(document.Text, terms, Tokenizer.Default);
+// "The <em>quick</em> brown fox jumps over the lazy dog"
+
+IReadOnlyList<HighlightSnippet> snippets = TextHighlighter.Highlight(
+    document.Text, terms, Tokenizer.Default,
+    new HighlightOptions { MaxSnippets = 2, Padding = 30 });
+```
+
+Matching goes through the tokenizer's span mode (`ISpanTokenizer.TokenizeWithSpans`, built
+into `Tokenizer`): each normalized term carries its `[Start, Length)` offsets into the source,
+so the query must be tokenized with the same tokenizer. Nearby matches cluster into one
+snippet, windows snap outward to word boundaries, and overlapping ranges (n-gram tokenizers)
+merge before tagging.
 
 ### Lexical similarity and keyword extraction
 
@@ -645,7 +673,7 @@ retrieve-then-rerank shape, one line of composition.
 ```
 Package            Responsibilities
 ─────────────────────────────────────────────────────────────────────────────
-LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider + ISparseEmbeddingProvider + sparse engine (export/import) + boost/rerank decorators + filters + similarity + keywords + metrics + hybrid federation (RRF, weighted, cascade, cross-encoder, MMR, MaxSim)
+LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider + ISparseEmbeddingProvider + sparse engine (export/import) + boost/rerank decorators + filters + highlighting + similarity + keywords + metrics + hybrid federation (RRF, weighted, cascade, cross-encoder, MMR, MaxSim)
 LexiSharp.Postgres  PostgreSQL providers: tsvector+unaccent (lexical), pgvector ANN (vector), pgvector sparsevec (sparse), pg_trgm+fuzzystrmatch (fuzzy)
 LexiSharp.ParadeDB   true BM25 provider on the pg_search (Tantivy) extension
 LexiSharp.MessagePack   MessagePack (binary) persistence for the in-memory index and the sparse engine
