@@ -14,7 +14,7 @@ namespace LexiSharp.Ranking;
 /// log-probabilities (negative for matching documents); a document sharing no term with
 /// the query scores exactly <c>0</c>, so the engine's « score 0 means no match » rule applies.
 /// </remarks>
-public sealed class QueryLikelihoodScorer : ITermOverlapScorer, IQueryPlannableScorer
+public sealed class QueryLikelihoodScorer : ITermOverlapScorer, IQueryPlannableScorer, IScoreExplainer
 {
     private readonly double _lambda;
 
@@ -79,6 +79,71 @@ public sealed class QueryLikelihoodScorer : ITermOverlapScorer, IQueryPlannableS
         ArgumentNullException.ThrowIfNull(index);
 
         return new QueryLikelihoodQueryPlan(queryTerms, index, _lambda);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Each term contributes its log-probability <c>log P(t | d)</c>, including query terms the
+    /// document does not contain (their contribution is the smoothed collection probability).
+    /// Because the engine treats a document sharing no term as a non-match (score <c>0</c>),
+    /// <see cref="ScoreExplanation.TotalScore"/> follows that convention while the per-term
+    /// contributions still expose the raw probabilities. Language models apply no length
+    /// normalization beyond <c>P(t | d)</c>, so <see cref="ScoreExplanation.LengthNormalization"/>
+    /// is <c>1</c>.
+    /// </remarks>
+    public ScoreExplanation Explain(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index)
+    {
+        ArgumentNullException.ThrowIfNull(index);
+        ArgumentNullException.ThrowIfNull(queryTerms);
+
+        int documentLength = index.DocumentLength(documentId);
+        long collectionTokens = index.CorpusTokenCount;
+        double averageLength = index.AverageDocumentLength;
+        double lengthRatio = averageLength > 0 ? documentLength / averageLength : 0;
+
+        var contributions = new List<TermContribution>();
+        double sum = 0;
+        bool sharesTerm = false;
+
+        if (documentLength > 0 && collectionTokens > 0)
+        {
+            var terms = queryTerms is DistinctTermList ? queryTerms : TermDeduplicator.Distinct(queryTerms);
+
+            for (int i = 0; i < terms.Count; i++)
+            {
+                string term = terms[i];
+                int cf = index.CorpusFrequency(term);
+
+                // Terms unseen in the whole corpus carry no information.
+                if (cf == 0)
+                    continue;
+
+                int tf = index.TermFrequency(documentId, term);
+
+                if (tf > 0)
+                    sharesTerm = true;
+
+                double documentProbability = (double)tf / documentLength;
+                double collectionProbability = (double)cf / collectionTokens;
+                double probability = (1.0 - _lambda) * documentProbability + _lambda * collectionProbability;
+                double contribution = Math.Log(probability);
+
+                contributions.Add(new TermContribution(
+                    term, tf, index.DocumentFrequency(term), InverseDocumentFrequency: 0, contribution));
+                sum += contribution;
+            }
+        }
+
+        return new ScoreExplanation(
+            documentId,
+            Name,
+            sharesTerm ? sum : 0,
+            documentLength,
+            averageLength,
+            lengthRatio,
+            LengthNormalization: 1.0,
+            contributions,
+            new Dictionary<string, double> { ["lambda"] = _lambda });
     }
 
     private sealed class QueryLikelihoodQueryPlan : ISearchQueryPlan
