@@ -42,7 +42,7 @@ namespace LexiSharp.Ranking;
 /// must reduce to exactly one term or the constructor throws.
 /// </para>
 /// </remarks>
-public sealed class RankedTextSearchEngine : ITextSearchEngine
+public sealed class RankedTextSearchEngine : IFacetedSearchEngine
 {
     /// <summary>
     /// Upper bound on how many vocabulary terms a single prefix/fuzzy atom may contribute to
@@ -107,9 +107,32 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
     public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(query);
+        return RunQuery(query, options ?? SearchOptions.Default, null);
+    }
 
-        options ??= SearchOptions.Default;
+    /// <inheritdoc />
+    public FacetedSearchResult SearchWithFacets(
+        string query,
+        SearchOptions? options = null,
+        IReadOnlyList<string>? facetFields = null)
+    {
+        ArgumentNullException.ThrowIfNull(query);
 
+        var collector = facetFields is { Count: > 0 } ? new FacetCollector(facetFields) : null;
+        var results = RunQuery(query, options ?? SearchOptions.Default, collector);
+
+        return new FacetedSearchResult(
+            results,
+            collector is null ? Array.Empty<FacetBucket>() : collector.Build());
+    }
+
+    /// <summary>
+    /// One pass over the candidate documents: parse/resolve the query once, score and gate
+    /// every candidate, optionally count facet values for the documents that match
+    /// (<paramref name="facets"/>), and cut the requested page from the bounded top window.
+    /// </summary>
+    private IReadOnlyList<SearchResult> RunQuery(string query, SearchOptions options, FacetCollector? facets)
+    {
         if (options.IsEmpty)
             return Array.Empty<SearchResult>();
 
@@ -165,6 +188,10 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
 
             if (double.IsNaN(score) || double.IsInfinity(score) || score == 0 || score < options.MinimumScore)
                 continue;
+
+            // Facets count every document that passed all gates — the whole match set,
+            // independent of the Offset/Limit window cut below.
+            facets?.Count(document);
 
             InsertRanked(top, window, (score, document, ordinal++));
         }
@@ -524,5 +551,80 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
             documentUnionUpperBound += index.DocumentFrequency(term);
 
         return (double)documentUnionUpperBound / index.Count;
+    }
+
+    /// <summary>
+    /// Per-field value counts over the documents that pass every match gate — independent of
+    /// the Offset/Limit window. Built once per <see cref="SearchWithFacets"/> call.
+    /// </summary>
+    private sealed class FacetCollector
+    {
+        private readonly string[] _fields;
+        private readonly Dictionary<string, int>[] _counts;
+
+        public FacetCollector(IReadOnlyList<string> fields)
+        {
+            var distinct = new List<string>(fields.Count);
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            for (int i = 0; i < fields.Count; i++)
+            {
+                var field = fields[i];
+                if (!string.IsNullOrEmpty(field) && seen.Add(field))
+                    distinct.Add(field);
+            }
+
+            _fields = distinct.ToArray();
+            _counts = new Dictionary<string, int>[_fields.Length];
+
+            for (int i = 0; i < _fields.Length; i++)
+                _counts[i] = new Dictionary<string, int>(StringComparer.Ordinal);
+        }
+
+        public void Count(SearchDocument document)
+        {
+            var documentFields = document.Fields;
+
+            if (documentFields is null)
+                return;
+
+            for (int i = 0; i < _fields.Length; i++)
+            {
+                // A document missing the field simply does not count for it.
+                if (!documentFields.TryGetValue(_fields[i], out var value) || value is null)
+                    continue;
+
+                var counts = _counts[i];
+                counts.TryGetValue(value, out int current);
+                counts[value] = current + 1;
+            }
+        }
+
+        public IReadOnlyList<FacetBucket> Build()
+        {
+            var buckets = new List<FacetBucket>(_fields.Length);
+
+            for (int i = 0; i < _fields.Length; i++)
+            {
+                // No counted document carries this field: no bucket.
+                if (_counts[i].Count == 0)
+                    continue;
+
+                var values = new List<FacetValue>(_counts[i].Count);
+
+                foreach (var pair in _counts[i])
+                    values.Add(new FacetValue(pair.Key, pair.Value));
+
+                values.Sort(static (a, b) =>
+                {
+                    int byCount = b.Count.CompareTo(a.Count);
+                    return byCount != 0 ? byCount : string.CompareOrdinal(a.Value, b.Value);
+                });
+
+                buckets.Add(new FacetBucket(_fields[i], values));
+            }
+
+            return buckets;
+        }
     }
 }
