@@ -40,9 +40,12 @@ public enum TrgmIndexKind
 /// engines; it relies on the <c>pg_trgm</c> extension (trigram similarity) and optionally on
 /// <c>fuzzystrmatch</c> (<c>levenshtein</c> refinement and <c>metaphone</c> phonetic field).
 /// </remarks>
-public sealed record PostgresFuzzyOptions
+public sealed partial record PostgresFuzzyOptions
 {
-    private static readonly Regex SafeName = new("^[A-Za-z0-9_]+$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    // Trivial linear pattern; NonBacktracking keeps the engine immune to ReDoS (S6444). Compiled
+    // once at startup by the source generator (SYSLIB1045).
+    [GeneratedRegex("^[A-Za-z0-9_]+$", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)]
+    private static partial Regex SafeNameRegex();
 
     /// <summary>Schema that hosts the documents table (default: <c>public</c>).</summary>
     public string Schema { get; init; } = "public";
@@ -92,7 +95,7 @@ public sealed record PostgresFuzzyOptions
     public bool AutoCreateSchema { get; init; } = true;
 
     internal bool IsValid =>
-        SafeName.IsMatch(Schema) && SafeName.IsMatch(Table) && SafeName.IsMatch(ContentField)
+        SafeNameRegex().IsMatch(Schema) && SafeNameRegex().IsMatch(Table) && SafeNameRegex().IsMatch(ContentField)
         && SimilarityThreshold is > 0 and <= 1
         && MaxLevenshteinDistance >= 0;
 

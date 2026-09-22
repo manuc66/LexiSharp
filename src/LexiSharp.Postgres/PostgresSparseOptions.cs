@@ -37,9 +37,12 @@ public enum SparseDistance
 /// this engine always builds an HNSW index — inserts and empty tables are fine (contrary to IVFFlat).
 /// </para>
 /// </remarks>
-public sealed record PostgresSparseOptions
+public sealed partial record PostgresSparseOptions
 {
-    private static readonly Regex SafeName = new("^[A-Za-z0-9_]+$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    // Trivial linear pattern; NonBacktracking keeps the engine immune to ReDoS (S6444). Compiled
+    // once at startup by the source generator (SYSLIB1045).
+    [GeneratedRegex("^[A-Za-z0-9_]+$", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)]
+    private static partial Regex SafeNameRegex();
 
     /// <summary>Schema that hosts the documents table (default: <c>public</c>).</summary>
     public string Schema { get; init; } = "public";
@@ -89,7 +92,7 @@ public sealed record PostgresSparseOptions
     }
 
     internal bool IsValid =>
-        SafeName.IsMatch(Schema) && SafeName.IsMatch(Table)
+        SafeNameRegex().IsMatch(Schema) && SafeNameRegex().IsMatch(Table)
         && Vocabulary.Count > 0
         && Vocabulary.Values.All(index => index >= 0)
         && HnswM > 0 && HnswEfConstruction > 0;

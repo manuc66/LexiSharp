@@ -11,9 +11,12 @@ namespace LexiSharp.ParadeDB;
 /// Tantivy (BM25) index <c>ON</c> that table, so the lexical <c>tsvector</c> engine, the
 /// vector engine and this one can coexist on a single table.
 /// </remarks>
-public sealed record ParadeDBOptions
+public sealed partial record ParadeDBOptions
 {
-    private static readonly Regex SafeName = new("^[A-Za-z0-9_]+$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    // Trivial linear pattern; NonBacktracking keeps the engine immune to ReDoS (S6444). Compiled
+    // once at startup by the source generator (SYSLIB1045).
+    [GeneratedRegex("^[A-Za-z0-9_]+$", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)]
+    private static partial Regex SafeNameRegex();
 
     /// <summary>Schema that hosts the documents table (default: <c>public</c>).</summary>
     public string Schema { get; init; } = "public";
@@ -44,7 +47,7 @@ public sealed record ParadeDBOptions
     /// </summary>
     public bool AutoCreateSchema { get; init; } = true;
 
-    internal bool IsValid => SafeName.IsMatch(Schema) && SafeName.IsMatch(Table) && SafeName.IsMatch(ContentField);
+    internal bool IsValid => SafeNameRegex().IsMatch(Schema) && SafeNameRegex().IsMatch(Table) && SafeNameRegex().IsMatch(ContentField);
 
     /// <summary>Fully qualified table name, e.g. <c>public.lexisharp_documents</c>.</summary>
     public string QualifiedTableName => $"{QuoteIdentifier(Schema)}.{QuoteIdentifier(Table)}";

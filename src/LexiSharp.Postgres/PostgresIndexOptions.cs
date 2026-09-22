@@ -5,9 +5,12 @@ namespace LexiSharp.Postgres;
 /// <summary>
 /// Naming and behavior options for the PostgreSQL-backed index.
 /// </summary>
-public sealed record PostgresIndexOptions
+public sealed partial record PostgresIndexOptions
 {
-    private static readonly Regex SafeName = new("^[A-Za-z0-9_]+$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    // Trivial linear pattern, compiled once at startup by the source generator; NonBacktracking
+    // keeps the engine immune to ReDoS, matching SonarCloud's S6444 guidance.
+    [GeneratedRegex("^[A-Za-z0-9_]+$", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)]
+    private static partial Regex SafeNameRegex();
 
     /// <summary>Schema that hosts the documents table (default: <c>public</c>).</summary>
     public string Schema { get; init; } = "public";
@@ -29,7 +32,7 @@ public sealed record PostgresIndexOptions
     /// </summary>
     public bool AutoCreateSchema { get; init; } = true;
 
-    internal bool IsValid => SafeName.IsMatch(Schema) && SafeName.IsMatch(Table) && SafeName.IsMatch(TextSearchConfig);
+    internal bool IsValid => SafeNameRegex().IsMatch(Schema) && SafeNameRegex().IsMatch(Table) && SafeNameRegex().IsMatch(TextSearchConfig);
 
     /// <summary>Fully qualified table name, e.g. <c>public.lexisharp_documents</c>.</summary>
     public string QualifiedTableName => $"{QuoteIdentifier(Schema)}.{QuoteIdentifier(Table)}";
