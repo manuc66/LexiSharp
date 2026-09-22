@@ -69,7 +69,7 @@ jobs:
       postgres:
         image: pgvector/pgvector:pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
         env:
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: postgres  # NOSONAR:S2068 (local test container only; Sonar flags the dummy dev password)
           POSTGRES_DB: lexisharp
         ports:
           - 5432:5432
@@ -79,7 +79,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      POSTGRES_TEST_CONNECTION: Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp
+      POSTGRES_TEST_CONNECTION: Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp  # NOSONAR:S2068 (dummy password for ephemeral CI container)
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
@@ -100,7 +100,7 @@ jobs:
       postgres:
         image: paradedb/paradedb:pg16@sha256:ac8ad72f57da6fa35738d346b9970811a4ab9ce0ba7f183bea27e0ad7b037222
         env:
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: postgres  # NOSONAR:S2068 (local test container only; Sonar flags the dummy dev password)
           POSTGRES_DB: lexisharp
         ports:
           - 5432:5432
@@ -110,7 +110,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      POSTGRES_TEST_CONNECTION: Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp
+      POSTGRES_TEST_CONNECTION: Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp  # NOSONAR:S2068 (dummy password for ephemeral CI container)
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 

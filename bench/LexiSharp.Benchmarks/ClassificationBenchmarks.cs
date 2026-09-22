@@ -16,7 +16,7 @@ public class ClassificationBenchmarks
     public void Setup()
     {
         var categories = new[] { "Sports", "Technology", "Cooking", "Travel", "Finance" };
-        var random = new Random(7);
+        var random = new Random(7); // NOSONAR:S2245 (fixed-seed synthetic corpus for reproducible benchmarks)
         var training = new SearchDocument[TrainingSetSize];
 
         for (int i = 0; i < training.Length; i++)

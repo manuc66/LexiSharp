@@ -73,7 +73,7 @@ internal static class CorpusFactory
 
     public static SearchDocument[] CreateDocuments(int count, int wordsPerDocument)
     {
-        var random = new Random(42);
+        var random = new Random(42); // NOSONAR:S2245 (fixed-seed synthetic corpus for reproducible benchmarks)
         var documents = new SearchDocument[count];
 
         for (int i = 0; i < count; i++)
