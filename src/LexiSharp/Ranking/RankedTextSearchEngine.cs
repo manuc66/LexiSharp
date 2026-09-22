@@ -175,8 +175,7 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
         (double Score, SearchDocument Document, long Ordinal) higher)
         // Equal scores are a tie-break against Ordinal, not a float-equality check on a computed
         // value; an epsilon comparison here would silently reorder identical-ranked documents.
-        // NOSONAR:S1244
-        => lower.Score < higher.Score || (lower.Score == higher.Score && lower.Ordinal > higher.Ordinal);
+        => lower.Score < higher.Score || (lower.Score == higher.Score && lower.Ordinal > higher.Ordinal); // NOSONAR:S1244
 
     /// <summary>
     /// Explains why a document received the score it did for a query, by delegating to the
