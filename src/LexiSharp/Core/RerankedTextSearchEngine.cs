@@ -23,7 +23,7 @@ namespace LexiSharp.Core;
 /// re-ranking — exactly like <see cref="BoostedTextSearchEngine"/> treats its boosted scores.
 /// </para>
 /// </remarks>
-public sealed class RerankedTextSearchEngine : ITextSearchEngine
+public sealed class RerankedTextSearchEngine : ITextSearchEngine, IQueryCostProbe
 {
     private readonly ITextSearchEngine _inner;
     private readonly IReranker _reranker;
@@ -107,5 +107,18 @@ public sealed class RerankedTextSearchEngine : ITextSearchEngine
             .Skip(options.Offset)
             .Take(options.Limit)
             .ToList();
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Re-ranking does not change how many candidates the query touches, so the estimate is
+    /// delegated to the inner engine when it can estimate; an inner without
+    /// <see cref="IQueryCostProbe"/> makes the decorator a routing last resort
+    /// (<see cref="long.MaxValue"/>).
+    /// </remarks>
+    public long EstimateCandidateCount(ReadOnlySpan<char> query, SearchOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return _inner is IQueryCostProbe probe ? probe.EstimateCandidateCount(query, options) : long.MaxValue;
     }
 }

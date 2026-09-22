@@ -42,7 +42,7 @@ namespace LexiSharp.Ranking;
 /// must reduce to exactly one term or the constructor throws.
 /// </para>
 /// </remarks>
-public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostProbe
+public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostProbe, IExplainableSearchEngine
 {
     /// <summary>
     /// Upper bound on how many vocabulary terms a single prefix/fuzzy atom may contribute to
