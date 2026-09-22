@@ -11,6 +11,7 @@ internal sealed record BeirQuery(string Id, string Text);
 
 internal sealed class BeirCorpus
 {
+    public required string Name { get; init; }
     public required IReadOnlyList<BeirDocument> Documents { get; init; }
     public required IReadOnlyList<BeirQuery> Queries { get; init; }
 
@@ -18,16 +19,49 @@ internal sealed class BeirCorpus
     public required IReadOnlyDictionary<string, IReadOnlyDictionary<string, double>> TestRelevance { get; init; }
 }
 
+/// <summary>A BEIR dataset plus its published BM25 baseline (Thakur et al. 2021, Table 2).</summary>
+internal sealed record BeirDataset(string Name, string DownloadUrl, string ExpectedMd5, double Bm25Ndcg10Ref, bool Graded)
+{
+    public static readonly IReadOnlyList<BeirDataset> All =
+    [
+        new(
+            "nfcorpus",
+            "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/nfcorpus.zip",
+            "a89dba18a62ef92f7d323ec890a0d38d",
+            Bm25Ndcg10Ref: 0.325,
+            Graded: true),
+        new(
+            "scifact",
+            "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip",
+            "5f7d1de60b170fc8027bb7898e2efca1",
+            Bm25Ndcg10Ref: 0.665,
+            Graded: false),
+        new(
+            "arguana",
+            "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/arguana.zip",
+            "8ad3e3c2a5867cdced806d6503f29b99",
+            Bm25Ndcg10Ref: 0.315,
+            Graded: false),
+    ];
+
+    public static BeirDataset Resolve(string name)
+    {
+        foreach (BeirDataset dataset in All)
+        {
+            if (dataset.Name == name)
+                return dataset;
+        }
+
+        throw new ArgumentException(
+            $"Unknown dataset '{name}'. Available: {string.Join(", ", All.Select(dataset => dataset.Name))}.");
+    }
+}
+
 internal static class BeirLoader
 {
-    private const string DownloadUrl =
-        "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/nfcorpus.zip";
-
-    private const string ExpectedMd5 = "a89dba18a62ef92f7d323ec890a0d38d";
-
-    public static async Task<BeirCorpus> LoadOrDownloadAsync(string dataDir)
+    public static async Task<BeirCorpus> LoadOrDownloadAsync(string dataBaseDir, BeirDataset dataset)
     {
-        string root = await EnsureDatasetAsync(dataDir);
+        string root = await EnsureDatasetAsync(dataBaseDir, dataset);
 
         var documents = ParseJsonLines(
             Path.Combine(root, "corpus.jsonl"),
@@ -46,6 +80,7 @@ internal static class BeirLoader
 
         return new BeirCorpus
         {
+            Name = dataset.Name,
             Documents = documents,
             Queries = queries,
             TestRelevance = relevance,
@@ -53,11 +88,11 @@ internal static class BeirLoader
     }
 
     /// <summary>Returns the directory containing the BEIR-formatted files, downloading them first when missing.</summary>
-    private static async Task<string> EnsureDatasetAsync(string dataDir)
+    private static async Task<string> EnsureDatasetAsync(string dataBaseDir, BeirDataset dataset)
     {
-        string nested = Path.Combine(dataDir, "nfcorpus");
+        string nested = Path.Combine(dataBaseDir, dataset.Name);
 
-        foreach (string candidate in new[] { dataDir, nested })
+        foreach (string candidate in new[] { dataBaseDir, nested })
         {
             if (File.Exists(Path.Combine(candidate, "corpus.jsonl"))
                 && File.Exists(Path.Combine(candidate, "queries.jsonl"))
@@ -67,29 +102,29 @@ internal static class BeirLoader
             }
         }
 
-        Directory.CreateDirectory(dataDir);
-        string zipPath = Path.Combine(dataDir, "nfcorpus.zip");
+        Directory.CreateDirectory(dataBaseDir);
+        string zipPath = Path.Combine(dataBaseDir, $"{dataset.Name}.zip");
 
-        Console.WriteLine($"Downloading NFCorpus (BEIR) from {DownloadUrl}");
+        Console.WriteLine($"Downloading {dataset.Name} (BEIR) from {dataset.DownloadUrl}");
         using var client = new HttpClient();
-        await using (Stream response = await client.GetStreamAsync(DownloadUrl))
+        await using (Stream response = await client.GetStreamAsync(dataset.DownloadUrl))
         await using (FileStream zip = File.Create(zipPath))
             await response.CopyToAsync(zip);
 
         string actualMd5 = await ComputeMd5Async(zipPath);
 
-        if (!string.Equals(actualMd5, ExpectedMd5, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(actualMd5, dataset.ExpectedMd5, StringComparison.OrdinalIgnoreCase))
         {
             File.Delete(zipPath);
             throw new InvalidOperationException(
-                $"NFCorpus download checksum mismatch: expected {ExpectedMd5}, got {actualMd5}.");
+                $"{dataset.Name} download checksum mismatch: expected {dataset.ExpectedMd5}, got {actualMd5}.");
         }
 
         Console.WriteLine("Download complete, checksum verified.");
-        ZipFile.ExtractToDirectory(zipPath, dataDir, overwriteFiles: true);
+        ZipFile.ExtractToDirectory(zipPath, dataBaseDir, overwriteFiles: true);
         File.Delete(zipPath);
 
-        return Directory.Exists(nested) ? nested : dataDir;
+        return Directory.Exists(nested) ? nested : dataBaseDir;
     }
 
     private static async Task<string> ComputeMd5Async(string path)
