@@ -60,6 +60,24 @@ public sealed class TextRankKeywordExtractor : IKeywordExtractor
         if (tokens.Count == 0)
             return Array.Empty<Keyword>();
 
+        var (nodes, weights) = BuildGraph(tokens);
+
+        if (nodes.Count == 1)
+            return new[] { new Keyword(nodes[0], 1.0) };
+
+        var scores = PageRank(weights, nodes.Count);
+
+        // Node order = first appearance order, so ranking is deterministic: first appearance wins ties.
+        return Enumerable.Range(0, nodes.Count)
+            .OrderByDescending(i => scores[i])
+            .ThenBy(i => i)
+            .Take(topN)
+            .Select(i => new Keyword(nodes[i], scores[i]))
+            .ToList();
+    }
+
+    private (List<string> Nodes, double[][] Weights) BuildGraph(IReadOnlyList<string> tokens)
+    {
         // Node order = first appearance order, for deterministic iteration and tie-breaking.
         var nodes = new List<string>();
         var nodeIndex = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -74,9 +92,6 @@ public sealed class TextRankKeywordExtractor : IKeywordExtractor
             }
         }
 
-        if (nodes.Count == 1)
-            return new[] { new Keyword(nodes[0], 1.0) };
-
         // Symmetric weighted adjacency from the sliding co-occurrence window.
         var weights = new double[nodes.Count][];
 
@@ -85,11 +100,11 @@ public sealed class TextRankKeywordExtractor : IKeywordExtractor
 
         for (int i = 0; i < tokens.Count; i++)
         {
+            int a = nodeIndex[tokens[i]];
             int max = Math.Min(i + _windowSize, tokens.Count);
 
             for (int j = i + 1; j < max; j++)
             {
-                int a = nodeIndex[tokens[i]];
                 int b = nodeIndex[tokens[j]];
 
                 if (a != b)
@@ -100,37 +115,21 @@ public sealed class TextRankKeywordExtractor : IKeywordExtractor
             }
         }
 
-        var outWeights = new double[nodes.Count];
+        return (nodes, weights);
+    }
 
-        for (int i = 0; i < nodes.Count; i++)
-        {
-            for (int j = 0; j < nodes.Count; j++)
-                outWeights[i] += weights[i][j];
-        }
+    private double[] PageRank(double[][] weights, int nodeCount)
+    {
+        var outWeights = ComputeOutDegrees(weights, nodeCount);
 
         // PageRank from a uniform distribution.
-        var scores = new double[nodes.Count];
-        Array.Fill(scores, 1.0 / nodes.Count);
-
-        var next = new double[nodes.Count];
+        var scores = new double[nodeCount];
+        Array.Fill(scores, 1.0 / nodeCount);
+        var next = new double[nodeCount];
 
         for (int iteration = 0; iteration < _maxIterations; iteration++)
         {
-            double totalChange = 0;
-
-            for (int i = 0; i < nodes.Count; i++)
-            {
-                double incoming = 0;
-
-                for (int j = 0; j < nodes.Count; j++)
-                {
-                    if (j != i && weights[j][i] > 0 && outWeights[j] > 0)
-                        incoming += scores[j] * (weights[j][i] / outWeights[j]);
-                }
-
-                next[i] = (1 - _damping) / nodes.Count + _damping * incoming;
-                totalChange += Math.Abs(next[i] - scores[i]);
-            }
+            double totalChange = Sweep(weights, outWeights, scores, next);
 
             (scores, next) = (next, scores);
 
@@ -138,11 +137,40 @@ public sealed class TextRankKeywordExtractor : IKeywordExtractor
                 break;
         }
 
-        return Enumerable.Range(0, nodes.Count)
-            .OrderByDescending(i => scores[i])
-            .ThenBy(i => i) // first appearance wins ties
-            .Take(topN)
-            .Select(i => new Keyword(nodes[i], scores[i]))
-            .ToList();
+        return scores;
+    }
+
+    private static double[] ComputeOutDegrees(double[][] weights, int nodeCount)
+    {
+        var outWeights = new double[nodeCount];
+
+        for (int i = 0; i < nodeCount; i++)
+        {
+            for (int j = 0; j < nodeCount; j++)
+                outWeights[i] += weights[i][j];
+        }
+
+        return outWeights;
+    }
+
+    private double Sweep(double[][] weights, double[] outWeights, double[] scores, double[] next)
+    {
+        double totalChange = 0;
+
+        for (int i = 0; i < scores.Length; i++)
+        {
+            double incoming = 0;
+
+            for (int j = 0; j < scores.Length; j++)
+            {
+                if (j != i && weights[j][i] > 0 && outWeights[j] > 0)
+                    incoming += scores[j] * (weights[j][i] / outWeights[j]);
+            }
+
+            next[i] = (1 - _damping) / scores.Length + _damping * incoming;
+            totalChange += Math.Abs(next[i] - scores[i]);
+        }
+
+        return totalChange;
     }
 }

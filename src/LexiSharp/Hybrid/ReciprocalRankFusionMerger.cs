@@ -62,6 +62,22 @@ public sealed class ReciprocalRankFusionMerger : IResultMerger
         if (engineCount == 0)
             return Array.Empty<SearchResult>();
 
+        double[] weights = ResolveWeights(engineCount);
+
+        // Accumulate 1/(k + rank) per document, using each document's best rank per engine.
+        var fusion = new Dictionary<string, (SearchDocument Document, double Score)>(StringComparer.Ordinal);
+
+        for (int i = 0; i < engineCount; i++)
+        {
+            if (weights[i] != 0)
+                AccumulateEngine(fusion, perEngineResults[i], weights[i]);
+        }
+
+        return Rank(fusion);
+    }
+
+    private double[] ResolveWeights(int engineCount)
+    {
         double[] weights = _weights.Length == 1 && engineCount > 1
             ? Enumerable.Repeat(_weights[0], engineCount).ToArray()
             : _weights;
@@ -70,40 +86,38 @@ public sealed class ReciprocalRankFusionMerger : IResultMerger
             throw new InvalidOperationException(
                 $"ReciprocalRankFusionMerger expects {engineCount} weights but got {weights.Length}.");
 
-        // Accumulate 1/(k + rank) per document, using each document's best rank per engine.
-        var fusion = new Dictionary<string, (SearchDocument Document, double Score)>(StringComparer.Ordinal);
+        return weights;
+    }
 
-        for (int i = 0; i < engineCount; i++)
+    private void AccumulateEngine(
+        Dictionary<string, (SearchDocument Document, double Score)> fusion,
+        IReadOnlyList<SearchResult> results,
+        double weight)
+    {
+        // Only the best rank per engine counts: later repeats of a document add nothing.
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        for (int rankIndex = 0; rankIndex < results.Count; rankIndex++)
         {
-            if (weights[i] == 0)
+            var result = results[rankIndex];
+
+            if (!seen.Add(result.DocumentId))
                 continue;
 
-            var seen = new HashSet<string>(StringComparer.Ordinal);
+            double contribution = weight / (_k + rankIndex + 1);
 
-            for (int rankIndex = 0; rankIndex < perEngineResults[i].Count; rankIndex++)
-            {
-                var result = perEngineResults[i][rankIndex];
-
-                if (!seen.Add(result.DocumentId))
-                    continue;
-
-                double contribution = weights[i] / (_k + rankIndex + 1);
-
-                if (fusion.TryGetValue(result.DocumentId, out var existing))
-                {
-                    fusion[result.DocumentId] = (existing.Document, existing.Score + contribution);
-                }
-                else
-                {
-                    fusion[result.DocumentId] = (result.Document, contribution);
-                }
-            }
+            if (fusion.TryGetValue(result.DocumentId, out var existing))
+                fusion[result.DocumentId] = (existing.Document, existing.Score + contribution);
+            else
+                fusion[result.DocumentId] = (result.Document, contribution);
         }
+    }
 
-        return fusion
+    private static IReadOnlyList<SearchResult> Rank(
+        Dictionary<string, (SearchDocument Document, double Score)> fusion) =>
+        fusion
             .Where(x => x.Value.Score > 0)
             .Select(x => new SearchResult(x.Key, x.Value.Score, x.Value.Document))
             .OrderByDescending(x => x.Score)
             .ToList();
-    }
 }

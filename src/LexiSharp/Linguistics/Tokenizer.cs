@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace LexiSharp.Linguistics;
@@ -47,6 +48,21 @@ public sealed class Tokenizer : ITokenizer
         if (string.IsNullOrEmpty(text))
             return Array.Empty<string>();
 
+        var words = SplitWords(text);
+
+        if (words.Count == 0)
+            return Array.Empty<string>();
+
+        var terms = ProcessWords(words);
+
+        if (!_useNgrams || terms.Count < 2)
+            return terms;
+
+        return BuildNgrams(terms);
+    }
+
+    private List<string> SplitWords(string text)
+    {
         var words = new List<string>(32);
         var word = new StringBuilder(16);
 
@@ -80,10 +96,11 @@ public sealed class Tokenizer : ITokenizer
         }
 
         FlushWord(word, words, _options.KeepSingleCharTerms);
+        return words;
+    }
 
-        if (words.Count == 0)
-            return Array.Empty<string>();
-
+    private List<string> ProcessWords(List<string> words)
+    {
         var terms = new List<string>(words.Count);
 
         foreach (var raw in words)
@@ -99,15 +116,18 @@ public sealed class Tokenizer : ITokenizer
             terms.Add(term);
         }
 
-        if (!_useNgrams || terms.Count < 2)
-            return terms;
+        return terms;
+    }
 
+    private List<string> BuildNgrams(List<string> terms)
+    {
+        var termsSpan = CollectionsMarshal.AsSpan(terms);
         var ngrams = new List<string>(terms.Count);
 
         for (int n = _options.NGramMin; n <= _options.NGramMax; n++)
         {
             for (int i = 0; i + n <= terms.Count; i++)
-                ngrams.Add(string.Join(' ', terms.Skip(i).Take(n)));
+                ngrams.Add(string.Join(' ', termsSpan.Slice(i, n)));
         }
 
         return ngrams;

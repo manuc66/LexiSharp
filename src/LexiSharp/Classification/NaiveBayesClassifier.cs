@@ -164,79 +164,93 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
 
         foreach (var pair in _termCountsByClass)
         {
-            string category = pair.Key;
-
-            if (excludedCategories is not null && excludedCategories.Contains(category))
+            if (excludedCategories is not null && excludedCategories.Contains(pair.Key))
                 continue;
 
-            var classTerms = pair.Value;
-            int classTokenCount = 0;
-            _classTokenCounts.TryGetValue(category, out classTokenCount);
-            _classDocumentCounts.TryGetValue(category, out int classDocumentCount);
-
-            double logProbability;
-
-            if (_options.Complement)
-            {
-                // Complement statistics: term and token totals over the other classes are smoothed
-                // by Alpha over the vocabulary. A query is scored as the negative log-likelihood
-                // of its tokens in the complement distribution, so the class whose complement
-                // explains the query least is the best pick (Rennie et al., 2003 as implemented
-                // by scikit-learn's ComplementNB, which also leaves the priors out).
-                int complementTokenCount = _totalTokenCount - classTokenCount;
-                double complementDenominator = complementTokenCount + _options.Alpha * _vocabularySize;
-                logProbability = 0.0;
-
-                foreach (var token in tokenList)
-                {
-                    if (_options.SkipOutOfVocabularyTokens && !IsInVocabulary(token.Token))
-                        continue;
-
-                    _globalTermCounts.TryGetValue(token.Token, out int globalTermCount);
-                    classTerms.TryGetValue(token.Token, out int termCount);
-                    int complementTermCount = globalTermCount - termCount;
-
-                    if (complementDenominator > 0)
-                    {
-                        double idf = IdfWeight(token.Token);
-                        logProbability += token.Weight * idf
-                            * -Math.Log((complementTermCount + _options.Alpha) / complementDenominator);
-                    }
-                }
-            }
-            else
-            {
-                double smoothingDenominator = classTokenCount + _options.Alpha * _vocabularySize;
-
-                double logPrior = _options.SmoothPriors
-                    ? Math.Log((classDocumentCount + _options.Alpha)
-                               / (_documentCount + _options.Alpha * _classCount))
-                    : Math.Log((double)classDocumentCount / _documentCount);
-
-                logProbability = logPrior;
-
-                foreach (var token in tokenList)
-                {
-                    if (_options.SkipOutOfVocabularyTokens && !IsInVocabulary(token.Token))
-                        continue;
-
-                    classTerms.TryGetValue(token.Token, out int termCount);
-
-                    if (smoothingDenominator > 0)
-                    {
-                        double idf = IdfWeight(token.Token);
-                        logProbability += token.Weight * idf
-                            * Math.Log((termCount + _options.Alpha) / smoothingDenominator);
-                    }
-                }
-            }
-
-            categories[idx] = category;
-            logProbabilities[idx] = logProbability / _options.Temperature;
+            logProbabilities[idx] = LogProbability(pair.Key, pair.Value, tokenList) / _options.Temperature;
+            categories[idx] = pair.Key;
             idx++;
         }
 
         return NormalizeAndRank(categories, logProbabilities, idx, limit);
+    }
+
+    private double LogProbability(
+        string category,
+        Dictionary<string, int> classTerms,
+        List<WeightedToken> tokenList)
+    {
+        _classTokenCounts.TryGetValue(category, out int classTokenCount);
+        _classDocumentCounts.TryGetValue(category, out int classDocumentCount);
+
+        return _options.Complement
+            ? ComplementLogProbability(classTerms, classTokenCount, tokenList)
+            : ClassicLogProbability(classTerms, classTokenCount, classDocumentCount, tokenList);
+    }
+
+    private double ComplementLogProbability(
+        Dictionary<string, int> classTerms,
+        int classTokenCount,
+        List<WeightedToken> tokenList)
+    {
+        // A query is scored as the negative log-likelihood of its tokens in the complement
+        // distribution, so the class whose complement explains the query least is the best pick
+        // (Rennie et al., 2003 as implemented by scikit-learn's ComplementNB, which also leaves
+        // the priors out). Complement statistics: term and token totals over the other classes
+        // are smoothed by Alpha over the vocabulary.
+        int complementTokenCount = _totalTokenCount - classTokenCount;
+        double complementDenominator = complementTokenCount + _options.Alpha * _vocabularySize;
+        double logProbability = 0.0;
+
+        foreach (var token in tokenList)
+        {
+            if (_options.SkipOutOfVocabularyTokens && !IsInVocabulary(token.Token))
+                continue;
+
+            _globalTermCounts.TryGetValue(token.Token, out int globalTermCount);
+            classTerms.TryGetValue(token.Token, out int termCount);
+            int complementTermCount = globalTermCount - termCount;
+
+            if (complementDenominator > 0)
+            {
+                double idf = IdfWeight(token.Token);
+                logProbability += token.Weight * idf
+                    * -Math.Log((complementTermCount + _options.Alpha) / complementDenominator);
+            }
+        }
+
+        return logProbability;
+    }
+
+    private double ClassicLogProbability(
+        Dictionary<string, int> classTerms,
+        int classTokenCount,
+        int classDocumentCount,
+        List<WeightedToken> tokenList)
+    {
+        double smoothingDenominator = classTokenCount + _options.Alpha * _vocabularySize;
+
+        double logProbability = _options.SmoothPriors
+            ? Math.Log((classDocumentCount + _options.Alpha)
+                       / (_documentCount + _options.Alpha * _classCount))
+            : Math.Log((double)classDocumentCount / _documentCount);
+
+        foreach (var token in tokenList)
+        {
+            if (_options.SkipOutOfVocabularyTokens && !IsInVocabulary(token.Token))
+                continue;
+
+            classTerms.TryGetValue(token.Token, out int termCount);
+
+            if (smoothingDenominator > 0)
+            {
+                double idf = IdfWeight(token.Token);
+                logProbability += token.Weight * idf
+                    * Math.Log((termCount + _options.Alpha) / smoothingDenominator);
+            }
+        }
+
+        return logProbability;
     }
 
     private bool IsInVocabulary(string term) =>
