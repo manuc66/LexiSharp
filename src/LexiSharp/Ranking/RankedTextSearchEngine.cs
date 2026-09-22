@@ -42,7 +42,7 @@ namespace LexiSharp.Ranking;
 /// must reduce to exactly one term or the constructor throws.
 /// </para>
 /// </remarks>
-public sealed class RankedTextSearchEngine : IFacetedSearchEngine
+public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostProbe
 {
     /// <summary>
     /// Upper bound on how many vocabulary terms a single prefix/fuzzy atom may contribute to
@@ -577,6 +577,30 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine
             documentUnionUpperBound += index.DocumentFrequency(term);
 
         return (double)documentUnionUpperBound / index.Count;
+    }
+
+    /// <summary>
+    /// Heuristic cost for <see cref="RoutedSearchEngine"/>: the sum of the literal query terms'
+    /// document frequencies, an upper bound of the candidate union. Empty requests and empty
+    /// indexes cost zero. Prefix/fuzzy expansions and synonyms resolve only at search time and
+    /// are deliberately not counted, so the estimate is a lower bound in their presence.
+    /// </summary>
+    /// <param name="query">The raw query, parsed with the engine's tokenizer.</param>
+    /// <param name="options">The options the search would run with.</param>
+    public long EstimateCandidateCount(ReadOnlySpan<char> query, SearchOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (options.IsEmpty || _index.Count == 0)
+            return 0;
+
+        var parsed = QueryParser.Parse(query, _tokenizer);
+        long total = 0;
+
+        for (int i = 0; i < parsed.AllTerms.Count; i++)
+            total += _index.DocumentFrequency(parsed.AllTerms[i]);
+
+        return total;
     }
 
     /// <summary>
