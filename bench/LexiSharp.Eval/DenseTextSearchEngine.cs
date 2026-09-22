@@ -23,7 +23,7 @@ internal static class DenseModels
         Directory.CreateDirectory(Path.Combine(cacheDir, "onnx"));
 
         await DownloadAsync(Path.Combine(cacheDir, OnnxFile), HuggingFaceBase + OnnxFile, "model.onnx", 256 * 1024 * 1024, ct);
-        await DownloadAsync(Path.Combine(cacheDir, SpmFile), HuggingFaceBase + SpmFile, "sentencepiece.bpe.model", 16 * 1024 * 1024, ct);
+        await DownloadAsync(Path.Combine(cacheDir, SpmFile), HuggingFaceBase + SpmFile, "sentencepiece.bpe.model", 64 * 1024, ct);
     }
 
     private static async Task DownloadAsync(string target, string url, string label, int minSize, CancellationToken ct)
