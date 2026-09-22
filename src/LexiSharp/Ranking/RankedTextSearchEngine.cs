@@ -16,6 +16,14 @@ namespace LexiSharp.Ranking;
 /// <c>0</c>; such documents are excluded from results unless <see cref="SearchOptions.MinimumScore"/>
 /// is lowered. All built-in scorers (TF-IDF, BM25, boolean, query likelihood) honor this.
 /// </para>
+/// <para>
+/// Double-quoted segments are parsed as <b>phrase queries</b> through
+/// <see cref="QueryParser"/> (before tokenization — the tokenizer itself treats <c>"</c> as
+/// an ordinary separator): their terms must appear at consecutive document positions, with
+/// several phrases AND-ed together, while the free text around them keeps scoring as usual —
+/// free terms never hard-filter a mixed query. Phrase checks assume a plain token stream:
+/// n-gram tokenizers emit overlapping tokens and break the consecutive-position guarantee.
+/// </para>
 /// </remarks>
 public sealed class RankedTextSearchEngine : ITextSearchEngine
 {
@@ -72,12 +80,12 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
         if (options.IsEmpty)
             return Array.Empty<SearchResult>();
 
-        var queryTerms = _tokenizer.Tokenize(query);
+        var parsed = QueryParser.Parse(query, _tokenizer);
 
-        if (queryTerms.Count == 0 || _index.Count == 0)
+        if (parsed.AllTerms.Count == 0 || _index.Count == 0)
             return Array.Empty<SearchResult>();
 
-        var distinctQueryTerms = DistinctTermList.Wrap(TermDeduplicator.Distinct(queryTerms));
+        var distinctQueryTerms = DistinctTermList.Wrap(TermDeduplicator.Distinct(parsed.AllTerms));
 
         // Precompute the query-level corpus constants (idf, collection probabilities, ...) once
         // per search instead of per candidate document when the scorer supports it.
@@ -108,6 +116,11 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
         {
             // Structured filters gate the corpus before any relevance math is paid for.
             if (!options.PassesFilters(document))
+                continue;
+
+            // Quoted segments are a hard positional gate: every phrase must appear at
+            // consecutive positions, checked before any relevance math is paid.
+            if (parsed.HasPhrases && !MatchesPhrases(document.Id, parsed.Phrases))
                 continue;
 
             double score = plan is null
@@ -183,11 +196,73 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
         => lower.Score < higher.Score || (lower.Score == higher.Score && lower.Ordinal > higher.Ordinal); // NOSONAR:S1244
 
     /// <summary>
+    /// Whether every phrase appears at consecutive document positions; phrases are AND-ed
+    /// (one failing constraint rejects the document).
+    /// </summary>
+    private bool MatchesPhrases(string documentId, IReadOnlyList<IReadOnlyList<string>> phrases)
+    {
+        for (int p = 0; p < phrases.Count; p++)
+        {
+            if (!MatchesPhrase(documentId, phrases[p]))
+                return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Whether the phrase's terms sit at positions <c>p, p+1, …</c> for some occurrence of
+    /// its first term. Position lists come straight from the index (sorted, no allocation).
+    /// </summary>
+    private bool MatchesPhrase(string documentId, IReadOnlyList<string> phrase)
+    {
+        var anchors = _index.GetTermPositions(documentId, phrase[0]);
+
+        for (int a = 0; a < anchors.Count; a++)
+        {
+            int start = anchors[a];
+            bool consecutive = true;
+
+            for (int i = 1; i < phrase.Count; i++)
+            {
+                if (!ContainsPosition(_index.GetTermPositions(documentId, phrase[i]), start + i))
+                {
+                    consecutive = false;
+                    break;
+                }
+            }
+
+            if (consecutive)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Membership test over an index position list (ascending, typically short).</summary>
+    private static bool ContainsPosition(IReadOnlyList<int> positions, int position)
+    {
+        for (int i = 0; i < positions.Count; i++)
+        {
+            if (positions[i] == position)
+                return true;
+
+            if (positions[i] > position)
+                return false; // ascending: no later entry can match
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Explains why a document received the score it did for a query, by delegating to the
     /// scorer's <see cref="IScoreExplainer"/> capability when it has one.
     /// </summary>
     /// <param name="documentId">Id of the document to explain.</param>
-    /// <param name="query">The raw query; tokenized with the engine's tokenizer.</param>
+    /// <param name="query">
+    /// The raw query; parsed with <see cref="QueryParser"/> like <see cref="Search"/> (quoted
+    /// segments contribute their terms) and tokenized with the engine's tokenizer.
+    /// </param>
     /// <returns>
     /// A <see cref="ScoreExplanation"/>, or <c>null</c> when the active scorer cannot explain
     /// itself (it does not implement <see cref="IScoreExplainer"/>) or the document is unknown.
@@ -199,7 +274,7 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
         if (_scorer is not IScoreExplainer explainer || !_index.Contains(documentId))
             return null;
 
-        return explainer.Explain(documentId, _tokenizer.Tokenize(query), _index);
+        return explainer.Explain(documentId, QueryParser.Parse(query, _tokenizer).AllTerms, _index);
     }
 
     /// <summary>

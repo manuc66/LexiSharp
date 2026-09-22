@@ -237,4 +237,82 @@ public class RankedTextSearchEngineTests
 
         Assert.Single(results);
     }
+
+    private static readonly SearchDocument[] PhraseDocs =
+    {
+        new("adjacent", "machine learning systems"),
+        new("reversed", "learning machine systems"),
+        new("gapped", "machine that learning systems"),
+        new("other", "completely unrelated text"),
+    };
+
+    [Fact]
+    public void Search_PhraseQuery_RequiresConsecutivePositions()
+    {
+        var engine = CreateEngine(PhraseDocs);
+
+        var results = engine.Search("\"machine learning\"", new SearchOptions(Limit: 10));
+
+        var hit = Assert.Single(results);
+        Assert.Equal("adjacent", hit.DocumentId);
+        Assert.True(hit.Score > 0);
+    }
+
+    [Fact]
+    public void Search_MixedQuery_PhraseGatesCorpusButFreeTermsOnlyScore()
+    {
+        var engine = CreateEngine(new[]
+        {
+            new SearchDocument("phrase-only", "machine learning systems rock"),
+            new SearchDocument("both", "neural machine learning systems"),
+            new SearchDocument("free-only", "neural networks accelerate fast"),
+            new SearchDocument("reversed", "learning machine neural systems"),
+        });
+
+        var results = engine.Search("neural \"machine learning\"", new SearchOptions(Limit: 10));
+
+        // The free term alone never pulls a document in, and never keeps one out: "phrase-only"
+        // lacks "neural" yet matches through the phrase; "free-only" has "neural" but no phrase.
+        Assert.Equal(2, results.Count);
+        Assert.Contains(results, r => r.DocumentId == "phrase-only");
+        Assert.Contains(results, r => r.DocumentId == "both");
+        Assert.DoesNotContain(results, r => r.DocumentId == "free-only");
+        Assert.DoesNotContain(results, r => r.DocumentId == "reversed");
+    }
+
+    [Fact]
+    public void Search_MultiplePhrases_AreAnded()
+    {
+        var engine = CreateEngine(new[]
+        {
+            new SearchDocument("both", "deep learning and machine learning"),
+            new SearchDocument("first-only", "deep learning beats statistics"),
+            new SearchDocument("second-only", "machine learning beats statistics"),
+        });
+
+        var results = engine.Search("\"deep learning\" \"machine learning\"", new SearchOptions(Limit: 10));
+
+        var hit = Assert.Single(results);
+        Assert.Equal("both", hit.DocumentId);
+    }
+
+    [Fact]
+    public void Search_SingleTokenPhrase_MatchesTermPresence()
+    {
+        var engine = CreateEngine(Docs);
+
+        var results = engine.Search("\"search\"", new SearchOptions(Limit: 10));
+
+        Assert.Equal(2, results.Count);
+        Assert.DoesNotContain(results, r => r.DocumentId == "3");
+    }
+
+    [Fact]
+    public void Search_OnlyVacuousPhrases_ReturnsNothing()
+    {
+        var engine = CreateEngine(Docs);
+
+        Assert.Empty(engine.Search("\"\"", new SearchOptions(Limit: 10)));
+        Assert.Empty(engine.Search("\"   \"", new SearchOptions(Limit: 10)));
+    }
 }

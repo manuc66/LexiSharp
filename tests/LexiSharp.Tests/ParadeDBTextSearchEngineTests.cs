@@ -258,4 +258,62 @@ public class ParadeDBTextSearchEngineTests
             engine.DropSchema();
         }
     }
+
+    [SkippableFact]
+    public void Search_PhraseQuery_RequiresConsecutiveTerms()
+    {
+        SkipIfUnavailable();
+
+        using var engine = NewEngine();
+
+        try
+        {
+            // ||| tokenizes quotes into a plain disjunction — only the ### path enforces
+            // consecutive positions on this backend.
+            engine.Add(Doc("adjacent", "running shoes are great"));
+            engine.Add(Doc("reversed", "shoes running are great"));
+            engine.Add(Doc("gapped", "running with shoes are great"));
+
+            var results = engine.Search("\"running shoes\"", new SearchOptions(Limit: 10));
+
+            var hit = Assert.Single(results);
+            Assert.Equal("adjacent", hit.DocumentId);
+            Assert.True(hit.Score > 0);
+
+            // Free text around a phrase never hard-filters (stock parity): an absent free
+            // term must not hide the phrase match.
+            var withFree = engine.Search("absent \"running shoes\"", new SearchOptions(Limit: 10));
+
+            var freeHit = Assert.Single(withFree);
+            Assert.Equal("adjacent", freeHit.DocumentId);
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    [SkippableFact]
+    public void Search_MultiplePhrases_AreAnded()
+    {
+        SkipIfUnavailable();
+
+        using var engine = NewEngine();
+
+        try
+        {
+            engine.Add(Doc("both", "deep learning and machine learning"));
+            engine.Add(Doc("first-only", "deep learning beats statistics"));
+            engine.Add(Doc("second-only", "machine learning beats statistics"));
+
+            var results = engine.Search("\"deep learning\" \"machine learning\"", new SearchOptions(Limit: 10));
+
+            var hit = Assert.Single(results);
+            Assert.Equal("both", hit.DocumentId);
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
 }
