@@ -32,9 +32,12 @@ public enum VectorDistance
 /// Naming and behavior options for the embeddings-backed (pgvector) index. The table layout is
 /// shared with the lexical engine so both engines can serve a single corpus table.
 /// </summary>
-public sealed record PostgresVectorOptions
+public sealed partial record PostgresVectorOptions
 {
-    private static readonly Regex SafeName = new("^[A-Za-z0-9_]+$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    // Trivial linear pattern; NonBacktracking keeps the engine immune to ReDoS (S6444). Compiled
+    // once at startup by the source generator (SYSLIB1045).
+    [GeneratedRegex("^[A-Za-z0-9_]+$", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)]
+    private static partial Regex SafeNameRegex();
 
     /// <summary>Schema that hosts the documents table (default: <c>public</c>).</summary>
     public string Schema { get; init; } = "public";
@@ -101,12 +104,12 @@ public sealed record PostgresVectorOptions
     public bool AutoCreateSchema { get; init; } = true;
 
     internal bool IsValid =>
-        SafeName.IsMatch(Schema) && SafeName.IsMatch(Table)
+        SafeNameRegex().IsMatch(Schema) && SafeNameRegex().IsMatch(Table)
         && Dimension > 0 && HnswM > 0 && HnswEfConstruction > 0 && IvfLists > 0
         && (HnswEfSearch is null || HnswEfSearch > 0)
         && !IsMixedEmbeddingConfiguration
         && (EmbeddingColumns is null || EmbeddingColumns.Count > 0)
-        && (EmbeddingColumns?.All(column => SafeName.IsMatch(column.Key) && column.Value.Length > 0) ?? true);
+        && (EmbeddingColumns?.All(column => SafeNameRegex().IsMatch(column.Key) && column.Value.Length > 0) ?? true);
 
     /// <summary><see cref="EmbeddingTextField"/> and <see cref="EmbeddingColumns"/> are two
     /// mutually exclusive ways to source the embedded text; configuring both is a programming error.</summary>
