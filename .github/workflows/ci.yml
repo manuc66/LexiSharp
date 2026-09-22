@@ -162,7 +162,23 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             pr_args="/d:sonar.pullrequest.key=$PR_KEY /d:sonar.pullrequest.branch=$PR_BRANCH /d:sonar.pullrequest.base=$PR_BASE"
           fi
-          dotnet-sonarscanner begin /k:manuc66_lexisharp /o:manuc66-github /d:sonar.token="$SONAR_TOKEN" /d:sonar.host.url=https://sonarcloud.io /d:sonar.cs.cobertura.reportsPaths=TestResults/**/coverage*.cobertura.xml /d:sonar.exclusions=**/*Tests*/**/*,**/bench/**/* /d:sonar.coverage.exclusions=**/LexiSharp.Postgres/**/*,**/LexiSharp.ParadeDB/**/* $pr_args
+          # Test-code style noise stays scrapped by Sonar (real test defects are still reported)
+          # but is filtered out by these rule-level ignores (per Sonar docs, by issue, not by
+          # file exclusion, so bugs in tests are never hidden).
+          ignore_args=(
+            "/d:sonar.issue.ignore.multicriteria=test-noise1,test-noise2,test-noise3,test-noise4,test-noise5"
+            "/d:sonar.issue.ignore.multicriteria.test-noise1.ruleKey=external_roslyn:CA1861"
+            "/d:sonar.issue.ignore.multicriteria.test-noise1.resourceKey=**/*Tests*/**/*"
+            "/d:sonar.issue.ignore.multicriteria.test-noise2.ruleKey=external_roslyn:CA1859"
+            "/d:sonar.issue.ignore.multicriteria.test-noise2.resourceKey=**/*Tests*/**/*"
+            "/d:sonar.issue.ignore.multicriteria.test-noise3.ruleKey=external_roslyn:CA1865"
+            "/d:sonar.issue.ignore.multicriteria.test-noise3.resourceKey=**/*Tests*/**/*"
+            "/d:sonar.issue.ignore.multicriteria.test-noise4.ruleKey=external_roslyn:xUnit1042"
+            "/d:sonar.issue.ignore.multicriteria.test-noise4.resourceKey=**/*Tests*/**/*"
+            "/d:sonar.issue.ignore.multicriteria.test-noise5.ruleKey=external_roslyn:xUnit1044"
+            "/d:sonar.issue.ignore.multicriteria.test-noise5.resourceKey=**/*Tests*/**/*"
+          )
+          dotnet-sonarscanner begin /k:manuc66_lexisharp /o:manuc66-github /d:sonar.token="$SONAR_TOKEN" /d:sonar.host.url=https://sonarcloud.io /d:sonar.cs.cobertura.reportsPaths=TestResults/**/coverage*.cobertura.xml /d:sonar.exclusions=**/*Tests*/**/*,**/bench/**/* /d:sonar.coverage.exclusions=**/LexiSharp.Postgres/**/*,**/LexiSharp.ParadeDB/**/* "${ignore_args[@]}" $pr_args
 
       - name: Test with coverage
         # The build happens here: coverlet.msbuild instrumentation requires
