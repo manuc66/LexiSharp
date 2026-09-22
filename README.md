@@ -70,6 +70,9 @@ or ML model** — pure lexical statistics.
   original text (`HighlightFull`) or returns padded, word-snapped snippets (`Highlight`) —
   driven by the tokenizer's span mode (`TokenizeWithSpans`: term + `[Start, Length)` offsets
   into the source).
+- **Prefix &amp; fuzzy queries**: `neural*` expands to every indexed term with that prefix,
+  `catt~`/`catt~N` fuzzy-matches within N edits (default 1, clamped to 0–2) — search-time
+  vocabulary expansion on the stock engine (`IVocabularyIndex`), 64 terms max per atom.
 - **Lexical similarity** (`LexiSharp.Similarity`): pairwise token-set measures (Jaccard,
   Sørensen–Dice) over the library tokenizer, a `pg_trgm`-style character trigram similarity,
   and a rolling Levenshtein edit distance — near-duplicate detection and fuzzy matching with
@@ -343,6 +346,24 @@ into `Tokenizer`): each normalized term carries its `[Start, Length)` offsets in
 so the query must be tokenized with the same tokenizer. Nearby matches cluster into one
 snippet, windows snap outward to word boundaries, and overlapping ranges (n-gram tokenizers)
 merge before tagging.
+
+### Prefix &amp; fuzzy queries
+
+Suffix a free-text atom to expand it against the index vocabulary at search time:
+
+```csharp
+engine.Search("neural*");    // every indexed term starting with "neural"
+engine.Search("catt~");      // within 1 edit: "cat", "cats", "catt", ...
+engine.Search("catt~2");     // within 2 edits (count clamped to 0–2)
+```
+
+Expansion is a stock-engine feature: the atom's base is tokenized first, then matched against
+an `IVocabularyIndex` (`InMemoryTextIndex` implements it), keeping at most 64 terms per atom —
+highest document frequency first, then ordinal order. An index without vocabulary support
+falls back to the atom's literal base term, i.e. the behavior of a query without operators.
+Operators are only recognized when suffixed to word characters, never inside quoted phrases
+(a `"machine*"` phrase stays literal), and they are a LexiSharp query syntax — the SQL
+backends do not interpret them.
 
 ### Lexical similarity and keyword extraction
 

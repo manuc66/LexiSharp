@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using LexiSharp;
 using LexiSharp.Core;
 using LexiSharp.Indexing;
@@ -314,5 +315,193 @@ public class RankedTextSearchEngineTests
 
         Assert.Empty(engine.Search("\"\"", new SearchOptions(Limit: 10)));
         Assert.Empty(engine.Search("\"   \"", new SearchOptions(Limit: 10)));
+    }
+
+    [Fact]
+    public void Search_PrefixAtom_ExpandsAgainstTheVocabulary()
+    {
+        var engine = CreateEngine(new[]
+        {
+            new SearchDocument("1", "neural networks rule"),
+            new SearchDocument("2", "neuralnets are tall"),
+            new SearchDocument("3", "unrelated content here"),
+        });
+
+        var results = engine.Search("neural*", new SearchOptions(Limit: 10));
+
+        Assert.Equal(2, results.Count);
+        Assert.Contains(results, r => r.DocumentId == "1");
+        Assert.Contains(results, r => r.DocumentId == "2");
+    }
+
+    [Fact]
+    public void Search_PrefixAtom_WithPlainTerms_ScoreOnlyBothSides()
+    {
+        var engine = CreateEngine(new[]
+        {
+            new SearchDocument("1", "neural networks rule"),
+            new SearchDocument("2", "neuralnets are tall"),
+            new SearchDocument("3", "networks effects"),
+        });
+
+        // Free terms (here: the expansion and the literal) never hard-filter: every document
+        // sharing at least one of them scores above zero.
+        var results = engine.Search("neural* networks", new SearchOptions(Limit: 10));
+
+        Assert.Equal(3, results.Count);
+    }
+
+    [Fact]
+    public void Search_FuzzyAtom_MatchesWithinEditDistance()
+    {
+        var engine = CreateEngine(new[]
+        {
+            new SearchDocument("1", "cars park"),
+            new SearchDocument("2", "a car parks"),
+            new SearchDocument("3", "care costs"),
+            new SearchDocument("4", "truck loads"),
+        });
+
+        // Default budget 1: "cars" (0 edit), "car" and "care" (1 edit) all expand in.
+        var fuzzy = engine.Search("cars~", new SearchOptions(Limit: 10));
+        Assert.Equal(new[] { "1", "2", "3" }, fuzzy.Select(r => r.DocumentId).OrderBy(x => x));
+
+        // Budget 0 pins the expansion to the exact term.
+        var exact = engine.Search("cars~0", new SearchOptions(Limit: 10));
+        var hit = Assert.Single(exact);
+        Assert.Equal("1", hit.DocumentId);
+
+        // Without the operator the typo/exact term is looked up literally.
+        var literal = engine.Search("cars", new SearchOptions(Limit: 10));
+        Assert.Single(literal);
+    }
+
+    [Fact]
+    public void Search_FuzzyAtom_TypoInQueryFindsTheCorrectedTerm()
+    {
+        var engine = CreateEngine(new[]
+        {
+            new SearchDocument("1", "neural networks"),
+            new SearchDocument("2", "unrelated stuff"),
+        });
+
+        var results = engine.Search("neurall~", new SearchOptions(Limit: 10));
+
+        var hit = Assert.Single(results);
+        Assert.Equal("1", hit.DocumentId);
+
+        // Same typo without the operator matches nothing.
+        Assert.Empty(engine.Search("neurall"));
+    }
+
+    [Fact]
+    public void Search_PrefixExpansion_CapsTermsPerAtom()
+    {
+        var docs = new SearchDocument[70];
+        for (int i = 0; i < docs.Length; i++)
+            docs[i] = new SearchDocument($"d{i}", $"zpad{i:D2}");
+
+        var engine = CreateEngine(docs);
+
+        var results = engine.Search("zpad*", new SearchOptions(Limit: 100));
+
+        // All document frequencies tie, so ordinal order decides: zpad00..zpad63 win the cap.
+        Assert.Equal(RankedTextSearchEngine.MaxExpansionsPerAtom, results.Count);
+        Assert.Contains(results, r => r.DocumentId == "d0");
+        Assert.DoesNotContain(results, r => r.DocumentId == "d64");
+    }
+
+    [Fact]
+    public void Search_ExpansionOnIndexWithoutVocabulary_FallsBackToLiteralBase()
+    {
+        var inner = new InMemoryTextIndex();
+        inner.Index(new[]
+        {
+            new SearchDocument("1", "neural networks"),
+            new SearchDocument("2", "neuralnets are tall"),
+        });
+
+        var engine = new RankedTextSearchEngine(new NoVocabularyIndex(inner), new Bm25Scorer());
+
+        var results = engine.Search("neural*", new SearchOptions(Limit: 10));
+
+        var hit = Assert.Single(results);
+        Assert.Equal("1", hit.DocumentId);
+    }
+
+    [Fact]
+    public void Search_ExpansionOperatorInsideQuotesIsLiteral()
+    {
+        var engine = CreateEngine(new[]
+        {
+            new SearchDocument("1", "machine learning rocks"),
+            new SearchDocument("2", "machines learn rock"),
+        });
+
+        var results = engine.Search("\"machine*\"", new SearchOptions(Limit: 10));
+
+        // Quoted segments never expand: only the exact term "machine" satisfies the phrase.
+        var hit = Assert.Single(results);
+        Assert.Equal("1", hit.DocumentId);
+    }
+
+    [Fact]
+    public void Engine_Explain_ResolvesExpansionTerms()
+    {
+        var engine = CreateEngine(new[] { new SearchDocument("1", "neural networks") });
+
+        var withOperator = engine.Explain("1", "neural*");
+        var literal = engine.Explain("1", "neural");
+
+        Assert.NotNull(withOperator);
+        Assert.NotNull(literal);
+        Assert.Equal(literal!.TotalScore, withOperator!.TotalScore, 12);
+    }
+
+    /// <summary>An <see cref="ITextIndex"/> without <see cref="IVocabularyIndex"/> — exercises the literal-fallback path.</summary>
+    private sealed class NoVocabularyIndex : ITextIndex
+    {
+        private readonly InMemoryTextIndex _inner;
+
+        public NoVocabularyIndex(InMemoryTextIndex inner) => _inner = inner;
+
+        public IReadOnlyCollection<SearchDocument> Documents => _inner.Documents;
+
+        public int Count => _inner.Count;
+
+        public double AverageDocumentLength => _inner.AverageDocumentLength;
+
+        public int VocabularySize => _inner.VocabularySize;
+
+        public long CorpusTokenCount => _inner.CorpusTokenCount;
+
+        public void Index(IEnumerable<SearchDocument> documents) => _inner.Index(documents);
+
+        public void Add(SearchDocument document) => _inner.Add(document);
+
+        public bool Remove(string documentId) => _inner.Remove(documentId);
+
+        public void Clear() => _inner.Clear();
+
+        public bool Contains(string documentId) => _inner.Contains(documentId);
+
+        public IReadOnlyList<string> GetTerms(string documentId) => _inner.GetTerms(documentId);
+
+        public IReadOnlyList<int> GetTermPositions(string documentId, string term) =>
+            _inner.GetTermPositions(documentId, term);
+
+        public int DocumentFrequency(string term) => _inner.DocumentFrequency(term);
+
+        public int CorpusFrequency(string term) => _inner.CorpusFrequency(term);
+
+        public int TermFrequency(string documentId, string term) =>
+            _inner.TermFrequency(documentId, term);
+
+        public int DocumentLength(string documentId) => _inner.DocumentLength(documentId);
+
+        public bool TryGetDocument(
+            string documentId,
+            [NotNullWhen(true)] out SearchDocument? document) =>
+            _inner.TryGetDocument(documentId, out document);
     }
 }
