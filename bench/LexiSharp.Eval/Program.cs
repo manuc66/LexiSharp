@@ -13,6 +13,8 @@ public static class Program
         int denseSeq = 256;
         bool dense = false;
         bool tuned = true;
+        bool rerank = false;
+        int rerankCandidates = 100;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -39,6 +41,12 @@ public static class Program
                 case "--no-tuned":
                     tuned = false;
                     break;
+                case "--rerank":
+                    rerank = true;
+                    break;
+                case "--rerank-top" when i + 1 < args.Length:
+                    rerankCandidates = ParsePositive(args[++i], "--rerank-top");
+                    break;
                 case "--help":
                 case "-h":
                     PrintHelp();
@@ -56,13 +64,35 @@ public static class Program
             ? BeirDataset.All
             : [BeirDataset.Resolve(datasetArg)];
 
+        IReranker? reranker = null;
+
+        if (rerank)
+        {
+            string rerankCache = Path.Combine(dataBaseDir, "models", "cross-encoder");
+            await CrossEncoderModels.EnsureFilesAsync(rerankCache, CancellationToken.None);
+
+            var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
+            options.AppendExecutionProvider_CPU();
+            options.IntraOpNumThreads = 4;
+            options.InterOpNumThreads = 1;
+
+            var session = new Microsoft.ML.OnnxRuntime.InferenceSession(
+                Path.Combine(rerankCache, "onnx", "model.onnx"), options);
+
+            reranker = new CrossEncoderReranker(new BertTokenizer(Path.Combine(rerankCache, "vocab.txt")), session);
+
+            Console.WriteLine(
+                $"Cross-encoder reranker enabled ({CrossEncoderModels.ModelId}, {rerankCandidates} candidates/query).");
+            Console.WriteLine();
+        }
+
         Console.WriteLine("LexiSharp evaluation harness — BEIR corpora");
         Console.WriteLine($"Data directory: {dataBaseDir}");
         Console.WriteLine();
 
         foreach (BeirDataset dataset in datasets)
         {
-            await RunDatasetAsync(dataset, dataBaseDir, topK, limit, dense, denseSeq, tuned);
+            await RunDatasetAsync(dataset, dataBaseDir, topK, limit, dense, denseSeq, tuned, reranker, rerankCandidates);
             Console.WriteLine();
         }
 
@@ -70,7 +100,8 @@ public static class Program
     }
 
     private static async Task RunDatasetAsync(
-        BeirDataset dataset, string dataBaseDir, int topK, int? limit, bool dense, int denseSeq, bool tuned)
+        BeirDataset dataset, string dataBaseDir, int topK, int? limit, bool dense, int denseSeq, bool tuned,
+        IReranker? reranker, int rerankCandidates)
     {
         Console.WriteLine($"== {dataset.Name} ==");
 
@@ -92,10 +123,10 @@ public static class Program
         }
         else
         {
-            Console.WriteLine("Dense configs disabled — re-run with --dense to add multilingual-e5-small (CPU, first run downloads the model and encodes the corpus).");
+            Console.WriteLine("Dense configs disabled — re-run with --dense to add multilingual-e5-small (CPU, first run downloads the model and encodes the corpus). Re-run with --rerank to add a cross-encoder second stage.");
         }
 
-        var (results, tunedDescription) = Evaluation.Run(corpus, topK, limit, denseVectors, tuned);
+        var (results, tunedDescription) = Evaluation.Run(corpus, topK, limit, denseVectors, tuned, reranker, rerankCandidates);
 
         PrintTable(results, topK);
         PrintReference(dataset);
@@ -154,7 +185,7 @@ public static class Program
     {
         Console.WriteLine("""
             Usage: LexiSharp.Eval [--data <dir>] [--dataset <name|all>] [--top-k <n>] [--limit <n>]
-                     [--no-tuned] [--dense] [--dense-seq <n>]
+                     [--no-tuned] [--dense] [--dense-seq <n>] [--rerank] [--rerank-top <n>]
 
               --data <dir>      Base directory for datasets (default: <project>/data).
                                 Downloaded and checksum-verified on first run.
@@ -169,6 +200,10 @@ public static class Program
                                 First run downloads the model and encodes corpus+queries on CPU
                                 (threads capped at 4); embeddings are cached for later runs.
               --dense-seq <n>   Max tokens per sequence when embedding (default: 256). Lower = faster.
+              --rerank          Add a second-stage cross-encoder reranker (ms-marco MiniLM-L-6-v2,
+                                ONNX Runtime): re-scores the top-N lexical/dense candidates per query.
+                                First run downloads ~90 MB into data/models/cross-encoder/.
+              --rerank-top <n>  Number of candidates fed to the cross-encoder (default: 100).
               --help, -h        Show this help.
             """);
     }

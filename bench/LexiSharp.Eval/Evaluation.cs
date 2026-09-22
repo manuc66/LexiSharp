@@ -24,7 +24,8 @@ internal static class Evaluation
     private static readonly Tokenizer Tokenizer = Tokenizer.Default;
 
     public static (IReadOnlyList<ConfigResult> Results, string TunedDescription) Run(
-        BeirCorpus corpus, int topK, int? limit, DenseVectors? dense = null, bool tuned = true)
+        BeirCorpus corpus, int topK, int? limit, DenseVectors? dense = null, bool tuned = true,
+        IReranker? reranker = null, int rerankCandidates = 100)
     {
         var queries = corpus.Queries
             .Where(query => corpus.TestRelevance.ContainsKey(query.Id))
@@ -61,6 +62,27 @@ internal static class Evaluation
                 new ITextSearchEngine[] { bm25, denseEngine }, new WeightedScoreResultMerger(1.0, 1.0))));
             buildersList.Add(("Hybrid BM25+Dense RRF", () => new HybridTextSearchEngine(
                 new ITextSearchEngine[] { bm25, denseEngine }, new ReciprocalRankFusionMerger())));
+        }
+
+        if (reranker is not null)
+        {
+            var bm25 = Ranked(documents, new Bm25Scorer(1.5, 0.75));
+            var languageModel = Ranked(documents, new QueryLikelihoodScorer(0.2));
+
+            buildersList.Add(($"BM25 (top{rerankCandidates})+CrossRerank", () =>
+                RerankEngines.Reranked(bm25, rerankCandidates, reranker)));
+            buildersList.Add(($"QL (top{rerankCandidates})+CrossRerank", () =>
+                RerankEngines.Reranked(languageModel, rerankCandidates, reranker)));
+
+            if (dense is not null)
+            {
+                var rrf = new HybridTextSearchEngine(
+                    new ITextSearchEngine[] { bm25, new DenseTextSearchEngine(corpus, dense) },
+                    new ReciprocalRankFusionMerger());
+
+                buildersList.Add(($"Hybrid RRF (top{rerankCandidates})+CrossRerank", () =>
+                    RerankEngines.Reranked(rrf, rerankCandidates, reranker)));
+            }
         }
 
         var results = new List<ConfigResult>();
