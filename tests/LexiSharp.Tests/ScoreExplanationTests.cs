@@ -80,6 +80,77 @@ public class ScoreExplanationTests
     }
 
     [Fact]
+    public void TfIdf_Explain_ReproducesTheScoreAndBreaksDownTerms()
+    {
+        var (index, doc1, _) = CreateFixture();
+        var scorer = new TfIdfScorer();
+        var query = new[] { "alpha", "beta" };
+
+        var explanation = scorer.Explain(doc1.Id, query, index);
+
+        Assert.Equal("TF-IDF", explanation.Algorithm);
+        Assert.Equal(1.0, explanation.LengthNormalization);
+        Assert.Equal(3, explanation.DocumentLength);
+        Assert.Equal(2.5, explanation.AverageDocumentLength);
+
+        // df(alpha)=1, idf = ln(3/2) + 1; df(beta)=2, idf = ln(3/3) + 1 = 1.
+        var alpha = Assert.Single(explanation.Terms, t => t.Term == "alpha");
+        Assert.Equal(2, alpha.TermFrequency);
+        Assert.Equal(1, alpha.DocumentFrequency);
+        Assert.Equal(Math.Log(1.5) + 1.0, alpha.InverseDocumentFrequency, 12);
+        Assert.Equal(2 * (Math.Log(1.5) + 1.0), alpha.Score, 12);
+
+        var beta = Assert.Single(explanation.Terms, t => t.Term == "beta");
+        Assert.Equal(1.0, beta.InverseDocumentFrequency, 12);
+
+        Assert.Equal(alpha.Score + beta.Score, explanation.TotalScore, 12);
+        Assert.Equal(scorer.Score(doc1.Id, query, index), explanation.TotalScore, 12);
+    }
+
+    [Fact]
+    public void QueryLikelihood_Explain_ReproducesTheScoreAndBreaksDownTerms()
+    {
+        var (index, doc1, _) = CreateFixture();
+        var scorer = new QueryLikelihoodScorer();
+        var query = new[] { "alpha", "beta" };
+
+        var explanation = scorer.Explain(doc1.Id, query, index);
+
+        Assert.Equal("QueryLikelihood", explanation.Algorithm);
+        Assert.Equal(1.0, explanation.LengthNormalization);
+        Assert.Equal(0.2, explanation.Parameters["lambda"]);
+        Assert.Equal(2, explanation.Terms.Count);
+
+        var alpha = Assert.Single(explanation.Terms, t => t.Term == "alpha");
+        double expectedAlpha = Math.Log(0.8 * (2.0 / 3.0) + 0.2 * (2.0 / 5.0));
+        Assert.Equal(expectedAlpha, alpha.Score, 12);
+
+        double expectedBeta = Math.Log(0.8 * (1.0 / 3.0) + 0.2 * (2.0 / 5.0));
+        Assert.Equal(expectedBeta, Assert.Single(explanation.Terms, t => t.Term == "beta").Score, 12);
+
+        Assert.Equal(alpha.Score + expectedBeta, explanation.TotalScore, 12);
+        Assert.Equal(scorer.Score(doc1.Id, query, index), explanation.TotalScore, 12);
+    }
+
+    [Fact]
+    public void QueryLikelihood_Explain_NonMatchingDocumentReportsZeroButKeepsSmoothingTerms()
+    {
+        var (index, _, doc2) = CreateFixture();
+        var scorer = new QueryLikelihoodScorer();
+
+        var explanation = scorer.Explain(doc2.Id, QueryAlpha, index);
+
+        // doc2 has no "alpha": the engine convention makes it a non-match, score 0.
+        Assert.Equal(0, explanation.TotalScore);
+        Assert.Equal(scorer.Score(doc2.Id, QueryAlpha, index), explanation.TotalScore);
+
+        // The collection-model contribution is still exposed for diagnostics (tf 0).
+        var alpha = Assert.Single(explanation.Terms, t => t.Term == "alpha");
+        Assert.Equal(0, alpha.TermFrequency);
+        Assert.Equal(Math.Log(0.2 * (2.0 / 5.0)), alpha.Score, 12);
+    }
+
+    [Fact]
     public void Engine_Explain_ReturnsNullForNonExplainingScorers()
     {
         var (index, _, _) = CreateFixture();

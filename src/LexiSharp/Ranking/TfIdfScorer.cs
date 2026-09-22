@@ -11,7 +11,7 @@ namespace LexiSharp.Ranking;
 /// <c>idf(t) = log((N + 1) / (df(t) + 1)) + 1</c>.
 /// This smoothed variant guarantees a positive idf, so a score of 0 truly means « no match ».
 /// </remarks>
-public sealed class TfIdfScorer : ITermOverlapScorer, IQueryPlannableScorer
+public sealed class TfIdfScorer : ITermOverlapScorer, IQueryPlannableScorer, IScoreExplainer
 {
     /// <inheritdoc />
     public string Name => "TF-IDF";
@@ -56,6 +56,59 @@ public sealed class TfIdfScorer : ITermOverlapScorer, IQueryPlannableScorer
         ArgumentNullException.ThrowIfNull(index);
 
         return new TfIdfQueryPlan(queryTerms, index);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// TF-IDF applies no document-length normalization, so
+    /// <see cref="ScoreExplanation.LengthNormalization"/> is always <c>1</c>. Terms absent from
+    /// the document are omitted, and <see cref="ScoreExplanation.TotalScore"/> always equals
+    /// <see cref="Score"/> for the same inputs.
+    /// </remarks>
+    public ScoreExplanation Explain(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index)
+    {
+        ArgumentNullException.ThrowIfNull(index);
+        ArgumentNullException.ThrowIfNull(queryTerms);
+
+        int documentCount = index.Count;
+        int documentLength = index.DocumentLength(documentId);
+        double averageLength = index.AverageDocumentLength;
+        double lengthRatio = averageLength > 0 ? documentLength / averageLength : 0;
+
+        var contributions = new List<TermContribution>();
+        double total = 0;
+
+        if (documentCount > 0)
+        {
+            var terms = queryTerms is DistinctTermList ? queryTerms : TermDeduplicator.Distinct(queryTerms);
+
+            for (int i = 0; i < terms.Count; i++)
+            {
+                string term = terms[i];
+                int tf = index.TermFrequency(documentId, term);
+
+                if (tf == 0)
+                    continue;
+
+                int df = index.DocumentFrequency(term);
+                double idf = Math.Log((documentCount + 1.0) / (df + 1.0)) + 1.0;
+                double termScore = tf * idf;
+
+                contributions.Add(new TermContribution(term, tf, df, idf, termScore));
+                total += termScore;
+            }
+        }
+
+        return new ScoreExplanation(
+            documentId,
+            Name,
+            total,
+            documentLength,
+            averageLength,
+            lengthRatio,
+            LengthNormalization: 1.0,
+            contributions,
+            new Dictionary<string, double>());
     }
 
     private sealed class TfIdfQueryPlan : ISearchQueryPlan

@@ -94,9 +94,9 @@ or ML model** — pure lexical statistics.
 - **Keyword extraction** (`LexiSharp.Keywords`): a corpus-backed **TF-IDF** extractor
   (demotes corpus-frequent words) and a graph-based **TextRank** extractor (weighted
   co-occurrence graph + PageRank), both deterministic and tokenizer-configurable.
-- **Explainable scoring**: `Bm25Scorer` implements `IScoreExplainer`, and
-  `RankedTextSearchEngine.Explain` returns a per-term breakdown (TF, IDF, term score, length
-  normalization, parameter values) of any ranking decision.
+- **Explainable scoring**: `Bm25Scorer`, `TfIdfScorer` and `QueryLikelihoodScorer` implement
+  `IScoreExplainer`, and `RankedTextSearchEngine.Explain` returns a per-term breakdown
+  (TF, IDF, term score, length normalization, parameter values) of any ranking decision.
 - **Evaluation metrics** (`RetrievalMetrics`): `Precision@k`, `Recall@k`, `F1@k`, binary and
   **graded** `nDCG@k` (exponential gains), plus `ReciprocalRank@k` (→ MRR) and
   `AveragePrecision@k` (→ MAP).
@@ -547,12 +547,19 @@ var reloaded = MessagePackSparseIndexPersistence.Load("splade.bin", mySplade); /
 
 ### Explainable scoring and BM25 tuning
 
-Audit any ranking decision term by term, then let the corpus pick its own parameters:
+Audit any ranking decision term by term, then let the corpus pick its own parameters. The
+explainers cover the additive scorers — BM25, TF-IDF and query likelihood
+(`QueryLikelihoodScorer` also exposes the collection-model contribution of query terms the
+document does not contain); a pure filter like `BooleanScorer` has no additive breakdown and
+`Explain` returns `null` for it:
 
 ```csharp
-var engine = new RankedTextSearchEngine(index, new Bm25Scorer());
+var engine = new RankedTextSearchEngine(index, new TfIdfScorer());
 ScoreExplanation? why = engine.Explain("doc-1", "search engine");
 // why.Terms -> per-term TF, IDF and score contribution; why.LengthRatio, why.Parameters...
+
+var bm25 = new RankedTextSearchEngine(index, new Bm25Scorer());
+ScoreExplanation? whyBm25 = bm25.Explain("doc-1", "search engine");
 
 var tuner = new Bm25ParameterTuner(index, validationQueries: [
     new Bm25ValidationQuery("search engine", ["doc-1", "doc-7"]),
