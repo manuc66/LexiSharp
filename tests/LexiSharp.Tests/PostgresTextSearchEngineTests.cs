@@ -13,6 +13,8 @@ namespace LexiSharp.Tests;
 /// </summary>
 public class PostgresTextSearchEngineTests
 {
+    private static readonly string[] ABIds = new[] { "a", "b" };
+
     private static string? ConnectionString =>
         Environment.GetEnvironmentVariable("POSTGRES_TEST_CONNECTION");
 
@@ -80,7 +82,7 @@ public class PostgresTextSearchEngineTests
             var results = engine.Search("quick fox", new SearchOptions(Limit: 10));
 
             Assert.Equal(2, results.Count);
-            Assert.Equal(new[] { "a", "b" }, results.Select(r => r.DocumentId).OrderBy(x => x).ToArray());
+            Assert.Equal(ABIds, results.Select(r => r.DocumentId).OrderBy(x => x).ToArray());
 
             var fable = results.Single(r => r.DocumentId == "a");
             Assert.Equal("fable", fable.Document.Category);

@@ -31,18 +31,20 @@ public class TokenizerParityTests
         "foo_bar-baz.qux/quux",
     };
 
-    public static TheoryData<TokenizerOptions?> Options => new()
-    {
-        null,
-        new TokenizerOptions { KeepSingleCharTerms = true },
-        new TokenizerOptions { NGramMax = 2 },
-        new TokenizerOptions { RemoveStopWords = true },
-    };
-
     [Theory]
-    [MemberData(nameof(Options))]
-    public void Tokenize_MatchesScalarReference(TokenizerOptions? options)
+    [InlineData(null)]
+    [InlineData("keep-single")]
+    [InlineData("ngrams")]
+    [InlineData("stopwords")]
+    public void Tokenize_MatchesScalarReference(string? mode)
     {
+        TokenizerOptions? options = mode switch
+        {
+            "keep-single" => new TokenizerOptions { KeepSingleCharTerms = true },
+            "ngrams" => new TokenizerOptions { NGramMax = 2 },
+            "stopwords" => new TokenizerOptions { RemoveStopWords = true },
+            _ => null,
+        };
         var sut = new Tokenizer(options);
 
         foreach (var sample in Samples)
@@ -53,7 +55,7 @@ public class TokenizerParityTests
         }
     }
 
-    private static IReadOnlyList<string> ReferenceTokenize(string text, TokenizerOptions? options)
+    private static List<string> ReferenceTokenize(string text, TokenizerOptions? options)
     {
         options ??= TokenizerOptions.Default;
 

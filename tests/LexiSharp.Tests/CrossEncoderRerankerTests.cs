@@ -9,6 +9,9 @@ public class CrossEncoderRerankerTests
     private static readonly SearchDocument Doc1 = new("1", "apple pie recipe");
     private static readonly SearchDocument Doc2 = new("2", "apple tart recipe");
     private static readonly SearchDocument Doc3 = new("3", "kubernetes cluster");
+    private static readonly string[] ExpectedIds321 = new[] { "3", "2", "1" };
+    private static readonly string[] ExpectedIds32 = new[] { "3", "2" };
+    private static readonly string[] ExpectedIdsAbc = new[] { "a", "b", "c" };
 
     private static SearchResult R(string id, SearchDocument doc, double score) => new(id, score, doc);
 
@@ -36,7 +39,7 @@ public class CrossEncoderRerankerTests
 
         var results = reranker.Rerank("q", new[] { R("1", Doc1, 1.0), R("2", Doc2, 0.8), R("3", Doc3, 0.5) });
 
-        Assert.Equal(new[] { "3", "2", "1" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(ExpectedIds321, results.Select(r => r.DocumentId).ToArray());
         Assert.Equal(0.9, results[0].Score);
         Assert.Equal(0.6, results[1].Score);
         Assert.Equal(0.3, results[2].Score);
@@ -86,7 +89,7 @@ public class CrossEncoderRerankerTests
 
         var results = reranker.Rerank("q", new[] { R("1", Doc1, 1), R("2", Doc2, 1), R("3", Doc3, 1) });
 
-        Assert.Equal(new[] { "3", "2" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(ExpectedIds32, results.Select(r => r.DocumentId).ToArray());
     }
 
     [Fact]
@@ -96,7 +99,7 @@ public class CrossEncoderRerankerTests
 
         var results = reranker.Rerank("q", new[] { R("a", Doc1, 1), R("b", Doc2, 1), R("c", Doc3, 1) });
 
-        Assert.Equal(new[] { "a", "b", "c" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(ExpectedIdsAbc, results.Select(r => r.DocumentId).ToArray());
     }
 
     [Fact]

@@ -10,6 +10,8 @@ public class CascadeRerankPipelineTests
     private static readonly SearchDocument DocB = new("b", "beta");
     private static readonly SearchDocument DocC = new("c", "gamma");
     private static readonly SearchDocument DocD = new("d", "delta");
+    private static readonly string[] ExpectedIdsAbc = new[] { "a", "b", "c" };
+    private static readonly string[] ExpectedIdsBa = new[] { "b", "a" };
 
     private static SearchResult R(string id, SearchDocument doc, double score = 1.0) => new(id, score, doc);
 
@@ -40,7 +42,7 @@ public class CascadeRerankPipelineTests
 
         var results = pipeline.Rerank("q", new[] { R("a", DocA), R("b", DocB), R("c", DocC) });
 
-        Assert.Equal(new[] { "a", "b", "c" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(ExpectedIdsAbc, results.Select(r => r.DocumentId).ToArray());
     }
 
     [Fact]
@@ -110,7 +112,7 @@ public class CascadeRerankPipelineTests
         var results = outer.Rerank("q", new[] { R("a", DocA), R("b", DocB) });
 
         // Two reversals inside, one outside: b then a.
-        Assert.Equal(new[] { "b", "a" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(ExpectedIdsBa, results.Select(r => r.DocumentId).ToArray());
     }
 
     [Fact]

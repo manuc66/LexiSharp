@@ -12,7 +12,7 @@ public class Bm25ParameterTunerTests
     /// normalization the long, term-heavy document leads; with strong normalization the
     /// short document takes the top spot.
     /// </summary>
-    private static ITextIndex CreateIndex()
+    private static InMemoryTextIndex CreateIndex()
     {
         var shortDoc = new SearchDocument("short", "alpha beta");
         var longDoc = new SearchDocument(

@@ -8,7 +8,14 @@ namespace LexiSharp.Tests;
 
 public class HybridTextSearchEngineTests
 {
-    private static ITextSearchEngine MemoryEngine(IEnumerable<SearchDocument> docs, ITextScorer? scorer = null)
+    private static readonly string[] LexicalAndSemanticSourceNames = { "lexical", "semantic" };
+    private static readonly string[] LexicalOnlySourceName = { "lexical" };
+    private static readonly string[] SemanticOnlySourceName = { "semantic" };
+    private static readonly string[] EngineZeroSourceName = { "engine-0" };
+    private static readonly string[] DuplicateSourceNames = { "dup", "dup" };
+    private static readonly string[] WhitespaceOnlySourceName = { " " };
+
+    private static RankedTextSearchEngine MemoryEngine(IEnumerable<SearchDocument> docs, ITextScorer? scorer = null)
     {
         var index = new InMemoryTextIndex();
         index.Index(docs);
@@ -161,20 +168,20 @@ public class HybridTextSearchEngineTests
 
         var hybrid = new HybridTextSearchEngine(
             new[] { lexical, semantic },
-            sourceNames: new[] { "lexical", "semantic" });
+            sourceNames: LexicalAndSemanticSourceNames);
 
         var details = hybrid.SearchWithDetails("apple");
 
         Assert.Equal(3, details.Count);
 
         var docA = details.Single(d => d.DocumentId == "a");
-        Assert.Equal(new[] { "lexical" }, docA.Contributions.Keys.ToArray());
+        Assert.Equal(LexicalOnlySourceName, docA.Contributions.Keys.ToArray());
 
         var docB = details.Single(d => d.DocumentId == "b");
-        Assert.Equal(new[] { "lexical", "semantic" }, docB.Contributions.Keys.OrderBy(x => x).ToArray());
+        Assert.Equal(LexicalAndSemanticSourceNames, docB.Contributions.Keys.OrderBy(x => x).ToArray());
 
         var docC = details.Single(d => d.DocumentId == "c");
-        Assert.Equal(new[] { "semantic" }, docC.Contributions.Keys.ToArray());
+        Assert.Equal(SemanticOnlySourceName, docC.Contributions.Keys.ToArray());
 
         // Contributions carry the raw per-engine scores.
         Assert.All(details, d => Assert.All(d.Contributions.Values, v => Assert.True(v > 0)));
@@ -190,7 +197,7 @@ public class HybridTextSearchEngineTests
         var details = hybrid.SearchWithDetails("apple");
 
         var contribution = Assert.Single(details);
-        Assert.Equal(new[] { "engine-0" }, contribution.Contributions.Keys.ToArray());
+        Assert.Equal(EngineZeroSourceName, contribution.Contributions.Keys.ToArray());
     }
 
     [Fact]
@@ -217,8 +224,8 @@ public class HybridTextSearchEngineTests
         Assert.Throws<ArgumentException>(() => new HybridTextSearchEngine(
             new[] { engine }, sourceNames: Array.Empty<string>()));
         Assert.Throws<ArgumentException>(() => new HybridTextSearchEngine(
-            new[] { engine }, sourceNames: new[] { "dup", "dup" }));
+            new[] { engine }, sourceNames: DuplicateSourceNames));
         Assert.Throws<ArgumentException>(() => new HybridTextSearchEngine(
-            new[] { engine }, sourceNames: new[] { " " }));
+            new[] { engine }, sourceNames: WhitespaceOnlySourceName));
     }
 }

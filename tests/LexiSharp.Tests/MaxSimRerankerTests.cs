@@ -6,6 +6,12 @@ namespace LexiSharp.Tests;
 
 public class MaxSimRerankerTests
 {
+    private static readonly string[] DocIdsScoreOrder = { "2", "1" };
+    private static readonly string[] DocIdsIncomingOrder = { "1", "2" };
+    private static readonly string[] DocIdsTopThree = { "2", "3", "1" };
+    private static readonly string[] DocIdsTopTwo = { "2", "3" };
+    private static readonly string[] DocIdsTieOrder = { "a", "b", "c" };
+
     private static readonly SearchDocument Doc1 = new("1", "apple pie recipe");
     private static readonly SearchDocument Doc2 = new("2", "apple tart recipe");
     private static readonly SearchDocument Doc3 = new("3", "kubernetes cluster");
@@ -14,7 +20,7 @@ public class MaxSimRerankerTests
 
     private static ReadOnlyMemory<float> V(params float[] values) => values;
 
-    private static IReadOnlyList<ReadOnlyMemory<float>> Tokens(params ReadOnlyMemory<float>[] vectors) => vectors;
+    private static ReadOnlyMemory<float>[] Tokens(params ReadOnlyMemory<float>[] vectors) => vectors;
 
     private sealed class StubTokenizer : ITokenEmbeddingProvider
     {
@@ -49,7 +55,7 @@ public class MaxSimRerankerTests
 
         var results = reranker.Rerank("q", new[] { R("1", Doc1, 1.0), R("2", Doc2, 0.8) });
 
-        Assert.Equal(new[] { "2", "1" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(DocIdsScoreOrder, results.Select(r => r.DocumentId).ToArray());
         Assert.Equal(1.8, results[0].Score, 3);
         Assert.Equal(1.3, results[1].Score, 2);
     }
@@ -81,7 +87,7 @@ public class MaxSimRerankerTests
 
         var results = reranker.Rerank("q", new[] { R("1", Doc1, 1.0), R("2", Doc2, 0.8) });
 
-        Assert.Equal(new[] { "1", "2" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(DocIdsIncomingOrder, results.Select(r => r.DocumentId).ToArray());
         Assert.Equal(1.0, results[0].Score); // untouched, since nothing was re-scored
         Assert.Equal(0.8, results[1].Score);
     }
@@ -114,13 +120,13 @@ public class MaxSimRerankerTests
 
         var scored = new MaxSimReranker(model, vectors);
         var results = scored.Rerank("q", new[] { R("1", Doc1, 1), R("2", Doc2, 1), R("3", Doc3, 1) });
-        Assert.Equal(new[] { "2", "3", "1" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(DocIdsTopThree, results.Select(r => r.DocumentId).ToArray());
 
         var limited = new MaxSimReranker(model, vectors, limit: 2);
-        Assert.Equal(new[] { "2", "3" }, limited.Rerank("q", new[] { R("1", Doc1, 1), R("2", Doc2, 1), R("3", Doc3, 1) }).Select(r => r.DocumentId).ToArray());
+        Assert.Equal(DocIdsTopTwo, limited.Rerank("q", new[] { R("1", Doc1, 1), R("2", Doc2, 1), R("3", Doc3, 1) }).Select(r => r.DocumentId).ToArray());
 
         var minimum = new MaxSimReranker(model, vectors, minimumScore: 0.55);
-        Assert.Equal(new[] { "2", "3" }, minimum.Rerank("q", new[] { R("1", Doc1, 1), R("2", Doc2, 1), R("3", Doc3, 1) }).Select(r => r.DocumentId).ToArray());
+        Assert.Equal(DocIdsTopTwo, minimum.Rerank("q", new[] { R("1", Doc1, 1), R("2", Doc2, 1), R("3", Doc3, 1) }).Select(r => r.DocumentId).ToArray());
     }
 
     [Fact]
@@ -138,7 +144,7 @@ public class MaxSimRerankerTests
 
         var results = reranker.Rerank("q", new[] { R("a", Doc1, 1), R("b", Doc2, 1), R("c", Doc3, 1) });
 
-        Assert.Equal(new[] { "a", "b", "c" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(DocIdsTieOrder, results.Select(r => r.DocumentId).ToArray());
         Assert.All(results, r => Assert.Equal(1.0, r.Score, 3));
     }
 

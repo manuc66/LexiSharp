@@ -27,6 +27,8 @@ public class RankedTextSearchEngineTests
         new("3", "Italian cuisine is renowned in Rome"),
     };
 
+    private static readonly string[] ABIds = new[] { "a", "b" };
+
     [Fact]
     public void Search_ReturnsRelevantDocumentsFirst()
     {
@@ -78,7 +80,7 @@ public class RankedTextSearchEngineTests
         Assert.Equal(2, results.Count);
         Assert.Equal(1.0, results[0].Score);
         Assert.Equal(1.0, results[1].Score);
-        Assert.Equal(new[] { "a", "b" }, results.Select(r => r.DocumentId));
+        Assert.Equal(ABIds, results.Select(r => r.DocumentId));
     }
 
     [Fact]

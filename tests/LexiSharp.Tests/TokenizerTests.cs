@@ -5,13 +5,22 @@ namespace LexiSharp.Tests;
 
 public class TokenizerTests
 {
+    private static readonly string[] LowercaseTokens = { "hello", "world", "this", "is", "net" };
+    private static readonly string[] DiacriticFreeTokens = { "cafe", "deja", "vu", "facade", "nono" };
+    private static readonly string[] SingleWordToken = { "word" };
+    private static readonly string[] SingleCharKeptTokens = { "a", "b", "c", "word" };
+    private static readonly string[] StopWordFreeTokens = { "quick", "brown", "fox", "lazy", "dog" };
+    private static readonly string[] CustomStopWordTokens = { "baz", "qux" };
+    private static readonly string[] BigramTokens = { "machine", "learning", "rocks", "machine learning", "learning rocks" };
+    private static readonly string[] StemmedTokens = { "jump", "jump", "cat", "dog" };
+
     [Fact]
     public void Tokenize_LowercasesAndSplitsOnPunctuation()
     {
         var tokens = Tokenizer.Default.Tokenize("Hello, World! This is .NET C#.");
 
         // "C#" -> "c", discarded because single-character terms are dropped by default.
-        Assert.Equal(new[] { "hello", "world", "this", "is", "net" }, tokens);
+        Assert.Equal(LowercaseTokens, tokens);
     }
 
     [Fact]
@@ -19,7 +28,7 @@ public class TokenizerTests
     {
         var tokens = Tokenizer.Default.Tokenize("Café déjà vu façade ñoño");
 
-        Assert.Equal(new[] { "cafe", "deja", "vu", "facade", "nono" }, tokens);
+        Assert.Equal(DiacriticFreeTokens, tokens);
     }
 
     [Fact]
@@ -27,7 +36,7 @@ public class TokenizerTests
     {
         var tokens = Tokenizer.Default.Tokenize("a b c word");
 
-        Assert.Equal(new[] { "word" }, tokens);
+        Assert.Equal(SingleWordToken, tokens);
     }
 
     [Fact]
@@ -37,7 +46,7 @@ public class TokenizerTests
 
         var tokens = tokenizer.Tokenize("a b c word");
 
-        Assert.Equal(new[] { "a", "b", "c", "word" }, tokens);
+        Assert.Equal(SingleCharKeptTokens, tokens);
     }
 
     [Fact]
@@ -55,7 +64,7 @@ public class TokenizerTests
 
         var tokens = tokenizer.Tokenize("the quick brown fox and the lazy dog");
 
-        Assert.Equal(new[] { "quick", "brown", "fox", "lazy", "dog" }, tokens);
+        Assert.Equal(StopWordFreeTokens, tokens);
     }
 
     [Fact]
@@ -69,7 +78,7 @@ public class TokenizerTests
 
         var tokens = tokenizer.Tokenize("foo baz bar qux");
 
-        Assert.Equal(new[] { "baz", "qux" }, tokens);
+        Assert.Equal(CustomStopWordTokens, tokens);
     }
 
     [Fact]
@@ -80,7 +89,7 @@ public class TokenizerTests
         var tokens = tokenizer.Tokenize("machine learning rocks");
 
         Assert.Equal(
-            new[] { "machine", "learning", "rocks", "machine learning", "learning rocks" },
+            BigramTokens,
             tokens);
     }
 
@@ -91,7 +100,7 @@ public class TokenizerTests
 
         var tokens = tokenizer.Tokenize("jumping jumped cats dogs");
 
-        Assert.Equal(new[] { "jump", "jump", "cat", "dog" }, tokens);
+        Assert.Equal(StemmedTokens, tokens);
     }
 
     [Fact]

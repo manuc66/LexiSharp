@@ -7,6 +7,10 @@ namespace LexiSharp.Tests;
 
 public class BoostedTextSearchEngineTests
 {
+    private static readonly string[] BoostedOrderByWeight = { "b", "a" };
+    private static readonly string[] DescendingRankOrder = { "d1", "d2", "d3" };
+    private static readonly string[] AscendingIdOrder = { "a", "b" };
+
     private static readonly SearchDocument[] Docs =
     {
         new("a", "the quick brown fox",
@@ -72,7 +76,7 @@ public class BoostedTextSearchEngineTests
         }
     }
 
-    private static IReadOnlyList<SearchResult> Ranked(int count)
+    private static List<SearchResult> Ranked(int count)
     {
         var idle = new SearchDocument("idle", "unused text");
         return Enumerable.Range(1, count)
@@ -91,7 +95,7 @@ public class BoostedTextSearchEngineTests
 
         Assert.Equal("a", raw[0].DocumentId);
 
-        Assert.Equal(new[] { "b", "a" }, results.Select(r => r.DocumentId));
+        Assert.Equal(BoostedOrderByWeight, results.Select(r => r.DocumentId));
 
         var rawB = raw.Single(r => r.DocumentId == "b").Score;
         var boostedB = results.Single(r => r.DocumentId == "b").Score;
@@ -112,7 +116,7 @@ public class BoostedTextSearchEngineTests
 
         var results = damped.Search("quick brown fox");
 
-        Assert.Equal(new[] { "b", "a" }, results.Select(r => r.DocumentId));
+        Assert.Equal(BoostedOrderByWeight, results.Select(r => r.DocumentId));
     }
 
     [Fact]
@@ -176,7 +180,7 @@ public class BoostedTextSearchEngineTests
 
         var results = boosted.Search("query");
 
-        Assert.Equal(new[] { "d1", "d2", "d3" }, results.Select(r => r.DocumentId));
+        Assert.Equal(DescendingRankOrder, results.Select(r => r.DocumentId));
         Assert.Equal(0.5, results[0].Score, 9);
         Assert.Equal(-0.5, results[1].Score, 9);
         Assert.Equal(-1.5, results[2].Score, 9);
@@ -253,6 +257,6 @@ public class BoostedTextSearchEngineTests
 
         var results = boosted.Search("query");
 
-        Assert.Equal(new[] { "a", "b" }, results.Select(r => r.DocumentId));
+        Assert.Equal(AscendingIdOrder, results.Select(r => r.DocumentId));
     }
 }

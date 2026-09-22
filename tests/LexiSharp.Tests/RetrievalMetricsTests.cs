@@ -7,6 +7,7 @@ public class RetrievalMetricsTests
 {
     private static readonly string[] Retrieved = ["a", "b", "c", "d", "e"];
     private static readonly string[] Relevant = ["b", "d", "f"];
+    private static readonly string[] RelevantA = ["a"];
 
     [Fact]
     public void Precision_CountsUnfilledSlotsAsMisses()
@@ -184,7 +185,7 @@ public class RetrievalMetricsTests
     {
         var retrieved = new[] { "a", "a" };
 
-        Assert.Equal(1, RetrievalMetrics.AveragePrecisionAtK(retrieved, new[] { "a" }, 5), 12);
+        Assert.Equal(1, RetrievalMetrics.AveragePrecisionAtK(retrieved, RelevantA, 5), 12);
     }
 
     [Fact]

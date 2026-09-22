@@ -13,16 +13,18 @@ namespace LexiSharp.Tests;
 /// </summary>
 public class HybridSparseMergingTests
 {
+    private static readonly string[] SharedHitIds = new[] { "1", "3" };
+
     private static SearchDocument Doc(string id, string text) => new(id, text);
 
-    private static ITextSearchEngine LexicalEngine(IEnumerable<SearchDocument> docs)
+    private static RankedTextSearchEngine LexicalEngine(IEnumerable<SearchDocument> docs)
     {
         var index = new InMemoryTextIndex();
         index.Index(docs);
         return new RankedTextSearchEngine(index, new Bm25Scorer());
     }
 
-    private static ITextSearchEngine SparseEngine(IReadOnlyDictionary<string, float> queryVector)
+    private static SparseTextSearchEngine SparseEngine(IReadOnlyDictionary<string, float> queryVector)
     {
         var provider = new StubSparseProvider(text => text switch
         {
@@ -58,7 +60,7 @@ public class HybridSparseMergingTests
 
         // "1" and "3" match "apple" lexically AND sparsely → double RRF contribution;
         // "2" only matches the sparse engine's banana/bread activations.
-        Assert.Equal(new[] { "1", "3" }, order.Take(2).OrderBy(x => x).ToArray());
+        Assert.Equal(SharedHitIds, order.Take(2).OrderBy(x => x).ToArray());
         Assert.Equal("2", order[^1]);
     }
 

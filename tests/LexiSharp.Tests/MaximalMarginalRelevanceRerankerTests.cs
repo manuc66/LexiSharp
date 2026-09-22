@@ -6,6 +6,12 @@ namespace LexiSharp.Tests;
 
 public class MaximalMarginalRelevanceRerankerTests
 {
+    private static readonly string[] DiversifiedOrder = { "1", "3", "2" };
+    private static readonly string[] PureRelevanceOrder = { "1", "2", "3" };
+    private static readonly string[] IncomingOrder = { "a", "b", "c" };
+    private static readonly string[] DiversePrefixOrder = { "1", "3" };
+    private static readonly string[] ReverseScoreOrder = { "3", "2", "1" };
+
     private static readonly SearchDocument Doc1 = new("1", "apple pie recipe");
     private static readonly SearchDocument Doc2 = new("2", "apple tart recipe");
     private static readonly SearchDocument Doc3 = new("3", "kubernetes cluster");
@@ -32,7 +38,7 @@ public class MaximalMarginalRelevanceRerankerTests
             R("1", Doc1, 1.0), R("2", Doc2, 0.9), R("3", Doc3, 0.8),
         });
 
-        Assert.Equal(new[] { "1", "3", "2" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(DiversifiedOrder, results.Select(r => r.DocumentId).ToArray());
     }
 
     [Fact]
@@ -45,7 +51,7 @@ public class MaximalMarginalRelevanceRerankerTests
             R("1", Doc1, 1.0), R("2", Doc2, 0.9), R("3", Doc3, 0.8),
         });
 
-        Assert.Equal(new[] { "1", "2", "3" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(PureRelevanceOrder, results.Select(r => r.DocumentId).ToArray());
     }
 
     [Fact]
@@ -82,7 +88,7 @@ public class MaximalMarginalRelevanceRerankerTests
         // λ = 0 is pure diversity. "2" is nearly a duplicate of "1" (cos ≈ 0.995) and is pushed
         // to the end; "3" has no vector at all, so it is never punished for redundancy and
         // outranks "2".
-        Assert.Equal(new[] { "1", "3", "2" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(DiversifiedOrder, results.Select(r => r.DocumentId).ToArray());
     }
 
     [Fact]
@@ -95,7 +101,7 @@ public class MaximalMarginalRelevanceRerankerTests
             R("a", Doc1, 1.0), R("b", Doc2, 1.0), R("c", Doc3, 1.0),
         });
 
-        Assert.Equal(new[] { "a", "b", "c" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(IncomingOrder, results.Select(r => r.DocumentId).ToArray());
     }
 
     [Fact]
@@ -108,7 +114,7 @@ public class MaximalMarginalRelevanceRerankerTests
             R("1", Doc1, 1.0), R("2", Doc2, 0.9), R("3", Doc3, 0.8),
         });
 
-        Assert.Equal(new[] { "1", "3" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(DiversePrefixOrder, results.Select(r => r.DocumentId).ToArray());
     }
 
     [Fact]
@@ -159,7 +165,7 @@ public class MaximalMarginalRelevanceRerankerTests
         });
 
         // maxScore = 1.0: "3" leads; "1"/"2" get negative relevance, yet keep their rank.
-        Assert.Equal(new[] { "3", "2", "1" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(ReverseScoreOrder, results.Select(r => r.DocumentId).ToArray());
     }
 
     [Fact]
@@ -174,6 +180,6 @@ public class MaximalMarginalRelevanceRerankerTests
 
         // Every relevance is forced to 0 (no score exceeds 0): selection is pure diversity —
         // first pick is the earliest candidate, then the orthogonal "3" beats the near-duplicate "2".
-        Assert.Equal(new[] { "1", "3", "2" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(DiversifiedOrder, results.Select(r => r.DocumentId).ToArray());
     }
 }
