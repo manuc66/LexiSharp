@@ -186,6 +186,103 @@ public class RoutedSearchEngineTests
         Assert.Equal(0, probe.EstimateCandidateCount("anything".AsSpan(), SearchOptions.Default));
     }
 
+    [Fact]
+    public void SearchWithFacets_RoutesToTheSelectedEngine()
+    {
+        var faceted = new FacetedEngine();
+        var router = new RoutedSearchEngine(
+            new[] { new RoutedEngine("plain", new PlainEngine("plain")), new RoutedEngine("faceted", faceted) },
+            new AlwaysIndexEstimator(1));
+
+        var result = router.SearchWithFacets("q", null, ["kind"]);
+
+        Assert.Equal("kind", Assert.Single(result.Buckets).Field);
+        Assert.Equal("q", faceted.LastFacetQuery);
+    }
+
+    [Fact]
+    public void SearchWithFacets_SelectedEngineWithoutTheCapability_Throws()
+    {
+        var router = new RoutedSearchEngine(new[] { new RoutedEngine("plain", new PlainEngine("plain")) });
+
+        Assert.Throws<NotSupportedException>(() => router.SearchWithFacets("q"));
+    }
+
+    [Fact]
+    public void SearchWithDetails_RoutesToTheSelectedEngine()
+    {
+        var router = new RoutedSearchEngine(new[] { new RoutedEngine("detailed", new DetailedEngine()) });
+
+        var results = router.SearchWithDetails("q");
+
+        var hit = Assert.Single(results);
+        Assert.Equal("detailed", hit.DocumentId);
+        Assert.Equal(1, hit.Contributions["lexical"]);
+    }
+
+    [Fact]
+    public void SearchWithDetails_SelectedEngineWithoutTheCapability_Throws()
+    {
+        var router = new RoutedSearchEngine(new[] { new RoutedEngine("plain", new PlainEngine("plain")) });
+
+        Assert.Throws<NotSupportedException>(() => router.SearchWithDetails("q"));
+    }
+
+    [Fact]
+    public void Explain_RoutesToTheSelectedEngine()
+    {
+        var router = new RoutedSearchEngine(new[] { new RoutedEngine("explainable", new ExplainableEngine()) });
+
+        var explanation = router.Explain("doc", "q");
+
+        Assert.NotNull(explanation);
+        Assert.Equal("doc", explanation!.DocumentId);
+    }
+
+    [Fact]
+    public void Explain_SelectedEngineWithoutTheCapability_Throws()
+    {
+        var router = new RoutedSearchEngine(new[] { new RoutedEngine("plain", new PlainEngine("plain")) });
+
+        Assert.Throws<NotSupportedException>(() => router.Explain("doc", "q"));
+    }
+
+    [Fact]
+    public void EstimateCandidateCount_IsTheSmallestAcrossProbedEngines()
+    {
+        var router = new RoutedSearchEngine(new[]
+        {
+            Routed("a", 10),
+            Routed("b", 3),
+            new RoutedEngine("plain", new PlainEngine("plain")),
+        });
+
+        Assert.Equal(3, router.EstimateCandidateCount("q".AsSpan(), SearchOptions.Default));
+    }
+
+    [Fact]
+    public void EstimateCandidateCount_WithoutAnyProbedEngine_IsLastResort()
+    {
+        var router = new RoutedSearchEngine(new[] { new RoutedEngine("plain", new PlainEngine("plain")) });
+
+        Assert.Equal(long.MaxValue, router.EstimateCandidateCount("q".AsSpan(), SearchOptions.Default));
+    }
+
+    [Fact]
+    public void BoostedAndReranked_DelegateTheCostProbeToTheInner()
+    {
+        var inner = (ProbeEngine)Routed("inner", 7).Engine;
+
+        IQueryCostProbe boosted = new BoostedTextSearchEngine(inner, _ => ScoreBoost.Factor(2));
+        IQueryCostProbe reranked = new RerankedTextSearchEngine(inner, new NoopReranker());
+
+        Assert.Equal(7, boosted.EstimateCandidateCount("q".AsSpan(), SearchOptions.Default));
+        Assert.Equal(7, reranked.EstimateCandidateCount("q".AsSpan(), SearchOptions.Default));
+
+        IQueryCostProbe unprobed = new BoostedTextSearchEngine(new PlainEngine("plain"), _ => ScoreBoost.Factor(2));
+        Assert.Equal(long.MaxValue, unprobed.EstimateCandidateCount("q".AsSpan(), SearchOptions.Default));
+    }
+
     private sealed class ProbeEngine : ITextSearchEngine, IQueryCostProbe
     {
         private readonly long _cost;
@@ -246,5 +343,81 @@ public class RoutedSearchEngineTests
 
         public int Select(IReadOnlyList<RoutedEngine> engines, ReadOnlySpan<char> query, SearchOptions options) =>
             _index;
+    }
+
+    private sealed class FacetedEngine : IFacetedSearchEngine
+    {
+        public string? LastFacetQuery { get; private set; }
+
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+            new[] { new SearchResult("faceted", 1, new SearchDocument("faceted", query)) };
+
+        public FacetedSearchResult SearchWithFacets(
+            string query,
+            SearchOptions? options = null,
+            IReadOnlyList<string>? facetFields = null)
+        {
+            LastFacetQuery = query;
+            return new(
+                Search(query, options),
+                new[] { new FacetBucket("kind", new[] { new FacetValue("x", 1) }) });
+        }
+
+        public void Index(IEnumerable<SearchDocument> documents) => throw new NotSupportedException();
+
+        public void Add(SearchDocument document) => throw new NotSupportedException();
+
+        public void Remove(string documentId) => throw new NotSupportedException();
+
+        public void Clear() => throw new NotSupportedException();
+    }
+
+    private sealed class DetailedEngine : IDetailedSearchEngine, ITextSearchEngine
+    {
+        public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null) =>
+            new[]
+            {
+                new DetailedSearchResult(
+                    "detailed", 1, new SearchDocument("detailed", query),
+                    new Dictionary<string, double> { ["lexical"] = 1 }),
+            };
+
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+            new[] { new SearchResult("detailed", 1, new SearchDocument("detailed", query)) };
+
+        public void Index(IEnumerable<SearchDocument> documents) => throw new NotSupportedException();
+
+        public void Add(SearchDocument document) => throw new NotSupportedException();
+
+        public void Remove(string documentId) => throw new NotSupportedException();
+
+        public void Clear() => throw new NotSupportedException();
+    }
+
+    private sealed class ExplainableEngine : IExplainableSearchEngine, ITextSearchEngine
+    {
+        public ScoreExplanation? Explain(string documentId, string query) =>
+            new(
+                documentId, "fake", 1, 1, 1, 1, 1,
+                Array.Empty<TermContribution>(),
+                new Dictionary<string, double>());
+
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+            new[] { new SearchResult("explainable", 1, new SearchDocument("explainable", query)) };
+
+        public void Index(IEnumerable<SearchDocument> documents) => throw new NotSupportedException();
+
+        public void Add(SearchDocument document) => throw new NotSupportedException();
+
+        public void Remove(string documentId) => throw new NotSupportedException();
+
+        public void Clear() => throw new NotSupportedException();
+    }
+
+    private sealed class NoopReranker : IReranker
+    {
+        public string Name => "noop";
+
+        public IReadOnlyList<SearchResult> Rerank(string query, IReadOnlyList<SearchResult> candidates) => candidates;
     }
 }

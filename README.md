@@ -475,6 +475,16 @@ engine — while engines without the probe are only used when no costed engine e
 engine's estimate is the sum of the literal query terms' document frequencies; pass a custom
 `IQueryCostEstimator` to route on engine priority, latency history or query shape instead.
 
+The router is capability-preserving: `SearchWithFacets`, `SearchWithDetails` and `Explain` run
+on the engine the estimator selects for that query, and the router's own
+`EstimateCandidateCount` reports the smallest estimate across its engines (so a routed engine can
+itself be a candidate inside another router). Because the selection is per query, a capability
+the selected engine lacks throws `NotSupportedException` rather than silently re-routing.
+`BoostedTextSearchEngine`/`RerankedTextSearchEngine` also forward `IQueryCostProbe` to their
+inner engine (they do not change how many candidates a query touches); their score-mutating
+wrapper deliberately does not surface facets/detailed/explain, whose contracts it cannot
+preserve.
+
 ### Lexical similarity and keyword extraction
 
 Pairwise similarity for near-duplicate detection and record de-duplication — token-set

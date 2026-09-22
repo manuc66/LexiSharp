@@ -27,7 +27,7 @@ namespace LexiSharp.Core;
     /// of reach no matter its boost.
 /// </para>
 /// </remarks>
-public sealed class BoostedTextSearchEngine : ITextSearchEngine
+public sealed class BoostedTextSearchEngine : ITextSearchEngine, IQueryCostProbe
 {
     private readonly ITextSearchEngine _inner;
     private readonly Func<SearchResult, ScoreBoost> _boost;
@@ -132,5 +132,18 @@ public sealed class BoostedTextSearchEngine : ITextSearchEngine
             .Skip(options.Offset)
             .Take(options.Limit)
             .ToList();
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Boosting does not change how many candidates the query touches, so the estimate is
+    /// delegated to the inner engine when it can estimate; an inner without
+    /// <see cref="IQueryCostProbe"/> makes the decorator a routing last resort
+    /// (<see cref="long.MaxValue"/>).
+    /// </remarks>
+    public long EstimateCandidateCount(ReadOnlySpan<char> query, SearchOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return _inner is IQueryCostProbe probe ? probe.EstimateCandidateCount(query, options) : long.MaxValue;
     }
 }
