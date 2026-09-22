@@ -21,14 +21,14 @@ or ML model** — pure lexical statistics.
 - **Built on established IR.** The techniques implemented (BM25, RRF, SPLADE-style sparse
   retrieval, MaxSim) follow well-documented information-retrieval literature; the value here
   is a small, dependency-free .NET implementation of them, not new research.
-- **Behavior is specified by tests.** Everything described in this README is covered by the
-  xUnit suite; the Postgres/ParadeDB integration tests run against a live instance when
+- **Behavior is specified by tests.** The documented behavior below is covered by the xUnit
+  suite; the Postgres/ParadeDB integration tests run against a live instance when
   `POSTGRES_TEST_CONNECTION` is set and self-skip otherwise (see *Building & testing*).
   Performance numbers live in [BENCHMARKS.md](BENCHMARKS.md) and are indicative — always
   measure on your own corpus.
 - **Combinatorial coverage.** Engines, scorers, rerankers and mergers are tested individually
-  and in documented combinations; less common pairings are supported by construction rather
-  than individually exercised.
+  and in documented combinations; not every pairing is exercised yet, so treat an unusual
+  combination as supported but unproven until you test it on your data.
 
 ## Features
 
@@ -429,8 +429,8 @@ foreach (var bucket in page.Buckets)
 `Results` is identical to `Search` for the same arguments. Counts cover every document that
 passes the metadata filters, the phrase gates and the score thresholds — the whole match set —
 independently of `Offset`/`Limit`, which only cut `Results`. A document missing a field does
-not count for it (`Category` is not faceted), and fields no matching document carries are
-omitted from `Buckets`. Currently stock-engine only.
+not count for it (faceting reads `Fields` only, not `Category`), and fields no matching
+document carries are omitted from `Buckets`. Currently stock-engine only.
 
 ### Span-first API
 
