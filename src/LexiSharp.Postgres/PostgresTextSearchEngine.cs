@@ -176,19 +176,56 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
+
+        // Mixed queries honor the same contract as the stock engine: quoted segments are a hard
+        // corpus gate (each phrase must appear, AND-ed) while the free terms only contribute to
+        // scoring. Gating on the whole query (websearch_to_tsquery) would wrongly require the
+        // free terms too. A query without quotes keeps its exact previous behavior.
+        var segments = QueryParser.SplitRaw(query);
+
+        string gateCondition;
+        string rankExpression;
+
+        if (segments.Phrases.Count == 0)
+        {
+            gateCondition = $"tsv @@ websearch_to_tsquery('{_options.TextSearchConfig}', unaccent(@query))";
+            rankExpression = $"websearch_to_tsquery('{_options.TextSearchConfig}', unaccent(@query))";
+            command.Parameters.AddWithValue("query", query);
+        }
+        else
+        {
+            var gates = new List<string>(segments.Phrases.Count);
+            var ranks = new List<string>(segments.Phrases.Count + 1);
+
+            if (!string.IsNullOrWhiteSpace(segments.FreeText))
+            {
+                ranks.Add($"websearch_to_tsquery('{_options.TextSearchConfig}', unaccent(@freeText))");
+                command.Parameters.AddWithValue("freeText", segments.FreeText);
+            }
+
+            for (int i = 0; i < segments.Phrases.Count; i++)
+            {
+                gates.Add($"tsv @@ phraseto_tsquery('{_options.TextSearchConfig}', unaccent(@phrase{i}))");
+                ranks.Add($"phraseto_tsquery('{_options.TextSearchConfig}', unaccent(@phrase{i}))");
+                command.Parameters.AddWithValue($"phrase{i}", segments.Phrases[i]);
+            }
+
+            gateCondition = string.Join(" AND ", gates);
+            // OR the free terms with each phrase so a phrase-only match still scores above zero
+            // (the ts_rank_cd of the full AND query is 0 when a free term is missing).
+            rankExpression = string.Join(" || ", ranks);
+        }
+
         string searchSql = $"""
-            SELECT id, content, category, fields, ts_rank_cd(tsv, query, 32) AS score
-            FROM {_options.QualifiedTableName},
-                 websearch_to_tsquery('{_options.TextSearchConfig}', unaccent(@query)) AS query
-            WHERE tsv @@ query
+            SELECT id, content, category, fields, ts_rank_cd(tsv, {rankExpression}) AS score
+            FROM {_options.QualifiedTableName}
+            WHERE ({gateCondition})
             ORDER BY score DESC
             LIMIT @limit;
             """;
 
         // Identifiers/config only are interpolated (validated [A-Za-z0-9_]+ and quoted); query text is parameterized.
         command.CommandText = searchSql; // NOSONAR:S2077
-
-        command.Parameters.AddWithValue("query", query);
 
         // Fetch the whole window (Offset + Limit): the C# side drops rows below MinimumScore
         // afterwards, and score DESC makes those drops a suffix of the fetched prefix — so the
