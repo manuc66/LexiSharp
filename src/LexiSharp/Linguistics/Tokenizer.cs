@@ -1,6 +1,5 @@
 using System.Buffers;
 using System.Globalization;
-using System.Runtime.InteropServices;
 using System.Text;
 
 namespace LexiSharp.Linguistics;
@@ -20,12 +19,17 @@ namespace LexiSharp.Linguistics;
 /// <item><description>Optional stop word removal and/or stemming through a consumer-provided <see cref="IStemmer"/>.</description></item>
 /// <item><description>Optional grouping into term n-grams (« machine learning » becomes <c>machine learning</c>).</description></item>
 /// </list>
+/// <see cref="TokenizeWithSpans"/> runs the same pipeline while tracking source offsets;
+/// <see cref="Tokenize"/> is its projection onto the terms alone.
 /// </remarks>
-public sealed class Tokenizer : ITokenizer
+public sealed class Tokenizer : ISpanTokenizer
 {
     /// <summary>ASCII book characters (letters and digits); a 62-entry set eligible for SIMD search.</summary>
     private static readonly SearchValues<char> AsciiWordChars =
         SearchValues.Create("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
+
+    /// <summary>A raw split word with its half-open source range.</summary>
+    private readonly record struct SourceWord(string Text, int Start, int Length);
 
     private readonly TokenizerOptions _options;
     private readonly IReadOnlySet<string>? _stopWords;
@@ -45,27 +49,44 @@ public sealed class Tokenizer : ITokenizer
     /// <inheritdoc />
     public IReadOnlyList<string> Tokenize(string text)
     {
-        if (string.IsNullOrEmpty(text))
+        var spans = TokenizeWithSpans(text);
+
+        if (spans.Count == 0)
             return Array.Empty<string>();
+
+        var terms = new List<string>(spans.Count);
+
+        for (int i = 0; i < spans.Count; i++)
+            terms.Add(spans[i].Term);
+
+        return terms;
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<TokenSpan> TokenizeWithSpans(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return Array.Empty<TokenSpan>();
 
         var words = SplitWords(text);
 
         if (words.Count == 0)
-            return Array.Empty<string>();
+            return Array.Empty<TokenSpan>();
 
-        var terms = ProcessWords(words);
+        var spans = ProcessWords(words);
 
-        if (!_useNgrams || terms.Count < 2)
-            return terms;
+        if (!_useNgrams || spans.Count < 2)
+            return spans;
 
-        return BuildNgrams(terms);
+        return BuildNgrams(spans);
     }
 
-    private List<string> SplitWords(string text)
+    private List<SourceWord> SplitWords(string text)
     {
-        var words = new List<string>(32);
+        var words = new List<SourceWord>(32);
         var word = new StringBuilder(16);
 
+        int wordStart = 0;
         int position = 0;
 
         while (position < text.Length)
@@ -77,6 +98,9 @@ public sealed class Tokenizer : ITokenizer
 
             if (asciiRunEnd > position)
             {
+                if (word.Length == 0)
+                    wordStart = position;
+
                 word.Append(text.AsSpan(position, asciiRunEnd - position));
                 position = asciiRunEnd;
             }
@@ -88,24 +112,31 @@ public sealed class Tokenizer : ITokenizer
             var rune = Rune.GetRuneAt(text, position);
 
             if (Rune.IsLetterOrDigit(rune))
+            {
+                if (word.Length == 0)
+                    wordStart = position;
+
                 word.Append(rune);
+            }
             else
-                FlushWord(word, words, _options.KeepSingleCharTerms);
+            {
+                FlushWord(word, words, _options.KeepSingleCharTerms, wordStart, position);
+            }
 
             position += rune.Utf16SequenceLength;
         }
 
-        FlushWord(word, words, _options.KeepSingleCharTerms);
+        FlushWord(word, words, _options.KeepSingleCharTerms, wordStart, position);
         return words;
     }
 
-    private List<string> ProcessWords(List<string> words)
+    private List<TokenSpan> ProcessWords(List<SourceWord> words)
     {
-        var terms = new List<string>(words.Count);
+        var spans = new List<TokenSpan>(words.Count);
 
         foreach (var raw in words)
         {
-            var term = Normalize(raw);
+            var term = Normalize(raw.Text);
 
             if (_stopWords is not null && _stopWords.Contains(term))
                 continue;
@@ -113,33 +144,52 @@ public sealed class Tokenizer : ITokenizer
             if (_options.Stemmer is not null)
                 term = _options.Stemmer.Stem(term);
 
-            terms.Add(term);
+            spans.Add(new TokenSpan(term, raw.Start, raw.Length));
         }
 
-        return terms;
+        return spans;
     }
 
-    private List<string> BuildNgrams(List<string> terms)
+    private List<TokenSpan> BuildNgrams(List<TokenSpan> spans)
     {
-        var termsSpan = CollectionsMarshal.AsSpan(terms);
-        var ngrams = new List<string>(terms.Count);
+        var ngrams = new List<TokenSpan>(spans.Count);
 
         for (int n = _options.NGramMin; n <= _options.NGramMax; n++)
         {
-            for (int i = 0; i + n <= terms.Count; i++)
-                ngrams.Add(string.Join(' ', termsSpan.Slice(i, n)));
+            for (int i = 0; i + n <= spans.Count; i++)
+            {
+                var first = spans[i];
+                var last = spans[i + n - 1];
+
+                string term;
+                if (n == 1)
+                {
+                    term = first.Term;
+                }
+                else
+                {
+                    var parts = new string[n];
+                    for (int j = 0; j < n; j++)
+                        parts[j] = spans[i + j].Term;
+
+                    term = string.Join(' ', parts);
+                }
+
+                // The span covers the whole source region of the phrase, separators included.
+                ngrams.Add(new TokenSpan(term, first.Start, last.End - first.Start));
+            }
         }
 
         return ngrams;
     }
 
-    private static void FlushWord(StringBuilder word, List<string> into, bool keepSingleChar)
+    private static void FlushWord(StringBuilder word, List<SourceWord> into, bool keepSingleChar, int start, int end)
     {
         if (word.Length == 0)
             return;
 
         if (word.Length >= 2 || keepSingleChar)
-            into.Add(word.ToString());
+            into.Add(new SourceWord(word.ToString(), start, end - start));
 
         word.Clear();
     }
