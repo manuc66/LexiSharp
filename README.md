@@ -84,6 +84,9 @@ or ML model** — pure lexical statistics.
   `IFacetedSearchEngine.SearchWithFacets` and `RankedTextSearchEngine.Explain` — each have a
   `ReadOnlySpan<char>` overload that avoids materializing the query as a string; default
   interface implementations forward to the string path so existing implementers keep working.
+- **Cost-based routing** (`RoutedSearchEngine`): opt-in decorator over several pre-filled
+  engines that forwards each query to the cheapest one, chosen by an `IQueryCostEstimator` —
+  the default `CheapestByCandidateCountEstimator` uses per-engine `IQueryCostProbe` estimates.
 - **Lexical similarity** (`LexiSharp.Similarity`): pairwise token-set measures (Jaccard,
   Sørensen–Dice) over the library tokenizer, a `pg_trgm`-style character trigram similarity,
   and a rolling Levenshtein edit distance — near-duplicate detection and fuzzy matching with
@@ -442,6 +445,32 @@ Every overload is equivalent to its `string` counterpart. `Tokenizer` runs the s
 directly over the span (SIMD ASCII runs, rune decoding only on the non-ASCII path); other
 implementers fall back to the default interface method, which copies the span and forwards. A
 `null` literal still binds to the `string` overload, so the span path is null-free.
+
+### Cost-based routing (`RoutedSearchEngine`)
+
+When the same corpus is reachable through several engines — say a stock in-memory engine and a
+SQL backend — route each query to the one that will do the least work:
+
+```csharp
+using LexiSharp.Core;
+
+var router = new RoutedSearchEngine(new[]
+{
+    new RoutedEngine("memory", memoryEngine),   // implements IQueryCostProbe
+    new RoutedEngine("postgres", pgEngine),     // no probe: last resort
+});
+
+IReadOnlyList<SearchResult> hits = router.Search("machine learning");
+```
+
+The router owns no index — it never writes, and its `Index`/`Add`/`Remove`/`Clear` throw
+`NotSupportedException`; populate the engines yourself. Each query runs on exactly one engine,
+so the scores are that engine's own (the router never mixes or renormalizes them across
+engines). The default `CheapestByCandidateCountEstimator` asks every engine implementing
+`IQueryCostProbe` for `EstimateCandidateCount` and picks the smallest — ties keep the earliest
+engine — while engines without the probe are only used when no costed engine exists. The stock
+engine's estimate is the sum of the literal query terms' document frequencies; pass a custom
+`IQueryCostEstimator` to route on engine priority, latency history or query shape instead.
 
 ### Lexical similarity and keyword extraction
 
