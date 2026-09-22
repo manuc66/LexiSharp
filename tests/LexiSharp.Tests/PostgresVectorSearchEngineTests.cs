@@ -344,6 +344,176 @@ public class PostgresVectorSearchEngineTests
         }
     }
 
+    private static readonly IReadOnlyDictionary<string, float[]> ColumnVectors =
+        new Dictionary<string, float[]>
+        {
+            ["alpha one"] = new[] { 1f, 0f },
+            ["bravo two"] = new[] { 0f, 1f },
+        };
+
+    private static PostgresVectorOptions ColumnOptions() => new()
+    {
+        Dimension = 2,
+        EmbeddingColumns = new Dictionary<string, string>
+        {
+            ["title"] = "title",
+            ["description"] = "description",
+        },
+    };
+
+    [SkippableFact]
+    public void EmbeddingColumns_EnsureSchema_CreatesOneIndexPerColumn()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        using var engine = NewEngine(new StubEmbeddingProvider(ColumnVectors), ColumnOptions());
+
+        try
+        {
+            using var connection = new Npgsql.NpgsqlConnection(ConnectionString);
+            connection.Open();
+
+            using var command = connection.CreateCommand();
+            var table = engine.TestTableName;
+            command.CommandText = "SELECT indexname FROM pg_indexes WHERE tablename = @t";
+            command.Parameters.AddWithValue("t", table);
+
+            var indexes = new List<string>();
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+                indexes.Add(reader.GetString(0));
+
+            Assert.Contains(indexes, name => name.Contains("_title_embedding_hnsw"));
+            Assert.Contains(indexes, name => name.Contains("_description_embedding_hnsw"));
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    [SkippableFact]
+    public void EmbeddingColumns_SearchByColumn_SelectsTheRightEmbedding()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        using var engine = NewEngine(new StubEmbeddingProvider(ColumnVectors), ColumnOptions());
+
+        try
+        {
+            engine.Add(new SearchDocument("d1", "unrelated body",
+                TextFields: new Dictionary<string, string> { ["title"] = "alpha one", ["description"] = "bravo two" }));
+            engine.Add(new SearchDocument("d2", "unrelated body",
+                TextFields: new Dictionary<string, string> { ["title"] = "bravo two", ["description"] = "alpha one" }));
+
+            // "alpha one" lives in d1's title and d2's description.
+            var byTitle = engine.SearchWithColumns("alpha one", new[] { "title" });
+            Assert.Equal(new[] { "d1" }, byTitle.Select(r => r.DocumentId).ToArray());
+
+            var byDescription = engine.SearchWithColumns("alpha one", new[] { "description" });
+            Assert.Equal(new[] { "d2" }, byDescription.Select(r => r.DocumentId).ToArray());
+
+            // Searching without column selection OR-fuses every configured column by best similarity.
+            var all = engine.Search("alpha one");
+            Assert.Equal(
+                new[] { "d1", "d2" }.OrderBy(x => x),
+                all.Select(r => r.DocumentId).OrderBy(x => x));
+            Assert.All(all, r => Assert.Equal(1.0, r.Score, 6));
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    [SkippableFact]
+    public void EmbeddingColumns_SearchWithDetails_ExposesPerColumnContributions()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        using var engine = NewEngine(new StubEmbeddingProvider(ColumnVectors), ColumnOptions());
+
+        try
+        {
+            engine.Add(new SearchDocument("d1", "unrelated body",
+                TextFields: new Dictionary<string, string> { ["title"] = "alpha one", ["description"] = "bravo two" }));
+            engine.Add(new SearchDocument("d2", "unrelated body",
+                TextFields: new Dictionary<string, string> { ["title"] = "bravo two", ["description"] = "alpha one" }));
+
+            var details = engine.SearchWithDetails("alpha one");
+
+            var d1 = Assert.Single(details, d => d.DocumentId == "d1");
+            var titleOnly = Assert.Single(d1.Contributions.Keys);
+            Assert.Equal("title", titleOnly); // orthogonal description similarity (0) is dropped
+            Assert.Equal(1.0, d1.Contributions["title"], 6);
+
+            var d2 = Assert.Single(details, d => d.DocumentId == "d2");
+            var descriptionOnly = Assert.Single(d2.Contributions.Keys);
+            Assert.Equal("description", descriptionOnly);
+            Assert.Equal(1.0, d2.Contributions["description"], 6);
+
+            // Details agree with the plain search on ordering.
+            Assert.Equal(
+                engine.Search("alpha one").Select(r => r.DocumentId).OrderBy(x => x),
+                details.Select(r => r.DocumentId).OrderBy(x => x));
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    [SkippableFact]
+    public void SearchWithColumns_RejectsUnknownColumn()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        using var engine = NewEngine(new StubEmbeddingProvider(ColumnVectors), ColumnOptions());
+
+        try
+        {
+            Assert.Throws<ArgumentException>(() => engine.SearchWithColumns("alpha one", new[] { "nope" }));
+            Assert.Throws<ArgumentException>(() => engine.SearchWithColumns("alpha one", Array.Empty<string>()));
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    [Fact]
+    public void EmbeddingColumns_And_EmbeddingTextField_AreMutuallyExclusive()
+    {
+        var provider = new StubEmbeddingProvider(CosineVectors);
+
+        Assert.Throws<ArgumentException>(() => new PostgresVectorSearchEngine(
+            "Host=localhost;Username=test;Password=test;Database=test",
+            provider,
+            new PostgresVectorOptions
+            {
+                Dimension = provider.Dimension,
+                EmbeddingTextField = "title",
+                EmbeddingColumns = new Dictionary<string, string> { ["title"] = "title" },
+                AutoCreateSchema = false,
+            }));
+    }
+
+    [Fact]
+    public void EmbeddingColumns_RejectsUntrustedColumnNames()
+    {
+        var provider = new StubEmbeddingProvider(CosineVectors);
+
+        Assert.Throws<ArgumentException>(() => new PostgresVectorSearchEngine(
+            "Host=localhost;Username=test;Password=test;Database=test",
+            provider,
+            new PostgresVectorOptions
+            {
+                Dimension = provider.Dimension,
+                EmbeddingColumns = new Dictionary<string, string> { ["bad;name"] = "title" },
+                AutoCreateSchema = false,
+            }));
+    }
+
     private sealed class RecordingEmbeddingProvider : IEmbeddingProvider
     {
         private readonly StubEmbeddingProvider _inner;
