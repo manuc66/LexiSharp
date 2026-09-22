@@ -136,4 +136,80 @@ public class InMemoryTextIndexTests
         Assert.Equal(0, index.VocabularySize);
         Assert.Empty(index.Documents);
     }
+
+    [Fact]
+    public void Churn_AddThenRemove_VocabularyReturnsToBaseline()
+    {
+        var index = new InMemoryTextIndex();
+
+        index.Add(new SearchDocument("keep", "alpha bravo"));
+
+        for (int cycle = 0; cycle < 50; cycle++)
+        {
+            index.Add(new SearchDocument("temp", $"term{cycle} other{cycle}"));
+            Assert.True(index.Remove("temp"));
+        }
+
+        // Every term introduced by a removed document must leave the vocabulary with it:
+        // an implementation that never evicts terms would report a growing VocabularySize here.
+        Assert.Equal(2, index.VocabularySize);
+        Assert.Equal(1, index.Count);
+        Assert.Equal(2, index.CorpusTokenCount);
+        Assert.Equal(0, index.CorpusFrequency("term0"));
+        Assert.Empty(index.GetTermPositions("keep", "term0"));
+    }
+
+    [Fact]
+    public void Churn_RepeatedReplace_KeepsVocabularyBounded()
+    {
+        var index = new InMemoryTextIndex();
+
+        for (int cycle = 0; cycle < 200; cycle++)
+            index.Add(new SearchDocument("doc", $"unique{cycle}"));
+
+        // Replacing the same id must not accumulate the terms of previous revisions.
+        Assert.Equal(1, index.Count);
+        Assert.Equal(1, index.VocabularySize);
+        Assert.Equal(1, index.CorpusTokenCount);
+        Assert.Equal(0, index.CorpusFrequency("unique0"));
+        Assert.Equal(1, index.CorpusFrequency("unique199"));
+    }
+
+    [Fact]
+    public void Churn_DoesNotGrowRetainedMemory()
+    {
+        var index = new InMemoryTextIndex();
+
+        index.Add(new SearchDocument("keep", "alpha bravo charlie"));
+
+        long Baseline()
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            return GC.GetTotalMemory(forceFullCollection: true);
+        }
+
+        // Warm up the postings structures at their steady state before measuring.
+        for (int cycle = 0; cycle < 50; cycle++)
+        {
+            index.Add(new SearchDocument("temp", $"term{cycle} other{cycle}"));
+            index.Remove("temp");
+        }
+
+        long before = Baseline();
+
+        for (int cycle = 0; cycle < 5000; cycle++)
+        {
+            index.Add(new SearchDocument("temp", $"term{cycle} other{cycle}"));
+            index.Remove("temp");
+        }
+
+        long after = Baseline();
+
+        // Retained memory must stay flat: allow 1 MB of measurement noise, nothing more.
+        Assert.True(
+            after - before < 1_000_000,
+            $"Retained memory grew by {after - before} bytes across churn.");
+    }
 }
