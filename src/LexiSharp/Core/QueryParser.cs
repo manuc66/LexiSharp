@@ -69,9 +69,18 @@ public static class QueryParser
     public static ParsedQuery Parse(string query, ITokenizer tokenizer)
     {
         ArgumentNullException.ThrowIfNull(query);
+        return Parse(query.AsSpan(), tokenizer);
+    }
+
+    /// <summary>
+    /// Tokenizes <paramref name="query"/> into free terms, phrase constraints and expansion
+    /// atoms, without materializing the query as a string.
+    /// </summary>
+    public static ParsedQuery Parse(ReadOnlySpan<char> query, ITokenizer tokenizer)
+    {
         ArgumentNullException.ThrowIfNull(tokenizer);
 
-        if (!query.Contains('"') && !ContainsExpansionMarker(query))
+        if (query.IndexOf('"') < 0 && !ContainsExpansionMarker(query))
         {
             var plainTerms = tokenizer.Tokenize(query);
             return new ParsedQuery(
@@ -130,14 +139,21 @@ public static class QueryParser
     /// Quote-level split without tokenizing: the free text (outside-quote segments, trimmed and
     /// joined by single spaces) and each quoted segment's literal interior. Interiors that are
     /// empty, whitespace-only, or that the default tokenizer empties are dropped — the same
-    /// vacuous-phrase rule as <see cref="Parse"/>.
+    /// vacuous-phrase rule as <see cref="Parse(string, ITokenizer)"/>.
     /// </summary>
     public static RawQuerySegments SplitRaw(string query)
     {
         ArgumentNullException.ThrowIfNull(query);
+        return SplitRaw(query.AsSpan());
+    }
 
-        if (!query.Contains('"'))
-            return new RawQuerySegments(query, Array.Empty<string>());
+    /// <summary>
+    /// Quote-level split without tokenizing, without materializing the query as a string.
+    /// </summary>
+    public static RawQuerySegments SplitRaw(ReadOnlySpan<char> query)
+    {
+        if (query.IndexOf('"') < 0)
+            return new RawQuerySegments(query.ToString(), Array.Empty<string>());
 
         var freeParts = new List<string>();
         var phrases = new List<string>();
@@ -157,7 +173,7 @@ public static class QueryParser
                 {
                     var part = query[freeStart..i].Trim();
                     if (part.Length > 0)
-                        freeParts.Add(part);
+                        freeParts.Add(part.ToString());
                 }
 
                 inPhrase = true;
@@ -177,7 +193,7 @@ public static class QueryParser
         {
             var trailing = query[freeStart..].Trim();
             if (trailing.Length > 0)
-                freeParts.Add(trailing);
+                freeParts.Add(trailing.ToString());
         }
 
         return new RawQuerySegments(string.Join(' ', freeParts), phrases);
@@ -189,7 +205,7 @@ public static class QueryParser
             target.Add(terms[i]);
     }
 
-    private static bool ContainsExpansionMarker(string text) =>
+    private static bool ContainsExpansionMarker(ReadOnlySpan<char> text) =>
         text.IndexOf('*') >= 0 || text.IndexOf('~') >= 0;
 
     /// <summary>
@@ -201,7 +217,7 @@ public static class QueryParser
     private static void AppendFree(
         List<string> terms,
         List<QueryExpansion> expansions,
-        string segment,
+        ReadOnlySpan<char> segment,
         ITokenizer tokenizer)
     {
         if (segment.Length == 0)
@@ -257,7 +273,7 @@ public static class QueryParser
     /// (<c>[0, 2]</c>, default 1).
     /// </summary>
     private static bool TryReadExpansionOperator(
-        string segment,
+        ReadOnlySpan<char> segment,
         int index,
         out int runStart,
         out int atomEnd,
@@ -285,7 +301,7 @@ public static class QueryParser
     /// Consumes the ASCII digits after <c>~</c>; returns the end index (start when there are
     /// no digits) and the edit budget parsed from them, clamped to <c>[0, 2]</c>.
     /// </summary>
-    private static int ReadEditCount(string segment, int start, out int maxEdits)
+    private static int ReadEditCount(ReadOnlySpan<char> segment, int start, out int maxEdits)
     {
         int edits = 0;
         int i = start;
@@ -311,9 +327,9 @@ public static class QueryParser
             phrases.Add(terms);
     }
 
-    private static void AppendRawPhrase(List<string> phrases, string interior)
+    private static void AppendRawPhrase(List<string> phrases, ReadOnlySpan<char> interior)
     {
-        if (string.IsNullOrWhiteSpace(interior))
+        if (interior.IsWhiteSpace())
             return;
 
         // Mirror Parse's rule with the default tokenizer as a proxy for "will any backend
@@ -321,6 +337,6 @@ public static class QueryParser
         if (Tokenizer.Default.Tokenize(interior).Count == 0)
             return;
 
-        phrases.Add(interior);
+        phrases.Add(interior.ToString());
     }
 }
