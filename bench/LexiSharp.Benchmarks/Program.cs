@@ -11,6 +11,7 @@ public static class Program
             typeof(TokenizerBenchmarks),
             typeof(IndexBenchmarks),
             typeof(SearchBenchmarks),
+            typeof(LevenshteinBenchmarks),
             typeof(ClassificationBenchmarks),
         });
 
