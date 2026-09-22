@@ -8,16 +8,18 @@ namespace LexiSharp.Classification;
 /// </summary>
 /// <remarks>
 /// Model parameters: class priors and per-class term probabilities
-/// <c>P(t | c) = (count(c, t) + 1) / (size(c) + |V|)</c> — i.e. Laplace (add-1)
-/// smoothing over the shared training vocabulary. Documents without a
-/// <see cref="SearchDocument.Category"/> are ignored during training.
-/// <para>
-/// The behavior is tunable through <see cref="NaiveBayesOptions"/>: a softmax
-/// <c>temperature</c> that sharpens or flattens the posterior, an <see cref="IdfMode"/> that
-/// discounts corpus-wide vocabulary, an <see cref="NaiveBayesOptions.Alpha"/> smoothing
-/// coefficient (optionally applied to the priors) and a mode that skips out-of-vocabulary
-/// query tokens instead of letting Laplace smoothing penalize them.
-/// </para>
+    /// <c>P(t | c) = (count(c, t) + 1) / (size(c) + |V|)</c> — i.e. Laplace (add-1)
+    /// smoothing over the shared training vocabulary. Documents without a
+    /// <see cref="SearchDocument.Category"/> are ignored during training.
+    /// <para>
+    /// The behavior is tunable through <see cref="NaiveBayesOptions"/>: a softmax
+    /// <c>temperature</c> that sharpens or flattens the posterior, an <see cref="IdfMode"/> that
+    /// discounts corpus-wide vocabulary, an <see cref="NaiveBayesOptions.Alpha"/> smoothing
+    /// coefficient (optionally applied to the priors), a mode that skips out-of-vocabulary
+    /// query tokens instead of letting Laplace smoothing penalize them, and a
+    /// <see cref="NaiveBayesOptions.Complement"/> mode that learns each class from its
+    /// complement — use it when the training classes are severely imbalanced.
+    /// </para>
 /// </remarks>
 /// <remarks>
 /// Categories with equal probability are ordered by category name, so the output of
@@ -31,9 +33,11 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
     private readonly Dictionary<string, int> _classDocumentCounts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _classTokenCounts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Dictionary<string, int>> _termCountsByClass = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _globalTermCounts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _termDocumentFrequencies = new(StringComparer.Ordinal);
 
     private int _documentCount;
+    private int _totalTokenCount;
     private int _classCount;
     private int _vocabularySize;
 
@@ -56,8 +60,10 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
         _classDocumentCounts.Clear();
         _classTokenCounts.Clear();
         _termCountsByClass.Clear();
+        _globalTermCounts.Clear();
         _termDocumentFrequencies.Clear();
         _documentCount = 0;
+        _totalTokenCount = 0;
         _classCount = 0;
         _vocabularySize = 0;
 
@@ -88,6 +94,10 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
                 classTerms.TryGetValue(term, out int termCount);
                 classTerms[term] = termCount + 1;
                 vocabulary.Add(term);
+
+                _globalTermCounts.TryGetValue(term, out int globalTermCount);
+                _globalTermCounts[term] = globalTermCount + 1;
+                _totalTokenCount++;
 
                 _classTokenCounts.TryGetValue(category, out int classTokenCount);
                 _classTokenCounts[category] = classTokenCount + 1;
@@ -162,29 +172,61 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
             var classTerms = pair.Value;
             int classTokenCount = 0;
             _classTokenCounts.TryGetValue(category, out classTokenCount);
-            double smoothingDenominator = classTokenCount + _options.Alpha * _vocabularySize;
-
             _classDocumentCounts.TryGetValue(category, out int classDocumentCount);
 
-            double logPrior = _options.SmoothPriors
-                ? Math.Log((classDocumentCount + _options.Alpha)
-                           / (_documentCount + _options.Alpha * _classCount))
-                : Math.Log((double)classDocumentCount / _documentCount);
+            double logProbability;
 
-            double logProbability = logPrior;
-
-            foreach (var token in tokenList)
+            if (_options.Complement)
             {
-                if (_options.SkipOutOfVocabularyTokens && !IsInVocabulary(token.Token))
-                    continue;
+                // Complement statistics: term and token totals over the *other* classes, smoothed
+                // by Alpha over the vocabulary. A query is scored as -log P(t | c̄): the class
+                // whose complement explains the query least is the best pick (Rennie et al. 2003;
+                // priors sit out, matching scikit-learn's ComplementNB).
+                int complementTokenCount = _totalTokenCount - classTokenCount;
+                double complementDenominator = complementTokenCount + _options.Alpha * _vocabularySize;
+                logProbability = 0.0;
 
-                classTerms.TryGetValue(token.Token, out int termCount);
-
-                if (smoothingDenominator > 0)
+                foreach (var token in tokenList)
                 {
-                    double idf = IdfWeight(token.Token);
-                    logProbability += token.Weight * idf
-                        * Math.Log((termCount + _options.Alpha) / smoothingDenominator);
+                    if (_options.SkipOutOfVocabularyTokens && !IsInVocabulary(token.Token))
+                        continue;
+
+                    _globalTermCounts.TryGetValue(token.Token, out int globalTermCount);
+                    classTerms.TryGetValue(token.Token, out int termCount);
+                    int complementTermCount = globalTermCount - termCount;
+
+                    if (complementDenominator > 0)
+                    {
+                        double idf = IdfWeight(token.Token);
+                        logProbability += token.Weight * idf
+                            * -Math.Log((complementTermCount + _options.Alpha) / complementDenominator);
+                    }
+                }
+            }
+            else
+            {
+                double smoothingDenominator = classTokenCount + _options.Alpha * _vocabularySize;
+
+                double logPrior = _options.SmoothPriors
+                    ? Math.Log((classDocumentCount + _options.Alpha)
+                               / (_documentCount + _options.Alpha * _classCount))
+                    : Math.Log((double)classDocumentCount / _documentCount);
+
+                logProbability = logPrior;
+
+                foreach (var token in tokenList)
+                {
+                    if (_options.SkipOutOfVocabularyTokens && !IsInVocabulary(token.Token))
+                        continue;
+
+                    classTerms.TryGetValue(token.Token, out int termCount);
+
+                    if (smoothingDenominator > 0)
+                    {
+                        double idf = IdfWeight(token.Token);
+                        logProbability += token.Weight * idf
+                            * Math.Log((termCount + _options.Alpha) / smoothingDenominator);
+                    }
                 }
             }
 

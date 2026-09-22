@@ -142,8 +142,12 @@ hide hot categories at runtime without retraining (probabilities renormalize ove
 `NaiveBayesOptions` tunes the scoring: a softmax `Temperature` (sharpening/flattening), an
 `IdfMode` (`None` / `DocumentCount` = `log(1 + N/df)` / `ClassCount` = `max(0, log(C/df))`),
 an `Alpha` smoothing coefficient (optionally applied to the priors through `SmoothPriors`) and
-`SkipOutOfVocabularyTokens` (ignore unknown query terms instead of a Laplace penalty). `Train`
-must not overlap any `Predict`; concurrent `Predict` calls are safe.
+`SkipOutOfVocabularyTokens` (ignore unknown query terms instead of a Laplace penalty). Setting
+`Complement` switches to **Complement Naive Bayes** (Rennie et al. 2003, matching scikit-learn's
+`ComplementNB`): each class is learned from the complement of its documents and a query is
+attributed to the class whose exclusion explains it least — a cheap robustness win when the
+training labels are heavily imbalanced. `Train` must not overlap any `Predict`; concurrent
+`Predict` calls are safe.
 
 ### Tokenizer customization
 
