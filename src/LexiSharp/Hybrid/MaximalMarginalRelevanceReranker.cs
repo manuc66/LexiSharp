@@ -87,25 +87,7 @@ public sealed class MaximalMarginalRelevanceReranker : IReranker
 
         while (pool.Count > 0 && (_limit is null || selected.Count < _limit))
         {
-            int bestIndex = 0;
-            double bestMmr = double.NegativeInfinity;
-
-            for (int i = 0; i < pool.Count; i++)
-            {
-                double relevance = maxScore > 0 ? pool[i].Score / maxScore : 0;
-                double redundancy = selectedVectors.Count == 0
-                    ? 0
-                    : MaxSimilarity(pool[i], selectedVectors);
-
-                double mmr = _lambda * relevance - (1 - _lambda) * redundancy;
-
-                // Strictly greater keeps the earliest candidate in the incoming order on ties.
-                if (mmr > bestMmr)
-                {
-                    bestMmr = mmr;
-                    bestIndex = i;
-                }
-            }
+            int bestIndex = SelectBestIndex(pool, selectedVectors, maxScore);
 
             var pick = pool[bestIndex];
             pool.RemoveAt(bestIndex);
@@ -116,6 +98,34 @@ public sealed class MaximalMarginalRelevanceReranker : IReranker
         }
 
         return selected;
+    }
+
+    private int SelectBestIndex(
+        List<SearchResult> pool,
+        List<ReadOnlyMemory<float>> selectedVectors,
+        double maxScore)
+    {
+        int bestIndex = 0;
+        double bestMmr = double.NegativeInfinity;
+
+        for (int i = 0; i < pool.Count; i++)
+        {
+            double relevance = maxScore > 0 ? pool[i].Score / maxScore : 0;
+            double redundancy = selectedVectors.Count == 0
+                ? 0
+                : MaxSimilarity(pool[i], selectedVectors);
+
+            double mmr = _lambda * relevance - (1 - _lambda) * redundancy;
+
+            // Strictly greater keeps the earliest candidate in the incoming order on ties.
+            if (mmr > bestMmr)
+            {
+                bestMmr = mmr;
+                bestIndex = i;
+            }
+        }
+
+        return bestIndex;
     }
 
     private double MaxSimilarity(SearchResult candidate, List<ReadOnlyMemory<float>> selectedVectors)

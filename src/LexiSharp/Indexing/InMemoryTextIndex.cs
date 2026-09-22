@@ -199,35 +199,46 @@ public sealed class InMemoryTextIndex : ICandidateIndex
     public IEnumerable<SearchDocument> GetCandidateDocuments(IReadOnlyList<string> terms)
     {
         ArgumentNullException.ThrowIfNull(terms);
-        return GetCandidateDocumentsCore(terms);
+
+        if (terms.Count == 0 || _postings.Count == 0)
+            return Array.Empty<SearchDocument>();
+
+        return terms.Count == 1
+            ? EnumerateSingleTerm(terms[0])
+            : EnumerateMultiTerm(terms);
     }
 
-    private IEnumerable<SearchDocument> GetCandidateDocumentsCore(IReadOnlyList<string> terms)
+    // A single term enumerates its posting list in document-insertion order, which is exactly
+    // the corpus order — no candidate set needed, indistinguishable from a full scan.
+    private IEnumerable<SearchDocument> EnumerateSingleTerm(string term)
     {
-        if (terms.Count == 0 || _postings.Count == 0)
+        if (!_postings.TryGetValue(term, out var postings) || postings.Count == 0)
             yield break;
 
-        // A single term enumerates in document-insertion order, which is exactly the corpus
-        // order — no candidate set needed, indistinguishable from a full scan.
-        if (terms.Count == 1)
+        foreach (var documentId in postings.Keys)
         {
-            if (_postings.TryGetValue(terms[0], out var postings) && postings.Count > 0)
-            {
-                foreach (var documentId in postings.Keys)
-                {
-                    if (_documents.TryGetValue(documentId, out var document))
-                        yield return document;
-                }
-            }
-
-            yield break;
+            if (_documents.TryGetValue(documentId, out var document))
+                yield return document;
         }
+    }
 
-        // Multi-term: stamp the union members by object identity instead of building a fresh
-        // string-keyed hash set per query. The marking dictionary is reused across queries and
-        // keyed by reference identity, so the re-enumeration over the corpus performs plain
-        // identity lookups (no string hashing) while the tied-break order stays the corpus
-        // order. Entries are never removed; a size cap protects long-lived churning indexes.
+    private IEnumerable<SearchDocument> EnumerateMultiTerm(IReadOnlyList<string> terms)
+    {
+        long epoch = MarkCandidates(terms);
+
+        foreach (var document in _documents.Values)
+        {
+            if (_candidateMarks.TryGetValue(document, out long marked) && marked == epoch)
+                yield return document;
+        }
+    }
+
+    private long MarkCandidates(IReadOnlyList<string> terms)
+    {
+        // The marking dictionary is reused across queries and keyed by reference identity, so the
+        // re-enumeration over the corpus performs plain identity lookups (no string hashing) while
+        // the tie-break order stays the corpus order. Entries are never removed; a size cap
+        // protects long-lived churning indexes.
         if (_candidateMarks.Count > _documents.Count + 1024)
             _candidateMarks.Clear();
 
@@ -243,11 +254,7 @@ public sealed class InMemoryTextIndex : ICandidateIndex
             }
         }
 
-        foreach (var document in _documents.Values)
-        {
-            if (_candidateMarks.TryGetValue(document, out long marked) && marked == epoch)
-                yield return document;
-        }
+        return epoch;
     }
 
     /// <inheritdoc />
