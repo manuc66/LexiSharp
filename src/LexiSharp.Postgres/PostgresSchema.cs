@@ -31,6 +31,7 @@ public static class PostgresSchema
                 content  text NOT NULL,
                 category text,
                 fields   jsonb,
+                text_fields jsonb,
                 tsv      tsvector
             );
             CREATE INDEX IF NOT EXISTS {indexName} ON {options.QualifiedTableName} USING GIN (tsv);

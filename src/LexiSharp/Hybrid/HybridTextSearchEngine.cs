@@ -22,9 +22,10 @@ namespace LexiSharp.Hybrid;
 /// <c>0</c> (convention: "not a match") is dropped, as are NaN/Infinity scores.
 /// </para>
 /// </remarks>
-public sealed class HybridTextSearchEngine : ITextSearchEngine
+public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchEngine
 {
     private readonly IReadOnlyList<ITextSearchEngine> _engines;
+    private readonly IReadOnlyList<string> _sourceNames;
     private readonly IResultMerger _merger;
     private readonly int _minCandidatesPerEngine;
 
@@ -34,10 +35,16 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine
     /// Minimum number of candidates requested from each engine so the merger has enough
     /// material to re-rank meaningfully; defaults to 50. Never below the final limit.
     /// </param>
+    /// <param name="sourceNames">
+    /// Labels identifying each engine in <see cref="DetailedSearchResult.Contributions"/> from
+    /// <see cref="SearchWithDetails"/> (e.g. <c>["lexical", "semantic"]</c>). Must match
+    /// <paramref name="engines"/> in count and be unique; defaults to <c>"engine-0"</c>, <c>"engine-1"</c>, ...
+    /// </param>
     public HybridTextSearchEngine(
         IEnumerable<ITextSearchEngine> engines,
         IResultMerger? merger = null,
-        int minCandidatesPerEngine = 50)
+        int minCandidatesPerEngine = 50,
+        IReadOnlyList<string>? sourceNames = null)
     {
         ArgumentNullException.ThrowIfNull(engines);
 
@@ -48,6 +55,26 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine
 
         if (_engines.Distinct().Count() != _engines.Count)
             throw new ArgumentException("Engine instances must be distinct.", nameof(engines));
+
+        if (sourceNames is not null)
+        {
+            if (sourceNames.Count != _engines.Count)
+                throw new ArgumentException("sourceNames must contain exactly one label per engine.", nameof(sourceNames));
+
+            if (sourceNames.Distinct(StringComparer.Ordinal).Count() != sourceNames.Count)
+                throw new ArgumentException("sourceNames must not contain duplicates.", nameof(sourceNames));
+
+            if (sourceNames.Any(string.IsNullOrWhiteSpace))
+                throw new ArgumentException("sourceNames must not contain empty labels.", nameof(sourceNames));
+
+            _sourceNames = sourceNames;
+        }
+        else
+        {
+            _sourceNames = Enumerable.Range(0, _engines.Count)
+                .Select(i => $"engine-{i}")
+                .ToList();
+        }
 
         _merger = merger ?? new RerankingResultMerger();
         _minCandidatesPerEngine = Math.Max(1, minCandidatesPerEngine);
@@ -86,14 +113,31 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+        SearchWithDetails(query, options)
+            .Select(x => x.ToSearchResult())
+            .ToList();
+
+    /// <summary>
+    /// Same query as <see cref="Search"/>, but every result also carries the per-source score
+    /// breakdown that fed the final rank (see <see cref="DetailedSearchResult.Contributions"/>).
+    /// Part of the opt-in <see cref="IDetailedSearchEngine"/> capability.
+    /// </summary>
+    /// <remarks>
+    /// The contributions are the raw scores each delegate engine assigned <i>before</i> merging,
+    /// keyed by the <c>sourceNames</c> labels configured at construction. A source that did not
+    /// return the document is absent from the dictionary. Scores come from heterogeneous scales;
+    /// the breakdown is an instrument for debugging and surface UI, not a substitute for the
+    /// merged ordering.
+    /// </remarks>
+    public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(query);
 
         options ??= SearchOptions.Default;
 
         if (options.Limit <= 0)
-            return Array.Empty<SearchResult>();
+            return Array.Empty<DetailedSearchResult>();
 
         int candidateLimit = Math.Max(options.Limit, _minCandidatesPerEngine);
 
@@ -104,6 +148,24 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine
             perEngine.Add(engine.Search(query, options with { Limit = candidateLimit }));
         }
 
+        var contributionsByDocument = new Dictionary<string, Dictionary<string, double>>(StringComparer.Ordinal);
+
+        for (int i = 0; i < _engines.Count; i++)
+        {
+            string source = _sourceNames[i];
+
+            foreach (var result in perEngine[i])
+            {
+                if (!contributionsByDocument.TryGetValue(result.DocumentId, out var sources))
+                {
+                    sources = new Dictionary<string, double>(StringComparer.Ordinal);
+                    contributionsByDocument[result.DocumentId] = sources;
+                }
+
+                sources[source] = result.Score;
+            }
+        }
+
         var merged = _merger.Merge(perEngine, query);
 
         return merged
@@ -111,6 +173,12 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine
                         && x.Score >= options.MinimumScore && x.Score != 0)
             .OrderByDescending(x => x.Score)
             .Take(options.Limit)
+            .Select(x => new DetailedSearchResult(
+                x.DocumentId,
+                x.Score,
+                x.Document,
+                (IReadOnlyDictionary<string, double>)
+                    (contributionsByDocument.GetValueOrDefault(x.DocumentId) ?? new Dictionary<string, double>())))
             .ToList();
     }
 }

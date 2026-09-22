@@ -14,7 +14,7 @@ public class SparseTextSearchEngineTests
             => _lookup = lookup;
 
         public Task<IReadOnlyDictionary<string, float>> GetSparseEmbeddingAsync(
-            string text, CancellationToken cancellationToken = default)
+            string text, EmbeddingUse use, CancellationToken cancellationToken = default)
             => Task.FromResult(_lookup(text));
     }
 
@@ -239,5 +239,33 @@ public class SparseTextSearchEngineTests
         Assert.Throws<ArgumentNullException>(() => engine.Search(null!));
         Assert.Throws<ArgumentNullException>(() => engine.Index(null!));
         Assert.Throws<ArgumentNullException>(() => engine.Remove(null!));
+    }
+
+    [Fact]
+    public void EmbeddingUse_IsReportedToTheProvider()
+    {
+        var provider = new RecordingSparseProvider(Embed);
+        var engine = new SparseTextSearchEngine(provider);
+        engine.Add(Doc("c1", "c1"));
+        engine.Search("q-cat");
+
+        Assert.Equal(new[] { EmbeddingUse.Passage, EmbeddingUse.Query }, provider.Uses.ToArray());
+    }
+
+    private sealed class RecordingSparseProvider : ISparseEmbeddingProvider
+    {
+        private readonly StubSparseProvider _inner;
+
+        public RecordingSparseProvider(Func<string, IReadOnlyDictionary<string, float>> lookup)
+            => _inner = new StubSparseProvider(lookup);
+
+        public List<EmbeddingUse> Uses { get; } = new();
+
+        public Task<IReadOnlyDictionary<string, float>> GetSparseEmbeddingAsync(
+            string text, EmbeddingUse use, CancellationToken cancellationToken = default)
+        {
+            Uses.Add(use);
+            return _inner.GetSparseEmbeddingAsync(text, use, cancellationToken);
+        }
     }
 }

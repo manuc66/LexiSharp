@@ -11,26 +11,39 @@ namespace LexiSharp.Classification;
 /// <c>P(t | c) = (count(c, t) + 1) / (size(c) + |V|)</c> — i.e. Laplace (add-1)
 /// smoothing over the shared training vocabulary. Documents without a
 /// <see cref="SearchDocument.Category"/> are ignored during training.
+/// <para>
+/// The behavior is tunable through <see cref="NaiveBayesOptions"/>: a softmax
+/// <c>temperature</c> that sharpens or flattens the posterior, and an optional term
+/// <c>idf</c> weighting <c>log(1 + N / df(t))</c> that lets rarer vocabulary weigh more.
+/// </para>
 /// </remarks>
 /// <remarks>
 /// Categories with equal probability are ordered by category name, so the output of
-/// <see cref="Predict"/> is deterministic for a given model.
+/// <see cref="Predict(string, int, IReadOnlySet{string})"/> is deterministic for a given model.
 /// </remarks>
-public sealed class NaiveBayesClassifier : ITextClassifier
+public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
 {
     private readonly ITokenizer _tokenizer;
+    private readonly NaiveBayesOptions _options;
 
     private readonly Dictionary<string, int> _classDocumentCounts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _classTokenCounts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Dictionary<string, int>> _termCountsByClass = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _termDocumentFrequencies = new(StringComparer.Ordinal);
 
     private int _documentCount;
     private int _classCount;
     private int _vocabularySize;
 
-    public NaiveBayesClassifier(ITokenizer? tokenizer = null)
+    /// <param name="tokenizer">Tokenizer used both at training and prediction time (default: <see cref="Tokenizer.Default"/>).</param>
+    /// <param name="options">Tunable knobs; when null, <see cref="NaiveBayesOptions.Default"/> (classic behavior) applies.</param>
+    public NaiveBayesClassifier(ITokenizer? tokenizer = null, NaiveBayesOptions? options = null)
     {
         _tokenizer = tokenizer ?? Tokenizer.Default;
+        _options = options ?? NaiveBayesOptions.Default;
+
+        if (!_options.IsValid)
+            throw new ArgumentException("Temperature must be a finite number greater than 0.", nameof(options));
     }
 
     /// <inheritdoc />
@@ -41,6 +54,7 @@ public sealed class NaiveBayesClassifier : ITextClassifier
         _classDocumentCounts.Clear();
         _classTokenCounts.Clear();
         _termCountsByClass.Clear();
+        _termDocumentFrequencies.Clear();
         _documentCount = 0;
         _classCount = 0;
         _vocabularySize = 0;
@@ -65,6 +79,8 @@ public sealed class NaiveBayesClassifier : ITextClassifier
             _classDocumentCounts[category] = documentCount + 1;
             _documentCount++;
 
+            var documentTerms = new HashSet<string>(StringComparer.Ordinal);
+
             foreach (var term in _tokenizer.Tokenize(document.Text))
             {
                 classTerms.TryGetValue(term, out int termCount);
@@ -73,6 +89,12 @@ public sealed class NaiveBayesClassifier : ITextClassifier
 
                 _classTokenCounts.TryGetValue(category, out int classTokenCount);
                 _classTokenCounts[category] = classTokenCount + 1;
+
+                if (documentTerms.Add(term))
+                {
+                    _termDocumentFrequencies.TryGetValue(term, out int docFrequency);
+                    _termDocumentFrequencies[term] = docFrequency + 1;
+                }
             }
         }
 
@@ -80,14 +102,49 @@ public sealed class NaiveBayesClassifier : ITextClassifier
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<ClassificationResult> Predict(string text, int limit = 3)
+    public IReadOnlyList<ClassificationResult> Predict(
+        string text,
+        int limit = 3,
+        IReadOnlySet<string>? excludedCategories = null)
     {
         ArgumentNullException.ThrowIfNull(text);
 
         if (limit <= 0 || _classCount == 0)
             return Array.Empty<ClassificationResult>();
 
-        var terms = _tokenizer.Tokenize(text);
+        var tokens = _tokenizer.Tokenize(text).Select(WeightedToken.Full);
+
+        return PredictCore(tokens, limit, excludedCategories);
+    }
+
+    /// <inheritdoc />
+    public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null)
+    {
+        var results = Predict(text, limit: 1, excludedCategories);
+        return results.Count > 0 ? results[0].Category : null;
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<ClassificationResult> Predict(
+        IEnumerable<WeightedToken> tokens,
+        int limit = 3,
+        IReadOnlySet<string>? excludedCategories = null)
+    {
+        ArgumentNullException.ThrowIfNull(tokens);
+
+        if (limit <= 0 || _classCount == 0)
+            return Array.Empty<ClassificationResult>();
+
+        return PredictCore(tokens, limit, excludedCategories);
+    }
+
+    private IReadOnlyList<ClassificationResult> PredictCore(
+        IEnumerable<WeightedToken> tokens,
+        int limit,
+        IReadOnlySet<string>? excludedCategories)
+    {
+        var tokenList = tokens.ToList();
+
         var logProbabilities = new double[_classCount];
         var categories = new string[_classCount];
 
@@ -96,6 +153,10 @@ public sealed class NaiveBayesClassifier : ITextClassifier
         foreach (var pair in _termCountsByClass)
         {
             string category = pair.Key;
+
+            if (excludedCategories is not null && excludedCategories.Contains(category))
+                continue;
+
             var classTerms = pair.Value;
             int classTokenCount = 0;
             _classTokenCounts.TryGetValue(category, out classTokenCount);
@@ -104,48 +165,61 @@ public sealed class NaiveBayesClassifier : ITextClassifier
             _classDocumentCounts.TryGetValue(category, out int classDocumentCount);
             double logProbability = Math.Log((double)classDocumentCount / _documentCount);
 
-            foreach (var term in terms)
+            foreach (var token in tokenList)
             {
-                classTerms.TryGetValue(term, out int termCount);
+                classTerms.TryGetValue(token.Token, out int termCount);
 
                 if (smoothingDenominator > 0)
-                    logProbability += Math.Log((termCount + 1.0) / smoothingDenominator);
+                {
+                    double idf = IdfWeight(token.Token);
+                    logProbability += token.Weight * idf * Math.Log((termCount + 1.0) / smoothingDenominator);
+                }
             }
 
             categories[idx] = category;
-            logProbabilities[idx] = logProbability;
+            logProbabilities[idx] = logProbability / _options.Temperature;
             idx++;
         }
 
-        return NormalizeAndRank(categories, logProbabilities, limit);
+        return NormalizeAndRank(categories, logProbabilities, idx, limit);
     }
 
-    /// <inheritdoc />
-    public string? PredictBest(string text)
+    /// <summary><c>log(1 + N / df(term))</c> over the training corpus, or 1 when unweighted.</summary>
+    private double IdfWeight(string term)
     {
-        var results = Predict(text, limit: 1);
-        return results.Count > 0 ? results[0].Category : null;
+        if (!_options.IdfWeighting || _documentCount == 0)
+            return 1.0;
+
+        _termDocumentFrequencies.TryGetValue(term, out int docFrequency);
+
+        if (docFrequency <= 0)
+            return 1.0;
+
+        return Math.Log(1.0 + _documentCount / (double)docFrequency);
     }
 
     private static IReadOnlyList<ClassificationResult> NormalizeAndRank(
-        string[] categories, double[] logProbabilities, int limit)
+        string[] categories, double[] logProbabilities, int count, int limit)
     {
+        if (count <= 0)
+            return Array.Empty<ClassificationResult>();
+
         double max = logProbabilities[0];
-        for (int i = 1; i < logProbabilities.Length; i++)
+        for (int i = 1; i < count; i++)
             max = Math.Max(max, logProbabilities[i]);
 
         double sum = 0;
-        var probabilities = new double[logProbabilities.Length];
+        var probabilities = new double[count];
 
-        for (int i = 0; i < logProbabilities.Length; i++)
+        for (int i = 0; i < count; i++)
         {
             probabilities[i] = Math.Exp(logProbabilities[i] - max);
             sum += probabilities[i];
         }
 
-        var ranked = new List<ClassificationResult>(categories.Length);
+        var ranked = new List<ClassificationResult>(count);
 
-        for (int i = 0; i < categories.Length; i++)
+        for (int i = 0; i < count; i++)
         {
             ranked.Add(new ClassificationResult(categories[i], probabilities[i] / sum));
         }

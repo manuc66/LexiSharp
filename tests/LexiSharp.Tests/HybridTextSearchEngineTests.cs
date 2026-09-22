@@ -152,4 +152,73 @@ public class HybridTextSearchEngineTests
 
         Assert.Equal("a", results[0].DocumentId);
     }
+
+    [Fact]
+    public void SearchWithDetails_ExposesPerSourceContributions()
+    {
+        var lexical = MemoryEngine(new[] { Doc("a", "apple pie"), Doc("b", "apple crumble") });
+        var semantic = MemoryEngine(new[] { Doc("b", "apple crumble"), Doc("c", "apple juice") });
+
+        var hybrid = new HybridTextSearchEngine(
+            new[] { lexical, semantic },
+            sourceNames: new[] { "lexical", "semantic" });
+
+        var details = hybrid.SearchWithDetails("apple");
+
+        Assert.Equal(3, details.Count);
+
+        var docA = details.Single(d => d.DocumentId == "a");
+        Assert.Equal(new[] { "lexical" }, docA.Contributions.Keys.ToArray());
+
+        var docB = details.Single(d => d.DocumentId == "b");
+        Assert.Equal(new[] { "lexical", "semantic" }, docB.Contributions.Keys.OrderBy(x => x).ToArray());
+
+        var docC = details.Single(d => d.DocumentId == "c");
+        Assert.Equal(new[] { "semantic" }, docC.Contributions.Keys.ToArray());
+
+        // Contributions carry the raw per-engine scores.
+        Assert.All(details, d => Assert.All(d.Contributions.Values, v => Assert.True(v > 0)));
+    }
+
+    [Fact]
+    public void SearchWithDetails_DefaultSourceNames_AreEngineIndexed()
+    {
+        var engine = MemoryEngine(new[] { Doc("a", "apple") });
+
+        var hybrid = new HybridTextSearchEngine(new[] { engine });
+
+        var details = hybrid.SearchWithDetails("apple");
+
+        var contribution = Assert.Single(details);
+        Assert.Equal(new[] { "engine-0" }, contribution.Contributions.Keys.ToArray());
+    }
+
+    [Fact]
+    public void SearchWithDetails_ToSearchResult_DropsContributions()
+    {
+        var engine = MemoryEngine(new[] { Doc("a", "apple") });
+
+        var hybrid = new HybridTextSearchEngine(new[] { engine });
+
+        var plain = hybrid.SearchWithDetails("apple")
+            .Select(d => d.ToSearchResult())
+            .ToList();
+
+        var result = Assert.Single(plain);
+        Assert.Equal("a", result.DocumentId);
+        Assert.NotNull(result.Document);
+    }
+
+    [Fact]
+    public void Ctor_RejectsInvalidSourceNames()
+    {
+        var engine = MemoryEngine(new[] { Doc("a", "apple") });
+
+        Assert.Throws<ArgumentException>(() => new HybridTextSearchEngine(
+            new[] { engine }, sourceNames: Array.Empty<string>()));
+        Assert.Throws<ArgumentException>(() => new HybridTextSearchEngine(
+            new[] { engine }, sourceNames: new[] { "dup", "dup" }));
+        Assert.Throws<ArgumentException>(() => new HybridTextSearchEngine(
+            new[] { engine }, sourceNames: new[] { " " }));
+    }
 }

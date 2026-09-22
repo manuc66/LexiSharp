@@ -3,6 +3,13 @@ namespace LexiSharp.Core;
 /// <summary>
 /// The public search surface of the library: index documents and rank them against a query.
 /// </summary>
+/// <remarks>
+/// Thread-safety: concurrent <see cref="Search"/> calls are supported. <see cref="Index"/>,
+/// <see cref="Add"/>, <see cref="Remove"/> and <see cref="Clear"/> must not run concurrently with
+/// each other or with a <see cref="Search"/>. Engines do not synchronize writes internally;
+/// synchronize externally (e.g. train off-lock on a snapshot, then atomically swap the engine
+/// instance) when writes and reads can overlap.
+/// </remarks>
 public interface ITextSearchEngine
 {
     /// <summary>Indexes a batch of documents, replacing any previously indexed content.</summary>

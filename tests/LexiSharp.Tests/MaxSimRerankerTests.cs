@@ -25,7 +25,7 @@ public class MaxSimRerankerTests
 
         public string Name => "stub";
 
-        public IReadOnlyList<ReadOnlyMemory<float>> GetTokenEmbeddings(string text) => _lookup(text);
+        public IReadOnlyList<ReadOnlyMemory<float>> GetTokenEmbeddings(string text, EmbeddingUse use) => _lookup(text);
     }
 
     [Fact]
@@ -186,6 +186,35 @@ public class MaxSimRerankerTests
                 new StubTokenizer(_ => Tokens(V(1f))),
                 new Dictionary<string, IReadOnlyList<ReadOnlyMemory<float>>> { ["1"] = Tokens(V(1f)) },
                 minimumScore: double.NaN));
+
+    [Fact]
+    public void Rerank_EmbedsTheQueryWithTheQueryRole()
+    {
+        var provider = new RecordingTokenizer(_ => Tokens(V(1f)));
+        var reranker = new MaxSimReranker(provider, new Dictionary<string, IReadOnlyList<ReadOnlyMemory<float>>> { ["1"] = Tokens(V(1f)) });
+
+        reranker.Rerank("q", new[] { R("1", Doc1, 1) });
+
+        Assert.Equal(new[] { EmbeddingUse.Query }, provider.Uses.ToArray());
+    }
+
+    private sealed class RecordingTokenizer : ITokenEmbeddingProvider
+    {
+        private readonly StubTokenizer _inner;
+
+        public RecordingTokenizer(Func<string, IReadOnlyList<ReadOnlyMemory<float>>> lookup)
+            => _inner = new StubTokenizer(lookup);
+
+        public string Name => "recording";
+
+        public List<EmbeddingUse> Uses { get; } = new();
+
+        public IReadOnlyList<ReadOnlyMemory<float>> GetTokenEmbeddings(string text, EmbeddingUse use)
+        {
+            Uses.Add(use);
+            return _inner.GetTokenEmbeddings(text, use);
+        }
+    }
 
     [Fact]
     public void Ctor_ValidatesArguments()

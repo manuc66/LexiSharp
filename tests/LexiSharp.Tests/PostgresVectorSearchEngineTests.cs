@@ -20,7 +20,7 @@ public class PostgresVectorSearchEngineTests
 
         public int Dimension { get; }
 
-        public Task<ReadOnlyMemory<float>> GetTextEmbeddingAsync(string text, CancellationToken cancellationToken = default) =>
+        public Task<ReadOnlyMemory<float>> GetTextEmbeddingAsync(string text, EmbeddingUse use, CancellationToken cancellationToken = default) =>
             _vectors.TryGetValue(text, out var vector)
                 ? Task.FromResult((ReadOnlyMemory<float>)vector)
                 : throw new KeyNotFoundException($"No embedding configured for '{text}'.");
@@ -217,6 +217,151 @@ public class PostgresVectorSearchEngineTests
         finally
         {
             engine.DropSchema();
+        }
+    }
+
+    [SkippableFact]
+    public void Add_AndSearch_RoundTripsTextFields()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        Run(engine =>
+        {
+            engine.Add(new SearchDocument("a", "red apple",
+                new Dictionary<string, string> { ["kind"] = "fruit" }, "food",
+                new Dictionary<string, string> { ["summary"] = "fresh and crunchy" }));
+
+            var results = engine.SearchAsync("pure red").GetAwaiter().GetResult();
+
+            var result = Assert.Single(results);
+            Assert.Equal("food", result.Document.Category);
+            Assert.Equal("fruit", result.Document.Fields!["kind"]);
+            Assert.Equal("fresh and crunchy", result.Document.TextFields!["summary"]);
+        });
+    }
+
+    [SkippableFact]
+    public void EmbeddingTextField_SelectsWhichTextIsEmbedded()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        var embeddings = new StubEmbeddingProvider(new Dictionary<string, float[]>
+        {
+            ["red apple"] = new[] { 1f, 0f },
+            ["blue sky"] = new[] { 0f, 1f },
+        });
+
+        using var engine = NewEngine(
+            embeddings,
+            new PostgresVectorOptions { Dimension = 2, EmbeddingTextField = "title" });
+
+        try
+        {
+            engine.Add(new SearchDocument("a", "ignored body text",
+                TextFields: new Dictionary<string, string> { ["title"] = "red apple" }));
+
+            // Orthogonal: the body text was NOT embedded, the title was.
+            Assert.Empty(engine.Search("blue sky"));
+
+            var hit = engine.Search("red apple");
+            var result = Assert.Single(hit);
+            Assert.Equal("a", result.DocumentId);
+            Assert.Equal("ignored body text", result.Document.Text);
+            Assert.Equal("red apple", result.Document.TextFields!["title"]);
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    [SkippableFact]
+    public void ListDocumentIds_ReturnsEveryStoredIdInStableOrder()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        Run(engine =>
+        {
+            engine.Add(Doc("bravo", "red apple"));
+            engine.Add(Doc("alpha", "green apple"));
+            engine.Add(Doc("charlie", "blue sky"));
+
+            Assert.Equal(
+                new[] { "alpha", "bravo", "charlie" },
+                engine.ListDocumentIds().ToArray());
+            Assert.Equal(
+                new[] { "alpha", "bravo", "charlie" },
+                engine.ListDocumentIds(batchSize: 1).ToArray());
+
+            Assert.Throws<ArgumentOutOfRangeException>(() => engine.ListDocumentIds(0));
+        });
+    }
+
+    [SkippableFact]
+    public void Search_WithHnswEfSearch_RunsInsideALocalTransaction()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        using var engine = NewEngine(
+            new StubEmbeddingProvider(CosineVectors),
+            new PostgresVectorOptions { Dimension = 4, HnswEfSearch = 64 });
+
+        try
+        {
+            engine.Add(Doc("red", "red apple"));
+            engine.Add(Doc("green", "green apple"));
+
+            var exact = engine.Search("pure red");
+
+            var result = Assert.Single(exact);
+            Assert.Equal("red", result.DocumentId);
+            Assert.Equal(1.0, result.Score, 6);
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    [SkippableFact]
+    public void EmbeddingUse_IsReportedToTheProvider()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        var provider = new RecordingEmbeddingProvider(CosineVectors);
+        using var engine = NewEngine(provider);
+
+        try
+        {
+            engine.Add(Doc("a", "red apple"));
+            engine.Search("pure red");
+
+            Assert.Equal(new[] { EmbeddingUse.Passage, EmbeddingUse.Query }, provider.Uses.ToArray());
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    private sealed class RecordingEmbeddingProvider : IEmbeddingProvider
+    {
+        private readonly StubEmbeddingProvider _inner;
+
+        public RecordingEmbeddingProvider(IReadOnlyDictionary<string, float[]> vectors)
+        {
+            _inner = new StubEmbeddingProvider(vectors);
+            Dimension = _inner.Dimension;
+        }
+
+        public List<EmbeddingUse> Uses { get; } = new();
+
+        public int Dimension { get; }
+
+        public Task<ReadOnlyMemory<float>> GetTextEmbeddingAsync(string text, EmbeddingUse use, CancellationToken cancellationToken = default)
+        {
+            Uses.Add(use);
+            return _inner.GetTextEmbeddingAsync(text, use, cancellationToken);
         }
     }
 }

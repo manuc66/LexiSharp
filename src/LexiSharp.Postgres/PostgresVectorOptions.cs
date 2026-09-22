@@ -57,8 +57,23 @@ public sealed record PostgresVectorOptions
     /// <summary>HNSW <c>ef_construction</c>, when <see cref="IndexMethod"/> is HNSW.</summary>
     public int HnswEfConstruction { get; init; } = 64;
 
+    /// <summary>
+    /// HNSW <c>ef_search</c>, the size of the dynamic candidate list during a search (higher = more
+    /// recall, more IO). When set, the engine issues <c>SET LOCAL hnsw.ef_search = @v</c> inside a
+    /// dedicated transaction around each search; when null (default), pgvector's built-in default
+    /// (<c>40</c>) applies and no GUC is touched.
+    /// </summary>
+    public int? HnswEfSearch { get; init; }
+
     /// <summary>IVFFlat <c>lists</c>, when <see cref="IndexMethod"/> is IVFFlat (roughly <c>sqrt(rows)</c>).</summary>
     public int IvfLists { get; init; } = 100;
+
+    /// <summary>
+    /// Name of the <see cref="Core.SearchDocument.TextFields"/> entry that should be embedded in
+    /// place of <see cref="Core.SearchDocument.Text"/>. When null (default), the whole
+    /// <see cref="Core.SearchDocument.Text"/> is embedded.
+    /// </summary>
+    public string? EmbeddingTextField { get; init; }
 
     /// <summary>
     /// When true (default), the constructor installs the <c>vector</c> extension, the documents
@@ -68,7 +83,8 @@ public sealed record PostgresVectorOptions
 
     internal bool IsValid =>
         SafeName.IsMatch(Schema) && SafeName.IsMatch(Table)
-        && Dimension > 0 && HnswM > 0 && HnswEfConstruction > 0 && IvfLists > 0;
+        && Dimension > 0 && HnswM > 0 && HnswEfConstruction > 0 && IvfLists > 0
+        && (HnswEfSearch is null || HnswEfSearch > 0);
 
     /// <summary>Fully qualified table name, e.g. <c>public.lexisharp_documents</c>.</summary>
     public string QualifiedTableName => $"{PostgresIndexOptions.QuoteIdentifier(Schema)}.{PostgresIndexOptions.QuoteIdentifier(Table)}";

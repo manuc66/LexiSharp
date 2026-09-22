@@ -185,7 +185,7 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable
     {
         ArgumentNullException.ThrowIfNull(document);
 
-        var weights = await _embeddings.GetSparseEmbeddingAsync(document.Text, cancellationToken).ConfigureAwait(false);
+        var weights = await _embeddings.GetSparseEmbeddingAsync(document.Text, EmbeddingUse.Passage, cancellationToken).ConfigureAwait(false);
         string literal = SparseVectorText.Format(ToCoordinates(weights), _options.ResolvedDimension);
 
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
@@ -245,7 +245,7 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable
         if (options.Limit <= 0 || string.IsNullOrWhiteSpace(query))
             return Array.Empty<SearchResult>();
 
-        var weights = await _embeddings.GetSparseEmbeddingAsync(query, cancellationToken).ConfigureAwait(false);
+        var weights = await _embeddings.GetSparseEmbeddingAsync(query, EmbeddingUse.Query, cancellationToken).ConfigureAwait(false);
         var queryCoordinates = ToCoordinates(weights);
 
         if (queryCoordinates.Count == 0)

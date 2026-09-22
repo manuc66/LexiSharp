@@ -16,7 +16,7 @@ public class PostgresSparseSearchEngineTests
         }
 
         public Task<IReadOnlyDictionary<string, float>> GetSparseEmbeddingAsync(
-            string text, CancellationToken cancellationToken = default)
+            string text, EmbeddingUse use, CancellationToken cancellationToken = default)
             => Task.FromResult(_vectors.TryGetValue(text, out var vector)
                 ? vector
                 : throw new KeyNotFoundException($"No sparse embedding configured for '{text}'."));
