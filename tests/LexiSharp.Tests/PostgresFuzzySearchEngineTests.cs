@@ -272,4 +272,24 @@ public class PostgresFuzzySearchEngineTests
             Assert.Empty(engine.Search("timber"));
         });
     }
+
+    [SkippableFact]
+    public void Search_FiltersGateResults()
+    {
+        Run(engine =>
+        {
+            engine.Add(new SearchDocument("red", "red apple",
+                new Dictionary<string, string> { ["kind"] = "fruit" }));
+            engine.Add(new SearchDocument("green", "green apple",
+                new Dictionary<string, string> { ["kind"] = "veg" }));
+
+            var filtered = engine.Search("apple", new SearchOptions(Limit: 10,
+                Filters: new[] { new MetadataFilter("kind", MetadataFilterOperator.Equal, "fruit") }));
+
+            Assert.Equal(new[] { "red" }, filtered.Select(r => r.DocumentId).ToArray());
+
+            Assert.Empty(engine.Search("apple", new SearchOptions(Limit: 10,
+                Filters: new[] { new MetadataFilter("kind", MetadataFilterOperator.Equal, "nope") })));
+        });
+    }
 }

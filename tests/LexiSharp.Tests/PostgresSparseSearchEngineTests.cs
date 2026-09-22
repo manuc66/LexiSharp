@@ -268,4 +268,27 @@ public class PostgresSparseSearchEngineTests
                 new StubSparseProvider(Docs),
                 new PostgresSparseOptions { Vocabulary = new Dictionary<string, int>() }));
     }
+
+    [SkippableFact]
+    public void Search_FiltersGateResults()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+        Skip.If(!VectorExtensionAvailable(), "vector extension unavailable.");
+
+        Run(engine =>
+        {
+            engine.Add(new SearchDocument("red", "red apple",
+                new Dictionary<string, string> { ["kind"] = "fruit" }));
+            engine.Add(new SearchDocument("green", "green apple",
+                new Dictionary<string, string> { ["kind"] = "veg" }));
+
+            var filtered = engine.Search("red apple", new SearchOptions(Limit: 10,
+                Filters: new[] { new MetadataFilter("kind", MetadataFilterOperator.Equal, "fruit") }));
+
+            Assert.Equal(new[] { "red" }, filtered.Select(r => r.DocumentId).ToArray());
+
+            Assert.Empty(engine.Search("red apple", new SearchOptions(Limit: 10,
+                Filters: new[] { new MetadataFilter("kind", MetadataFilterOperator.Equal, "nope") })));
+        });
+    }
 }

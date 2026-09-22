@@ -58,7 +58,7 @@ or ML model** — pure lexical statistics.
   scoring kept) without pulling ONNX into the library — the model lives in the consumer.
 - **Metadata filters**: declarative, AND-composed filters over document fields
   (`MetadataFilterOperator`: equal, not-equal, contains, numeric-or-ordinal greater/less than)
-  in `SearchOptions` — applied by the stock engine before any relevance math.
+  in `SearchOptions` — honored by every backend (stock in-memory and SQL) before scoring.
 - **Pagination**: `SearchOptions.Offset` cuts any window `[Offset, Offset + Limit)` of the
   ranking — honored by the stock engine, the boost/rerank decorators, the hybrid merger
   (the page comes from the merged ordering) and every SQL backend.
@@ -315,6 +315,9 @@ var results = engine.Search("vector search", options);
 
 Comparisons are culture-invariant; greater/less-than go numeric when both sides parse as
 numbers, otherwise ordinal. Documents missing a field fail everything except `NotEqual`.
+Every backend honors the same contract: the in-memory engines evaluate the predicate before
+scoring, and the SQL backends (PostgreSQL, ParadeDB) push it down as a parameterized
+predicate over the `fields jsonb` column.
 
 ### Phrase queries
 

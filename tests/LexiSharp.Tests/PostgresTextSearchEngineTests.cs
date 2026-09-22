@@ -244,4 +244,45 @@ public class PostgresTextSearchEngineTests
             Assert.DoesNotContain(results, r => r.DocumentId == "free-only");
         });
     }
+
+    [SkippableFact]
+    public void Search_FiltersGateResults()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        Run(engine =>
+        {
+            engine.Add(new SearchDocument("a", "quick fox",
+                new Dictionary<string, string> { ["kind"] = "article", ["year"] = "2022" }));
+            engine.Add(new SearchDocument("b", "quick fox",
+                new Dictionary<string, string> { ["kind"] = "note", ["year"] = "2024" }));
+            engine.Add(new SearchDocument("c", "quick fox",
+                new Dictionary<string, string> { ["kind"] = "articles", ["year"] = "2023" }));
+            engine.Add(new SearchDocument("d", "quick fox")); // carries no fields at all
+
+            static string[] Ids(IReadOnlyList<SearchResult> results) =>
+                results.Select(r => r.DocumentId).OrderBy(x => x, StringComparer.Ordinal).ToArray();
+
+            static SearchOptions With(MetadataFilter filter) => new(Limit: 10, Filters: new[] { filter });
+
+            Assert.Equal(new[] { "a" }, Ids(engine.Search("quick fox",
+                With(new MetadataFilter("kind", MetadataFilterOperator.Equal, "article")))));
+
+            // NotEqual also admits the document that carries no field at all (absent passes).
+            Assert.Equal(new[] { "b", "c", "d" }, Ids(engine.Search("quick fox",
+                With(new MetadataFilter("kind", MetadataFilterOperator.NotEqual, "article")))));
+
+            Assert.Equal(new[] { "a", "c" }, Ids(engine.Search("quick fox",
+                With(new MetadataFilter("kind", MetadataFilterOperator.Contains, "article")))));
+
+            Assert.Equal(new[] { "b", "c" }, Ids(engine.Search("quick fox",
+                With(new MetadataFilter("year", MetadataFilterOperator.GreaterThan, "2022")))));
+
+            Assert.Equal(new[] { "a" }, Ids(engine.Search("quick fox",
+                With(new MetadataFilter("year", MetadataFilterOperator.LessThan, "2023")))));
+
+            Assert.Empty(engine.Search("quick fox",
+                With(new MetadataFilter("kind", MetadataFilterOperator.Equal, "missing"))));
+        });
+    }
 }

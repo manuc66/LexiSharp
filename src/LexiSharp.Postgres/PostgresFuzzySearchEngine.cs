@@ -211,7 +211,11 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable
         }
 
         using var command = connection.CreateCommand();
-        command.CommandText = BuildSearchSql();
+
+        var filters = PostgresMetadataFilterSql.Build(options.Filters);
+        filters.Apply(command);
+
+        command.CommandText = BuildSearchSql(filters.Fragment);
         command.Parameters.AddWithValue("query", query);
 
         // Fetch the whole window (Offset + Limit): the C# side drops rows below MinimumScore
@@ -264,7 +268,7 @@ command.CommandText = $"CREATE INDEX IF NOT EXISTS {indexName} ON {_options.Qual
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private string BuildSearchSql()
+    private string BuildSearchSql(string filterSql)
     {
         string phonetic = _options.IncludePhonetic && _options.SearchMode == TrgmSearchMode.Similarity
             ? " OR metaphone = metaphone(@query, 4)"
@@ -276,7 +280,9 @@ command.CommandText = $"CREATE INDEX IF NOT EXISTS {indexName} ON {_options.Qual
 
         if (_options.SearchMode == TrgmSearchMode.Nearest)
         {
-            string where = levenshtein == string.Empty ? string.Empty : $"WHERE {levenshtein}";
+            string where = levenshtein == string.Empty
+                ? $"WHERE TRUE{filterSql}"
+                : $"WHERE {levenshtein}{filterSql}";
 
             return $"""
                 SELECT id, content, category, fields, 1 - ({_options.ContentField} <-> @query) AS score
@@ -294,7 +300,7 @@ command.CommandText = $"CREATE INDEX IF NOT EXISTS {indexName} ON {_options.Qual
         return $"""
             SELECT id, content, category, fields, similarity({_options.ContentField}, @query) AS score
             FROM {_options.QualifiedTableName}
-            WHERE {conditions}
+            WHERE {conditions}{filterSql}
             ORDER BY score DESC, id ASC
             LIMIT @limit;
             """;
