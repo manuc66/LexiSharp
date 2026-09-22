@@ -27,8 +27,8 @@ public sealed record SearchOptions(
             return true;
 
         // Per-document hot path: a LINQ All() would allocate an enumerator per candidate, so the
-        // short-circuit loop is deliberate. // NOSONAR:S3267
-        foreach (var filter in Filters)
+        // short-circuit loop is deliberate.
+        foreach (var filter in Filters) // NOSONAR:S3267
         {
             if (!filter.Matches(document))
                 return false;

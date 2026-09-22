@@ -47,8 +47,8 @@ internal static class TermDeduplicator
         var result = new List<string>();
 
         // Stateful duplicate filter: LINQ Where would capture a growing HashSet in a per-call
-        // closure (exactly the allocation these helpers avoid). // NOSONAR:S3267
-        foreach (var term in terms)
+        // closure (exactly the allocation these helpers avoid).
+        foreach (var term in terms) // NOSONAR:S3267
         {
             if (seen.Add(term))
                 result.Add(term);
