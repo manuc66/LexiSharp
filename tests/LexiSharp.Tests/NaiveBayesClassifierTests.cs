@@ -388,13 +388,13 @@ public class NaiveBayesClassifierTests
         // token so every knob has to do something.
         SearchDocument[] corpus =
         {
-            new("1", "chat network", Category: "support"),
-            new("2", "chat", Category: "support"),
-            new("3", "mail", Category: "support"),
-            new("4", "invoice payment", Category: "billing"),
-            new("5", "invoice", Category: "billing"),
-            new("6", "payment", Category: "billing"),
-            new("7", "box", Category: "shipping"),
+            new("1", "one two", Category: "A"),
+            new("2", "one", Category: "A"),
+            new("3", "two", Category: "A"),
+            new("4", "three four", Category: "B"),
+            new("5", "three", Category: "B"),
+            new("6", "four", Category: "B"),
+            new("7", "five", Category: "C"),
         };
 
         const double alpha = 1.0;
@@ -416,9 +416,9 @@ public class NaiveBayesClassifierTests
         var model = ReferenceModel.Build(corpus, tokenizer);
         var query = new[]
         {
-            new WeightedToken("chat", 1.0),
-            new WeightedToken("invoice", 0.8),
-            new WeightedToken("misspellt", 0.5),
+            new WeightedToken("one", 1.0),
+            new WeightedToken("three", 0.8),
+            new WeightedToken("six", 0.5),
         };
 
         var actual = classifier.Predict(query, limit: 3);
