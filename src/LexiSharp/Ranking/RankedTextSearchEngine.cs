@@ -79,6 +79,12 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
 
         var distinctQueryTerms = DistinctTermList.Wrap(TermDeduplicator.Distinct(queryTerms));
 
+        // Precompute the query-level corpus constants (idf, collection probabilities, ...) once
+        // per search instead of per candidate document when the scorer supports it.
+        var plan = _scorer is IQueryPlannableScorer plannable
+            ? plannable.CreatePlan(distinctQueryTerms, _index)
+            : null;
+
         // Convention: a score of exactly 0 means "not a match".
         // When the index can enumerate the documents sharing at least one query term
         // (ICandidateIndex) and the scorer provably returns 0 for every document that
@@ -103,7 +109,9 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
             if (!options.PassesFilters(document))
                 continue;
 
-            double score = _scorer.Score(document.Id, distinctQueryTerms, _index);
+            double score = plan is null
+                ? _scorer.Score(document.Id, distinctQueryTerms, _index)
+                : plan.Score(document.Id);
 
             if (double.IsNaN(score) || double.IsInfinity(score) || score == 0 || score < options.MinimumScore)
                 continue;
