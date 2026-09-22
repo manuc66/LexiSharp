@@ -113,4 +113,21 @@ public class ScoreExplanationTests
             fromTerms.Terms.Select(t => t.Term),
             fromRaw.Terms.Select(t => t.Term));
     }
+
+    [Fact]
+    public void Engine_Explain_ParsesQuotedPhrasesLikeSearch()
+    {
+        var (index, doc1, _) = CreateFixture();
+        var engine = new RankedTextSearchEngine(index, new Bm25Scorer());
+
+        var quoted = engine.Explain(doc1.Id, "\"alpha beta\"");
+        var plain = engine.Explain(doc1.Id, "alpha beta");
+
+        Assert.NotNull(quoted);
+        Assert.NotNull(plain);
+        Assert.Equal(plain!.TotalScore, quoted!.TotalScore, 12);
+        Assert.Equal(
+            plain.Terms.Select(t => t.Term),
+            quoted.Terms.Select(t => t.Term));
+    }
 }

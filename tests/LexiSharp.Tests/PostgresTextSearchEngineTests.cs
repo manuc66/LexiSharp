@@ -204,4 +204,44 @@ public class PostgresTextSearchEngineTests
             Assert.Empty(engine.Search("alpha beta", new SearchOptions(Limit: 2, Offset: -1)));
         });
     }
+
+    [SkippableFact]
+    public void Search_PhraseQuery_RequiresConsecutiveTerms()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        Run(engine =>
+        {
+            // websearch_to_tsquery interprets double-quoted segments as phrases natively —
+            // no SQL change was needed, this locks the behavior in.
+            engine.Add(new SearchDocument("adjacent", "machine learning systems"));
+            engine.Add(new SearchDocument("reversed", "learning machine systems"));
+            engine.Add(new SearchDocument("gapped", "machine that learning systems"));
+
+            var results = engine.Search("\"machine learning\"", new SearchOptions(Limit: 10));
+
+            var hit = Assert.Single(results);
+            Assert.Equal("adjacent", hit.DocumentId);
+        });
+    }
+
+    [SkippableFact]
+    public void Search_MixedQuery_PhraseGatesCorpusButFreeTermsOnlyScore()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        Run(engine =>
+        {
+            engine.Add(new SearchDocument("phrase-only", "machine learning systems rock"));
+            engine.Add(new SearchDocument("both", "neural machine learning systems"));
+            engine.Add(new SearchDocument("free-only", "neural networks accelerate fast"));
+
+            var results = engine.Search("neural \"machine learning\"", new SearchOptions(Limit: 10));
+
+            Assert.Equal(2, results.Count);
+            Assert.Contains(results, r => r.DocumentId == "phrase-only");
+            Assert.Contains(results, r => r.DocumentId == "both");
+            Assert.DoesNotContain(results, r => r.DocumentId == "free-only");
+        });
+    }
 }

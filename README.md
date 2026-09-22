@@ -62,6 +62,10 @@ or ML model** — pure lexical statistics.
 - **Pagination**: `SearchOptions.Offset` cuts any window `[Offset, Offset + Limit)` of the
   ranking — honored by the stock engine, the boost/rerank decorators, the hybrid merger
   (the page comes from the merged ordering) and every SQL backend.
+- **Phrase queries**: double-quoted segments (`"machine learning"`) must appear at
+  consecutive document positions (several phrases are AND-ed), while the free terms around
+  them keep scoring — free terms never hard-filter a mixed query. Natively honored by the
+  stock engine (index positions), PostgreSQL (`websearch_to_tsquery`) and ParadeDB (`###`).
 - **Lexical similarity** (`LexiSharp.Similarity`): pairwise token-set measures (Jaccard,
   Sørensen–Dice) over the library tokenizer, a `pg_trgm`-style character trigram similarity,
   and a rolling Levenshtein edit distance — near-duplicate detection and fuzzy matching with
@@ -290,6 +294,27 @@ var results = engine.Search("vector search", options);
 
 Comparisons are culture-invariant; greater/less-than go numeric when both sides parse as
 numbers, otherwise ordinal. Documents missing a field fail everything except `NotEqual`.
+
+### Phrase queries
+
+Quote a segment of the query to require its terms at consecutive document positions:
+
+```csharp
+var results = engine.Search("neural \"machine learning\"", new SearchOptions(Limit: 10));
+```
+
+Parsing happens before tokenization (`QueryParser`): double quotes are otherwise an ordinary
+separator for the tokenizer. In a mixed query the phrase is a hard corpus gate while the free
+terms around it only contribute to scoring — a document that matches the phrase comes back
+even if it lacks every free term, and a document that only has the free terms never does.
+Several quoted segments are AND-ed. A query made solely of empty quotes matches nothing.
+Phrase checks assume a plain token stream: n-gram tokenizers emit overlapping tokens and
+break the consecutive-position guarantee.
+
+The SQL backends honor the same syntax natively: PostgreSQL through
+`websearch_to_tsquery`, ParadeDB through the `###` phrase operator (on that backend only
+phrases shape the match set when quotes are present — free terms stay out of `WHERE`, exactly
+mirroring the stock engine's scoring-only role for them).
 
 ### Lexical similarity and keyword extraction
 

@@ -5,30 +5,37 @@ using NpgsqlTypes;
 
 namespace LexiSharp.ParadeDB;
 
-/// <summary>
-/// ParadeDB/PG_search-backed <see cref="ITextSearchEngine"/>: true BM25 ranking built on the
-/// Tantivy index of the <c>pg_search</c> extension. The search field is matched with the
-/// match-disjunction operator (<c>|||</c>) and ranked with <c>pdb.score(key_field)</c> —
-/// real Okapi BM25, unlike <c>ts_rank_cd</c>.
-/// </summary>
-/// <remarks>
-/// <para>
-/// Depends on the <c>pg_search</c> extension (AGPL-3, see
-/// <see href="https://paradedb.com">ParadeDB</see>); the ParadeDB Docker image preloads it.
-/// </para>
-/// <para>
-/// The documents table is the shared <see cref="PostgresSchema"/> table: the lexical
-/// <c>tsvector</c> engine, the vector engine and this one can coexist on a single table and
-/// be merged by the hybrid engine. Writes are plain inserts; <c>pg_search</c> maintains its
-/// own inverted index in the same transaction.
-/// </para>
-/// <para>
-/// BM25 scores (Tantivy variant) are PostgreSQL-native: ordering is meaningful, but numeric
-/// values are not comparable to <see cref="LexiSharp.Ranking.Bm25Scorer"/>. Wrap this engine
-/// in the hybrid package's <c>ReciprocalRankFusionMerger</c> (or re-rank the union) when a
-/// single cross-engine ordering is required.
-/// </para>
-/// </remarks>
+    /// <summary>
+    /// ParadeDB/PG_search-backed <see cref="ITextSearchEngine"/>: true BM25 ranking built on the
+    /// Tantivy index of the <c>pg_search</c> extension. The search field is matched with the
+    /// match-disjunction operator (<c>|||</c>) and ranked with <c>pdb.score(key_field)</c> —
+    /// real Okapi BM25, unlike <c>ts_rank_cd</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Depends on the <c>pg_search</c> extension (AGPL-3, see
+    /// <see href="https://paradedb.com">ParadeDB</see>); the ParadeDB Docker image preloads it.
+    /// </para>
+    /// <para>
+    /// Double-quoted segments are parsed as phrase queries (<see cref="QueryParser.SplitRaw"/>)
+    /// and translated to the native <c>###</c> operator (tokens in consecutive positions) —
+    /// <c>|||</c> only tokenizes into a disjunction and would silently ignore the quotes. Like
+    /// the stock in-memory engine, free terms around a phrase never hard-filter a mixed query:
+    /// only the phrases shape the match set here, and <c>pdb.score</c> ranks it.
+    /// </para>
+    /// <para>
+    /// The documents table is the shared <see cref="PostgresSchema"/> table: the lexical
+    /// <c>tsvector</c> engine, the vector engine and this one can coexist on a single table and
+    /// be merged by the hybrid engine. Writes are plain inserts; <c>pg_search</c> maintains its
+    /// own inverted index in the same transaction.
+    /// </para>
+    /// <para>
+    /// BM25 scores (Tantivy variant) are PostgreSQL-native: ordering is meaningful, but numeric
+    /// values are not comparable to <see cref="LexiSharp.Ranking.Bm25Scorer"/>. Wrap this engine
+    /// in the hybrid package's <c>ReciprocalRankFusionMerger</c> (or re-rank the union) when a
+    /// single cross-engine ordering is required.
+    /// </para>
+    /// </remarks>
 public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
 {
     private readonly NpgsqlDataSource _dataSource;
@@ -177,18 +184,47 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        string searchSql = $"""
-            SELECT id, content, category, fields, pdb.score(id) AS score
-            FROM {_options.QualifiedTableName}
-            WHERE {_options.ContentField} ||| @query
-            ORDER BY pdb.score(id) DESC, id ASC
-            LIMIT @limit;
-            """;
 
-        // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); query text is parameterized.
-        command.CommandText = searchSql; // NOSONAR:S2077
+        var segments = QueryParser.SplitRaw(query);
 
-        command.Parameters.AddWithValue("query", query);
+        if (segments.Phrases.Count == 0)
+        {
+            string matchSql = $"""
+                SELECT id, content, category, fields, pdb.score(id) AS score
+                FROM {_options.QualifiedTableName}
+                WHERE {_options.ContentField} ||| @query
+                ORDER BY pdb.score(id) DESC, id ASC
+                LIMIT @limit;
+                """;
+
+            // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); query text is parameterized.
+            command.CommandText = matchSql; // NOSONAR:S2077
+            command.Parameters.AddWithValue("query", query);
+        }
+        else
+        {
+            // Only the phrases gate the corpus (free text is scoring-only in a mixed query,
+            // exactly like the stock engine — so it stays out of WHERE); pdb.score ranks the
+            // phrase-matching set. One ### condition per phrase, AND-ed.
+            var phraseConditions = new string[segments.Phrases.Count];
+
+            for (int i = 0; i < segments.Phrases.Count; i++)
+            {
+                phraseConditions[i] = $"{_options.ContentField} ### @phrase{i}";
+                command.Parameters.AddWithValue($"phrase{i}", segments.Phrases[i]);
+            }
+
+            string phraseSql = $"""
+                SELECT id, content, category, fields, pdb.score(id) AS score
+                FROM {_options.QualifiedTableName}
+                WHERE {string.Join(" AND ", phraseConditions)}
+                ORDER BY pdb.score(id) DESC, id ASC
+                LIMIT @limit;
+                """;
+
+            // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); phrase text is parameterized.
+            command.CommandText = phraseSql; // NOSONAR:S2077
+        }
 
         // Fetch the whole window (Offset + Limit): score-based drops below happen in C# after
         // the ordered prefix is read, then Skip/Take cuts the requested page.
