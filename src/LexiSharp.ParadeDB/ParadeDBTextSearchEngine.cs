@@ -185,8 +185,13 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
 
         using var command = connection.CreateCommand();
 
-        var filters = PostgresMetadataFilterSql.Build(options.Filters);
-        filters.Apply(command);
+        // ParadeDB's custom planner rejects any predicate shape beyond a simple comparison next
+        // to the `|||` BM25 operator ("Unsupported query shape"): IS DISTINCT FROM, CASE, OR and
+        // strpos all fail. Metadata filters are therefore applied in C# over the whole match set,
+        // which preserves MetadataFilter.Matches exactly; the SQL LIMIT is dropped so pagination
+        // still sees every surviving document.
+        bool filterInMemory = options.Filters is { Count: > 0 };
+        string limitClause = filterInMemory ? string.Empty : "LIMIT @limit;";
 
         var segments = QueryParser.SplitRaw(query);
 
@@ -195,9 +200,9 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
             string matchSql = $"""
                 SELECT id, content, category, fields, pdb.score(id) AS score
                 FROM {_options.QualifiedTableName}
-                WHERE {_options.ContentField} ||| @query{filters.Fragment}
+                WHERE {_options.ContentField} ||| @query
                 ORDER BY pdb.score(id) DESC, id ASC
-                LIMIT @limit;
+                {limitClause}
                 """;
 
             // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); query text is parameterized.
@@ -220,18 +225,20 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
             string phraseSql = $"""
                 SELECT id, content, category, fields, pdb.score(id) AS score
                 FROM {_options.QualifiedTableName}
-                WHERE {string.Join(" AND ", phraseConditions)}{filters.Fragment}
+                WHERE {string.Join(" AND ", phraseConditions)}
                 ORDER BY pdb.score(id) DESC, id ASC
-                LIMIT @limit;
+                {limitClause}
                 """;
 
             // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); phrase text is parameterized.
             command.CommandText = phraseSql; // NOSONAR:S2077
         }
 
-        // Fetch the whole window (Offset + Limit): score-based drops below happen in C# after
-        // the ordered prefix is read, then Skip/Take cuts the requested page.
-        command.Parameters.AddWithValue("limit", options.Window);
+        // Without filters, fetch the whole window (Offset + Limit): score-based drops below happen
+        // in C# after the ordered prefix is read, then Skip/Take cuts the requested page. With
+        // filters, the LIMIT is dropped (see filterInMemory) so every match is filtered first.
+        if (!filterInMemory)
+            command.Parameters.AddWithValue("limit", options.Window);
 
         var results = new List<SearchResult>();
 
@@ -248,10 +255,30 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable
                 continue;
 
             var document = ReadDocument(reader);
+
+            if (!PassesFilters(options, document))
+                continue;
+
             results.Add(new SearchResult(document.Id, score, document));
         }
 
         return results.Skip(options.Offset).Take(options.Limit).ToList();
+    }
+
+    private static bool PassesFilters(SearchOptions options, SearchDocument document)
+    {
+        var filters = options.Filters;
+
+        if (filters is null || filters.Count == 0)
+            return true;
+
+        for (int i = 0; i < filters.Count; i++)
+        {
+            if (!filters[i].Matches(document))
+                return false;
+        }
+
+        return true;
     }
 
     /// <summary>Releases the underlying Npgsql data source.</summary>
