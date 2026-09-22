@@ -34,6 +34,13 @@ namespace LexiSharp.Ranking;
 /// then ordinal order — and never applies inside quotes. An index without vocabulary support
 /// falls back to the atom's literal base term.
 /// </para>
+/// <para>
+/// An optional <see cref="SynonymMap"/> additionally rewrites <b>free</b> query terms to
+/// their direct synonyms — one-way edges via <c>Add</c>, bidirectional groups via
+/// <c>AddEquivalent</c> — at one level only (never synonyms of synonyms) and never inside
+/// quoted phrases. Entries are tokenized with the engine's tokenizer at construction; each
+/// must reduce to exactly one term or the constructor throws.
+/// </para>
 /// </remarks>
 public sealed class RankedTextSearchEngine : ITextSearchEngine
 {
@@ -46,6 +53,7 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
     private readonly ITextIndex _index;
     private readonly ITextScorer _scorer;
     private readonly ITokenizer _tokenizer;
+    private readonly Dictionary<string, string[]>? _synonyms;
 
     /// <param name="index">The corpus index backing the engine.</param>
     /// <param name="scorer">The ranking strategy (TF-IDF, BM25, ...).</param>
@@ -53,10 +61,18 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
     /// Tokenizer used for queries. Should be consistent with the one the index was
     /// built with, otherwise query terms will not match indexed terms.
     /// </param>
+    /// <param name="synonyms">
+    /// Optional synonym edges applied to free query terms. Tokenized with
+    /// <paramref name="tokenizer"/> at construction; every entry must yield exactly one term.
+    /// </param>
+    /// <exception cref="ArgumentException">
+    /// A <paramref name="synonyms"/> entry tokenizes to zero or more than one term.
+    /// </exception>
     public RankedTextSearchEngine(
         ITextIndex index,
         ITextScorer scorer,
-        ITokenizer? tokenizer = null)
+        ITokenizer? tokenizer = null,
+        SynonymMap? synonyms = null)
     {
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(scorer);
@@ -64,6 +80,7 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
         _index = index;
         _scorer = scorer;
         _tokenizer = tokenizer ?? Tokenizer.Default;
+        _synonyms = ResolveSynonyms(synonyms);
     }
 
     /// <inheritdoc />
@@ -96,12 +113,10 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
         if (options.IsEmpty)
             return Array.Empty<SearchResult>();
 
-        var parsed = QueryParser.Parse(query, _tokenizer);
-
         if (_index.Count == 0)
             return Array.Empty<SearchResult>();
 
-        var queryTerms = ResolveQueryTerms(parsed);
+        var (parsed, queryTerms) = BuildQuery(query);
 
         if (queryTerms.Count == 0)
             return Array.Empty<SearchResult>();
@@ -276,35 +291,133 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
     }
 
     /// <summary>
-    /// Resolves prefix/fuzzy atoms against the index vocabulary — or falls back to their
-    /// literal base term when the index cannot enumerate its vocabulary — on top of the
-    /// literal terms the parser produced.
+    /// Shared by <see cref="Search"/> and <see cref="Explain"/>: parse the raw query, then
+    /// resolve synonyms and vocabulary expansions into the concrete scoring terms. The
+    /// parsed form still carries the literal phrase constraints for the positional gate.
+    /// </summary>
+    private (ParsedQuery Parsed, IReadOnlyList<string> Terms) BuildQuery(string query)
+    {
+        var parsed = QueryParser.Parse(query, _tokenizer);
+        return (parsed, ResolveQueryTerms(parsed));
+    }
+
+    /// <summary>
+    /// Resolves the literal query into concrete scoring terms: free terms gain their direct
+    /// synonyms (one level, phrases stay literal), then prefix/fuzzy atoms expand against the
+    /// index vocabulary — or fall back to their literal base term when the index cannot
+    /// enumerate its vocabulary.
     /// </summary>
     private IReadOnlyList<string> ResolveQueryTerms(ParsedQuery parsed)
     {
-        if (!parsed.HasExpansions)
+        if (_synonyms is null && !parsed.HasExpansions)
             return parsed.AllTerms;
 
         var terms = new List<string>(parsed.AllTerms);
-        var vocabulary = _index as IVocabularyIndex;
 
-        for (int i = 0; i < parsed.Expansions.Count; i++)
+        if (_synonyms is not null)
         {
-            var expansion = parsed.Expansions[i];
+            for (int i = 0; i < parsed.FreeTerms.Count; i++)
+                AppendSynonyms(terms, parsed.FreeTerms[i]);
+        }
 
-            if (vocabulary is null)
+        if (parsed.HasExpansions)
+        {
+            var vocabulary = _index as IVocabularyIndex;
+
+            for (int i = 0; i < parsed.Expansions.Count; i++)
             {
-                terms.Add(expansion.BaseTerm);
-                continue;
-            }
+                var expansion = parsed.Expansions[i];
 
-            if (expansion.Kind == QueryExpansionKind.Prefix)
-                ExpandPrefix(terms, vocabulary, expansion);
-            else
-                ExpandFuzzy(terms, vocabulary, expansion);
+                if (vocabulary is null)
+                {
+                    terms.Add(expansion.BaseTerm);
+                    continue;
+                }
+
+                if (expansion.Kind == QueryExpansionKind.Prefix)
+                    ExpandPrefix(terms, vocabulary, expansion);
+                else
+                    ExpandFuzzy(terms, vocabulary, expansion);
+            }
         }
 
         return terms;
+    }
+
+    /// <summary>Appends the free term's direct synonyms, when the map defines any.</summary>
+    private void AppendSynonyms(List<string> terms, string freeTerm)
+    {
+        if (_synonyms!.TryGetValue(freeTerm, out var synonyms))
+        {
+            for (int i = 0; i < synonyms.Length; i++)
+                terms.Add(synonyms[i]);
+        }
+    }
+
+    /// <summary>
+    /// Tokenizes every map entry with the engine tokenizer — each must yield exactly one
+    /// term — and flattens the edges into a per-term synonym table (direct edges only, so
+    /// expansion stays one level deep and non-transitive).
+    /// </summary>
+    private Dictionary<string, string[]>? ResolveSynonyms(SynonymMap? map)
+    {
+        if (map is null || map.IsEmpty)
+            return null;
+
+        var resolved = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+
+        foreach (var (source, target) in map.OneWay)
+            AddEdge(resolved, RequireSingleTerm(source), RequireSingleTerm(target));
+
+        foreach (var group in map.Groups)
+        {
+            // Every member to every other member: bidirectional by construction.
+            var members = new string[group.Length];
+            for (int i = 0; i < group.Length; i++)
+                members[i] = RequireSingleTerm(group[i]);
+
+            for (int i = 0; i < members.Length; i++)
+            {
+                for (int j = 0; j < members.Length; j++)
+                {
+                    if (i != j)
+                        AddEdge(resolved, members[i], members[j]);
+                }
+            }
+        }
+
+        var table = new Dictionary<string, string[]>(resolved.Count, StringComparer.Ordinal);
+
+        foreach (var (term, targets) in resolved)
+            table[term] = targets.ToArray();
+
+        return table;
+    }
+
+    private static void AddEdge(Dictionary<string, HashSet<string>> resolved, string source, string target)
+    {
+        if (!resolved.TryGetValue(source, out var targets))
+        {
+            targets = new HashSet<string>(StringComparer.Ordinal);
+            resolved[source] = targets;
+        }
+
+        targets.Add(target);
+    }
+
+    /// <summary>Tokenizes one raw map entry; it must reduce to exactly one term.</summary>
+    private string RequireSingleTerm(string entry)
+    {
+        var terms = _tokenizer.Tokenize(entry);
+
+        if (terms.Count != 1)
+        {
+            throw new ArgumentException(
+                $"Synonym entries must tokenize to exactly one term, but '{entry}' produced {terms.Count}.",
+                "synonyms");
+        }
+
+        return terms[0];
     }
 
     /// <summary>
@@ -376,9 +489,9 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
     /// </summary>
     /// <param name="documentId">Id of the document to explain.</param>
     /// <param name="query">
-    /// The raw query; parsed with <see cref="QueryParser"/> like <see cref="Search"/> (quoted
-    /// segments contribute their terms, expansion atoms resolve against the vocabulary) and
-    /// tokenized with the engine's tokenizer.
+    /// The raw query; parsed and resolved with the same <see cref="BuildQuery"/> path as
+    /// <see cref="Search"/> (quoted segments contribute their terms, synonyms and expansion
+    /// atoms resolve against the map/vocabulary) and tokenized with the engine's tokenizer.
     /// </param>
     /// <returns>
     /// A <see cref="ScoreExplanation"/>, or <c>null</c> when the active scorer cannot explain
@@ -391,10 +504,8 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
         if (_scorer is not IScoreExplainer explainer || !_index.Contains(documentId))
             return null;
 
-        return explainer.Explain(
-            documentId,
-            ResolveQueryTerms(QueryParser.Parse(query, _tokenizer)),
-            _index);
+        var (_, terms) = BuildQuery(query);
+        return explainer.Explain(documentId, terms, _index);
     }
 
     /// <summary>

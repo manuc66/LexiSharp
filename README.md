@@ -73,6 +73,9 @@ or ML model** — pure lexical statistics.
 - **Prefix &amp; fuzzy queries**: `neural*` expands to every indexed term with that prefix,
   `catt~`/`catt~N` fuzzy-matches within N edits (default 1, clamped to 0–2) — search-time
   vocabulary expansion on the stock engine (`IVocabularyIndex`), 64 terms max per atom.
+- **Synonyms** (`SynonymMap`): one-way rewrites and bidirectional equivalence groups,
+  tokenized at engine construction and applied to free query terms — one level deep
+  (non-transitive), never inside quoted phrases.
 - **Lexical similarity** (`LexiSharp.Similarity`): pairwise token-set measures (Jaccard,
   Sørensen–Dice) over the library tokenizer, a `pg_trgm`-style character trigram similarity,
   and a rolling Levenshtein edit distance — near-duplicate detection and fuzzy matching with
@@ -364,6 +367,29 @@ falls back to the atom's literal base term, i.e. the behavior of a query without
 Operators are only recognized when suffixed to word characters, never inside quoted phrases
 (a `"machine*"` phrase stays literal), and they are a LexiSharp query syntax — the SQL
 backends do not interpret them.
+
+### Synonyms
+
+Register synonym edges once, then every free query term pulls in its direct synonyms:
+
+```csharp
+using LexiSharp.Linguistics;
+
+var synonyms = new SynonymMap()
+    .Add("car", "auto")                       // one-way: "car" also searches "auto"
+    .AddEquivalent("auto", "automobile");     // bidirectional group
+
+ITextSearchEngine engine = new RankedTextSearchEngine(
+    new InMemoryTextIndex(),
+    new Bm25Scorer(),
+    synonyms: synonyms);
+```
+
+Entries are tokenized with the engine's tokenizer at construction and each must reduce to
+exactly one term (otherwise the constructor throws). Expansion is one level deep and
+non-transitive — a synonym's own synonyms are never pulled in — and applies to free terms
+only: quoted phrases stay literal. Like the prefix/fuzzy operators, this is a stock-engine
+feature; the SQL backends do not rewrite queries.
 
 ### Lexical similarity and keyword extraction
 
