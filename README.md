@@ -13,27 +13,27 @@ LexiSharp provides a small, dependency-free set of interfaces and implementation
 indexing plain text and retrieving/ranking/classifying documents **without any semantic
 or ML model** — pure lexical statistics.
 
-## Status & provenance
+## Status & scope
 
-- **Young, single-maintainer project (v0.1.0).** No production track record and no external
-  contributors yet; the public API may still change between minor versions. Evaluate it as
-  such before adopting it.
-- **Developed with AI assistance.** Most of the code and this README were written with LLM
-  coding agents, then reviewed and tested by the maintainer. The techniques implemented
-  (BM25, RRF, SPLADE-style sparse retrieval, MaxSim) follow established IR literature; this
-  repository contributes no novel research.
-- **Claims vs. evidence.** Behavior described in this README is covered by the xUnit suite
-  (Postgres/ParadeDB integration tests self-skip without a live instance — see
-  *Building & testing*). Comparative or performance statements are kept to a minimum; the
-  few measured numbers live in [BENCHMARKS.md](BENCHMARKS.md) and are indicative only.
-- **Not every combination is exercised.** Engines, scorers, rerankers and mergers are tested
-  individually and in a few documented combinations, but the full cross-product is not:
-  treat unusual pairings as *supported by construction, not yet stress-tested*.
+- **Version 0.1.0, single maintainer.** The library is young and its public API may still
+  change between minor versions — pin a version and read the release notes if you adopt it
+  early. Contributions and feedback are welcome.
+- **Built on established IR.** The techniques implemented (BM25, RRF, SPLADE-style sparse
+  retrieval, MaxSim) follow well-documented information-retrieval literature; the value here
+  is a small, dependency-free .NET implementation of them, not new research.
+- **Behavior is specified by tests.** Everything described in this README is covered by the
+  xUnit suite; the Postgres/ParadeDB integration tests run against a live instance when
+  `POSTGRES_TEST_CONNECTION` is set and self-skip otherwise (see *Building & testing*).
+  Performance numbers live in [BENCHMARKS.md](BENCHMARKS.md) and are indicative — always
+  measure on your own corpus.
+- **Combinatorial coverage.** Engines, scorers, rerankers and mergers are tested individually
+  and in documented combinations; less common pairings are supported by construction rather
+  than individually exercised.
 
 ## Features
 
 - **Pluggable architecture**: an `ITextIndex`, `ITextScorer` and `ITokenizer` are
-  independent contracts; algortihms can be swapped without touching the engine.
+  independent contracts; algorithms can be swapped without touching the engine.
 - **Four ranking strategies** behind the same `ITextSearchEngine`:
   - `Bm25Scorer` — Okapi BM25, with ready-made `Bm25Parameters` profiles (`Balanced`,
     `Aggressive`, `Conservative`),
