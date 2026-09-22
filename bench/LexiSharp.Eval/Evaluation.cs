@@ -24,7 +24,7 @@ internal static class Evaluation
     private static readonly Tokenizer Tokenizer = Tokenizer.Default;
 
     public static (IReadOnlyList<ConfigResult> Results, string TunedDescription) Run(
-        BeirCorpus corpus, int topK, int? limit, DenseVectors? dense = null)
+        BeirCorpus corpus, int topK, int? limit, DenseVectors? dense = null, bool tuned = true)
     {
         var queries = corpus.Queries
             .Where(query => corpus.TestRelevance.ContainsKey(query.Id))
@@ -68,7 +68,7 @@ internal static class Evaluation
         foreach (var (name, factory) in buildersList)
             results.Add(RunConfig(name, factory(), queries, topK));
 
-        string tunedDescription = RunTuned(documents, corpus, queries, topK, results);
+        string tunedDescription = tuned ? RunTuned(documents, corpus, queries, topK, results) : "skipped (--no-tuned)";
 
         return (results, tunedDescription);
     }
