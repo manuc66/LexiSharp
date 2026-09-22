@@ -130,13 +130,6 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
     }
 
     /// <inheritdoc />
-    public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null)
-    {
-        var results = Predict(text, limit: 1, excludedCategories);
-        return results.Count > 0 ? results[0].Category : null;
-    }
-
-    /// <inheritdoc />
     public IReadOnlyList<ClassificationResult> Predict(
         IEnumerable<WeightedToken> tokens,
         int limit = 3,
@@ -148,6 +141,13 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
             return Array.Empty<ClassificationResult>();
 
         return PredictCore(tokens, limit, excludedCategories);
+    }
+
+    /// <inheritdoc />
+    public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null)
+    {
+        var results = Predict(text, limit: 1, excludedCategories);
+        return results.Count > 0 ? results[0].Category : null;
     }
 
     private IReadOnlyList<ClassificationResult> PredictCore(
@@ -178,10 +178,11 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
 
             if (_options.Complement)
             {
-                // Complement statistics: term and token totals over the *other* classes, smoothed
-                // by Alpha over the vocabulary. A query is scored as -log P(t | c̄): the class
-                // whose complement explains the query least is the best pick (Rennie et al. 2003;
-                // priors sit out, matching scikit-learn's ComplementNB).
+                // Complement statistics: term and token totals over the other classes are smoothed
+                // by Alpha over the vocabulary. A query is scored as the negative log-likelihood
+                // of its tokens in the complement distribution, so the class whose complement
+                // explains the query least is the best pick (Rennie et al., 2003 as implemented
+                // by scikit-learn's ComplementNB, which also leaves the priors out).
                 int complementTokenCount = _totalTokenCount - classTokenCount;
                 double complementDenominator = complementTokenCount + _options.Alpha * _vocabularySize;
                 logProbability = 0.0;

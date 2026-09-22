@@ -14,7 +14,7 @@ namespace LexiSharp.Ranking;
 /// audited term by term (see <see cref="Explain"/>).
 /// </para>
 /// </remarks>
-public sealed class Bm25Scorer : ITextScorer, IScoreExplainer, ITermOverlapScorer, IQueryPlannableScorer
+public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlannableScorer
 {
     private readonly double _k1;
     private readonly double _b;

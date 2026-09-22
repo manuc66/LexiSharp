@@ -173,6 +173,9 @@ public sealed class RankedTextSearchEngine : ITextSearchEngine
     private static bool IsRankedAscending(
         (double Score, SearchDocument Document, long Ordinal) lower,
         (double Score, SearchDocument Document, long Ordinal) higher)
+        // Equal scores are a tie-break against Ordinal, not a float-equality check on a computed
+        // value; an epsilon comparison here would silently reorder identical-ranked documents.
+        // NOSONAR:S1244
         => lower.Score < higher.Score || (lower.Score == higher.Score && lower.Ordinal > higher.Ordinal);
 
     /// <summary>
