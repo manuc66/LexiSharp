@@ -14,7 +14,7 @@ namespace LexiSharp.Ranking;
 /// log-probabilities (negative for matching documents); a document sharing no term with
 /// the query scores exactly <c>0</c>, so the engine's « score 0 means no match » rule applies.
 /// </remarks>
-public sealed class QueryLikelihoodScorer : ITextScorer
+public sealed class QueryLikelihoodScorer : ITextScorer, ITermOverlapScorer
 {
     private readonly double _lambda;
 
@@ -45,7 +45,7 @@ public sealed class QueryLikelihoodScorer : ITextScorer
         double score = 0;
         bool sharesTerm = false;
 
-        foreach (var term in queryTerms.Distinct(StringComparer.Ordinal))
+        foreach (var term in TermDeduplicator.Distinct(queryTerms))
         {
             int tf = index.TermFrequency(documentId, term);
             int cf = index.CorpusFrequency(term);

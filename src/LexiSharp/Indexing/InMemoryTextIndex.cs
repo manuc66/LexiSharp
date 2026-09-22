@@ -11,7 +11,7 @@ namespace LexiSharp.Indexing;
 /// <remarks>
 /// Not thread-safe; mutate it from a single thread (or synchronize externally).
 /// </remarks>
-public sealed class InMemoryTextIndex : ITextIndex
+public sealed class InMemoryTextIndex : ITextIndex, ICandidateIndex
 {
     private readonly ITokenizer _tokenizer;
 
@@ -188,6 +188,33 @@ public sealed class InMemoryTextIndex : ITextIndex
     /// <inheritdoc />
     public bool TryGetDocument(string documentId, [NotNullWhen(true)] out SearchDocument? document) =>
         _documents.TryGetValue(documentId, out document);
+
+    /// <inheritdoc />
+    public IEnumerable<SearchDocument> GetCandidateDocuments(IReadOnlyList<string> terms)
+    {
+        ArgumentNullException.ThrowIfNull(terms);
+
+        if (terms.Count == 0 || _postings.Count == 0)
+            yield break;
+
+        var candidates = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var term in terms)
+        {
+            if (_postings.TryGetValue(term, out var postings))
+            {
+                foreach (var documentId in postings.Keys)
+                    candidates.Add(documentId);
+            }
+        }
+
+        // Re-enumeration in corpus order keeps tie-breaking identical to a full scan.
+        foreach (var document in _documents.Values)
+        {
+            if (candidates.Contains(document.Id))
+                yield return document;
+        }
+    }
 
     /// <inheritdoc />
     public TextIndexStatistics GetStatistics() => TextIndexStatistics.From(this);
