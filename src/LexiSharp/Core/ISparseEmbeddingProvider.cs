@@ -16,6 +16,12 @@ namespace LexiSharp.Core;
 /// scales. Weights are expected to be non-negative (ReLU-like); non-positive weights are treated
 /// as "term absent" by the built-in engines. Because a learned model is not guaranteed to produce
 /// the same vocabulary as the lexical tokenizer, terms are passed as opaque strings.
+/// <para>
+/// Like <see cref="IEmbeddingProvider"/>, the <see cref="EmbeddingUse"/> argument tells the
+/// provider which side it is encoding. Most sparse models are symmetric in practice, but the role
+/// is threaded through uniformly so asymmetric variants (per-side vocabulary constraints,
+/// query/doc prefixing, ...) keep a hook.
+/// </para>
 /// </remarks>
 public interface ISparseEmbeddingProvider
 {
@@ -25,5 +31,17 @@ public interface ISparseEmbeddingProvider
     /// </summary>
     Task<IReadOnlyDictionary<string, float>> GetSparseEmbeddingAsync(
         string text,
+        EmbeddingUse use,
         CancellationToken cancellationToken = default);
+}
+
+/// <summary>Backwards-compatible call shape: embeds text as a <see cref="EmbeddingUse.Passage"/>.</summary>
+public static class SparseEmbeddingProviderExtensions
+{
+    /// <summary>Encodes a passage (index-side) sparse embedding. Kept so older call sites keep working.</summary>
+    public static Task<IReadOnlyDictionary<string, float>> GetSparseEmbeddingAsync(
+        this ISparseEmbeddingProvider provider,
+        string text,
+        CancellationToken cancellationToken = default) =>
+        provider.GetSparseEmbeddingAsync(text, EmbeddingUse.Passage, cancellationToken);
 }

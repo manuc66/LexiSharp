@@ -135,6 +135,14 @@ foreach (var prediction in classifier.Predict("i cannot connect to the internet"
     Console.WriteLine($"{prediction.Category}: {prediction.Probability:P}");
 ```
 
+The classifier is a `IWeightedPredictor` too (`classifier is IWeightedPredictor`): a
+spell-corrected token can carry less evidence than an exact match by passing
+`WeightedToken`s directly. `Predict`/`PredictBest` accept a set of `excludedCategories` to
+hide hot categories at runtime without retraining (probabilities renormalize over the rest).
+`NaiveBayesOptions` exposes a softmax `Temperature` (sharpening/flattening) and optional
+`IdfWeighting` (`log(1 + N/df)`). `Train` must not overlap any `Predict`; concurrent
+`Predict` calls are safe.
+
 ### Tokenizer customization
 
 ```csharp
@@ -242,13 +250,14 @@ var tokenVectors = new Dictionary<string, IReadOnlyList<ReadOnlyMemory<float>>>
 
 IReranker maxsim = new MaxSimReranker(
     myTokenEmbedder,                 // ITokenEmbeddingProvider (core seam, consumer-provided)
-    tokenVectors,
+    tokenVectors,                    // doc-side token embeddings, pre-computed with the Passage role
     limit: 5,
     minimumScore: 0.0);
 ```
 
 `MaxSimReranker` scores each candidate as `Σₜ max_tok cosine(q_t, d_tok)` — for each query token,
-the best cosine against any of the candidate's token embeddings — drops `0`/NaN/infinity scores
+the best cosine against any of the candidate's token embeddings (the query side is re-embedded
+with the `Query` role per search) — drops `0`/NaN/infinity scores
 and ranks by total. It is the middle ground between whole-document cosine and the full
 pairwise pass of a cross-encoder.
 
@@ -393,6 +402,16 @@ cluster lists, so the index is created on the first `EnsureSchema()` call **afte
 first inserts. ANN results are approximate: combine with `HybridTextSearchEngine` + RRF to
 trade recall for speed — exact cosine behavior is verified in the integration suite.
 
+The embedding seam is role-aware: `PostgresVectorSearchEngine` embeds indexed documents with
+`EmbeddingUse.Passage` and queries with `EmbeddingUse.Query`, so asymmetric models (E5 prefixes
+and friends) work through the same single provider method. Two finer knobs live in the options
+(see the class docs): `HnswEfSearch` (per-search candidate list; the engine wraps the query in
+a `SET LOCAL hnsw.ef_search` transaction) and `EmbeddingTextField` (embed a named
+`SearchDocument.TextFields` entry instead of `Text`, leaving `content`/`tsv` untouched for the
+lexical engine). The engine also implements `IListableSearchEngine`, so the full set of stored
+ids can be streamed (`ListDocumentIds` / `ListDocumentIdsAsync`, keyset pagination) to diff
+against an external ledger.
+
 By default the integration tests are skipped unless `POSTGRES_TEST_CONNECTION` points at a
 live instance (e.g. `Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp`).
 The vector and sparse tests additionally require the `vector` extension: use the
@@ -523,6 +542,12 @@ Reciprocal Rank Fusion never looks at scores, so it bridges engines whose scores
 comparable — the sparse and dense embedding backends land in the same formula without
 calibration.
 
+For score breakdowns, `SearchWithDetails()` returns `DetailedSearchResult`s where each
+document also carries its raw per-source score (`Contributions`), keyed by the labels passed
+as `sourceNames` to the constructor (`"lexical"`, `"semantic"`, ... — default `"engine-N"`).
+A source that did not return the document is simply absent from that dictionary; the merged
+ordering from `Search()` is unchanged.
+
 **Embeddings are an agreed seam, not a feature here**: `IEmbeddingProvider` (core) describes how a
 consumer project (ONNX model, model server, ...) would produce vectors — LexiSharp never
 computes embeddings — and `VectorSimilarity` provides pure cosine math. `PostgresVectorSearchEngine`
@@ -551,7 +576,10 @@ var results = engine.Search("learned sparse retrieval");
 ```
 
 Like `IEmbeddingProvider`, `ISparseEmbeddingProvider` is a pure seam in the core: the ONNX model,
-tokenizer and vocabulary live in the consumer. A walkthrough of writing a SPLADE provider
+tokenizer and vocabulary live in the consumer — and the `EmbeddingUse` role is threaded through
+uniformly across the dense/sparse/token seams (`Passage` at index time, `Query` per search),
+so asymmetric sparse variants keep a hook even though most SPLADE models are symmetric.
+A walkthrough of writing a SPLADE provider
 (ONNX + HuggingFace tokenizer + vocabulary mapping) is in
 [docs/SPLADE.md](docs/SPLADE.md) — an outline, not a tested reference implementation. Weights
 are expected non-negative (ReLU-like); non-positive values are treated as "term absent". The

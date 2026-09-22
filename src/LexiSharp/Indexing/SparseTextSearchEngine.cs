@@ -98,7 +98,7 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine
         ArgumentNullException.ThrowIfNull(document);
 
         var vector = await _embeddings
-            .GetSparseEmbeddingAsync(document.Text, cancellationToken)
+            .GetSparseEmbeddingAsync(document.Text, EmbeddingUse.Passage, cancellationToken)
             .ConfigureAwait(false);
 
         AddVector(document, vector);
@@ -194,7 +194,7 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine
             return Array.Empty<SearchResult>();
 
         var queryVector = await _embeddings
-            .GetSparseEmbeddingAsync(query, cancellationToken)
+            .GetSparseEmbeddingAsync(query, EmbeddingUse.Query, cancellationToken)
             .ConfigureAwait(false);
 
         if (queryVector is null || queryVector.Count == 0)

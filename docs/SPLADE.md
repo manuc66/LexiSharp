@@ -7,7 +7,7 @@ the output of your model through one interface:
 public interface ISparseEmbeddingProvider
 {
     Task<IReadOnlyDictionary<string, float>> GetSparseEmbeddingAsync(
-        string text, CancellationToken cancellationToken = default);
+        string text, EmbeddingUse use, CancellationToken cancellationToken = default);
 }
 ```
 
@@ -19,6 +19,9 @@ The contract, in plain terms:
 - **Non-negative weights** (ReLU-like). Non-positive values are treated as "term absent".
 - The mapping is typically sparse: SPLADE activates a few dozen to a few hundred terms,
   not the whole vocabulary.
+- **`use` tells you which side you encode** (`EmbeddingUse.Passage` for indexed documents,
+  `EmbeddingUse.Query` for searches). Most sparse models are symmetric and can ignore it;
+  role-aware variants (per-side vocabulary constraints, document/query prefixing) get a hook.
 
 This guide describes how to write such a provider around a SPLADE ONNX model. It is an
 **outline, not a shipped or tested reference implementation** — the exact tensor names,
@@ -60,7 +63,7 @@ sealed class SpladeProvider : ISparseEmbeddingProvider
     private readonly int _topK;
 
     public async Task<IReadOnlyDictionary<string, float>> GetSparseEmbeddingAsync(
-        string text, CancellationToken cancellationToken = default)
+        string text, EmbeddingUse use, CancellationToken cancellationToken = default)
     {
         // 1. tokenize + run inference (synchronously on a worker thread, or use ORT IOBinding)
         var encoded = _tok.Encode(text);

@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using LexiSharp.Core;
 using Npgsql;
 
@@ -28,7 +29,7 @@ namespace LexiSharp.Postgres;
 /// <see cref="AddAsync"/> and <see cref="SearchAsync"/> overloads.
 /// </para>
 /// </remarks>
-public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDisposable
+public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IListableSearchEngine, IDisposable
 {
     private readonly NpgsqlDataSource _dataSource;
     private readonly IEmbeddingProvider _embeddings;
@@ -100,6 +101,12 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDisposable
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = $"ALTER TABLE {_options.QualifiedTableName} ADD COLUMN IF NOT EXISTS embedding {_options.VectorType};";
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = $"ALTER TABLE {_options.QualifiedTableName} ADD COLUMN IF NOT EXISTS text_fields jsonb;";
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
@@ -196,7 +203,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDisposable
     {
         ArgumentNullException.ThrowIfNull(document);
 
-        float[] embedding = await EmbedAsync(document.Text, cancellationToken).ConfigureAwait(false);
+        float[] embedding = await EmbedAsync(EmbeddingText(document), EmbeddingUse.Passage, cancellationToken).ConfigureAwait(false);
 
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
@@ -205,12 +212,13 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDisposable
         string tsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content");
 
         command.CommandText = $"""
-            INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, embedding)
-            VALUES (@id, @content, @category, @fields, @embedding::vector)
+            INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, embedding)
+            VALUES (@id, @content, @category, @fields, @text_fields, @embedding::vector)
             ON CONFLICT (id) DO UPDATE
                 SET content = EXCLUDED.content,
                     category = EXCLUDED.category,
                     fields = EXCLUDED.fields,
+                    text_fields = EXCLUDED.text_fields,
                     embedding = EXCLUDED.embedding,
                     tsv = {tsvExpr};
             """;
@@ -219,6 +227,17 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDisposable
         command.Parameters.AddWithValue("content", document.Text);
         command.Parameters.AddWithValue("category", (object?)document.Category ?? DBNull.Value);
         command.Parameters.AddWithValue("embedding", VectorText.Format(embedding));
+
+        if (document.TextFields is not null)
+        {
+            var textFieldsParameter = command.Parameters.AddWithValue("text_fields",
+                System.Text.Json.JsonSerializer.Serialize(document.TextFields));
+            textFieldsParameter.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Jsonb;
+        }
+        else
+        {
+            command.Parameters.AddWithValue("text_fields", DBNull.Value);
+        }
 
         if (document.Fields is not null)
         {
@@ -254,16 +273,31 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDisposable
         if (options.Limit <= 0 || string.IsNullOrWhiteSpace(query))
             return Array.Empty<SearchResult>();
 
-        float[] queryVector = await EmbedAsync(query, cancellationToken).ConfigureAwait(false);
+        float[] queryVector = await EmbedAsync(query, EmbeddingUse.Query, cancellationToken).ConfigureAwait(false);
         string serialized = VectorText.Format(queryVector);
 
         string scoreExpression = ScoreExpression();
 
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
+        NpgsqlTransaction? transaction = null;
+
+        if (_options.HnswEfSearch is int hnswEfSearch)
+        {
+            transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
+            await using (var setCommand = connection.CreateCommand())
+            {
+                setCommand.Transaction = transaction;
+                setCommand.CommandText = $"SET LOCAL hnsw.ef_search = {hnswEfSearch};";
+                await setCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = $"""
-            SELECT id, content, category, fields, {scoreExpression} AS score
+            SELECT id, content, category, fields, text_fields, {scoreExpression} AS score
             FROM {_options.QualifiedTableName}
             WHERE embedding IS NOT NULL
             ORDER BY embedding {_options.Operator} @query::vector
@@ -279,7 +313,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDisposable
         {
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                double score = reader.GetDouble(4);
+                double score = reader.GetDouble(5);
 
                 if (double.IsNaN(score) || double.IsInfinity(score) || score == 0)
                     continue;
@@ -292,6 +326,9 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDisposable
             }
         }
 
+        if (transaction is not null)
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+
         return results;
     }
 
@@ -300,9 +337,76 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDisposable
 
     internal string TestTableName => _options.Table;
 
-    private async Task<float[]> EmbedAsync(string text, CancellationToken cancellationToken)
+    /// <inheritdoc />
+    public async IAsyncEnumerable<string> ListDocumentIdsAsync(
+        int batchSize = 1000,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var embedding = await _embeddings.GetTextEmbeddingAsync(text, cancellationToken).ConfigureAwait(false);
+        ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
+
+        string? lastId = null;
+
+        while (true)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+
+            command.CommandText = lastId is null
+                ? $"SELECT id FROM {_options.QualifiedTableName} ORDER BY id LIMIT @limit;"
+                : $"SELECT id FROM {_options.QualifiedTableName} WHERE id > @last_id ORDER BY id LIMIT @limit;";
+
+            if (lastId is not null)
+                command.Parameters.AddWithValue("last_id", lastId);
+
+            command.Parameters.AddWithValue("limit", batchSize + 1);
+
+            var page = new List<string>(batchSize + 1);
+
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+            {
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                    page.Add(reader.GetString(0));
+            }
+
+            if (page.Count == 0)
+                yield break;
+
+            bool hasMore = page.Count > batchSize;
+            int taken = hasMore ? batchSize : page.Count;
+
+            for (int i = 0; i < taken; i++)
+                yield return page[i];
+
+            if (!hasMore)
+                yield break;
+
+            lastId = page[taken - 1];
+        }
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> ListDocumentIds(int batchSize = 1000)
+    {
+        var results = new List<string>();
+
+        var enumerator = ListDocumentIdsAsync(batchSize).GetAsyncEnumerator();
+
+        try
+        {
+            while (enumerator.MoveNextAsync().AsTask().GetAwaiter().GetResult())
+                results.Add(enumerator.Current);
+        }
+        finally
+        {
+            enumerator.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+
+        return results;
+    }
+
+    private async Task<float[]> EmbedAsync(string text, EmbeddingUse use, CancellationToken cancellationToken)
+    {
+        var embedding = await _embeddings.GetTextEmbeddingAsync(text, use, cancellationToken).ConfigureAwait(false);
         var vector = embedding.ToArray();
 
         if (vector.Length != _options.Dimension)
@@ -310,6 +414,22 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDisposable
                 $"The IEmbeddingProvider returned a {vector.Length}D vector but the engine expects {_options.Dimension}D ({_options.Dimension} = PostgresVectorOptions.Dimension).");
 
         return vector;
+    }
+
+    /// <summary>
+    /// The text that gets embedded for a document: the configured <see cref="PostgresVectorOptions.EmbeddingTextField"/>
+    /// entry when it exists, otherwise the plain <see cref="SearchDocument.Text"/>. <see cref="SearchDocument.Text"/> is
+    /// still what lands in the <c>content</c> column (and thus the lexical <c>tsv</c>), so both engines stay consistent.
+    /// </summary>
+    private string EmbeddingText(SearchDocument document)
+    {
+        string? text = document.TextFields is not null
+            && _options.EmbeddingTextField is string fieldName
+            && document.TextFields.TryGetValue(fieldName, out string? fieldValue)
+                ? fieldValue
+                : null;
+
+        return text ?? document.Text;
     }
 
     private string ScoreExpression() => _options.Distance switch
@@ -325,8 +445,9 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDisposable
         string content = reader.GetString(1);
         string? category = reader.IsDBNull(2) ? null : reader.GetString(2);
         var fields = reader.IsDBNull(3) ? null : DeserializeFields(reader.GetString(3));
+        var textFields = reader.IsDBNull(4) ? null : DeserializeFields(reader.GetString(4));
 
-        return new SearchDocument(id, content, fields, category);
+        return new SearchDocument(id, content, fields, category, textFields);
     }
 
     private static IReadOnlyDictionary<string, string>? DeserializeFields(string? json)

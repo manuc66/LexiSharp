@@ -103,7 +103,7 @@ public class HybridSparseMergingTests
             => _lookup = lookup;
 
         public Task<IReadOnlyDictionary<string, float>> GetSparseEmbeddingAsync(
-            string text, CancellationToken cancellationToken = default)
+            string text, EmbeddingUse use, CancellationToken cancellationToken = default)
             => Task.FromResult(_lookup(text));
     }
 }

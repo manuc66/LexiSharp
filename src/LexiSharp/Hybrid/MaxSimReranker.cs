@@ -76,7 +76,7 @@ public sealed class MaxSimReranker : IReranker
         if (candidates.Count == 0)
             return Array.Empty<SearchResult>();
 
-        var queryTokens = _model.GetTokenEmbeddings(query);
+        var queryTokens = _model.GetTokenEmbeddings(query, EmbeddingUse.Query);
 
         if (queryTokens.Count == 0)
             return candidates;

@@ -161,4 +161,125 @@ public class NaiveBayesClassifierTests
         Assert.All(results, r => Assert.False(double.IsNaN(r.Probability)));
         Assert.Equal(1.0, results.Sum(r => r.Probability), precision: 10);
     }
+
+    [Fact]
+    public void Predict_ExcludedCategories_RenormalizesOverTheRest()
+    {
+        var classifier = Trained();
+
+        var full = classifier.Predict("forgotten password", limit: 10);
+        Assert.Equal(3, full.Count);
+        Assert.Equal("Support", full[0].Category);
+
+        var excluded = classifier.Predict("forgotten password", limit: 10, excludedCategories: new HashSet<string> { "Support" });
+
+        Assert.Equal(2, excluded.Count);
+        Assert.DoesNotContain(excluded, r => r.Category == "Support");
+        Assert.Equal(1.0, excluded.Sum(r => r.Probability), precision: 10);
+    }
+
+    [Fact]
+    public void PredictBest_ExcludedCategory_FallsBackToSecondBest()
+    {
+        var classifier = Trained();
+
+        Assert.Equal("Support", classifier.PredictBest("forgotten password"));
+        Assert.Equal("Billing", classifier.PredictBest(
+            "forgotten password", excludedCategories: new HashSet<string> { "Support" }));
+    }
+
+    [Fact]
+    public void Predict_AllCategoriesExcluded_ReturnsEmpty()
+    {
+        var classifier = Trained();
+
+        Assert.Empty(classifier.Predict(
+            "anything", limit: 3, excludedCategories: new HashSet<string> { "Support", "Billing", "Shipping" }));
+        Assert.Null(classifier.PredictBest(
+            "anything", excludedCategories: new HashSet<string> { "Support", "Billing", "Shipping" }));
+    }
+
+    [Fact]
+    public void Ctor_RejectsInvalidTemperature()
+    {
+        Assert.Throws<ArgumentException>(() => new NaiveBayesClassifier(options: new NaiveBayesOptions { Temperature = 0 }));
+        Assert.Throws<ArgumentException>(() => new NaiveBayesClassifier(options: new NaiveBayesOptions { Temperature = double.NaN }));
+    }
+
+    [Fact]
+    public void Temperature_SharpensOrFlattensThePosterior()
+    {
+        var cold = new NaiveBayesClassifier(options: new NaiveBayesOptions { Temperature = 0.5 });
+        cold.Train(Training);
+
+        var hot = new NaiveBayesClassifier(options: new NaiveBayesOptions { Temperature = 4.0 });
+        hot.Train(Training);
+
+        var baseline = Trained().Predict("forgotten password")[0].Probability;
+        var sharpened = cold.Predict("forgotten password")[0].Probability;
+        var flattened = hot.Predict("forgotten password")[0].Probability;
+
+        Assert.True(sharpened > baseline, "T < 1 should sharpen the posterior.");
+        Assert.True(flattened < baseline, "T > 1 should flatten the posterior.");
+        Assert.Equal("Support", cold.Predict("forgotten password")[0].Category);
+        Assert.Equal("Support", hot.Predict("forgotten password")[0].Category);
+    }
+
+    [Fact]
+    public void IdfWeighting_LetsARareTermOutweighACorpusWideTerm()
+    {
+        SearchDocument[] corpus =
+        {
+            new("1", "rare common", Category: "A"),
+        };
+
+        for (int i = 0; i < 50; i++)
+            corpus = corpus.Append(new SearchDocument($"b{i}", "common", Category: "B")).ToArray();
+
+        var baseline = new NaiveBayesClassifier();
+        baseline.Train(corpus);
+        Assert.Equal("B", baseline.PredictBest("rare common"));
+
+        var weighted = new NaiveBayesClassifier(options: new NaiveBayesOptions { IdfWeighting = true });
+        weighted.Train(corpus);
+        Assert.Equal("A", weighted.PredictBest("rare common"));
+    }
+
+    [Fact]
+    public void WeightedTokens_ReduceTheEvidenceOfACorrectedToken()
+    {
+        SearchDocument[] corpus =
+        {
+            new("1", "chat", Category: "A"),
+            new("2", "chat", Category: "A"),
+            new("3", "support", Category: "B"),
+            new("4", "support", Category: "B"),
+        };
+
+        var classifier = new NaiveBayesClassifier();
+        classifier.Train(corpus);
+        IWeightedPredictor predictor = classifier;
+
+        Assert.Equal("A", predictor.Predict(new[] { new WeightedToken("chat", 1.0), new WeightedToken("support", 0.9) }, 1)[0].Category);
+        Assert.Equal("A", predictor.Predict(new[] { new WeightedToken("chat", 1.0), new WeightedToken("support", 0.4) }, 1)[0].Category);
+        Assert.Equal("B", predictor.Predict(new[] { new WeightedToken("chat", 0.4), new WeightedToken("support", 1.0) }, 1)[0].Category);
+    }
+
+    [Fact]
+    public void Predict_TokenWeightOfZero_ContributesNoEvidence()
+    {
+        SearchDocument[] corpus =
+        {
+            new("1", "chat", Category: "A"),
+            new("2", "support", Category: "B"),
+        };
+
+        var classifier = new NaiveBayesClassifier();
+        classifier.Train(corpus);
+        IWeightedPredictor predictor = classifier;
+
+        // Zeroed-weighted token behaves as if absent: B wins on "support" alone.
+        var results = predictor.Predict(new[] { new WeightedToken("chat", 0.0), WeightedToken.Full("support") }, 1);
+        Assert.Equal("B", results[0].Category);
+    }
 }
