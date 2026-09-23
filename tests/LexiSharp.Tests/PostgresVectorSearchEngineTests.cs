@@ -26,6 +26,40 @@ public class PostgresVectorSearchEngineTests
                 : throw new KeyNotFoundException($"No embedding configured for '{text}'.");
     }
 
+    // Column-aware: the query is encoded differently per column, so the resulting ranking is only
+    // correct if the engine passes the column on every call. The column-blind overload is a bug
+    // here on purpose, to fail loudly if the engine ever falls back to it.
+    private sealed class ColumnAwareStubEmbeddingProvider : IColumnAwareEmbeddingProvider
+    {
+        private readonly bool _titleUsesFirstAxis;
+        private readonly IReadOnlyDictionary<string, float[]> _passages;
+
+        public ColumnAwareStubEmbeddingProvider(bool titleUsesFirstAxis, IReadOnlyDictionary<string, float[]> passages)
+        {
+            _titleUsesFirstAxis = titleUsesFirstAxis;
+            _passages = passages;
+        }
+
+        public int Dimension => 2;
+
+        public List<(string Text, EmbeddingUse Use, string Column)> Calls { get; } = new();
+
+        public Task<ReadOnlyMemory<float>> GetTextEmbeddingAsync(string text, EmbeddingUse use, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("The engine must pass the embedding column.");
+
+        public Task<ReadOnlyMemory<float>> GetTextEmbeddingAsync(string text, EmbeddingUse use, string column, CancellationToken cancellationToken = default)
+        {
+            Calls.Add((text, use, column));
+
+            bool firstAxis = (column == "title") == _titleUsesFirstAxis;
+            float[] vector = use == EmbeddingUse.Query
+                ? (firstAxis ? new[] { 1f, 0f } : new[] { 0f, 1f })
+                : _passages[text];
+
+            return Task.FromResult((ReadOnlyMemory<float>)vector);
+        }
+    }
+
     private static readonly IReadOnlyDictionary<string, float[]> CosineVectors =
         new Dictionary<string, float[]>
         {
@@ -537,6 +571,68 @@ public class PostgresVectorSearchEngineTests
         finally
         {
             engine.DropSchema();
+        }
+    }
+
+    private static readonly IReadOnlyDictionary<string, float[]> ColumnAwarePassages =
+        new Dictionary<string, float[]>
+        {
+            ["alpha one"] = new[] { 1f, 0f },
+            ["bravo two"] = new[] { 0f, 1f },
+        };
+
+    // d1: title "alpha one", description "bravo two"; d2 is the mirror.
+    private static IEnumerable<SearchDocument> ColumnAwareDocuments() => new[]
+    {
+        new SearchDocument("d1", "unrelated body",
+            TextFields: new Dictionary<string, string> { ["title"] = "alpha one", ["description"] = "bravo two" }),
+        new SearchDocument("d2", "unrelated body",
+            TextFields: new Dictionary<string, string> { ["title"] = "bravo two", ["description"] = "alpha one" }),
+    };
+
+    [SkippableFact]
+    public void EmbeddingColumns_ColumnAwareProvider_EncodesQueryPerColumn()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        // Query "alpha one" encoded as (1,0) on the title channel and (0,1) on the description
+        // channel: d1 matches on both. The provider records the column it was called with.
+        var titleFirst = new ColumnAwareStubEmbeddingProvider(titleUsesFirstAxis: true, ColumnAwarePassages);
+
+        using (var engine = NewEngine(titleFirst, ColumnOptions()))
+        {
+            try
+            {
+                engine.Index(ColumnAwareDocuments());
+
+                Assert.Equal(D1OnlyIds, engine.Search("alpha one").Select(r => r.DocumentId).ToArray());
+
+                // The column is passed on both sides: query (once per column) and passage.
+                Assert.Contains(titleFirst.Calls, c => c == ("alpha one", EmbeddingUse.Query, "title"));
+                Assert.Contains(titleFirst.Calls, c => c == ("alpha one", EmbeddingUse.Query, "description"));
+                Assert.Contains(titleFirst.Calls, c => c == ("alpha one", EmbeddingUse.Passage, "title"));
+            }
+            finally
+            {
+                engine.DropSchema();
+            }
+        }
+
+        // Same corpus and query, only the per-column query encoding flips: d2 wins instead of d1.
+        var descriptionFirst = new ColumnAwareStubEmbeddingProvider(titleUsesFirstAxis: false, ColumnAwarePassages);
+
+        using (var engine = NewEngine(descriptionFirst, ColumnOptions()))
+        {
+            try
+            {
+                engine.Index(ColumnAwareDocuments());
+
+                Assert.Equal(D2OnlyIds, engine.Search("alpha one").Select(r => r.DocumentId).ToArray());
+            }
+            finally
+            {
+                engine.DropSchema();
+            }
         }
     }
 

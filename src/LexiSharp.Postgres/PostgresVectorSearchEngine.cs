@@ -226,7 +226,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         {
             float[] embedding = await EmbedAsync(
                 EmbeddingSource(document, _options.EmbeddingTextField),
-                EmbeddingUse.Passage, cancellationToken).ConfigureAwait(false);
+                EmbeddingUse.Passage, column: null, cancellationToken).ConfigureAwait(false);
 
             await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
             await using var command = connection.CreateCommand();
@@ -261,7 +261,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         {
             embeddings[i] = await EmbedAsync(
                 EmbeddingSource(document, sources[columns[i]]),
-                EmbeddingUse.Passage, cancellationToken).ConfigureAwait(false);
+                EmbeddingUse.Passage, columns[i], cancellationToken).ConfigureAwait(false);
         }
 
         await using var multiConnection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
@@ -408,8 +408,17 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
 
         QuerySyntax.EnsureSupported(query, SupportedQueryFeatures, nameof(PostgresVectorSearchEngine));
 
-        float[] queryVector = await EmbedAsync(query, EmbeddingUse.Query, cancellationToken).ConfigureAwait(false);
-        string serialized = VectorText.Format(queryVector);
+        // One query vector per channel: a column-aware provider may encode the same query
+        // differently per column (e.g. centering each channel in its own space). Computed here,
+        // before the connection/transaction is opened, so a slow provider call never holds a DB
+        // transaction — and a provider that does not care per channel is called exactly as before.
+        var queryVectors = new string[columns.Count];
+
+        for (int i = 0; i < columns.Count; i++)
+        {
+            float[] queryVector = await EmbedAsync(query, EmbeddingUse.Query, columns[i].Label, cancellationToken).ConfigureAwait(false);
+            queryVectors[i] = VectorText.Format(queryVector);
+        }
 
         // Multi-column searches need enough ANN candidates per column for the OR-fusion to be
         // meaningful: ramp the per-column LIMIT up so a column's noise does not starve the merge,
@@ -441,8 +450,10 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         var documents = new Dictionary<string, SearchDocument>(StringComparer.Ordinal);
         var filters = PostgresMetadataFilterSql.Build(options.Filters);
 
-        foreach ((string label, string column) in columns)
+        for (int i = 0; i < columns.Count; i++)
         {
+            var (label, column) = columns[i];
+
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
             filters.Apply(command);
@@ -458,7 +469,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
             // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); query text is parameterized.
             command.CommandText = searchSql; // NOSONAR:S2077
 
-            command.Parameters.AddWithValue("query", serialized);
+            command.Parameters.AddWithValue("query", queryVectors[i]);
             command.Parameters.AddWithValue("limit", candidateLimit);
 
             await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
@@ -638,9 +649,11 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
     private static void AwaitDispose(IAsyncEnumerator<string> enumerator) =>
         enumerator.DisposeAsync().AsTask().GetAwaiter().GetResult();
 
-    private async Task<float[]> EmbedAsync(string text, EmbeddingUse use, CancellationToken cancellationToken)
+    private async Task<float[]> EmbedAsync(string text, EmbeddingUse use, string? column, CancellationToken cancellationToken)
     {
-        var embedding = await _embeddings.GetTextEmbeddingAsync(text, use, cancellationToken).ConfigureAwait(false);
+        var embedding = column is not null && _embeddings is IColumnAwareEmbeddingProvider columnAware
+            ? await columnAware.GetTextEmbeddingAsync(text, use, column, cancellationToken).ConfigureAwait(false)
+            : await _embeddings.GetTextEmbeddingAsync(text, use, cancellationToken).ConfigureAwait(false);
         var vector = embedding.ToArray();
 
         if (vector.Length != _options.Dimension)

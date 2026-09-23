@@ -801,9 +801,12 @@ lexical engine) and, for a title/description (or any multi-section) split,
 `TextFields` entry. A search then targets a subset of columns
 (`SearchWithColumns`) or all of them, OR-fusing candidates by best per-column similarity, and
 `SearchWithDetails` (`IDetailedSearchEngine`) exposes each column's contribution for UI badges
-or telemetry. The engine also implements `IListableSearchEngine`, so the full set of stored
-ids can be streamed (`ListDocumentIds` / `ListDocumentIdsAsync`, keyset pagination) to diff
-against an external ledger.
+or telemetry. To encode the same query differently per column (e.g. center each channel's
+query in its own space), implement `IColumnAwareEmbeddingProvider`: the engine then passes the
+column label on every query and passage call; a plain `IEmbeddingProvider` keeps the single
+query vector shared across columns. The engine also implements `IListableSearchEngine`, so the
+full set of stored ids can be streamed (`ListDocumentIds` / `ListDocumentIdsAsync`, keyset
+pagination) to diff against an external ledger.
 
 By default the integration tests are skipped unless `POSTGRES_TEST_CONNECTION` points at a
 live instance (e.g. `Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp`).
