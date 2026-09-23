@@ -218,6 +218,30 @@ public class LexiSharpIndexTests
     }
 
     [Fact]
+    public void FuzzyOnlyOutOfVocabulary_KeepsKnownTermsExact_AndStillCorrectsTypos()
+    {
+        var docs = new[]
+        {
+            With("1", "keycloak login recovery", "docs"),
+            With("2", "logins proxy", "docs"),
+        };
+
+        var strict = CreateIndex(o =>
+        {
+            o.EnableFuzzy = true;
+            o.FuzzyOnlyOutOfVocabulary = true;
+        }, docs);
+        var plain = CreateIndex(o => o.EnableFuzzy = true, docs);
+
+        // "login" is in the vocabulary: with the flag it stays exact, "logins" no longer leaks in.
+        Assert.Equal(new[] { "1" }, strict.Search("login").Select(h => h.DocumentId));
+        Assert.Equal(new[] { "1", "2" }, plain.Search("login").Select(h => h.DocumentId).OrderBy(x => x));
+
+        // "keycloack" is out of vocabulary: the typo is still corrected to "keycloak".
+        Assert.Equal("1", RequireSingle(strict.Search("keycloack")).DocumentId);
+    }
+
+    [Fact]
     public void Highlight_ProducesWrappedText()
     {
         var index = CreateIndex(null, With("1", "the quick brown fox", "docs"));

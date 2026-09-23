@@ -81,6 +81,14 @@ public sealed class LexiSharpIndexOptions<TDocument>
     /// </summary>
     public bool EnableFuzzy { get; set; }
 
+    /// <summary>
+    /// Sharpens <see cref="EnableFuzzy"/> (and explicit <c>term~</c> operators): a fuzzy term
+    /// whose exact form is already in the index vocabulary matches that exact form only, so
+    /// only genuinely unknown words are corrected. Correctly spelled tokens no longer pull in
+    /// unrelated close variants and cannot be degraded by the fuzzy rewrite.
+    /// </summary>
+    public bool FuzzyOnlyOutOfVocabulary { get; set; }
+
     /// <summary>Drop stop words during tokenization. Default: <c>false</c>.</summary>
     public bool RemoveStopWords { get; set; }
 

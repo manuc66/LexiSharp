@@ -16,11 +16,18 @@ namespace LexiSharp.Core;
 /// <see cref="Filters"/> produce. Default: <c>0</c> (no skip). A negative offset makes the
 /// request empty, like a non-positive <see cref="Limit"/>.
 /// </param>
+/// <param name="FuzzyOnlyOutOfVocabulary">
+/// When set, a fuzzy term whose base form already exists in the index vocabulary matches its
+/// exact form only — the near-variant expansion is skipped. Only genuinely out-of-vocabulary
+/// words are corrected, so a correctly spelled word can no longer be degraded by unrelated
+/// close variants. Default: <c>false</c> (start from the base form and add close variants).
+/// </param>
 public sealed record SearchOptions(
     int Limit = 10,
     double MinimumScore = double.NegativeInfinity,
     IReadOnlyList<MetadataFilter>? Filters = null,
-    int Offset = 0)
+    int Offset = 0,
+    bool FuzzyOnlyOutOfVocabulary = false)
 {
     public static readonly SearchOptions Default = new();
 

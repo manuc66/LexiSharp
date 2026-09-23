@@ -40,6 +40,7 @@ public sealed class LexiSharpIndex<TDocument>
     private readonly Func<TDocument, string?> _category;
     private readonly Func<TDocument, IReadOnlyDictionary<string, string>?> _fields;
     private readonly bool _enableFuzzy;
+    private readonly bool _fuzzyOnlyOutOfVocabulary;
 
     private readonly ITextIndex _index;
     private readonly ITokenizer _tokenizer;
@@ -71,6 +72,7 @@ public sealed class LexiSharpIndex<TDocument>
         _fields = options.Fields ?? DefaultFields() ?? NoFields;
 
         _enableFuzzy = options.EnableFuzzy;
+        _fuzzyOnlyOutOfVocabulary = options.FuzzyOnlyOutOfVocabulary;
 
         var tokenizer = options.Tokenizer ?? BuildDefaultTokenizer(options);
         _spanTokenizer = tokenizer as ISpanTokenizer;
@@ -155,7 +157,8 @@ public sealed class LexiSharpIndex<TDocument>
         ArgumentNullException.ThrowIfNull(query);
 
         var effectiveQuery = Fuzzify(query);
-        var coreOptions = (options ?? LexiSharpQueryOptions.Default).ToCore();
+        var coreOptions = (options ?? LexiSharpQueryOptions.Default).ToCore()
+            with { FuzzyOnlyOutOfVocabulary = _fuzzyOnlyOutOfVocabulary };
 
         if (coreOptions.IsEmpty)
             return Array.Empty<LexiSharpHit<TDocument>>();
@@ -187,7 +190,8 @@ public sealed class LexiSharpIndex<TDocument>
         ArgumentNullException.ThrowIfNull(query);
 
         var effectiveQuery = Fuzzify(query);
-        var coreOptions = (options ?? LexiSharpQueryOptions.Default).ToCore();
+        var coreOptions = (options ?? LexiSharpQueryOptions.Default).ToCore()
+            with { FuzzyOnlyOutOfVocabulary = _fuzzyOnlyOutOfVocabulary };
 
         if (coreOptions.IsEmpty)
             return new LexiSharpFacetedResult<TDocument>(Array.Empty<LexiSharpHit<TDocument>>(), Array.Empty<FacetBucket>());
