@@ -5,37 +5,37 @@ using NpgsqlTypes;
 
 namespace LexiSharp.ParadeDB;
 
-    /// <summary>
-    /// ParadeDB/PG_search-backed <see cref="ITextSearchEngine"/>: true BM25 ranking built on the
-    /// Tantivy index of the <c>pg_search</c> extension. The search field is matched with the
-    /// match-disjunction operator (<c>|||</c>) and ranked with <c>pdb.score(key_field)</c> —
-    /// real Okapi BM25, unlike <c>ts_rank_cd</c>.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Depends on the <c>pg_search</c> extension (AGPL-3, see
-    /// <see href="https://paradedb.com">ParadeDB</see>); the ParadeDB Docker image preloads it.
-    /// </para>
-    /// <para>
-    /// Double-quoted segments are parsed as phrase queries (<see cref="QueryParser.SplitRaw(string)"/>)
-    /// and translated to the native <c>###</c> operator (tokens in consecutive positions) —
-    /// <c>|||</c> only tokenizes into a disjunction and would silently ignore the quotes. Like
-    /// the stock in-memory engine, free terms around a phrase never hard-filter a mixed query:
-    /// only the phrases shape the match set here, and <c>pdb.score</c> ranks it.
-    /// </para>
-    /// <para>
-    /// The documents table is the shared <see cref="PostgresSchema"/> table: the lexical
-    /// <c>tsvector</c> engine, the vector engine and this one can coexist on a single table and
-    /// be merged by the hybrid engine. Writes are plain inserts; <c>pg_search</c> maintains its
-    /// own inverted index in the same transaction.
-    /// </para>
-    /// <para>
-    /// BM25 scores (Tantivy variant) are PostgreSQL-native: ordering is meaningful, but numeric
-    /// values are not comparable to <see cref="LexiSharp.Ranking.Bm25Scorer"/>. Wrap this engine
-    /// in the hybrid package's <c>ReciprocalRankFusionMerger</c> (or re-rank the union) when a
-    /// single cross-engine ordering is required.
-    /// </para>
-    /// </remarks>
+/// <summary>
+/// ParadeDB/PG_search-backed <see cref="ITextSearchEngine"/>: true BM25 ranking built on the
+/// Tantivy index of the <c>pg_search</c> extension. The search field is matched with the
+/// match-disjunction operator (<c>|||</c>) and ranked with <c>pdb.score(key_field)</c> —
+/// real Okapi BM25, unlike <c>ts_rank_cd</c>.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Depends on the <c>pg_search</c> extension (AGPL-3, see
+/// <see href="https://paradedb.com">ParadeDB</see>); the ParadeDB Docker image preloads it.
+/// </para>
+/// <para>
+/// Double-quoted segments are parsed as phrase queries (<see cref="QueryParser.SplitRaw(string)"/>)
+/// and translated to the native <c>###</c> operator (tokens in consecutive positions) —
+/// <c>|||</c> only tokenizes into a disjunction and would silently ignore the quotes. Like
+/// the stock in-memory engine, free terms around a phrase never hard-filter a mixed query:
+/// only the phrases shape the match set here, and <c>pdb.score</c> ranks it.
+/// </para>
+/// <para>
+/// The documents table is the shared <see cref="PostgresSchema"/> table: the lexical
+/// <c>tsvector</c> engine, the vector engine and this one can coexist on a single table and
+/// be merged by the hybrid engine. Writes are plain inserts; <c>pg_search</c> maintains its
+/// own inverted index in the same transaction.
+/// </para>
+/// <para>
+/// BM25 scores (Tantivy variant) are PostgreSQL-native: ordering is meaningful, but numeric
+/// values are not comparable to <see cref="LexiSharp.Ranking.Bm25Scorer"/>. Wrap this engine
+/// in the hybrid package's <c>ReciprocalRankFusionMerger</c> (or re-rank the union) when a
+/// single cross-engine ordering is required.
+/// </para>
+/// </remarks>
 public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, IQuerySyntaxSupport
 {
     /// <inheritdoc />
