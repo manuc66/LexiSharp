@@ -19,7 +19,7 @@ public sealed class PmiTermExpanderOptions
     /// </summary>
     public int MinimumCoOccurrence { get; set; } = 2;
 
-/// <summary>
+    /// <summary>
     /// A candidate neighbor must itself appear in at least this many windows corpus-wide. This
     /// floor cuts the PPMI « rarity bias »: words that happen to appear once, always alongside
     /// an input term, would otherwise rank above genuinely selective associates. Default:
