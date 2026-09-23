@@ -45,8 +45,9 @@
   }
   .chip:hover { color: var(--text); border-color: var(--accent); }
   .meta { color: var(--muted); padding: 0 32px 12px; font-size: 13px; }
-  .lanes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; padding: 8px 32px 32px; }
-  @media (max-width: 1200px) { .lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .lanes { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; padding: 8px 32px 32px; }
+  @media (max-width: 1500px) { .lanes { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 980px) { .lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 640px) { .lanes { grid-template-columns: 1fr; } }
   .lane { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; }
   .lane-head { padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--panel-2); }
@@ -100,8 +101,8 @@
 <body>
 <header>
   <h1>Lexi<span>Sharp</span> · retrieval lab</h1>
-  <p class="sub">One corpus, four strategies compared live: plain BM25, corpus-derived semantic expansion,
-    reciprocal-rank fusion, and a cross-encoder rerank. Click any hit to see <em>why</em> it ranked there.</p>
+  <p class="sub">One corpus, five strategies compared live: plain BM25, corpus-derived semantic expansion,
+    dense cosine, reciprocal-rank fusion, and a cross-encoder rerank. Click any hit to see <em>why</em> it ranked there.</p>
 </header>
 
 <div class="bar">
@@ -126,7 +127,7 @@
 </aside>
 
 <script>
-const laneColors = { lexical: "var(--accent)", semantic: "var(--accent-2)", hybrid: "var(--accent-3)", rerank: "var(--accent-4)" };
+const laneColors = { lexical: "var(--accent)", semantic: "var(--accent-2)", dense: "var(--accent-4)", hybrid: "var(--accent-3)", rerank: "#f2789f" };
 const $ = (id) => document.getElementById(id);
 
 function esc(value) {
@@ -146,7 +147,7 @@ async function getJson(url) {
 async function loadMeta() {
   try {
     const meta = await getJson("/api/meta");
-    $("meta").textContent = meta.documentCount + " documents indexed · 4 strategies · click a hit to explain its rank";
+    $("meta").textContent = meta.documentCount + " documents indexed · 5 strategies · click a hit to explain its rank";
     $("chips").innerHTML = meta.queries.map((query) => `<span class="chip">${esc(query)}</span>`).join("");
     document.querySelectorAll(".chip").forEach((chip) => chip.addEventListener("click", () => {
       $("q").value = chip.textContent;

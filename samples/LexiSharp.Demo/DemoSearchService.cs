@@ -1,20 +1,23 @@
 using System.Diagnostics;
 using LexiSharp;
 using LexiSharp.Core;
+using LexiSharp.Embeddings;
 using LexiSharp.Expansion;
 using LexiSharp.Highlighting;
 using LexiSharp.Hybrid;
+using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
 
 namespace LexiSharp.Demo;
 
 /// <summary>
-/// Builds four retrieval strategies over the same corpus and exposes a comparison API:
+/// Builds five retrieval strategies over the same corpus and exposes a comparison API:
 /// <list type="bullet">
 ///   <item>lexical — plain BM25;</item>
 ///   <item>semantic — BM25 over an index whose documents were widened with PPMI-derived terms;</item>
-///   <item>hybrid — the two engines fused by reciprocal rank fusion;</item>
+///   <item>dense — cosine similarity over deterministic hashing embeddings;</item>
+///   <item>hybrid — lexical, semantic and dense fused by reciprocal rank fusion;</item>
 ///   <item>rerank — the hybrid shortlist reordered by a cross-encoder.</item>
 /// </list>
 /// Every lane reuses an existing LexiSharp piece; the demo only wires them together.
@@ -25,6 +28,7 @@ public sealed class DemoSearchService
     private readonly ISpanTokenizer? _spanTokenizer;
     private readonly LexiSharpIndex<SearchDocument> _lexical;
     private readonly LexiSharpIndex<SearchDocument> _semantic;
+    private readonly InMemoryVectorSearchEngine _dense;
     private readonly HybridTextSearchEngine _hybrid;
     private readonly RerankedTextSearchEngine _rerank;
 
@@ -48,10 +52,14 @@ public sealed class DemoSearchService
         _lexical.AddRange(corpus);
         _semantic.AddRange(corpus);
 
+        // No model: the deterministic hashing provider makes the dense lane work offline.
+        _dense = new InMemoryVectorSearchEngine(new HashingEmbeddingProvider(512, _tokenizer));
+        _dense.Index(corpus);
+
         _hybrid = new HybridTextSearchEngine(
-            new ITextSearchEngine[] { _lexical.Engine, _semantic.Engine },
+            new ITextSearchEngine[] { _lexical.Engine, _semantic.Engine, _dense },
             new ReciprocalRankFusionMerger(),
-            sourceNames: new[] { "lexical", "semantic" });
+            sourceNames: new[] { "lexical", "semantic", "dense" });
 
         _rerank = new RerankedTextSearchEngine(
             _hybrid,
@@ -63,14 +71,15 @@ public sealed class DemoSearchService
     /// <summary>Number of indexed documents.</summary>
     public int DocumentCount => _lexical.Count;
 
-    /// <summary>Runs the four strategies and returns their pages side by side.</summary>
+    /// <summary>Runs the five strategies and returns their pages side by side.</summary>
     public CompareResponse Compare(string query, int limit)
     {
         var lanes = new List<LaneResult>
         {
             Measure("lexical", "Lexical · BM25", "literal term match, length-normalized", () => LexicalHits(query, limit)),
             Measure("semantic", "Semantic · BM25 + PMI expansion", "documents carry corpus-derived related terms", () => SemanticHits(query, limit)),
-            Measure("hybrid", "Hybrid · RRF fusion", "lexical and semantic fused by reciprocal rank", () => HybridHits(query, limit)),
+            Measure("dense", "Dense · hashing embedding", "cosine over deterministic hashed vectors", () => DenseHits(query, limit)),
+            Measure("hybrid", "Hybrid · RRF fusion", "lexical, semantic and dense fused by rank", () => HybridHits(query, limit)),
             Measure("rerank", "Hybrid + reranker", "cross-encoder reorders the hybrid shortlist", () => RerankHits(query, limit)),
         };
 
@@ -90,6 +99,24 @@ public sealed class DemoSearchService
                 : _semantic.Explain(documentId, query);
 
             return explanation is null ? null : FromTerms(explanation);
+        }
+
+        if (lane == "dense")
+        {
+            var dense = _dense
+                .Search(query, new SearchOptions(Limit: 50))
+                .FirstOrDefault(result => string.Equals(result.DocumentId, documentId, StringComparison.Ordinal));
+
+            return dense is null ? null : new ExplanationDto(
+                dense.DocumentId,
+                "sources",
+                null,
+                dense.Score,
+                null,
+                null,
+                Array.Empty<TermContributionDto>(),
+                new Dictionary<string, double>(StringComparer.Ordinal) { ["dense"] = dense.Score },
+                new Dictionary<string, double>(StringComparer.Ordinal));
         }
 
         var match = _hybrid
@@ -134,6 +161,20 @@ public sealed class DemoSearchService
         {
             var hit = hits[i];
             results[i] = ToHit(hit.DocumentId, hit.Score, hit.Document, hit.HighlightedText, null);
+        }
+
+        return results;
+    }
+
+    private IReadOnlyList<HitResult> DenseHits(string query, int limit)
+    {
+        var hits = _dense.Search(query, new SearchOptions(Limit: limit));
+        var results = new HitResult[hits.Count];
+
+        for (int i = 0; i < hits.Count; i++)
+        {
+            var hit = hits[i];
+            results[i] = ToHit(hit.DocumentId, hit.Score, hit.Document, Highlight(query, hit.Document.Text), null);
         }
 
         return results;
@@ -241,6 +282,7 @@ public sealed class DemoSearchService
 
         _lexical.Search(seed, new LexiSharpQueryOptions(Limit: 5));
         _semantic.Search(seed, new LexiSharpQueryOptions(Limit: 5));
+        _dense.Search(seed, new SearchOptions(Limit: 5));
         _hybrid.SearchWithDetails(seed, new SearchOptions(Limit: 5));
         _rerank.Search(seed, new SearchOptions(Limit: 5));
     }
