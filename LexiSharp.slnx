@@ -10,6 +10,9 @@
     <Project Path="src/LexiSharp.MessagePack/LexiSharp.MessagePack.csproj" />
     <Project Path="src/LexiSharp.Postgres/LexiSharp.Postgres.csproj" />
   </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/LexiSharp.Demo/LexiSharp.Demo.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/LexiSharp.Tests/LexiSharp.Tests.csproj" />
   </Folder>

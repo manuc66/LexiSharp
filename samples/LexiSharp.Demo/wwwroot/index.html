@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LexiSharp · retrieval lab</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: #151a23;
+    --panel-2: #1b222e;
+    --border: #263041;
+    --text: #e6ebf2;
+    --muted: #8b97a8;
+    --accent: #6ea8fe;
+    --accent-2: #38d39f;
+    --accent-3: #f0a868;
+    --accent-4: #c58af9;
+    --danger: #f2789f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header { padding: 28px 32px 8px; }
+  h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: -0.01em; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--muted); max-width: 720px; }
+  .bar { display: flex; gap: 10px; padding: 18px 32px; align-items: center; flex-wrap: wrap; }
+  input[type=search] {
+    flex: 1 1 320px; min-width: 220px; padding: 12px 14px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text); font-size: 15px;
+  }
+  input[type=search]:focus { outline: none; border-color: var(--accent); }
+  button {
+    padding: 12px 18px; border-radius: 10px; border: 1px solid transparent; cursor: pointer;
+    background: var(--accent); color: #06101f; font-weight: 600; font-size: 14px;
+  }
+  button.ghost { background: transparent; border-color: var(--border); color: var(--text); font-weight: 500; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; padding: 0 32px 8px; }
+  .chip {
+    padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--muted); cursor: pointer; font-size: 13px;
+  }
+  .chip:hover { color: var(--text); border-color: var(--accent); }
+  .meta { color: var(--muted); padding: 0 32px 12px; font-size: 13px; }
+  .lanes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; padding: 8px 32px 32px; }
+  @media (max-width: 1200px) { .lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 640px) { .lanes { grid-template-columns: 1fr; } }
+  .lane { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; }
+  .lane-head { padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--panel-2); }
+  .lane-title { font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .lane-desc { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .lane-stat { margin-top: 8px; font-size: 12px; color: var(--muted); display: flex; gap: 10px; }
+  .lane-stat b { color: var(--accent-3); font-weight: 600; }
+  .hits { padding: 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; max-height: 70vh; }
+  .hit {
+    background: var(--panel-2); border: 1px solid transparent; border-radius: 10px; padding: 10px 11px;
+    cursor: pointer; transition: border-color .12s, transform .12s;
+  }
+  .hit:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .hit-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  .hit-title { font-weight: 600; font-size: 13.5px; }
+  .hit-score { color: var(--accent); font-variant-numeric: tabular-nums; font-size: 12.5px; flex: none; }
+  .hit-cat {
+    display: inline-block; margin: 4px 0 6px; font-size: 11px; color: var(--muted);
+    border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px;
+  }
+  .hit-text { color: #c3cdda; font-size: 12.5px; }
+  .hit-text em { background: rgba(110,168,254,.22); color: #cfe1ff; font-style: normal; border-radius: 3px; padding: 0 2px; }
+  .sources { margin-top: 7px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .source { font-size: 11px; color: var(--muted); background: #0f141c; border: 1px solid var(--border); border-radius: 6px; padding: 1px 7px; }
+  .empty { color: var(--muted); padding: 16px 6px; font-size: 12.5px; }
+  .panel {
+    position: fixed; right: 0; top: 0; bottom: 0; width: min(460px, 94vw);
+    background: var(--panel); border-left: 1px solid var(--border); box-shadow: -20px 0 40px rgba(0,0,0,.4);
+    transform: translateX(102%); transition: transform .18s ease; z-index: 20; display: flex; flex-direction: column;
+  }
+  .panel.open { transform: none; }
+  .panel-head { padding: 16px 18px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .panel-head h2 { margin: 0; font-size: 15px; }
+  .panel-head .why { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .panel-body { padding: 16px 18px; overflow-y: auto; }
+  .kv { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 16px; }
+  .kv div { font-size: 12px; color: var(--muted); }
+  .kv b { color: var(--text); font-weight: 600; }
+  .term { margin-bottom: 10px; }
+  .term-top { display: flex; justify-content: space-between; font-size: 12.5px; margin-bottom: 3px; }
+  .term-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .term-val { color: var(--accent-2); font-variant-numeric: tabular-nums; }
+  .track { height: 7px; background: #0f141c; border-radius: 999px; overflow: hidden; }
+  .fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent-4)); }
+  .term-sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .close { background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 20px; line-height: 1; }
+  .err { color: var(--danger); padding: 0 32px 20px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Lexi<span>Sharp</span> · retrieval lab</h1>
+  <p class="sub">One corpus, four strategies compared live: plain BM25, corpus-derived semantic expansion,
+    reciprocal-rank fusion, and a cross-encoder rerank. Click any hit to see <em>why</em> it ranked there.</p>
+</header>
+
+<div class="bar">
+  <input id="q" type="search" placeholder="e.g. refresh token, ranking quality, vector database…" autocomplete="off" />
+  <button id="go">Search</button>
+  <button id="clear" class="ghost">Clear</button>
+</div>
+<div id="chips" class="chips"></div>
+<div id="meta" class="meta"></div>
+<div id="error" class="err"></div>
+<div id="lanes" class="lanes"></div>
+
+<aside id="panel" class="panel" aria-hidden="true">
+  <div class="panel-head">
+    <div>
+      <h2 id="panel-title">Why did this rank here?</h2>
+      <div id="panel-sub" class="why"></div>
+    </div>
+    <button id="panel-close" class="close" aria-label="Close">&times;</button>
+  </div>
+  <div id="panel-body" class="panel-body"></div>
+</aside>
+
+<script>
+const laneColors = { lexical: "var(--accent)", semantic: "var(--accent-2)", hybrid: "var(--accent-3)", rerank: "var(--accent-4)" };
+const $ = (id) => document.getElementById(id);
+
+function esc(value) {
+  return String(value).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function fmt(value, digits = 2) {
+  return Number(value).toFixed(digits);
+}
+
+async function getJson(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("HTTP " + response.status);
+  return response.json();
+}
+
+async function loadMeta() {
+  try {
+    const meta = await getJson("/api/meta");
+    $("meta").textContent = meta.documentCount + " documents indexed · 4 strategies · click a hit to explain its rank";
+    $("chips").innerHTML = meta.queries.map((query) => `<span class="chip">${esc(query)}</span>`).join("");
+    document.querySelectorAll(".chip").forEach((chip) => chip.addEventListener("click", () => {
+      $("q").value = chip.textContent;
+      runSearch();
+    }));
+  } catch (error) {
+    $("meta").textContent = "";
+  }
+}
+
+function hitCard(hit, laneKey) {
+  const sources = hit.sources
+    ? `<div class="sources">${Object.entries(hit.sources).map(([k, v]) => `<span class="source">${esc(k)} ${fmt(v)}</span>`).join("")}</div>`
+    : "";
+  return `<div class="hit" data-lane="${esc(laneKey)}" data-id="${esc(hit.id)}">
+    <div class="hit-top">
+      <span class="hit-title">${esc(hit.title)}</span>
+      <span class="hit-score">${fmt(hit.score, 3)}</span>
+    </div>
+    <span class="hit-cat">${esc(hit.category)}</span>
+    <div class="hit-text">${hit.highlighted}</div>
+    ${sources}
+  </div>`;
+}
+
+function render(response) {
+  $("lanes").innerHTML = response.lanes.map((lane) => {
+    const hits = lane.hits.length
+      ? lane.hits.map((hit) => hitCard(hit, lane.key)).join("")
+      : '<div class="empty">no match</div>';
+    return `<section class="lane">
+      <div class="lane-head">
+        <div class="lane-title"><span class="dot" style="background:${laneColors[lane.key]}"></span>${esc(lane.label)}</div>
+        <div class="lane-desc">${esc(lane.description)}</div>
+        <div class="lane-stat"><span><b>${lane.hits.length}</b> hits</span><span><b>${fmt(lane.elapsedMs, 2)}</b> ms</span></div>
+      </div>
+      <div class="hits">${hits}</div>
+    </section>`;
+  }).join("");
+
+  document.querySelectorAll(".hit").forEach((node) => node.addEventListener("click", () => {
+    explain(node.dataset.lane, node.dataset.id);
+  }));
+}
+
+async function runSearch() {
+  const query = $("q").value.trim();
+  $("error").textContent = "";
+  if (!query) { $("lanes").innerHTML = ""; return; }
+  try {
+    const response = await getJson("/api/compare?q=" + encodeURIComponent(query) + "&limit=6");
+    render(response);
+  } catch (error) {
+    $("error").textContent = "Search failed: " + error.message;
+  }
+}
+
+function termExplanation(data) {
+  const max = Math.max(0.0001, ...data.terms.map((t) => Math.abs(t.score)));
+  const params = Object.entries(data.parameters).map(([k, v]) => `${esc(k)}=${fmt(v, 2)}`).join(" · ");
+  const rows = data.terms.map((t) => {
+    const width = Math.max(2, (Math.abs(t.score) / max) * 100);
+    return `<div class="term">
+      <div class="term-top"><span class="term-name">${esc(t.term)}</span><span class="term-val">+${fmt(t.score, 3)}</span></div>
+      <div class="track"><div class="fill" style="width:${width}%"></div></div>
+      <div class="term-sub">tf=${t.termFrequency} · df=${t.documentFrequency} · idf=${fmt(t.idf, 3)}</div>
+    </div>`;
+  }).join("");
+  return `<div class="kv">
+      <div>scorer <b>${esc(data.algorithm || "?")}</b></div>
+      <div>total <b>${fmt(data.total, 3)}</b></div>
+      <div>length <b>${data.documentLength}</b></div>
+      ${params ? `<div>params <b>${params}</b></div>` : ""}
+    </div>${rows}`;
+}
+
+function sourceExplanation(data) {
+  const entries = Object.entries(data.sources);
+  const max = Math.max(0.0001, ...entries.map(([, v]) => Math.abs(v)));
+  const rows = entries.map(([name, value]) => {
+    const width = Math.max(2, (Math.abs(value) / max) * 100);
+    return `<div class="term">
+      <div class="term-top"><span class="term-name">${esc(name)}</span><span class="term-val">${fmt(value, 3)}</span></div>
+      <div class="track"><div class="fill" style="width:${width}%"></div></div>
+    </div>`;
+  }).join("");
+  return `<div class="kv"><div>fused total <b>${fmt(data.total, 3)}</b></div><div>mode <b>RRF contributors</b></div></div>${rows}`;
+}
+
+async function explain(lane, id) {
+  const query = $("q").value.trim();
+  $("panel").classList.add("open");
+  $("panel").setAttribute("aria-hidden", "false");
+  $("panel-sub").textContent = lane + " · " + id;
+  $("panel-body").innerHTML = '<div class="empty">computing…</div>';
+  try {
+    const data = await getJson("/api/explain?q=" + encodeURIComponent(query) + "&lane=" + encodeURIComponent(lane) + "&id=" + encodeURIComponent(id));
+    $("panel-body").innerHTML = data.mode === "terms" ? termExplanation(data) : sourceExplanation(data);
+  } catch (error) {
+    $("panel-body").innerHTML = '<div class="empty">no breakdown available for this lane.</div>';
+  }
+}
+
+$("go").addEventListener("click", runSearch);
+$("q").addEventListener("keydown", (event) => { if (event.key === "Enter") runSearch(); });
+$("clear").addEventListener("click", () => { $("q").value = ""; $("lanes").innerHTML = ""; $("error").textContent = ""; });
+$("panel-close").addEventListener("click", () => { $("panel").classList.remove("open"); $("panel").setAttribute("aria-hidden", "true"); });
+
+loadMeta();
+$("q").value = "refresh token";
+runSearch();
+</script>
+</body>
+</html>

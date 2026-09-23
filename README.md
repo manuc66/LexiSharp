@@ -74,6 +74,10 @@ or ML model** — pure lexical statistics.
   (`PmiTermExpander` learns PPMI/co-occurrence associations from your own documents), then
   folds them into the classic inverted index (`ExpansionTextIndex`, zero-new-dependencies,
   pure .NET core; the seam is where a real neural SPLADE model plugs in later).
+- **Reference demo app** (`samples/LexiSharp.Demo`): an ASP.NET Core page that compares BM25,
+  semantic expansion, hybrid RRF and cross-encoder rerank side by side on one corpus, with
+  latency, highlighting and a click-through "why did this rank here?" explanation — no model,
+  no external service.
 - **Metadata filters**: declarative, AND-composed filters over document fields
   (`MetadataFilterOperator`: equal, not-equal, contains, numeric-or-ordinal greater/less than)
   in `SearchOptions` — honored by every backend (stock in-memory and SQL) before scoring.
@@ -326,6 +330,25 @@ var hits = index.Search("refresh"); // also finds "token", "expiry", "session" d
 The rediscovered terms enter the very same inverted index — BM25, phrase, highlighting and
 every engine work on the enriched vocabulary untouched. The `bm25-semantic` preset of the
 benchmark CLI measures the impact against plain BM25 on your own corpus.
+
+### Reference demo (`samples/LexiSharp.Demo`)
+
+A self-contained ASP.NET Core app that runs **four retrieval strategies over the same corpus**
+and compares them live — plain BM25, corpus-derived semantic expansion, reciprocal-rank
+fusion, and a cross-encoder rerank — with per-lane latency and highlighting. Clicking any hit
+opens a **"why did this rank here?"** panel powered by `LexiSharpIndex.Explain` (per-term
+contributions, IDF, length) or, for the federated lanes, the per-source scores from
+`HybridTextSearchEngine.SearchWithDetails`. No external model or dependency: the semantic lane
+uses `PmiTermExpander` and the rerank lane a local term-overlap `ICrossEncoderScorer` — swap
+either behind its seam for a real model.
+
+```bash
+dotnet run --project samples/LexiSharp.Demo
+# → http://localhost:5000  (search box + four comparison columns)
+```
+
+The demo is the fastest way to *see* what the composable pieces buy you; its whole wiring is
+`DemoSearchService` (four engines over one corpus) plus a single static `wwwroot/index.html`.
 
 ### Classification
 
