@@ -10,11 +10,11 @@
     <RootNamespace>LexiSharp.Postgres</RootNamespace>
     <PackageId>LexiSharp.Postgres</PackageId>
     <Title>LexiSharp.Postgres</Title>
-    <Description>PostgreSQL backend for LexiSharp: lexical full-text search on top of tsvector, GIN and unaccent.</Description>
+    <Description>PostgreSQL backends for LexiSharp: lexical full-text search on tsvector, ANN on pgvector, sparse retrieval, fuzzy search on pg_trgm, and true Okapi BM25 on the ParadeDB pg_search (Tantivy) extension.</Description>
     <Authors>manu</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryType>git</RepositoryType>
-    <PackageTags>search;text;postgres;fts;tsvector;gin;unaccent</PackageTags>
+    <PackageTags>search;text;postgres;fts;tsvector;gin;unaccent;pgvector;sparse;pg_trgm;bm25;pg_search;paradedb;tantivy</PackageTags>
     <Version>0.1.0</Version>
     <IsPackable>true</IsPackable>
     <PackageReadmeFile>README.md</PackageReadmeFile>
@@ -26,7 +26,6 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="LexiSharp.Tests" />
-    <InternalsVisibleTo Include="LexiSharp.ParadeDB" />
   </ItemGroup>
 
   <ItemGroup>
