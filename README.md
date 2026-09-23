@@ -91,6 +91,9 @@ or ML model** — pure lexical statistics.
 - **Prefix &amp; fuzzy queries**: `neural*` expands to every indexed term with that prefix,
   `catt~`/`catt~N` fuzzy-matches within N edits (default 1, clamped to 0–2) — search-time
   vocabulary expansion on the stock engine (`IVocabularyIndex`), 64 terms max per atom.
+  A **selective** mode (`FuzzyOnlyOutOfVocabulary`, or `SearchOptions` of the same name)
+  keeps a term already in the vocabulary exact, so only genuinely unknown words are
+  corrected and correctly spelled tokens can no longer be degraded by close variants.
 - **Synonyms** (`SynonymMap`): one-way rewrites and bidirectional equivalence groups,
   tokenized at engine construction and applied to free query terms — one level deep
   (non-transitive), never inside quoted phrases.
@@ -115,6 +118,11 @@ or ML model** — pure lexical statistics.
 - **Explainable scoring**: `Bm25Scorer`, `TfIdfScorer` and `QueryLikelihoodScorer` implement
   `IScoreExplainer`, and `RankedTextSearchEngine.Explain` returns a per-term breakdown
   (TF, IDF, term score, length normalization, parameter values) of any ranking decision.
+- **Calibrated confidence** (`ScoreConfidence`): maps a result set's raw scores — BM25 output
+  and friends, whose scale is not a probability — to a per-result confidence in [0,1],
+  either from the winner margin (gap to the next result, scale-invariant) or from a logistic
+  z-score against the set's own distribution. `TopConfidence` feeds a `minConfidence` gate
+  that raw lexical scores cannot.
 - **Evaluation metrics** (`RetrievalMetrics`): `Precision@k`, `Recall@k`, `F1@k`, binary and
   **graded** `nDCG@k` (exponential gains), plus `ReciprocalRank@k` (→ MRR) and
   `AveragePrecision@k` (→ MAP).

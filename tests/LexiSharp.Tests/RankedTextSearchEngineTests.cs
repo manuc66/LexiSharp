@@ -395,6 +395,34 @@ public class RankedTextSearchEngineTests
     }
 
     [Fact]
+    public void Search_FuzzyAtom_OutOfVocabOnlyKeepsInVocabularyTermsExact()
+    {
+        var engine = CreateEngine(new[]
+        {
+            new SearchDocument("1", "keycloak login fails"),
+            new SearchDocument("2", "keycloaks proxy setup"),
+            new SearchDocument("3", "unrelated stuff"),
+        });
+
+        // Default behavior expands the known term to its close variants too.
+        var expanded = engine.Search("keycloak~", new SearchOptions(Limit: 10));
+        Assert.Equal(new[] { "1", "2" }, expanded.Select(r => r.DocumentId).OrderBy(x => x));
+
+        // With the flag, an in-vocabulary base term matches exactly: doc 2 ("keycloaks") falls out.
+        var exactOnly = engine.Search("keycloak~", new SearchOptions(Limit: 10, FuzzyOnlyOutOfVocabulary: true));
+        var hit = Assert.Single(exactOnly);
+        Assert.Equal("1", hit.DocumentId);
+
+        // The typo stays correctable: "keycloack" is out of vocabulary, so fuzzy expansion applies.
+        var typo = engine.Search("keycloack~", new SearchOptions(Limit: 10, FuzzyOnlyOutOfVocabulary: true));
+        Assert.Equal("1", Assert.Single(typo).DocumentId);
+
+        // Prefix atoms are never affected by the flag.
+        var prefix = engine.Search("keyclo*", new SearchOptions(Limit: 10, FuzzyOnlyOutOfVocabulary: true));
+        Assert.Equal(new[] { "1", "2" }, prefix.Select(r => r.DocumentId).OrderBy(x => x));
+    }
+
+    [Fact]
     public void Search_PrefixExpansion_CapsTermsPerAtom()
     {
         var docs = new SearchDocument[70];

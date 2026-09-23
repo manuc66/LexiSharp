@@ -32,7 +32,10 @@ namespace LexiSharp.Ranking;
 /// against an <see cref="IVocabularyIndex"/>, keeps at most
 /// <see cref="MaxExpansionsPerAtom"/> terms per atom — highest document frequency first,
 /// then ordinal order — and never applies inside quotes. An index without vocabulary support
-/// falls back to the atom's literal base term.
+/// falls back to the atom's literal base term. With
+/// <see cref="SearchOptions.FuzzyOnlyOutOfVocabulary"/>, a fuzzy atom whose base form is
+/// already in the vocabulary resolves to that exact term and skips the near-variant
+/// expansion: correctly spelled words are never degraded, only unknown ones are corrected.
 /// </para>
 /// <para>
 /// An optional <see cref="SynonymMap"/> additionally rewrites <b>free</b> query terms to
@@ -154,7 +157,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         if (_index.Count == 0)
             return Array.Empty<SearchResult>();
 
-        var (parsed, queryTerms) = BuildQuery(query);
+        var (parsed, queryTerms) = BuildQuery(query, options.FuzzyOnlyOutOfVocabulary);
 
         if (queryTerms.Count == 0)
             return Array.Empty<SearchResult>();
@@ -337,19 +340,21 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// resolve synonyms and vocabulary expansions into the concrete scoring terms. The
     /// parsed form still carries the literal phrase constraints for the positional gate.
     /// </summary>
-    private (ParsedQuery Parsed, IReadOnlyList<string> Terms) BuildQuery(ReadOnlySpan<char> query)
+    private (ParsedQuery Parsed, IReadOnlyList<string> Terms) BuildQuery(ReadOnlySpan<char> query, bool fuzzyOnlyOutOfVocabulary)
     {
         var parsed = QueryParser.Parse(query, _tokenizer);
-        return (parsed, ResolveQueryTerms(parsed));
+        return (parsed, ResolveQueryTerms(parsed, fuzzyOnlyOutOfVocabulary));
     }
 
     /// <summary>
     /// Resolves the literal query into concrete scoring terms: free terms gain their direct
     /// synonyms (one level, phrases stay literal), then prefix/fuzzy atoms expand against the
     /// index vocabulary — or fall back to their literal base term when the index cannot
-    /// enumerate its vocabulary.
+    /// enumerate its vocabulary. When <paramref name="fuzzyOnlyOutOfVocabulary"/> is set, a
+    /// fuzzy atom whose base term is already in the vocabulary resolves to that exact term
+    /// only (no near-variant expansion), so only unknown words get corrected.
     /// </summary>
-    private IReadOnlyList<string> ResolveQueryTerms(ParsedQuery parsed)
+    private IReadOnlyList<string> ResolveQueryTerms(ParsedQuery parsed, bool fuzzyOnlyOutOfVocabulary)
     {
         if (_synonyms is null && !parsed.HasExpansions)
             return parsed.AllTerms;
@@ -378,6 +383,8 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
                 if (expansion.Kind == QueryExpansionKind.Prefix)
                     ExpandPrefix(terms, vocabulary, expansion);
+                else if (fuzzyOnlyOutOfVocabulary && _index.DocumentFrequency(expansion.BaseTerm) > 0)
+                    terms.Add(expansion.BaseTerm);
                 else
                     ExpandFuzzy(terms, vocabulary, expansion);
             }
@@ -555,12 +562,17 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// A <see cref="ScoreExplanation"/>, or <c>null</c> when the active scorer cannot explain
     /// itself (it does not implement <see cref="IScoreExplainer"/>) or the document is unknown.
     /// </returns>
+    /// <remarks>
+    /// The query is resolved with the default expansion behavior
+    /// (<see cref="SearchOptions.FuzzyOnlyOutOfVocabulary"/> is <c>false</c>): explanation has
+    /// no per-search options of its own, so it always states the full literal resolution.
+    /// </remarks>
     public ScoreExplanation? Explain(string documentId, ReadOnlySpan<char> query)
     {
         if (_scorer is not IScoreExplainer explainer || !_index.Contains(documentId))
             return null;
 
-        var (_, terms) = BuildQuery(query);
+        var (_, terms) = BuildQuery(query, fuzzyOnlyOutOfVocabulary: false);
         return explainer.Explain(documentId, terms, _index);
     }
 
