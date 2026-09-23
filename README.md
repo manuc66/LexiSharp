@@ -1012,6 +1012,8 @@ Writes fan out to every engine. Three merge strategies are available:
 | `RerankingResultMerger` (default) | re-scores the union with one `ITextScorer` | comparable stats, identical score scale wanted |
 | `ReciprocalRankFusionMerger` | `Σ 1/(k + rank)` (k=60), rank-only | engines with **incomparable scales** — lexical + vector, ts_rank_cd vs BM25 (Postgres vs ParadeDB vs in-memory) |
 | `WeightedScoreResultMerger` | normalized per-engine score blend | native scores trusted, per-engine weights wanted |
+| `CombSumResultMerger` | sum of normalized per-engine scores | scores (not just ranks) are meaningful and should add up |
+| `CombMNZResultMerger` | CombSUM × number of engines that returned the doc | reward cross-engine **agreement** |
 
 Reciprocal Rank Fusion never looks at scores, so it bridges engines whose scores are not
 comparable — the sparse and dense embedding backends land in the same formula without
