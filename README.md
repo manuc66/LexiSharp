@@ -34,6 +34,9 @@ or ML model** — pure lexical statistics.
 
 - **Pluggable architecture**: an `ITextIndex`, `ITextScorer` and `ITokenizer` are
   independent contracts; algorithms can be swapped without touching the engine.
+- **Drop-in entry point** (`LexiSharpIndex<T>`): a typed facade that maps your own document
+  type to the engine and back — index objects, get your objects back — with fluent options for
+  the scorer, tokenizer, fuzzy matching, synonyms and an optional reranker.
 - **Four ranking strategies** behind the same `ITextSearchEngine`:
   - `Bm25Scorer` — Okapi BM25, with ready-made `Bm25Parameters` profiles (`Balanced`,
     `Aggressive`, `Conservative`),
@@ -142,6 +145,37 @@ IReadOnlyList<SearchResult> results = engine.Search("textual search");
 foreach (var result in results)
     Console.WriteLine($"{result.DocumentId} - {result.Score:0.###}: {result.Document.Text}");
 ```
+
+### Drop-in index (`LexiSharpIndex<T>`)
+
+The fastest way in: a typed facade that maps your own documents to the engine and back, so
+you go from "a list of objects" to "working search" in a few lines. `TDocument` can be
+`string` or `SearchDocument` (selectors default to the obvious mapping), or any class with
+explicit id/text selectors:
+
+```csharp
+using LexiSharp;
+
+var search = new LexiSharpIndex<MyDocument>(o =>
+{
+    o.Id = d => d.Id;
+    o.Text = d => d.Body;
+    o.EnableFuzzy = true;        // plain terms behave like `term~1`
+});
+
+search.Add(documents);
+
+var hits = search.Search("architecture distributed systems");
+foreach (var hit in hits)
+    Console.WriteLine($"{hit.DocumentId} - {hit.Score:0.###}: {hit.Document.Body}");
+```
+
+`Search` returns typed hits carrying the original document; `SearchWithFacets` adds facet
+buckets over the match set, `Explain` returns the per-term score breakdown, `Statistics` a
+corpus snapshot. `Highlight: true` on the query options wraps the matched terms of each hit.
+The scorer/tokenizer knobs of the rest of the library stay reachable through
+`LexiSharpIndexOptions<T>` (`UseBm25`, `UseTfIdf`, `UseQueryLikelihood`, `UseBoolean`,
+`RemoveStopWords`, `Stemmer`, `NGramMax`, `Synonyms`, `Reranker`, ...).
 
 Change the ranking algorithm without rebuilding the index:
 
