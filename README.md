@@ -74,10 +74,10 @@ or ML model** — pure lexical statistics.
   in-process counterpart of the PostgreSQL `pgvector` engine — and `HashingEmbeddingProvider`
   makes the whole embedding stack usable and testable with **no model and no dependency**.
 - **Semantic lexical expansion** (`LexiSharp.Expansion`): an `ITermExpander` seam that widens
-  a query — and any document, at index time — with corpus-derived related terms
-  (`PmiTermExpander` learns PPMI/co-occurrence associations from your own documents), then
-  folds them into the classic inverted index (`ExpansionTextIndex`, zero-new-dependencies,
-  pure .NET core; the seam is where a real neural SPLADE model plugs in later).
+  a query — or any document, at index time — with corpus-derived related terms
+  (`PmiTermExpander` learns PPMI/co-occurrence associations from your own documents), applied
+  either to documents (`ExpansionTextIndex`) or to the query (`ExpandingTextSearchEngine`),
+  zero-new-dependencies, pure .NET core; the seam is where a real neural SPLADE model plugs in later.
 - **Reference demo app** (`samples/LexiSharp.Demo`): an ASP.NET Core page that compares BM25,
   semantic expansion, dense hashing embeddings, hybrid RRF and cross-encoder rerank side by side
   on one corpus, with latency, highlighting and a click-through "why did this rank here?"
@@ -334,6 +334,17 @@ var hits = index.Search("refresh"); // also finds "token", "expiry", "session" d
 The rediscovered terms enter the very same inverted index — BM25, phrase, highlighting and
 every engine work on the enriched vocabulary untouched. The `bm25-semantic` preset of the
 benchmark CLI measures the impact against plain BM25 on your own corpus.
+
+The same expander can widen the **query** instead of the documents, with no reindexing, through
+the `ExpandingTextSearchEngine` decorator (original terms stay first; syntax-bearing queries are
+passed through untouched):
+
+```csharp
+using LexiSharp.Expansion;
+
+ITextSearchEngine engine = new ExpandingTextSearchEngine(bm25Engine, expansion);
+var hits = engine.Search("refresh"); // query becomes "refresh token access oauth session"
+```
 
 ### Reference demo (`samples/LexiSharp.Demo`)
 
