@@ -4,95 +4,104 @@ Numbers in this file come from BenchmarkDotNet runs on a single, aging developer
 they are **indicative only**, not a performance claim. Run the suite yourself before drawing
 any conclusion about your own corpus and hardware.
 
-## Machine
+## Machine & configuration
 
 ```
 BenchmarkDotNet v0.14.0, Manjaro Linux
 Intel Core i7-4790 CPU 3.60GHz (Haswell), 1 CPU, 8 logical and 4 physical cores
 .NET SDK 10.0.111
+Runtime: .NET 10.0.11 (X64 RyuJIT AVX2)
+Job: default (not ShortRun) — measurements below were collected in a single suite run.
 ```
-
-Two measurement generations are mixed below:
-
-- **Index building & Tokenizer** (older): `Job.ShortRun` (IterationCount=3, WarmupCount=3,
-  LaunchCount=1) on runtime `.NET 8.0.30`. Only 3 iterations → wide, noisy error bars; treat
-  as order of magnitude. These two tables have not been re-measured on .NET 10 yet.
-- **Search** (current, HEAD): default job on runtime `.NET 10.0.11`, measured after the perf
-  work merged on `main`.
 
 ## Search (`SearchBenchmarks`)
 
-Same synthetic corpus as the index builder: 10,000 documents, 50 words each. Default job,
-runtime `.NET 10.0.11`. `Allocated` excludes the corpus itself (index built once before the
-loop); it is the per-query allocation (per 1,000 operations in `Gen*` columns):
+Fast, non-noisy representative of the search hot path: a 10,000-document, 50-word corpus
+(index built once before the loop; `Allocated` is per-query, not the corpus itself):
 
 | Method                          | Mean      | Error     | StdDev    | Allocated |
 |-------------------------------- |----------:|----------:|----------:|----------:|
-| Bm25Search                      |  2.832 ms | 0.2562 ms | 0.7555 ms |   1.58 KB |
-| TfIdfSearch                     |  2.642 ms | 0.1195 ms | 0.3504 ms | 392.06 KB |
-| QueryLikelihoodSearch           |  3.666 ms | 0.1621 ms | 0.4779 ms | 392.06 KB |
-| BooleanSearch                   |  1.479 ms | 0.0724 ms | 0.2123 ms | 392.06 KB |
-| Bm25SearchRunAllQueries         | 27.940 ms | 0.5581 ms | 1.6012 ms |   8.13 KB |
+| Bm25Search                      |  2.336 ms | 0.1464 ms | 0.4316 ms |   1.33 KB |
+| TfIdfSearch                     |  2.197 ms | 0.1709 ms | 0.5040 ms |    1.3 KB |
+| QueryLikelihoodSearch           |  3.009 ms | 0.1619 ms | 0.4566 ms |   1.35 KB |
+| BooleanSearch                   |  1.077 ms | 0.0328 ms | 0.0945 ms |   1.19 KB |
+| Bm25SearchRunAllQueries         | 24.283 ms | 0.5560 ms | 1.6395 ms |   6.87 KB |
 
-Provenance: `Bm25Search`/`Bm25SearchRunAllQueries` were re-measured after the per-query plan
-hoist (`perf: hoist query-level corpus constants...`); `TfIdf`,`QueryLikelihood` and `Boolean`
-rows come from the previous optimization pass. A full refresh of every row on the same
-runtime is scheduled.
+Ranking output of every configuration is verified byte-for-byte against the pre-optimization
+engine (`QueryPlanParityTests`, full suite green), so the speedups below come with no quality
+trade-off. On the nfcorpus evaluation, all nDCG@10 scores are identical to the pre-optimization
+baseline (BM25 0.308, TF-IDF 0.248, Query-Likelihood 0.288, Dense 0.304, hybrids 0.323/0.333).
 
-### Before / after the search optimization pass (runtime .NET 10.0.11, same machine)
+### Before / after the search optimization pass (same env)
 
 | Method                          | Before          | After          | Mean Δ   | Alloc Δ   |
 |-------------------------------- |----------------:|---------------:|---------:|----------:|
-| Bm25Search                      |  6.923 ms / 4.12 MB |  2.832 ms / 1.58 KB | −59 % | −99.96 % |
-| TfIdfSearch                     |  6.239 ms / 4.12 MB |  2.642 ms / 392 KB | −58 % | −99.9 %  |
-| QueryLikelihoodSearch           |  7.062 ms / 4.12 MB |  3.666 ms / 392 KB | −48 % | −99.99 % |
-| BooleanSearch                   |  1.922 ms / 1.07 MB |  1.479 ms / 392 KB | −23 % | −64 %    |
-| Bm25SearchRunAllQueries         | 47.421 ms / 20.74 MB | 27.940 ms / 8.13 KB | −41 % | −99.96 % |
+| Bm25Search                      |  6.923 ms / 4.12 MB |  2.336 ms / 1.33 KB | −66 % | −99.97 % |
+| TfIdfSearch                     |  6.239 ms / 4.12 MB |  2.197 ms / 1.3 KB  | −65 % | −99.97 % |
+| QueryLikelihoodSearch           |  7.062 ms / 4.12 MB |  3.009 ms / 1.35 KB | −57 % | −99.97 % |
+| BooleanSearch                   |  1.922 ms / 1.07 MB |  1.077 ms / 1.19 KB | −44 % | −99.89 % |
+| Bm25SearchRunAllQueries         | 47.421 ms / 20.74 MB | 24.283 ms / 6.87 KB | −49 % | −99.97 % |
 
-Ranking output of every configuration is verified byte-for-byte against the pre-optimization
-engine (`QueryPlanParityTests`, 314 tests green), so the speedups come with no quality trade-off.
+The three big wins in the pass: a candidate-restricted scoring path for range scorers, a
+bounded top-L insertion instead of a full sort, and a per-query plan that hoists corpus
+statistics (idf, collection probabilities, average length) out of the per-document loop.
 
 ## Index building (`IndexBenchmarks`)
 
-Runtime `.NET 8.0.30`, `Job.ShortRun` — **to be re-measured on .NET 10**. Building an
-`InMemoryTextIndex` from scratch, 50 words per document. Gen0/Gen1/Gen2 columns are GC
-collection counts per 1,000 operations (BenchmarkDotNet convention):
+Building an `InMemoryTextIndex` from scratch, 50 words per document. Gen0/Gen1/Gen2 columns
+are GC collection counts per 1,000 operations (BenchmarkDotNet convention):
 
-| Method                            | DocumentCount | WordsPerDocument | Mean      | Error        | StdDev    | Gen0      | Gen1     | Gen2     | Allocated |
-|---------------------------------- |-------------- |----------------- |----------:|-------------:|----------:|----------:|---------:|---------:|----------:|
-| BuildInvertedIndex                | 1000          | 50               | 21.73 ms  | ±32.26 ms    | 1.768 ms  | 218.7500  | 93.7500  | -        | 25.49 MB  |
-| BuildIndexWithStopWordsAndStemmer | 1000          | 50               | 21.92 ms  | ±13.70 ms    | 0.751 ms  | 218.7500  | 156.2500 | -        | 25.53 MB  |
-| BuildInvertedIndex                | 10000         | 50               | 255.19 ms | ±35.99 ms    | 1.973 ms  | 1000.0000 | 500.0000 | 500.0000 | 253.27 MB |
-| BuildIndexWithStopWordsAndStemmer | 10000         | 50               | 318.15 ms | ±1,006.40 ms | 55.164 ms | 1000.0000 | 500.0000 | 500.0000 | 253.67 MB |
+| Method                            | DocumentCount | WordsPerDocument | Mean      | Error    | StdDev   | Gen0      | Gen1      | Gen2     | Allocated |
+|---------------------------------- |-------------- |----------------- |----------:|---------:|---------:|----------:|----------:|---------:|----------:|
+| BuildInvertedIndex                | 1000          | 50               |  10.30 ms | 0.200 ms | 0.280 ms |  265.6250 |  171.8750 |        - |   6.63 MB |
+| BuildIndexWithStopWordsAndStemmer | 1000          | 50               |  10.89 ms | 0.217 ms | 0.468 ms |  265.6250 |  171.8750 |        - |   6.67 MB |
+| BuildInvertedIndex                | 10000         | 50               | 167.31 ms | 3.331 ms | 4.882 ms | 1500.0000 | 1250.0000 | 500.0000 |  64.94 MB |
+| BuildIndexWithStopWordsAndStemmer | 10000         | 50               | 164.42 ms | 3.224 ms | 5.207 ms | 1750.0000 | 1500.0000 | 750.0000 |  65.34 MB |
 
-Read at this scale (roughly): a 10k-document, 50-word corpus indexes in ~0.25–0.32 s and
-allocates ~254 MB in the process. Nothing is claimed here about larger corpora, search
-latency under load, or memory behavior beyond a single run.
+Read at this scale (roughly): a 10k-document, 50-word corpus indexes in ~0.16 s and allocates
+~65 MB in the process. Nothing is claimed here about larger corpora, search latency under
+load, or memory behavior beyond a single run.
 
 ## Tokenizer (`TokenizerBenchmarks`)
 
-Runtime `.NET 8.0.30`, `Job.ShortRun` — **to be re-measured on .NET 10**. Tokenizing the
-same text under different normalizations. The `Ratio` column is only meaningful within the
-`Tokenize*` rows — the `Normalize*` methods operate on a much smaller input:
+Tokenizing the same text under different normalizations. The `Ratio` column is only
+meaningful within the `Tokenize*` rows — the `Normalize*` methods operate on a much smaller
+input:
 
-| Method               | Mean           | Error         | StdDev       | Ratio | Allocated |
-|--------------------- |---------------:|--------------:|-------------:|------:|----------:|
-| TokenizeDefaultAscii | 103,615.00 ns  | ±12,434.62 ns | 681.583 ns   | 1.000 | 155,264 B |
-| TokenizeAccented     | 500,803.37 ns  | ±265,484.78 ns| 14,552.117 ns| 4.833 | 431,592 B |
-| TokenizeMixedUnicode | 220,398.04 ns  | ±39,423.19 ns | 2,160.918 ns | 2.127 | 182,864 B |
-| NormalizeAsciiOnly   | 44.27 ns       | ±43.52 ns     | 2.385 ns     | 0.000 | -         |
-| NormalizeAccented    | 1,138.76 ns    | ±991.57 ns    | 54.351 ns    | 0.011 | 648 B     |
+| Method               | Mean          | Error        | StdDev        | Ratio | Allocated |
+|--------------------- |--------------:|-------------:|--------------:|------:|----------:|
+| TokenizeDefaultAscii |  97,527.99 ns | 1,822.854 ns |  2,995.002 ns | 1.000 | 138,616 B |
+| TokenizeAccented     | 470,094.28 ns | 9,327.037 ns | 15,324.590 ns | 4.824 | 329,824 B |
+| TokenizeMixedUnicode | 214,949.24 ns | 4,275.402 ns |  7,709.432 ns | 2.206 |  97,096 B |
+| NormalizeAsciiOnly   |      32.69 ns |     0.678 ns |      0.696 ns | 0.000 |         - |
+| NormalizeAccented    |     943.57 ns |    18.918 ns |     46.406 ns | 0.010 |     648 B |
 
 Read at this scale (roughly): ASCII-only input tokenizes ~5× faster than input requiring
 accent removal, and allocations scale accordingly. Absolute numbers will differ on any other
 machine.
 
+## Similarity (`LevenshteinBenchmarks`)
+
+| Method                  | Mean     | Error     | StdDev    | Allocated |
+|------------------------ |---------:|----------:|----------:|----------:|
+| DistanceAgainstVocabulary | 1.320 us | 0.0204 us | 0.0191 us |         - |
+| DistanceSimilarPairs      | 1.456 us | 0.0289 us | 0.0682 us |         - |
+
+## Classification (`ClassificationBenchmarks`)
+
+Synthetic in-memory Naive Bayes classifier (no external data or network):
+
+| Method          | Mean        | Error     | StdDev    | Allocated  |
+|---------------- |------------:|----------:|----------:|-----------:|
+| TrainClassifier | 2,097.52 us | 30.799 us | 25.719 us | 1571.28 KB |
+| PredictText     |    10.59 us |  0.209 us |  0.280 us |    9.44 KB |
+
 ## Reproduce
 
 ```bash
 dotnet run --project bench/LexiSharp.Benchmarks -c Release
-# search-only subset (fast) with the default job:
-dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter 'Bm25Search|TfIdfSearch|QueryLikelihoodSearch|BooleanSearch'
+# search-only subset (fast):
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*Search*'
 ```
 
 Reports land in `BenchmarkDotNet.Artifacts/results/` (CSV, HTML, GitHub-flavored markdown).
