@@ -128,9 +128,10 @@ or ML model** — pure lexical statistics.
 - **Keyword extraction** (`LexiSharp.Keywords`): a corpus-backed **TF-IDF** extractor
   (demotes corpus-frequent words) and a graph-based **TextRank** extractor (weighted
   co-occurrence graph + PageRank), both deterministic and tokenizer-configurable.
-- **Explainable scoring**: `Bm25Scorer`, `TfIdfScorer` and `QueryLikelihoodScorer` implement
-  `IScoreExplainer`, and `RankedTextSearchEngine.Explain` returns a per-term breakdown
-  (TF, IDF, term score, length normalization, parameter values) of any ranking decision.
+- **Explainable scoring**: `Bm25Scorer`, `TfIdfScorer`, `QueryLikelihoodScorer` and
+  `BooleanScorer` implement `IScoreExplainer`, and `RankedTextSearchEngine.Explain` returns a
+  per-term breakdown (TF, IDF, term score, length normalization, parameter values) of any
+  ranking decision.
 - **Calibrated confidence** (`ScoreConfidence`): maps a result set's raw scores — BM25 output
   and friends, whose scale is not a probability — to a per-result confidence in [0,1],
   either from the winner margin (gap to the next result, scale-invariant) or from a logistic
