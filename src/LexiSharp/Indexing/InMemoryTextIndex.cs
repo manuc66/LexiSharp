@@ -103,6 +103,71 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
         }
     }
 
+    /// <summary>
+    /// Number of synthetic positions inserted between a document's literal tokens and its
+    /// expansion terms, so a phrase query can never bridge across the boundary.
+    /// </summary>
+    private const int ExpansionPositionOffset = 2;
+
+    /// <summary>
+    /// Indexes additional terms for an already-indexed document (the « semantic lexical »
+    /// expansion). Each term counts once, at a synthetic position strictly after the
+    /// document's literal tokens, and participates in the same statistics (document length,
+    /// corpus frequencies) as any regular token. Terms the document already contains are
+    /// skipped. The <see cref="SearchDocument"/> itself is left untouched.
+    /// </summary>
+    /// <param name="documentId">An id currently present in the index.</param>
+    /// <param name="additionalTerms">The distinct terms to add.</param>
+    public void AddExpansionTerms(string documentId, IEnumerable<string> additionalTerms)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(documentId);
+        ArgumentNullException.ThrowIfNull(additionalTerms);
+
+        if (!_documents.TryGetValue(documentId, out _))
+            throw new KeyNotFoundException($"Unknown document id: '{documentId}'.");
+
+        var existing = new HashSet<string>(_tokens[documentId], StringComparer.Ordinal);
+        int nextPosition = _lengths[documentId] + ExpansionPositionOffset;
+
+        var added = new List<string>();
+        int addedCount = 0;
+
+        foreach (var term in additionalTerms)
+        {
+            if (term.Length == 0 || !existing.Add(term))
+                continue;
+
+            if (!_postings.TryGetValue(term, out var postings))
+            {
+                postings = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+                _postings[term] = postings;
+            }
+
+            if (!postings.TryGetValue(documentId, out var positions))
+            {
+                positions = new List<int>(1);
+                postings[documentId] = positions;
+            }
+
+            positions.Add(nextPosition++);
+            added.Add(term);
+            addedCount++;
+
+            _corpusFrequencies.TryGetValue(term, out int corpusCount);
+            _corpusFrequencies[term] = corpusCount + 1;
+        }
+
+        if (addedCount == 0)
+            return;
+
+        var allTokens = new List<string>(_tokens[documentId]);
+        allTokens.AddRange(added);
+        _tokens[documentId] = allTokens;
+
+        _lengths[documentId] += addedCount;
+        _totalTokens += addedCount;
+    }
+
     /// <inheritdoc />
     public bool Remove(string documentId)
     {

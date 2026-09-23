@@ -1,5 +1,7 @@
 using LexiSharp.Core;
+using LexiSharp.Expansion;
 using LexiSharp.Hybrid;
+using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
 
@@ -44,6 +46,22 @@ public sealed record BenchmarkConfig
     public static BenchmarkConfig Bm25(double k1 = 1.5, double b = 0.75) =>
         new(name: "BM25", build: (index, tokenizer, _, _) =>
             new RankedTextSearchEngine(index, new Bm25Scorer(k1, b), tokenizer));
+
+    /// <summary>
+    /// BM25 over an index enriched with corpus-learned « semantic lexical » expansion
+    /// (<see cref="PmiTermExpander"/> learned from the benchmark corpus itself): documents are
+    /// additionally filed under weakly associated terms, so queries match conceptually related
+    /// documents they never mention literally. Builds its own expanded index out of the shared
+    /// corpus.
+    /// </summary>
+    public static BenchmarkConfig Bm25Semantic(PmiTermExpanderOptions? options = null) =>
+        new(name: "BM25 + semantic", build: (index, tokenizer, _, _) =>
+        {
+            var expander = PmiTermExpander.LearnFrom(index.Documents, tokenizer, options);
+            var expanded = new ExpansionTextIndex(expander, tokenizer);
+            expanded.Index(index.Documents);
+            return new RankedTextSearchEngine(expanded, new Bm25Scorer(), tokenizer);
+        });
 
     /// <summary>
     /// BM25 with <c>(k1, b)</c> fitted on the labeled queries through

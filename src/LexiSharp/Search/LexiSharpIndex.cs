@@ -1,5 +1,6 @@
 using System.Text;
 using LexiSharp.Core;
+using LexiSharp.Expansion;
 using LexiSharp.Highlighting;
 using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
@@ -40,7 +41,8 @@ public sealed class LexiSharpIndex<TDocument>
     private readonly Func<TDocument, IReadOnlyDictionary<string, string>?> _fields;
     private readonly bool _enableFuzzy;
 
-    private readonly InMemoryTextIndex _index;
+    private readonly ITextIndex _index;
+    private readonly ITokenizer _tokenizer;
     private readonly RankedTextSearchEngine _baseEngine;
     private readonly ITextSearchEngine _engine;
     private readonly ISpanTokenizer? _spanTokenizer;
@@ -72,8 +74,11 @@ public sealed class LexiSharpIndex<TDocument>
 
         var tokenizer = options.Tokenizer ?? BuildDefaultTokenizer(options);
         _spanTokenizer = tokenizer as ISpanTokenizer;
+        _tokenizer = tokenizer;
 
-        _index = new InMemoryTextIndex(tokenizer);
+        _index = options.TermExpander is null
+            ? new InMemoryTextIndex(tokenizer)
+            : new ExpansionTextIndex(options.TermExpander, tokenizer);
         _baseEngine = new RankedTextSearchEngine(_index, options.Scorer, tokenizer, options.Synonyms);
         _engine = options.Reranker is null
             ? _baseEngine
@@ -158,7 +163,7 @@ public sealed class LexiSharpIndex<TDocument>
         IReadOnlyList<string>? queryTerms = null;
 
         if (options?.Highlight == true && _spanTokenizer is not null)
-            queryTerms = QueryParser.Parse(effectiveQuery, _index.Tokenizer).AllTerms;
+            queryTerms = QueryParser.Parse(effectiveQuery, _tokenizer).AllTerms;
 
         return MapHits(_engine.Search(effectiveQuery, coreOptions), queryTerms);
     }
@@ -219,7 +224,7 @@ public sealed class LexiSharpIndex<TDocument>
         if (!_enableFuzzy || query.IndexOfAny(['~', '*', '"']) >= 0)
             return query;
 
-        var terms = _index.Tokenizer.Tokenize(query);
+        var terms = _tokenizer.Tokenize(query);
 
         if (terms.Count == 0)
             return query;

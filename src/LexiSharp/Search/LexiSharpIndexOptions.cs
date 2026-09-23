@@ -1,4 +1,5 @@
 using LexiSharp.Core;
+using LexiSharp.Expansion;
 using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
 
@@ -51,6 +52,15 @@ public sealed class LexiSharpIndexOptions<TDocument>
     /// stock tokenizer when every knob is at its default.
     /// </summary>
     public ITokenizer? Tokenizer { get; set; }
+
+    /// <summary>
+    /// Optional « semantic lexical » expansion: every indexed document is also filed under the
+    /// weak terms this expander derives from its own tokens (see
+    /// <see cref="PmiTermExpander"/> for a corpus-learned, model-free implementation). Queries
+    /// then reach conceptually related documents they never mention literally, while the whole
+    /// index stays a plain inverted structure. Default: <c>null</c> (no expansion).
+    /// </summary>
+    public ITermExpander? TermExpander { get; set; }
 
     /// <summary>Optional synonym edges applied to free query terms.</summary>
     public SynonymMap? Synonyms { get; set; }
