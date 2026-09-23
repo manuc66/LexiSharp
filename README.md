@@ -40,6 +40,10 @@ or ML model** — pure lexical statistics.
 - **Document sources** (`LexiSharp.Sources`): loaders for the data on your disk — markdown
   with YAML front matter, plain text files and JSON arrays — producing id + text + fields +
   category records ready to index.
+- **Benchmark CLI** (`LexiSharp.Cli` + `LexiSharp.Benchmarking`): an in-core runner compares
+  stock scorers, tuned BM25 and RRF hybrids on your own corpus with labeled queries, reporting
+  the standard retrieval metrics and latency; a console front-end drives it from the command
+  line.
 - **Four ranking strategies** behind the same `ITextSearchEngine`:
   - `Bm25Scorer` — Okapi BM25, with ready-made `Bm25Parameters` profiles (`Balanced`,
     `Aggressive`, `Conservative`),
@@ -209,6 +213,29 @@ var records = JsonDocumentsLoader.Parse(json, new JsonDocumentLoadOptions
 - **`JsonDocumentsLoader`** — parses a JSON array of objects; scalars become fields, scalar
   arrays are flattened to a comma-separated string; the id/text/category property names are
   configurable.
+
+### Benchmark CLI (`LexiSharp.Cli`)
+
+Compare ranking strategies over your own corpus without writing code. The runner
+(`LexiSharp.Benchmarking` in the core) builds one shared in-memory index, evaluates every
+selected configuration against the same labeled queries and reports nDCG/MAP/MRR/Recall/
+Precision/F1 at the retrieval depth plus the per-query latency:
+
+```
+dotnet run --project bench/LexiSharp.Cli -c Release -- benchmark ./notes \
+    --queries queries.json --qrels qrels.tsv --top-k 10
+```
+
+- `--queries` accepts a JSON object `{ "id": "query text", ... }` or a TSV `id⇥text`.
+- `--qrels` is a TSV `qid⇥docid[⇥grade]` (grades are read as binary relevance); a query
+  without any judgment is loaded but excluded from the metric averages.
+- `--configs` selects the comparison: `bm25`, `bm25-tuned` (fits `(k1, b)` on the labeled
+  queries), `tfidf`, `ql` (query likelihood), `hybrid` (RRF over BM25 + TF-IDF).
+- `--json <path>` writes the results as a machine-readable report.
+
+The same comparison is available in-process through `CorpusBenchmark.Run` over any
+`IReadOnlyCollection<SearchDocument>` and `BenchmarkQuery` set, with custom engines reachable
+through the public `BenchmarkConfig` constructor.
 
 Change the ranking algorithm without rebuilding the index:
 
