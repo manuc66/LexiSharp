@@ -37,6 +37,9 @@ or ML model** — pure lexical statistics.
 - **Drop-in entry point** (`LexiSharpIndex<T>`): a typed facade that maps your own document
   type to the engine and back — index objects, get your objects back — with fluent options for
   the scorer, tokenizer, fuzzy matching, synonyms and an optional reranker.
+- **Document sources** (`LexiSharp.Sources`): loaders for the data on your disk — markdown
+  with YAML front matter, plain text files and JSON arrays — producing id + text + fields +
+  category records ready to index.
 - **Four ranking strategies** behind the same `ITextSearchEngine`:
   - `Bm25Scorer` — Okapi BM25, with ready-made `Bm25Parameters` profiles (`Balanced`,
     `Aggressive`, `Conservative`),
@@ -176,6 +179,36 @@ corpus snapshot. `Highlight: true` on the query options wraps the matched terms 
 The scorer/tokenizer knobs of the rest of the library stay reachable through
 `LexiSharpIndexOptions<T>` (`UseBm25`, `UseTfIdf`, `UseQueryLikelihood`, `UseBoolean`,
 `RemoveStopWords`, `Stemmer`, `NGramMax`, `Synonyms`, `Reranker`, ...).
+
+### Document sources (`LexiSharp.Sources`)
+
+Pair the facade with the loaders to index data that lives on disk: each loader produces a
+`LoadedDocument` (id + text + optional fields/category) that maps straight into a
+`LexiSharpIndex<LoadedDocument>` or a `SearchDocument`.
+
+```csharp
+using LexiSharp.Sources;
+
+var notes = MarkdownLoader.LoadDirectory(@"./notes");          // *.md, *.markdown, *.mdx
+var ledgers = TextFileLoader.ScanDirectory(@"./ledgers");      // any plain text files
+var records = JsonDocumentsLoader.Parse(json, new JsonDocumentLoadOptions
+{
+    IdProperty = "docid",
+    TextProperty = "content",
+    CategoryProperty = "bucket",
+});
+```
+
+- **`MarkdownLoader`** — reads a file (`LoadFile`) or a whole directory (`LoadDirectory`,
+  recursive, hidden paths skipped), parses the optional `---` YAML front matter into fields
+  (`title`, `category`, `tags` as `[a, b]` lists, plus any other `key: value`), and indexes the
+  remaining text. Document ids default to the full path for files and the forward-slash
+  relative path for directory scans.
+- **`TextFileLoader`** — whole file content is the indexed text; `title` and `source` fields
+  are added automatically.
+- **`JsonDocumentsLoader`** — parses a JSON array of objects; scalars become fields, scalar
+  arrays are flattened to a comma-separated string; the id/text/category property names are
+  configurable.
 
 Change the ranking algorithm without rebuilding the index:
 
