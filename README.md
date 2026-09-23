@@ -69,6 +69,11 @@ or ML model** — pure lexical statistics.
 - **Sparse learned embeddings**: `SparseTextSearchEngine` and its `ISparseEmbeddingProvider`
   seam bring SPLADE/uniCOIL-style retrieval (.NET-core only, weights learned, inverted-index
   scoring kept) without pulling ONNX into the library — the model lives in the consumer.
+- **Semantic lexical expansion** (`LexiSharp.Expansion`): an `ITermExpander` seam that widens
+  a query — and any document, at index time — with corpus-derived related terms
+  (`PmiTermExpander` learns PPMI/co-occurrence associations from your own documents), then
+  folds them into the classic inverted index (`ExpansionTextIndex`, zero-new-dependencies,
+  pure .NET core; the seam is where a real neural SPLADE model plugs in later).
 - **Metadata filters**: declarative, AND-composed filters over document fields
   (`MetadataFilterOperator`: equal, not-equal, contains, numeric-or-ordinal greater/less than)
   in `SearchOptions` — honored by every backend (stock in-memory and SQL) before scoring.
@@ -276,6 +281,38 @@ var bm25Engine   = new RankedTextSearchEngine(index, new Bm25Scorer());
 var tfIdfEngine  = new RankedTextSearchEngine(index, new TfIdfScorer());
 var booleanEngine = new RankedTextSearchEngine(index, new BooleanScorer(BooleanMatch.AllTerms));
 ```
+
+### Semantic lexical expansion (`LexiSharp.Expansion`)
+
+A query (or a document) rarely uses the *exact* vocabulary of what it is about. The
+`ITermExpander` seam lets the index enrich itself: each document is indexed as usual, then
+gains a handful of **expansion terms** — related words learned from the corpus — stored at
+synthetic positions after its literal tokens (a phrase query can never bridge the boundary).
+`PmiTermExpander` learns those associations statistically from your own documents (windowed
+co-occurrence, PMI-filtered, density-capped so function words don't leak); plug your own
+implementation (e.g. a neural SPLADE model) behind the same interface:
+
+```csharp
+using LexiSharp;
+using LexiSharp.Expansion;
+
+// Learn the associations from the documents you are about to index (say, loaders output).
+var expansion = PmiTermExpander.LearnFrom(corpus, options: new PmiTermExpanderOptions
+{
+    ContextWindowSize = 8,     // ±7 neighbours; 8 is the standard (LSA/PMI) default
+    MaxWindowDensity = 0.5,    // drop words present in > half the windows (function words)
+    MaxTotalTerms = 8,         // expansion budget per document
+});
+
+var index = new LexiSharpIndex<SearchDocument>(options => options.TermExpander = expansion);
+index.AddRange(documents); // every document is expanded lazily at its own Add
+
+var hits = index.Search("refresh"); // also finds "token", "expiry", "session" documents
+```
+
+The rediscovered terms enter the very same inverted index — BM25, phrase, highlighting and
+every engine work on the enriched vocabulary untouched. The `bm25-semantic` preset of the
+benchmark CLI measures the impact against plain BM25 on your own corpus.
 
 ### Classification
 

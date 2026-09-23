@@ -15,7 +15,7 @@ public static class Program
         + "  --qrels <file>       Relevance judgments: TSV 'qid\\tdocid[\\tgrade]', one per line ('#' comments)\n"
         + "  --top-k <n>          Retrieval depth for every metric (default: 10)\n"
         + "  --limit <n>          Cap the number of queries evaluated (default: all)\n"
-        + "  --configs <list>     Comma-separated: bm25, bm25-tuned, tfidf, ql, hybrid (default: bm25,tfidf,ql,hybrid,bm25-tuned)\n"
+        + "  --configs <list>     Comma-separated: bm25, bm25-tuned, tfidf, ql, hybrid, bm25-semantic (default: bm25,tfidf,ql,hybrid,bm25-tuned)\n"
         + "  --json <path>        Write the results as JSON to this file\n"
         + "  --help, -h           Show this help";
 
@@ -249,7 +249,8 @@ public static class Program
                 "tfidf" => BenchmarkConfig.TfIdf(),
                 "ql" => BenchmarkConfig.QueryLikelihood(),
                 "hybrid" => BenchmarkConfig.HybridRrf(new Bm25Scorer(), new TfIdfScorer()),
-                _ => throw new ArgumentException($"Unknown configuration '{name}'. Valid: bm25, bm25-tuned, tfidf, ql, hybrid.", nameof(names)),
+                "bm25-semantic" => BenchmarkConfig.Bm25Semantic(),
+                _ => throw new ArgumentException($"Unknown configuration '{name}'. Valid: bm25, bm25-tuned, tfidf, ql, hybrid, bm25-semantic.", nameof(names)),
             });
         }
 
