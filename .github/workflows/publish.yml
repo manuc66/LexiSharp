@@ -53,6 +53,9 @@ jobs:
       - name: Pack LexiSharp.AspNetCore
         run: dotnet pack src/LexiSharp.AspNetCore/LexiSharp.AspNetCore.csproj -c Release -o nupkgs /p:Version=${{ steps.ver.outputs.version }}
 
+      - name: Pack LexiSharp.Postgres
+        run: dotnet pack src/LexiSharp.Postgres/LexiSharp.Postgres.csproj -c Release -o nupkgs /p:Version=${{ steps.ver.outputs.version }}
+
       # Trusted publishing: exchange the GitHub OIDC token for a short-lived
       # NuGet API key (no long-lived secret). Requires a trusted publishing
       # policy on nuget.org for owner manuc66, repository lexisharp and
