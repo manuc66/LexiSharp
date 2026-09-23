@@ -108,6 +108,11 @@ or ML model** — pure lexical statistics.
 - **Cost-based routing** (`RoutedSearchEngine`): opt-in decorator over several pre-filled
   engines that forwards each query to the cheapest one, chosen by an `IQueryCostEstimator` —
   the default `CheapestByCandidateCountEstimator` uses per-engine `IQueryCostProbe` estimates.
+- **Intent-based routing** (`RoutingSearchEngine`): opt-in decorator over pre-composed routes
+  (engine + optional metadata filters) that asks an `IQueryRouter` you supply — a rule, a
+  classifier or a model — which route to run, with a confidence threshold and a fallback. The
+  route's filters are AND-ed onto the caller's. The seam is model-agnostic: LexiSharp never
+  runs a model itself.
 - **Lexical similarity** (`LexiSharp.Similarity`): pairwise token-set measures (Jaccard,
   Sørensen–Dice) over the library tokenizer, a `pg_trgm`-style character trigram similarity,
   and a rolling Levenshtein edit distance — near-duplicate detection and fuzzy matching with
@@ -662,6 +667,39 @@ the selected engine lacks throws `NotSupportedException` rather than silently re
 inner engine (they do not change how many candidates a query touches); their score-mutating
 wrapper does not currently surface facets/detailed/explain, whose contracts it cannot
 preserve.
+
+### Intent-based routing (`RoutingSearchEngine`)
+
+Cost routing picks the cheapest engine; intent routing picks the *right* one. Route each query to
+a pre-composed target — an engine plus optional metadata filters — chosen by a decision you
+supply (a rule, a small classifier, or a model behind `IQueryRouter`):
+
+```csharp
+using LexiSharp.Core;
+
+var router = new RoutingSearchEngine(
+    new KeywordVsQuestionRouter(),                 // your IQueryRouter
+    new[]
+    {
+        new SearchRoute("keywords", memoryEngine),
+        new SearchRoute("questions", pgEngine, new[]
+        {
+            new MetadataFilter("kind", MetadataFilterOperator.Equal, "faq"),
+        }),
+    },
+    fallbackId: "keywords",
+    minimumConfidence: 0.6);
+
+IReadOnlyList<SearchResult> hits = router.Search("how do I reset my password?");
+```
+
+The router only chooses among the ids it is given (`RouteAsync(query, candidateIds)`); it never
+builds filters or touches indexes. The selected route's filters are AND-ed onto the caller's
+`SearchOptions.Filters`. A `null` decision, an unknown id, a confidence below the threshold or a
+thrown exception all run the fallback route — a broken router never breaks a search. The seam is
+async (`ValueTask<QueryRoute?>`) because a model-backed router is naturally async, but the
+synchronous `Search` blocks on it, like the PostgreSQL engines block on `IEmbeddingProvider`.
+LexiSharp never runs a model itself: you provide the rule, classifier or model.
 
 ### Lexical similarity and keyword extraction
 
