@@ -69,6 +69,10 @@ or ML model** — pure lexical statistics.
 - **Sparse learned embeddings**: `SparseTextSearchEngine` and its `ISparseEmbeddingProvider`
   seam bring SPLADE/uniCOIL-style retrieval (.NET-core only, weights learned, inverted-index
   scoring kept) without pulling ONNX into the library — the model lives in the consumer.
+- **In-memory dense retrieval**: `InMemoryVectorSearchEngine` ranks by cosine over an
+  `IEmbeddingProvider`'s vectors (with `Export`/`Import` to reload without re-embedding), the
+  in-process counterpart of the PostgreSQL `pgvector` engine — and `HashingEmbeddingProvider`
+  makes the whole embedding stack usable and testable with **no model and no dependency**.
 - **Semantic lexical expansion** (`LexiSharp.Expansion`): an `ITermExpander` seam that widens
   a query — and any document, at index time — with corpus-derived related terms
   (`PmiTermExpander` learns PPMI/co-occurrence associations from your own documents), then
@@ -1052,6 +1056,39 @@ persistence, `MessagePackSparseIndexPersistence` serializes the stored weights d
 `PostgresSparseSearchEngine` is the same model over `pgvector sparsevec`. In every backend, only
 **queries** keep needing the provider after the corpus is loaded.
 
+### In-memory dense retrieval (`InMemoryVectorSearchEngine`, `HashingEmbeddingProvider`)
+
+The dense counterpart of the sparse engine, and the in-process twin of the PostgreSQL
+`pgvector` engine: documents are embedded with an `IEmbeddingProvider` and queries are ranked
+by **cosine similarity** over the whole corpus — a linear scan, no ANN index, so it targets
+small/medium corpora (reach for `LexiSharp.Postgres` beyond that). Negative and orthogonal
+cosines are clamped to `0` ("not a match"), keeping the standard LexiSharp score convention:
+
+```csharp
+using LexiSharp.Core;
+using LexiSharp.Indexing;
+
+IEmbeddingProvider model = myOnnxMiniLm;               // consumer-provided
+ITextSearchEngine dense = new InMemoryVectorSearchEngine(model);
+
+dense.Add(new SearchDocument("doc-1", "oauth access token renewal"));
+
+var results = dense.Search("refresh credentials");
+```
+
+Like the sparse engine it implements `ITextSearchEngine`, so it fuses with BM25 through
+`HybridTextSearchEngine` + `ReciprocalRankFusionMerger` (lexical + dense hybrid, in memory),
+and `Export()` / `Import()` reload a corpus from its stored vectors without calling the model.
+`InMemoryVectorSearchEngine` also implements `IQueryCostProbe` (a scan touches every document),
+so `RoutedSearchEngine` can weigh it against the lexical engines.
+
+To make the seam usable with **no model at all**, the core ships
+`HashingEmbeddingProvider`: a deterministic feature-hashing embedding (FNV-1a, sign hashing,
+L2-normalized) implementing both `IEmbeddingProvider` and `ITokenEmbeddingProvider`. It is
+**not semantic** — it captures lexical overlap, not meaning — but it exercises and tests the
+whole embedding stack (dense search, MMR, MaxSim, Postgres vector) offline, and is a drop-in
+baseline to swap for a real model behind the same interface.
+
 ### Reranking stage
 
 The reranking stage composes with all of it: wrap the hybrid in a
@@ -1065,7 +1102,7 @@ retrieve-then-rerank shape, one line of composition.
 ```
 Package            Responsibilities
 ─────────────────────────────────────────────────────────────────────────────
-LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider + ISparseEmbeddingProvider + sparse engine (export/import) + boost/rerank decorators + filters + highlighting + facets + similarity + keywords + metrics + hybrid federation (RRF, weighted, cascade, cross-encoder, MMR, MaxSim)
+LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider + ISparseEmbeddingProvider + sparse engine + in-memory dense engine + hashing embedding provider (export/import) + boost/rerank decorators + filters + highlighting + facets + similarity + keywords + metrics + hybrid federation (RRF, weighted, cascade, cross-encoder, MMR, MaxSim)
 LexiSharp.Postgres  PostgreSQL providers: tsvector+unaccent (lexical), pgvector ANN (vector), pgvector sparsevec (sparse), pg_trgm+fuzzystrmatch (fuzzy), pg_search/Tantivy (true BM25)
 LexiSharp.MessagePack   MessagePack (binary) persistence for the in-memory index and the sparse engine
 ```
