@@ -78,7 +78,7 @@ public class LexiSharpIndexTests
 
         Assert.Equal("a", hit.DocumentId);
         Assert.Equal("hello world", hit.Document.Text);
-        Assert.Equal("en", hit.Document.Fields["lang"]);
+        Assert.Equal("en", hit.Document.Fields!["lang"]);
     }
 
     [Fact]

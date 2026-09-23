@@ -22,10 +22,12 @@
     </PackageReference>
     <PackageReference Include="FsCheck" Version="3.4.0" />
     <PackageReference Include="FsCheck.Xunit" Version="3.4.0" />
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="10.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../src/LexiSharp/LexiSharp.csproj" />
+    <ProjectReference Include="../../src/LexiSharp.AspNetCore/LexiSharp.AspNetCore.csproj" />
     <ProjectReference Include="../../src/LexiSharp.MessagePack/LexiSharp.MessagePack.csproj" />
     <ProjectReference Include="../../src/LexiSharp.ParadeDB/LexiSharp.ParadeDB.csproj" />
     <ProjectReference Include="../../src/LexiSharp.Postgres/LexiSharp.Postgres.csproj" />

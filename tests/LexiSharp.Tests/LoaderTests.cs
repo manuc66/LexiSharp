@@ -144,8 +144,8 @@ public class LoaderTests
         Assert.Equal("1", documents[0].Id);
         Assert.Equal("hello world", documents[0].Text);
         Assert.Equal("en", documents[0].Fields!["lang"]);
-        Assert.Equal("a, b", documents[0].Fields["tags"]);
-        Assert.Equal("true", documents[0].Fields["flag"]);
+        Assert.Equal("a, b", documents[0].Fields!["tags"]);
+        Assert.Equal("true", documents[0].Fields!["flag"]);
         Assert.Equal("2", documents[1].Id);
     }
 
@@ -186,7 +186,7 @@ public class LoaderTests
             AdditionalPropertiesAsFields = false,
         }).Single();
 
-        Assert.Empty(document.Fields);
+        Assert.Empty(document.Fields!);
     }
 
     [Fact]

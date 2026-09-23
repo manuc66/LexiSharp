@@ -44,6 +44,9 @@ or ML model** — pure lexical statistics.
   stock scorers, tuned BM25 and RRF hybrids on your own corpus with labeled queries, reporting
   the standard retrieval metrics and latency; a console front-end drives it from the command
   line.
+- **ASP.NET Core endpoint** (`LexiSharp.AspNetCore`): a minimal-API extension that maps any
+  `LexiSharpIndex<T>` to a `GET /search` endpoint with pagination, minimum score and text
+  highlighting over HTTP.
 - **Four ranking strategies** behind the same `ITextSearchEngine`:
   - `Bm25Scorer` — Okapi BM25, with ready-made `Bm25Parameters` profiles (`Balanced`,
     `Aggressive`, `Conservative`),
@@ -236,6 +239,35 @@ dotnet run --project bench/LexiSharp.Cli -c Release -- benchmark ./notes \
 The same comparison is available in-process through `CorpusBenchmark.Run` over any
 `IReadOnlyCollection<SearchDocument>` and `BenchmarkQuery` set, with custom engines reachable
 through the public `BenchmarkConfig` constructor.
+
+### ASP.NET Core search endpoint (`LexiSharp.AspNetCore`)
+
+A minimal-API endpoint that exposes any registered `LexiSharpIndex<T>` over HTTP — a thin
+package built on the core (no web framework of its own; you reference it from your ASP.NET
+Core app):
+
+```csharp
+using LexiSharp;
+using LexiSharp.AspNetCore;
+
+var builder = WebApplication.CreateBuilder(args);
+
+var index = new LexiSharpIndex<SearchDocument>();
+index.AddRange(loader.LoadDirectory("data"));
+builder.Services.AddSingleton(index); // resolve the same<T> the endpoint uses
+
+var app = builder.Build();
+app.MapLexiSharpSearch<SearchDocument>(); // GET /search?q=...&limit=10&offset=0&highlight=true
+
+app.Run();
+```
+
+- Query parameters: `q` (required), `limit` (default 10), `offset` (default 0),
+  `minimumScore` (default −∞), `highlight` (default false).
+- A blank `q` returns `400` with a `{ "field": "q", "message": ... }` error payload.
+- With `highlight=true` each hit carries `highlightedText`, the document text with matched
+  terms wrapped in `<em>`; the page honors `Limit`/`MinimumScore`/`Offset` exactly like the
+  in-process `LexiSharpIndex<T>.Search`.
 
 Change the ranking algorithm without rebuilding the index:
 
