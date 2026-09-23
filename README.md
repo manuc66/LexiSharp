@@ -139,11 +139,11 @@ or ML model** — pure lexical statistics.
   - `LexiSharp.Postgres` — PostgreSQL backends implementing the same `ITextSearchEngine`:
     a lexical engine over `tsvector` + GIN + `unaccent`, an ANN engine over `pgvector`
     (HNSW/IVFFlat) driven by an external `IEmbeddingProvider`, a learned-**sparse** engine
-    over `pgvector sparsevec` (HNSW) driven by an `ISparseEmbeddingProvider`, and an
-    approximate **fuzzy** engine over the `pg_trgm` trigram extension (with optional
-    `fuzzystrmatch` refinement);
-  - `LexiSharp.ParadeDB` — **true Okapi BM25** on top of the `pg_search` Tantivy extension
-    (AGPL-3, requires the ParadeDB Docker image or self-hosted extension).
+    over `pgvector sparsevec` (HNSW) driven by an `ISparseEmbeddingProvider`, an approximate
+    **fuzzy** engine over the `pg_trgm` trigram extension (with optional `fuzzystrmatch`
+    refinement), and a **true Okapi BM25** engine over the ParadeDB `pg_search` Tantivy
+    extension (`ParadeDBTextSearchEngine`, AGPL-3). The extension engines share one documents
+    table and are picked at instantiation, exactly like the other backends.
 
 ## Quick start
 
@@ -865,14 +865,16 @@ mode ranks by `similarity()` above the configured threshold. These are the class
 blocks for autocomplete, de-duplication of names/addresses and "did you mean". PostgreSQL-native
 scores again call for `ReciprocalRankFusionMerger` when mixing with other engines.
 
-### ParadeDB backend (`LexiSharp.ParadeDB`)
+### ParadeDB BM25 backend (`ParadeDBTextSearchEngine`)
 
 Okapi BM25 ranking computed by Tantivy inside PostgreSQL through the `pg_search`
 extension — an option to consider when `ts_rank_cd` ranking is not good enough and true
-BM25 is wanted.
+BM25 is wanted. It ships in the same `LexiSharp.Postgres` package as the other PostgreSQL
+engines; only the `pg_search` extension (a self-hosted install or the ParadeDB image) is
+required server-side.
 
 ```csharp
-// install once:  dotnet add package LexiSharp.ParadeDB
+// install once:  dotnet add package LexiSharp.Postgres
 using LexiSharp.ParadeDB;
 
 ITextSearchEngine engine = new ParadeDBTextSearchEngine(connectionString);
@@ -1000,8 +1002,7 @@ retrieve-then-rerank shape, one line of composition.
 Package            Responsibilities
 ─────────────────────────────────────────────────────────────────────────────
 LexiSharp         records + interfaces + in-memory index + scorers + tokenizer + IEmbeddingProvider + ISparseEmbeddingProvider + sparse engine (export/import) + boost/rerank decorators + filters + highlighting + facets + similarity + keywords + metrics + hybrid federation (RRF, weighted, cascade, cross-encoder, MMR, MaxSim)
-LexiSharp.Postgres  PostgreSQL providers: tsvector+unaccent (lexical), pgvector ANN (vector), pgvector sparsevec (sparse), pg_trgm+fuzzystrmatch (fuzzy)
-LexiSharp.ParadeDB   true BM25 provider on the pg_search (Tantivy) extension
+LexiSharp.Postgres  PostgreSQL providers: tsvector+unaccent (lexical), pgvector ANN (vector), pgvector sparsevec (sparse), pg_trgm+fuzzystrmatch (fuzzy), pg_search/Tantivy (true BM25)
 LexiSharp.MessagePack   MessagePack (binary) persistence for the in-memory index and the sparse engine
 ```
 

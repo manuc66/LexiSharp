@@ -129,9 +129,10 @@ jobs:
     # the SonarScanner for .NET, and per Sonar's docs the coverage report must
     # be produced in the same job (between begin and end), so this job builds
     # and tests the solution itself. Auto-skipped until SONAR_TOKEN is set.
-    # Coverage excludes LexiSharp.Postgres/ParadeDB: their integration tests
-    # auto-skip without POSTGRES_TEST_CONNECTION, so counting them would drag
-    # the new-code coverage gate under 80% on every Postgres change.
+    # Coverage excludes LexiSharp.Postgres (including its ParadeDB/pg_search
+    # engine): their integration tests auto-skip without POSTGRES_TEST_CONNECTION,
+    # so counting them would drag the new-code coverage gate under 80% on every
+    # Postgres change.
     name: SonarCloud analysis
     needs: preflight
     if: needs.preflight.outputs.has_sonar == 'true'
@@ -162,7 +163,7 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             pr_args="/d:sonar.pullrequest.key=$PR_KEY /d:sonar.pullrequest.branch=$PR_BRANCH /d:sonar.pullrequest.base=$PR_BASE"
           fi
-          dotnet-sonarscanner begin /k:manuc66_lexisharp /o:manuc66-github /d:sonar.token="$SONAR_TOKEN" /d:sonar.host.url=https://sonarcloud.io /d:sonar.cs.cobertura.reportsPaths=TestResults/**/coverage*.cobertura.xml /d:sonar.exclusions=**/*Tests*/**/*,**/bench/**/* /d:sonar.coverage.exclusions=**/LexiSharp.Postgres/**/*,**/LexiSharp.ParadeDB/**/* $pr_args
+          dotnet-sonarscanner begin /k:manuc66_lexisharp /o:manuc66-github /d:sonar.token="$SONAR_TOKEN" /d:sonar.host.url=https://sonarcloud.io /d:sonar.cs.cobertura.reportsPaths=TestResults/**/coverage*.cobertura.xml /d:sonar.exclusions=**/*Tests*/**/*,**/bench/**/* /d:sonar.coverage.exclusions=**/LexiSharp.Postgres/**/* $pr_args
 
       - name: Test with coverage
         # The build happens here: coverlet.msbuild instrumentation requires

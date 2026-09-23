@@ -29,7 +29,6 @@
     <ProjectReference Include="../../src/LexiSharp/LexiSharp.csproj" />
     <ProjectReference Include="../../src/LexiSharp.AspNetCore/LexiSharp.AspNetCore.csproj" />
     <ProjectReference Include="../../src/LexiSharp.MessagePack/LexiSharp.MessagePack.csproj" />
-    <ProjectReference Include="../../src/LexiSharp.ParadeDB/LexiSharp.ParadeDB.csproj" />
     <ProjectReference Include="../../src/LexiSharp.Postgres/LexiSharp.Postgres.csproj" />
   </ItemGroup>
 

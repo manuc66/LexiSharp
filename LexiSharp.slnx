@@ -8,7 +8,6 @@
     <Project Path="src/LexiSharp/LexiSharp.csproj" />
     <Project Path="src/LexiSharp.AspNetCore/LexiSharp.AspNetCore.csproj" />
     <Project Path="src/LexiSharp.MessagePack/LexiSharp.MessagePack.csproj" />
-    <Project Path="src/LexiSharp.ParadeDB/LexiSharp.ParadeDB.csproj" />
     <Project Path="src/LexiSharp.Postgres/LexiSharp.Postgres.csproj" />
   </Folder>
   <Folder Name="/tests/">
