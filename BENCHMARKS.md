@@ -4,23 +4,59 @@ Numbers in this file come from BenchmarkDotNet runs on a single, aging developer
 they are **indicative only**, not a performance claim. Run the suite yourself before drawing
 any conclusion about your own corpus and hardware.
 
-## Environment (for both tables below)
+## Machine
 
 ```
 BenchmarkDotNet v0.14.0, Manjaro Linux
 Intel Core i7-4790 CPU 3.60GHz (Haswell), 1 CPU, 8 logical and 4 physical cores
 .NET SDK 10.0.111
-Runtime: .NET 8.0.30 (8.0.3026.36720), X64 RyuJIT AVX2
-Job: ShortRun (IterationCount=3, WarmupCount=3, LaunchCount=1)
 ```
 
-**Caveat:** `ShortRun` keeps only 3 iterations, so the error bars are wide and some runs are
-noisy (visible in the Error column). Treat every number as a rough order of magnitude.
+Two measurement generations are mixed below:
+
+- **Index building & Tokenizer** (older): `Job.ShortRun` (IterationCount=3, WarmupCount=3,
+  LaunchCount=1) on runtime `.NET 8.0.30`. Only 3 iterations → wide, noisy error bars; treat
+  as order of magnitude. These two tables have not been re-measured on .NET 10 yet.
+- **Search** (current, HEAD): default job on runtime `.NET 10.0.11`, measured after the perf
+  work merged on `main`.
+
+## Search (`SearchBenchmarks`)
+
+Same synthetic corpus as the index builder: 10,000 documents, 50 words each. Default job,
+runtime `.NET 10.0.11`. `Allocated` excludes the corpus itself (index built once before the
+loop); it is the per-query allocation (per 1,000 operations in `Gen*` columns):
+
+| Method                          | Mean      | Error     | StdDev    | Allocated |
+|-------------------------------- |----------:|----------:|----------:|----------:|
+| Bm25Search                      |  2.832 ms | 0.2562 ms | 0.7555 ms |   1.58 KB |
+| TfIdfSearch                     |  2.642 ms | 0.1195 ms | 0.3504 ms | 392.06 KB |
+| QueryLikelihoodSearch           |  3.666 ms | 0.1621 ms | 0.4779 ms | 392.06 KB |
+| BooleanSearch                   |  1.479 ms | 0.0724 ms | 0.2123 ms | 392.06 KB |
+| Bm25SearchRunAllQueries         | 27.940 ms | 0.5581 ms | 1.6012 ms |   8.13 KB |
+
+Provenance: `Bm25Search`/`Bm25SearchRunAllQueries` were re-measured after the per-query plan
+hoist (`perf: hoist query-level corpus constants...`); `TfIdf`,`QueryLikelihood` and `Boolean`
+rows come from the previous optimization pass. A full refresh of every row on the same
+runtime is scheduled.
+
+### Before / after the search optimization pass (runtime .NET 10.0.11, same machine)
+
+| Method                          | Before          | After          | Mean Δ   | Alloc Δ   |
+|-------------------------------- |----------------:|---------------:|---------:|----------:|
+| Bm25Search                      |  6.923 ms / 4.12 MB |  2.832 ms / 1.58 KB | −59 % | −99.96 % |
+| TfIdfSearch                     |  6.239 ms / 4.12 MB |  2.642 ms / 392 KB | −58 % | −99.9 %  |
+| QueryLikelihoodSearch           |  7.062 ms / 4.12 MB |  3.666 ms / 392 KB | −48 % | −99.99 % |
+| BooleanSearch                   |  1.922 ms / 1.07 MB |  1.479 ms / 392 KB | −23 % | −64 %    |
+| Bm25SearchRunAllQueries         | 47.421 ms / 20.74 MB | 27.940 ms / 8.13 KB | −41 % | −99.96 % |
+
+Ranking output of every configuration is verified byte-for-byte against the pre-optimization
+engine (`QueryPlanParityTests`, 314 tests green), so the speedups come with no quality trade-off.
 
 ## Index building (`IndexBenchmarks`)
 
-Building an `InMemoryTextIndex` from scratch, 50 words per document. Gen0/Gen1/Gen2 columns
-are GC collection counts per 1,000 operations (BenchmarkDotNet convention):
+Runtime `.NET 8.0.30`, `Job.ShortRun` — **to be re-measured on .NET 10**. Building an
+`InMemoryTextIndex` from scratch, 50 words per document. Gen0/Gen1/Gen2 columns are GC
+collection counts per 1,000 operations (BenchmarkDotNet convention):
 
 | Method                            | DocumentCount | WordsPerDocument | Mean      | Error        | StdDev    | Gen0      | Gen1     | Gen2     | Allocated |
 |---------------------------------- |-------------- |----------------- |----------:|-------------:|----------:|----------:|---------:|---------:|----------:|
@@ -35,9 +71,9 @@ latency under load, or memory behavior beyond a single run.
 
 ## Tokenizer (`TokenizerBenchmarks`)
 
-Tokenizing the same text under different normalizations. The `Ratio` column is only
-meaningful within the `Tokenize*` rows — the `Normalize*` methods operate on a much smaller
-input:
+Runtime `.NET 8.0.30`, `Job.ShortRun` — **to be re-measured on .NET 10**. Tokenizing the
+same text under different normalizations. The `Ratio` column is only meaningful within the
+`Tokenize*` rows — the `Normalize*` methods operate on a much smaller input:
 
 | Method               | Mean           | Error         | StdDev       | Ratio | Allocated |
 |--------------------- |---------------:|--------------:|-------------:|------:|----------:|
@@ -55,6 +91,8 @@ machine.
 
 ```bash
 dotnet run --project bench/LexiSharp.Benchmarks -c Release
+# search-only subset (fast) with the default job:
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter 'Bm25Search|TfIdfSearch|QueryLikelihoodSearch|BooleanSearch'
 ```
 
 Reports land in `BenchmarkDotNet.Artifacts/results/` (CSV, HTML, GitHub-flavored markdown).
