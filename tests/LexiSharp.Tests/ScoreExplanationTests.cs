@@ -154,7 +154,7 @@ public class ScoreExplanationTests
     public void Engine_Explain_ReturnsNullForNonExplainingScorers()
     {
         var (index, _, _) = CreateFixture();
-        var engine = new RankedTextSearchEngine(index, new BooleanScorer());
+        var engine = new RankedTextSearchEngine(index, new PlainScorer());
 
         Assert.Null(engine.Explain("1", "alpha"));
     }
@@ -200,5 +200,118 @@ public class ScoreExplanationTests
         Assert.Equal(
             plain.Terms.Select(t => t.Term),
             quoted.Terms.Select(t => t.Term));
+    }
+
+    [Fact]
+    public void Boolean_Explain_MatchAll_SpreadsTheUnitScoreOverMatchedTerms()
+    {
+        var (index, doc1, _) = CreateFixture();
+        var scorer = new BooleanScorer(BooleanMatch.AllTerms);
+
+        var explanation = scorer.Explain(doc1.Id, new[] { "alpha", "beta" }, index);
+
+        Assert.Equal("Boolean (AND)", explanation.Algorithm);
+        Assert.Equal(1.0, explanation.TotalScore, 12);
+        Assert.Equal(1.0, explanation.Parameters["allTerms"]);
+        Assert.Equal(1.0, explanation.Terms.Sum(t => t.Score), 12);
+        Assert.Equal(new[] { "alpha", "beta" }, explanation.Terms.Select(t => t.Term).ToArray());
+        Assert.All(explanation.Terms, term => Assert.Equal(0.5, term.Score, 12));
+        Assert.All(explanation.Terms, term => Assert.Equal(0, term.InverseDocumentFrequency));
+    }
+
+    [Fact]
+    public void Boolean_Explain_AllTerms_NonMatch_IsZero()
+    {
+        var (index, doc1, _) = CreateFixture();
+        var scorer = new BooleanScorer(BooleanMatch.AllTerms);
+
+        // doc1 has no "gamma" → AND fails, the boolean score is 0.
+        var explanation = scorer.Explain(doc1.Id, new[] { "alpha", "gamma" }, index);
+
+        Assert.Equal(0.0, explanation.TotalScore, 12);
+        Assert.Empty(explanation.Terms);
+    }
+
+    [Fact]
+    public void Boolean_Explain_AnyTerm_CountsOnlyPresentTerms()
+    {
+        var (index, doc1, _) = CreateFixture();
+        var scorer = new BooleanScorer(BooleanMatch.AnyTerm);
+
+        var explanation = scorer.Explain(doc1.Id, new[] { "alpha", "gamma" }, index);
+
+        Assert.Equal(1.0, explanation.TotalScore, 12);
+        Assert.Equal(0.0, explanation.Parameters["allTerms"]);
+        Assert.Single(explanation.Terms, t => t.Term == "alpha");
+        Assert.Equal(1.0, explanation.Terms.Sum(t => t.Score), 12);
+    }
+
+    [Fact]
+    public void Boolean_Explain_EmptyQuery_IsZero()
+    {
+        var (index, doc1, _) = CreateFixture();
+        var scorer = new BooleanScorer(BooleanMatch.AnyTerm);
+
+        var explanation = scorer.Explain(doc1.Id, Array.Empty<string>(), index);
+
+        Assert.Equal(0.0, explanation.TotalScore, 12);
+        Assert.Empty(explanation.Terms);
+    }
+
+    [Fact]
+    public void Boolean_Explain_EmptyIndex_IsZero()
+    {
+        var index = new InMemoryTextIndex();
+        var scorer = new BooleanScorer(BooleanMatch.AnyTerm);
+
+        var explanation = scorer.Explain("1", new[] { "alpha" }, index);
+
+        Assert.Equal(0.0, explanation.TotalScore, 12);
+        Assert.Equal(0.0, explanation.LengthRatio, 12);
+        Assert.Empty(explanation.Terms);
+    }
+
+    [Fact]
+    public void Boolean_Explain_EmptyDocument_IsZero()
+    {
+        var index = new InMemoryTextIndex();
+        index.Index(new[] { new SearchDocument("1", "alpha"), new SearchDocument("2", "") });
+        var scorer = new BooleanScorer(BooleanMatch.AllTerms);
+
+        var explanation = scorer.Explain("2", new[] { "alpha" }, index);
+
+        Assert.Equal(0.0, explanation.TotalScore, 12);
+        Assert.Empty(explanation.Terms);
+    }
+
+    [Fact]
+    public void Engine_Explain_BooleanScorer_BreaksDownMatchedTerms()
+    {
+        var (index, doc1, _) = CreateFixture();
+        var engine = new RankedTextSearchEngine(index, new BooleanScorer(BooleanMatch.AllTerms));
+
+        var explanation = engine.Explain(doc1.Id, "alpha beta");
+
+        Assert.NotNull(explanation);
+        Assert.Equal(1.0, explanation!.TotalScore, 12);
+        Assert.Equal(new[] { "alpha", "beta" }, explanation.Terms.Select(t => t.Term).ToArray());
+    }
+
+    [Fact]
+    public void Boolean_Explain_NullArguments_Throw()
+    {
+        var (index, doc1, _) = CreateFixture();
+        var scorer = new BooleanScorer();
+
+        Assert.Throws<ArgumentNullException>(() => scorer.Explain(doc1.Id, null!, index));
+        Assert.Throws<ArgumentNullException>(() => scorer.Explain(doc1.Id, new[] { "alpha" }, null!));
+    }
+
+    /// <summary>A scorer with no <see cref="IScoreExplainer"/> capability.</summary>
+    private sealed class PlainScorer : ITextScorer
+    {
+        public string Name => "Plain";
+
+        public double Score(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index) => 0;
     }
 }
