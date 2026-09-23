@@ -15,7 +15,7 @@ or ML model** — pure lexical statistics.
 
 ## Status & scope
 
-- **Version 0.1.0, single maintainer.** The library is young and its public API may still
+- **Version 0.3.0, single maintainer.** The library is young and its public API may still
   change between minor versions — pin a version and read the release notes if you adopt it
   early. Contributions and feedback are welcome.
 - **Built on established IR.** The techniques implemented (BM25, RRF, SPLADE-style sparse
