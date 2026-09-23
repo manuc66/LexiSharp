@@ -176,6 +176,40 @@ public class InMemoryTextIndexTests
     }
 
     [Fact]
+    public async Task GetCandidateDocuments_MultiTerm_IsConsistentUnderConcurrentQueries()
+    {
+        const int documentCount = 64;
+        var ids = Enumerable.Range(0, documentCount).Select(i => $"d{i}").ToArray();
+
+        var index = new InMemoryTextIndex();
+        index.Index(Enumerable.Range(0, documentCount)
+            .Select(i => new SearchDocument($"d{i}", $"alpha shared{i % 8}")));
+
+        var expected = new HashSet<string>(ids);
+        var terms = new[] { "alpha", "shared0", "shared1", "shared7" };
+
+        int workers = Math.Max(4, Environment.ProcessorCount * 2);
+        int failures = 0;
+
+        await Task.Run(() => Parallel.For(0, workers, _ =>
+        {
+            for (int iteration = 0; iteration < 200; iteration++)
+            {
+                var found = index.GetCandidateDocuments(terms)
+                    .Select(d => d.Id)
+                    .ToHashSet(StringComparer.Ordinal);
+
+                // Every document contains "alpha", so all of them must always be candidates;
+                // a shared marking table lets a concurrent query overwrite the marks and drop some.
+                if (!found.SetEquals(expected))
+                    Interlocked.Increment(ref failures);
+            }
+        }));
+
+        Assert.Equal(0, failures);
+    }
+
+    [Fact]
     public void Churn_DoesNotGrowRetainedMemory()
     {
         var index = new InMemoryTextIndex();

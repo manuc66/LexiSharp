@@ -9,7 +9,9 @@ namespace LexiSharp.Indexing;
 /// positions within each document. Exposes the corpus statistics required by scorers.
 /// </summary>
 /// <remarks>
-/// Not thread-safe; mutate it from a single thread (or synchronize externally).
+/// Mutations (<c>Add</c>/<c>Remove</c>/<c>Clear</c>/...) are not thread-safe: apply them from a
+/// single thread (or synchronize externally). Read-only queries hold no shared mutable state and
+/// may run concurrently with one another.
 /// </remarks>
 public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
 {
@@ -20,10 +22,6 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
     private readonly Dictionary<string, IReadOnlyList<string>> _tokens = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _lengths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _corpusFrequencies = new(StringComparer.Ordinal);
-
-    private readonly Dictionary<SearchDocument, long> _candidateMarks =
-        new(ReferenceEqualityComparer.Instance);
-    private long _candidateEpoch;
 
     private long _totalTokens;
 
@@ -208,8 +206,6 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
         _tokens.Clear();
         _lengths.Clear();
         _corpusFrequencies.Clear();
-        _candidateMarks.Clear();
-        _candidateEpoch = 0;
         _totalTokens = 0;
     }
 
@@ -292,25 +288,12 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
 
     private IEnumerable<SearchDocument> EnumerateMultiTerm(IReadOnlyList<string> terms)
     {
-        long epoch = MarkCandidates(terms);
-
-        foreach (var document in _documents.Values)
-        {
-            if (_candidateMarks.TryGetValue(document, out long marked) && marked == epoch)
-                yield return document;
-        }
-    }
-
-    private long MarkCandidates(IReadOnlyList<string> terms)
-    {
-        // The marking dictionary is reused across queries and keyed by reference identity, so the
-        // re-enumeration over the corpus performs plain identity lookups (no string hashing) while
-        // the tie-break order stays the corpus order. Entries are never removed; a size cap
-        // protects long-lived churning indexes.
-        if (_candidateMarks.Count > _documents.Count + 1024)
-            _candidateMarks.Clear();
-
-        long epoch = ++_candidateEpoch;
+        // Mark the candidates in a set local to this call. This used to be a shared,
+        // epoch-stamped dictionary reused across queries, but that is a read-vs-read race:
+        // two concurrent searches mutate the same map, so one can overwrite the other's
+        // marks and drop (or leak) candidates. The marking state must never outlive the
+        // call, which also keeps it correct across interleaved enumerations.
+        var candidates = new HashSet<SearchDocument>(ReferenceEqualityComparer.Instance);
 
         // Per-query hot path: LINQ Where on these loops would allocate per candidate. // NOSONAR:S3267
         foreach (var term in terms)
@@ -318,11 +301,20 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
             if (_postings.TryGetValue(term, out var postings))
             {
                 foreach (var documentId in postings.Keys)
-                    _candidateMarks[_documents[documentId]] = epoch;
+                    candidates.Add(_documents[documentId]);
             }
         }
 
-        return epoch;
+        if (candidates.Count == 0)
+            yield break;
+
+        // Re-enumerate the corpus so ties keep the corpus order, performing plain identity
+        // lookups (no string hashing) against the local candidate set.
+        foreach (var document in _documents.Values)
+        {
+            if (candidates.Contains(document))
+                yield return document;
+        }
     }
 
     /// <inheritdoc />
