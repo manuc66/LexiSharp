@@ -33,14 +33,14 @@ public sealed class LexiSharpIndexOptions<TDocument>
     /// underlying engine). When <typeparamref name="TDocument"/> is <see cref="SearchDocument"/>,
     /// defaults to its <see cref="SearchDocument.Fields"/>.
     /// </summary>
-    public Func<TDocument, IReadOnlyDictionary<string, string>>? Fields { get; set; }
+    public Func<TDocument, IReadOnlyDictionary<string, string>?>? Fields { get; set; }
 
     /// <summary>
     /// Extracts the document category, used for supervised classification. When
     /// <typeparamref name="TDocument"/> is <see cref="SearchDocument"/>, defaults to its
     /// <see cref="SearchDocument.Category"/>.
     /// </summary>
-    public Func<TDocument, string>? Category { get; set; }
+    public Func<TDocument, string?>? Category { get; set; }
 
     /// <summary>The ranking strategy. Defaults to Okapi BM25 (<see cref="Bm25Scorer"/>).</summary>
     public ITextScorer Scorer { get; set; } = new Bm25Scorer();
