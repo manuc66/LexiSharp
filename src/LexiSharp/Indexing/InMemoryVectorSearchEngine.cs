@@ -204,12 +204,18 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
             results.Add(new SearchResult(documentId, score, document));
         }
 
-        return results
+        var page = results
             .OrderByDescending(x => x.Score)
             .ThenBy(x => x.DocumentId, StringComparer.Ordinal)
             .Skip(options.Offset)
             .Take(options.Limit)
             .ToList();
+
+        // Recorded on the cut page, not per scanned document: a dense scan touches the whole
+        // corpus, so tracing the scan itself would grow with the index.
+        options.Trace?.RecordScoreStage("Dense", page);
+
+        return page;
     }
 
     /// <summary>

@@ -4,6 +4,24 @@ using Xunit;
 
 namespace LexiSharp.Tests;
 
+/// <summary>
+/// Isolates these tests from the rest of the suite.
+/// </summary>
+/// <remarks>
+/// <see cref="InMemoryTextIndexTests.Churn_DoesNotGrowRetainedMemory"/> asserts on
+/// <see cref="GC.GetTotalMemory"/>, which is <b>process-global</b>: xUnit runs test collections in
+/// parallel by default, so any other collection allocating at the same time is charged to this
+/// measurement. That made the assertion depend on what the rest of the suite happened to be doing
+/// rather than on the index — it stayed green only while the suite was light enough. Disabling
+/// parallelization for this collection makes the number mean what the test says it means.
+/// </remarks>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class InMemoryTextIndexCollection
+{
+    public const string Name = "InMemoryTextIndex (global-memory tests)";
+}
+
+[Collection(InMemoryTextIndexCollection.Name)]
 public class InMemoryTextIndexTests
 {
     private static InMemoryTextIndex Create(params (string Id, string Text)[] docs)
@@ -241,7 +259,9 @@ public class InMemoryTextIndexTests
 
         long after = Baseline();
 
-        // Retained memory must stay flat: allow 1 MB of measurement noise, nothing more.
+        // Retained memory must stay flat. The collection is non-parallel (see
+        // InMemoryTextIndexCollection) so this process-global reading is not charged with another
+        // test's allocations; 1 MB of allowance is then pure GC noise.
         Assert.True(
             after - before < 1_000_000,
             $"Retained memory grew by {after - before} bytes across churn.");

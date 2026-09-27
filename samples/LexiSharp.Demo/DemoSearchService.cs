@@ -87,18 +87,31 @@ public sealed class DemoSearchService
     }
 
     /// <summary>
-    /// Explains a document's rank in a lane: per-term contributions for the lexical/semantic
-    /// scorers, or the per-source scores that fed the federated ranking otherwise.
+    /// Explains a document's rank in a lane. Every lane additionally returns the full
+    /// <see cref="SearchTrace"/> chain for that document — the stages it passed through and the
+    /// score going in and out of each — which is what makes a reranked or boosted rank explicable
+    /// at all. The per-term breakdown is still filled in for the lanes whose scorer implements
+    /// <see cref="IScoreExplainer"/>.
     /// </summary>
     public ExplanationDto? Explain(string query, string lane, string documentId)
     {
+        var stages = TraceChain(query, lane, documentId);
+
         if (lane is "lexical" or "semantic")
         {
             var explanation = lane == "lexical"
                 ? _lexical.Explain(documentId, query)
                 : _semantic.Explain(documentId, query);
 
-            return explanation is null ? null : FromTerms(explanation);
+            if (explanation is null)
+                return stages.Count == 0 ? null : new ExplanationDto(
+                    documentId, "stages", null, FinalScore(stages), null, null,
+                    Array.Empty<TermContributionDto>(),
+                    new Dictionary<string, double>(StringComparer.Ordinal),
+                    new Dictionary<string, double>(StringComparer.Ordinal),
+                    stages);
+
+            return FromTerms(explanation, stages);
         }
 
         if (lane == "dense")
@@ -107,7 +120,10 @@ public sealed class DemoSearchService
                 .Search(query, new SearchOptions(Limit: 50))
                 .FirstOrDefault(result => string.Equals(result.DocumentId, documentId, StringComparison.Ordinal));
 
-            return dense is null ? null : new ExplanationDto(
+            if (dense is null)
+                return null;
+
+            return new ExplanationDto(
                 dense.DocumentId,
                 "sources",
                 null,
@@ -116,7 +132,8 @@ public sealed class DemoSearchService
                 null,
                 Array.Empty<TermContributionDto>(),
                 new Dictionary<string, double>(StringComparer.Ordinal) { ["dense"] = dense.Score },
-                new Dictionary<string, double>(StringComparer.Ordinal));
+                new Dictionary<string, double>(StringComparer.Ordinal),
+                stages);
         }
 
         var match = _hybrid
@@ -135,7 +152,75 @@ public sealed class DemoSearchService
             null,
             Array.Empty<TermContributionDto>(),
             match.Contributions,
-            new Dictionary<string, double>(StringComparer.Ordinal));
+            new Dictionary<string, double>(StringComparer.Ordinal),
+            stages);
+    }
+
+    /// <summary>
+    /// Replays a lane's search with a trace attached and returns the recorded steps for one
+    /// document, in pipeline order. The search is deterministic, so replaying it yields the same
+    /// ranking the user just clicked on.
+    /// </summary>
+    private IReadOnlyList<TraceStageDto> TraceChain(string query, string lane, string documentId)
+    {
+        // A page deep enough to contain the document the user clicked, so a document ranked below
+        // the visible page is still explainable.
+        var trace = new SearchTrace(capacity: 128);
+
+        switch (lane)
+        {
+            case "lexical":
+                _lexical.Search(query, new LexiSharpQueryOptions(Limit: 50, Trace: trace));
+                break;
+            case "semantic":
+                _semantic.Search(query, new LexiSharpQueryOptions(Limit: 50, Trace: trace));
+                break;
+            case "dense":
+                _dense.Search(query, new SearchOptions(Limit: 50, Trace: trace));
+                break;
+            case "hybrid":
+                _hybrid.SearchWithDetails(query, new SearchOptions(Limit: 50, Trace: trace));
+                break;
+            case "rerank":
+                _rerank.Search(query, new SearchOptions(Limit: 50, Trace: trace));
+                break;
+            default:
+                return Array.Empty<TraceStageDto>();
+        }
+
+        var stages = new List<TraceStageDto>();
+
+        foreach (var step in trace.Steps)
+        {
+            // The route decision is per query, not per document: keep it on every chain so the
+            // panel can show which lane path was taken.
+            bool keep = step.Stage == TraceStage.Route
+                        || string.Equals(step.DocumentId, documentId, StringComparison.Ordinal);
+
+            if (keep)
+            {
+                stages.Add(new TraceStageDto(
+                    step.Stage.ToString().ToLowerInvariant(),
+                    step.DocumentId,
+                    step.Before,
+                    step.After,
+                    step.Detail));
+            }
+        }
+
+        return stages;
+    }
+
+    /// <summary>The score the chain ended on: the last recorded after-score that is a number.</summary>
+    private static double FinalScore(IReadOnlyList<TraceStageDto> stages)
+    {
+        for (int i = stages.Count - 1; i >= 0; i--)
+        {
+            if (!double.IsNaN(stages[i].After))
+                return stages[i].After;
+        }
+
+        return 0;
     }
 
     private IReadOnlyList<HitResult> LexicalHits(string query, int limit)
@@ -241,7 +326,7 @@ public sealed class DemoSearchService
         return terms.Count == 0 ? text : TextHighlighter.HighlightFull(text, terms, _spanTokenizer);
     }
 
-    private static ExplanationDto FromTerms(ScoreExplanation explanation)
+    private static ExplanationDto FromTerms(ScoreExplanation explanation, IReadOnlyList<TraceStageDto> stages)
     {
         var terms = new TermContributionDto[explanation.Terms.Count];
 
@@ -265,7 +350,8 @@ public sealed class DemoSearchService
             explanation.AverageDocumentLength,
             terms,
             new Dictionary<string, double>(StringComparer.Ordinal),
-            explanation.Parameters);
+            explanation.Parameters,
+            stages);
     }
 
     private static string Field(SearchDocument document, string key) =>

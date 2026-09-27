@@ -28,6 +28,7 @@ public sealed class RerankedTextSearchEngine : ITextSearchEngine, IQueryCostProb
     private readonly ITextSearchEngine _inner;
     private readonly IReranker _reranker;
     private readonly int _maxCandidates;
+    private readonly string _rerankerName;
 
     /// <param name="inner">The engine producing the base ranking (never disposed by this wrapper).</param>
     /// <param name="reranker">Second-stage strategy applied to the inner shortlist.</param>
@@ -43,6 +44,9 @@ public sealed class RerankedTextSearchEngine : ITextSearchEngine, IQueryCostProb
         _inner = inner;
         _reranker = reranker;
         _maxCandidates = Math.Max(1, maxCandidates);
+        // Read once: the name is a property on a consumer-supplied seam, and a trace step should
+        // not call into it per candidate.
+        _rerankerName = reranker.Name;
     }
 
     /// <inheritdoc />
@@ -101,12 +105,52 @@ public sealed class RerankedTextSearchEngine : ITextSearchEngine, IQueryCostProb
 
         // The reranker owns the order (best-first by contract); here we only drop broken or
         // non-matching scores, then cut the requested page, preserving its relative order.
-        return reranked
+        var page = reranked
             .Where(x => !double.IsNaN(x.Score) && !double.IsInfinity(x.Score)
                         && x.Score != 0 && x.Score >= options.MinimumScore)
             .Skip(options.Offset)
             .Take(options.Limit)
             .ToList();
+
+        RecordRerankStage(options.Trace, candidates, page);
+
+        return page;
+    }
+
+    /// <summary>
+    /// Records one <see cref="TraceStage.Rerank"/> step per document of the final page, pairing
+    /// the reranker's score with the inner score it replaced. A reranker may also introduce a
+    /// document the inner engine never returned, in which case the before-score is unknown and
+    /// recorded as <see cref="double.NaN"/>.
+    /// </summary>
+    private void RecordRerankStage(
+        SearchTrace? trace,
+        IReadOnlyList<SearchResult> candidates,
+        IReadOnlyList<SearchResult> page)
+    {
+        if (trace is null)
+            return;
+
+        // maxCandidates-bounded, not corpus-bounded: only the shortlist is indexed.
+        Dictionary<string, double>? before = null;
+
+        for (int i = 0; i < page.Count; i++)
+        {
+            SearchResult result = page[i];
+
+            before ??= new Dictionary<string, double>(candidates.Count, StringComparer.Ordinal);
+            for (int j = 0; j < candidates.Count; j++)
+            {
+                string id = candidates[j].DocumentId;
+                if (!before.ContainsKey(id))
+                {
+                    before[id] = candidates[j].Score;
+                }
+            }
+
+            double prior = before.TryGetValue(result.DocumentId, out double found) ? found : double.NaN;
+            trace.Record(new TraceStep(TraceStage.Rerank, result.DocumentId, prior, result.Score, _rerankerName));
+        }
     }
 
     /// <inheritdoc />

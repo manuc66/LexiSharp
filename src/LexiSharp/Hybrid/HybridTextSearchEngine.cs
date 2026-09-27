@@ -1,3 +1,4 @@
+using System.Globalization;
 using LexiSharp.Core;
 
 namespace LexiSharp.Hybrid;
@@ -173,7 +174,7 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
 
         var merged = _merger.Merge(perEngine, query);
 
-        return merged
+        var page = merged
             .Where(x => !double.IsNaN(x.Score) && !double.IsInfinity(x.Score)
                         && x.Score >= options.MinimumScore && x.Score != 0)
             .OrderByDescending(x => x.Score)
@@ -186,5 +187,61 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
                 (IReadOnlyDictionary<string, double>)
                     (contributionsByDocument.GetValueOrDefault(x.DocumentId) ?? new Dictionary<string, double>())))
             .ToList();
+
+        RecordMergeStage(options.Trace, page);
+
+        return page;
+    }
+
+    /// <summary>
+    /// Records one <see cref="TraceStage.Merge"/> step per document of the final page, with the
+    /// per-source scores that fed the merge as the step detail. The merged score is reported as
+    /// both before and after: a merger is not a per-document transform but a re-ranking over the
+    /// union, so there is no meaningful single before-score.
+    /// </summary>
+    private void RecordMergeStage(SearchTrace? trace, IReadOnlyList<DetailedSearchResult> page)
+    {
+        if (trace is null)
+            return;
+
+        for (int i = 0; i < page.Count; i++)
+        {
+            DetailedSearchResult result = page[i];
+            trace.Record(new TraceStep(
+                TraceStage.Merge,
+                result.DocumentId,
+                result.Score,
+                result.Score,
+                FormatContributions(result.Contributions)));
+        }
+    }
+
+    /// <summary>
+    /// Renders per-source scores as an invariant, stable-order detail string (sources are sorted
+    /// by label so a trace is comparable and assertable).
+    /// </summary>
+    private static string FormatContributions(IReadOnlyDictionary<string, double> contributions)
+    {
+        if (contributions.Count == 0)
+            return string.Empty;
+
+        var labels = new List<string>(contributions.Keys);
+        labels.Sort(StringComparer.Ordinal);
+
+        var builder = new System.Text.StringBuilder();
+
+        for (int i = 0; i < labels.Count; i++)
+        {
+            if (i > 0)
+            {
+                builder.Append(' ');
+            }
+
+            builder.Append(labels[i])
+                .Append('=')
+                .Append(contributions[labels[i]].ToString("0.####", CultureInfo.InvariantCulture));
+        }
+
+        return builder.ToString();
     }
 }

@@ -146,11 +146,11 @@ public sealed class RoutingSearchEngine : ITextSearchEngine
         if (resolved.IsEmpty)
             return Array.Empty<SearchResult>();
 
-        var route = SelectRoute(query);
+        var route = SelectRoute(query, resolved.Trace);
         return route.Engine.Search(query, MergeFilters(resolved, route.Filters));
     }
 
-    private SearchRoute SelectRoute(string query)
+    private SearchRoute SelectRoute(string query, SearchTrace? trace)
     {
         QueryRoute? decision;
 
@@ -161,13 +161,41 @@ public sealed class RoutingSearchEngine : ITextSearchEngine
         catch
         {
             // A broken router must not break the search.
+            RecordRoute(trace, _fallback.Id, double.NaN, "router threw");
             return _fallback;
         }
 
         if (decision is null || !(decision.Confidence >= MinimumConfidence))
+        {
+            RecordRoute(trace, _fallback.Id, decision?.Confidence ?? double.NaN, "below threshold or no opinion");
             return _fallback;
+        }
 
-        return _routesById.TryGetValue(decision.RouteId, out var route) ? route : _fallback;
+        if (!_routesById.TryGetValue(decision.RouteId, out var route))
+        {
+            RecordRoute(trace, _fallback.Id, decision.Confidence, $"unknown route '{decision.RouteId}'");
+            return _fallback;
+        }
+
+        RecordRoute(trace, route.Id, decision.Confidence, null);
+        return route;
+    }
+
+    /// <summary>
+    /// Records which route ran, how confident the router was, and why the fallback was taken when
+    /// it was. Without this step a trace cannot tell a deliberate choice from a silent fallback —
+    /// the route a query actually took is otherwise invisible.
+    /// </summary>
+    private static void RecordRoute(SearchTrace? trace, string routeId, double confidence, string? reason)
+    {
+        if (trace is null)
+            return;
+
+        string detail = reason is null
+            ? routeId
+            : $"{routeId} (fallback: {reason})";
+
+        trace.Record(new TraceStep(TraceStage.Route, string.Empty, confidence, double.NaN, detail));
     }
 
     private static SearchOptions MergeFilters(SearchOptions options, IReadOnlyList<MetadataFilter>? routeFilters)

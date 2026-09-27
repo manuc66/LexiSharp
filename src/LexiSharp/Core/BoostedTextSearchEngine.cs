@@ -124,6 +124,16 @@ public sealed class BoostedTextSearchEngine : ITextSearchEngine, IQueryCostProbe
                 continue;
 
             results.Add(candidate with { Score = boostedScore });
+
+            // Recorded per surviving candidate, so the step count follows maxCandidates - not the
+            // corpus. A document the boost dropped (score 0 or below MinimumScore) records nothing:
+            // it is absent from the ranking, so there is no after-score to show.
+            options.Trace?.Record(new TraceStep(
+                TraceStage.Boost,
+                candidate.DocumentId,
+                candidate.Score,
+                boostedScore,
+                SearchTrace.FormatBoost(boost)));
         }
 
         return results
