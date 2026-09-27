@@ -1,0 +1,100 @@
+{
+  "$comment": [
+    "Machine-readable description of the reference corpus. Read by hand today, by",
+    "LexiSharp.Cli once the verify mode lands. Nothing here is a pass/fail gate yet:",
+    "the expectations are hypotheses to be checked, not facts."
+  ],
+  "name": "LexiSharp reference corpus",
+  "version": 1,
+  "license": "CC0-1.0",
+  "ownedBy": "this project",
+  "documents": "corpus/",
+  "queries": "queries.json",
+  "qrels": "qrels.tsv",
+  "buildPath": "one-shot Index() over the whole directory; never incremental Add/Remove",
+  "$harnessCaveat": [
+    "The 'expects' blocks below describe how the STOCK configurations shipped with",
+    "LexiSharp.Cli should separate these cases: bm25, bm25-semantic (PMI term",
+    "expansion) and hybrid (RRF over both).",
+    "",
+    "The dense capability in this repository is HashingEmbeddingProvider, which is",
+    "NOT a semantic model: it is feature hashing over the tokens, so it captures",
+    "lexical overlap and nothing else. Any expectation phrased as 'dense misses'",
+    "here is therefore a statement about hashing, and is a LOWER BOUND proxy for a",
+    "real embedding model, not a stand-in for one. A real dense model may well",
+    "separate the identifier and synonym cases. Do not read these as claims about",
+    "semantic retrieval."
+  ],
+  "families": {
+    "identifier": {
+      "intent": "A query that is an opaque literal. Lexical matching should win decisively; nothing in the vocabulary overlaps.",
+      "expects": {
+        "bm25": "finds the exact document at rank 1",
+        "dense": "no principled reason to separate MZ-77E2T0 from MZ-77E2T1 or MZ-77E2T9 - all three share a shape"
+      }
+    },
+    "synonym": {
+      "intent": "Query and document share no vocabulary. Only a synonym edge or a corpus-derived association can close the gap.",
+      "expects": {
+        "bm25": "fails - zero term overlap",
+        "bm25-semantic": "can succeed via PmiTermExpander, provided the corpus actually associates automobile with car"
+      }
+    },
+    "paraphrase": {
+      "intent": "The user asks about a symptom ('recover a lost password'), the document is written about the mechanism ('credential rotation').",
+      "expects": {
+        "bm25": "fails - no shared term",
+        "bm25-semantic": "partial, and only if the corpus co-occurs the two vocabularies"
+      }
+    },
+    "rare-term": {
+      "intent": "A term appearing in a single document. Its IDF is maximal, so a single match should outweigh a term common across the corpus.",
+      "expects": {
+        "bm25": "the rare term alone should carry the match",
+        "note": "this family is also a guard on the opposite failure: a document stuffed with common words outranking a precise rare-term hit"
+      }
+    },
+    "multilingual": {
+      "intent": "The same fact in English, French and German. The stock tokenizer folds diacritics and lowercases but does NOT translate or stem across languages.",
+      "expects": {
+        "bm25": "matches same-language text; cross-language recall depends entirely on a stemmer or a translation step being supplied"
+      }
+    },
+    "long-document": {
+      "intent": "The answer sits in a document several hundred words long, next to two near neighbours that differ by one word.",
+      "expects": {
+        "bm25": "length normalization should keep the long document competitive; without it, TF dilution buries it",
+        "note": "a long document is also the adversarial input for a term expander: PMI associations learned from it are mostly noise"
+      }
+    },
+    "ambiguous": {
+      "intent": "One symptom, several documents, only one of which is the actual cause. THIS is the family the graded qrels exist for.",
+      "expects": {
+        "bm25": "the diagnosis should outrank the workaround",
+        "note": "a binary qrels file would score all three documents equally and could not express the distinction this family exists to test"
+      }
+    },
+    "metadata-conflict": {
+      "intent": "The document body and its front-matter fields disagree about what it is about.",
+      "expects": {
+        "bm25": "ranks on body text; a metadata filter is a separate, explicit gate and is not part of the ranking"
+      }
+    },
+    "ordinary": {
+      "intent": "Plain, well-matched documents. They exist so that IDF and average document length are not degenerate, and so that the hard families are not the only signal in the corpus.",
+      "expects": {
+        "bm25": "should be near-perfect; a failure here means the tokenizer, the index or the scorer is broken, not tuned"
+      }
+    }
+  },
+  "balance": {
+    "hard": 16,
+    "ordinary": 26,
+    "$note": [
+      "The ratio is a starting point, not a result. A corpus of only hard cases makes",
+      "IDF and average document length meaningless; a corpus of only ordinary cases",
+      "has nothing to discriminate. Target for the full corpus is roughly 70% ordinary",
+      "by count, reviewed after the first verify run against the measured spread."
+    ]
+  }
+}
