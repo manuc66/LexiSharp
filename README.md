@@ -7,12 +7,16 @@
 [![NuGet](https://img.shields.io/nuget/v/LexiSharp.svg)](https://www.nuget.org/packages/LexiSharp/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> A lexical text search and classification library for .NET — zero runtime dependencies in
-> the core.
+> A composable information retrieval toolkit for .NET — build, measure and inspect search
+> pipelines, from lexical BM25 to hybrid and reranked retrieval.
 
 LexiSharp provides composable interfaces and implementations for indexing plain text and
-retrieving/ranking/classifying documents **without any semantic or ML model** — pure lexical
-statistics.
+retrieving, ranking and classifying documents: an in-memory inverted index, four ranking
+strategies, rank fusion, reranking, and **model-agnostic seams** for dense, learned-sparse and
+neural scoring — the models themselves stay in your application. It also ships what it takes to
+judge a pipeline rather than guess at one: standard IR metrics, BM25 parameter tuning, a
+benchmark CLI over your own corpus, per-term score explanations and an end-to-end `SearchTrace`.
+The core package references **no NuGet package at all**.
 
 ## See it running
 
@@ -202,6 +206,10 @@ ArguAna against BEIR's published BM25 numbers in
   passed through — score, merge (per-source scores), rerank (before/after), boost (factor/offset)
   and the route a query took — so a final rank is walkable end to end. A null trace is inert and
   a trace is bounded by the page, never the corpus.
+- **Source agreement** (`RetrievalAgreementAnalyzer`): classifies each document of a fused page as
+  `Unanimous`, `Disputed`, `Lukewarm` or `SingleSource` from the per-source scores, normalized per
+  source so the incomparable scales (BM25 ~4.8, cosine ~0.48) can be read together. It says
+  whether a document is on the page because everything agreed, or because one retriever insisted.
 - **Calibrated confidence** (`ScoreConfidence`): maps a result set's raw scores — BM25 output
   and friends, whose scale is not a probability — to a per-result confidence in [0,1],
   either from the winner margin (gap to the next result, scale-invariant) or from a logistic
@@ -978,6 +986,52 @@ index.
 
 **Not thread-safe.** A trace is a mutable collector: give each concurrent search its own, the same
 way each gets its own `SearchOptions`.
+
+### Source agreement (`RetrievalAgreementAnalyzer`)
+
+A fused ranking hides *why* a document is on the page. `RetrievalAgreementAnalyzer` reads the
+per-source scores in `DetailedSearchResult.Contributions` and classifies each document by how much
+its sources agree:
+
+```csharp
+using LexiSharp.Core;
+
+var page = hybrid.SearchWithDetails("refresh token", new SearchOptions(Limit: 20));
+var reports = RetrievalAgreementAnalyzer.Analyze(page);
+
+foreach (var report in reports)
+    Console.WriteLine($"{report.DocumentId}  {report.Agreement}  strong: {string.Join(",", report.StrongSources)}");
+
+var counts = RetrievalAgreementAnalyzer.Summarize(reports);
+```
+
+| Category | What it means |
+|----------|---------------|
+| `Unanimous` | several sources returned it, all found it convincing |
+| `Disputed` | several returned it, they disagree — some convinced, some not |
+| `Lukewarm` | several returned it, **none** convinced: it is on the page through a merger, not anyone's conviction |
+| `SingleSource` | exactly one source returned it — the case worth surfacing, since a reader of the final score cannot tell |
+| `None` | no source returned it; should not occur on a result page |
+
+The categories are structural, not named, because source labels are yours: a setup calling them
+`lexical`/`dense` and one calling them `bm25`/`cosine` describe the same shape, so a hard-coded
+`LexicalOnly` would be wrong for half of them. `StrongSources` gives the names back.
+
+**Normalization is not optional.** Raw contributions are not comparable across sources — LexiSharp's
+dense lane returns a cosine in [0, 1] while its BM25 lane returns values around 1 to 10. Dividing
+each contribution by the best score that source gave on the same page makes the values scale-free
+without assuming anything about the scoring function. A source that returned nothing is reported as
+`AbsentSources` rather than weak, because being outside a source's depth is a different fact from
+being ranked low by it.
+
+**The threshold is a heuristic.** `strongThreshold` (default `0.5`) is the share of a source's best
+score at which a document counts as strongly supported. It is a round number chosen for
+readability, **not a value validated against relevance data** — tune it against your own corpus, and
+pass `sourceNames` so a source that silently contributed nothing still shows up as absent.
+
+The demo's own five-lane corpus produces one of each category, which is the quickest way to see the
+distinction matter: the obvious match is `unanimous`, the arguable ones are `disputed`, one is on the
+page with nobody enthusiastic (`lukewarm`), and one rides on the semantic lane alone.
 
 ### Explainable scoring and BM25 tuning
 
