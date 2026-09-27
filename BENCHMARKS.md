@@ -32,6 +32,37 @@ engine (`QueryPlanParityTests`, full suite green), so the speedups below come wi
 trade-off. On the nfcorpus evaluation, all nDCG@10 scores are identical to the pre-optimization
 baseline (BM25 0.308, TF-IDF 0.248, Query-Likelihood 0.288, Dense 0.304, hybrids 0.323/0.333).
 
+### Ranking trace (`SearchTrace`) — allocation only, no timing
+
+`SearchTrace` is opt-in through `SearchOptions.Trace` and defaults to `null`. The rows below exist
+to price what that null costs, and they were **not** measured on the machine described above — this
+run was made on a different host, in a sandbox that hid all but one core and forced
+BenchmarkDotNet into `--inProcess`:
+
+```
+Intel Core i7-8850H CPU 2.60GHz (Coffee Lake), 1 CPU visible to BDN
+Job: ShortRun and MediumRun, --inProcess (a separate process could not be launched)
+```
+
+| Variant                           | Allocated per search |
+|-----------------------------------|---------------------:|
+| `Trace: null` (default)           |             1.34 KB  |
+| `TraceSaturated` (at capacity)    |             1.34 KB  |
+| `TracePerSearch` (fresh per call) |             1.81 KB  |
+
+**Allocation is the trustworthy column.** It came out identical in every run and at every job: a
+saturated trace adds **0 bytes**, and a trace created per search costs **~0.47 KB** — the
+`SearchTrace` object plus the backing array for its ten `TraceStep`s. Recording happens on the cut
+page rather than per candidate, which is why the cost follows the page size and not the corpus.
+
+**No timing is quoted, and that is a finding rather than an omission.** On this host the *baseline*
+`Bm25Search` itself measured anywhere from 1.52 ms to 3.57 ms across identical runs, a 2.3× spread.
+BenchmarkDotNet additionally reported bimodal and multimodal distributions on the pre-existing
+search benchmarks, not only on the trace ones, and `TracePerSearch` came out *faster* than the
+baseline in one run, which is physically impossible. A delta below that spread is not resolvable
+here, so quoting one would be invention. Both benchmarks are in `SearchBenchmarks`; running them on
+a quiet multi-core machine is what would produce a publishable timing.
+
 ### Before / after the search optimization pass (same env)
 
 | Method                          | Before          | After          | Mean Δ   | Alloc Δ   |
