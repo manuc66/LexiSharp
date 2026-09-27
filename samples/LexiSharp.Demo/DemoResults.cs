@@ -38,6 +38,17 @@ public sealed record TraceStageDto(
     string? Detail);
 
 /// <summary>
+/// How much the demo's lanes agree about a document, from
+/// <c>LexiSharp.Core.RetrievalAgreementAnalyzer</c>. Null for lanes that have a single source and
+/// therefore nothing to agree or disagree about.
+/// </summary>
+public sealed record AgreementDto(
+    string Agreement,
+    IReadOnlyDictionary<string, double> Strengths,
+    IReadOnlyList<string> StrongSources,
+    IReadOnlyList<string> AbsentSources);
+
+/// <summary>
 /// A unified explanation payload. <see cref="Terms"/> carries the per-term arithmetic when the
 /// lane's scorer can explain itself, <see cref="Sources"/> the per-source scores of a federated
 /// ranking, and <see cref="Stages"/> the full stage-by-stage chain — which is the only part
@@ -53,4 +64,5 @@ public sealed record ExplanationDto(
     IReadOnlyList<TermContributionDto> Terms,
     IReadOnlyDictionary<string, double> Sources,
     IReadOnlyDictionary<string, double> Parameters,
-    IReadOnlyList<TraceStageDto> Stages);
+    IReadOnlyList<TraceStageDto> Stages,
+    AgreementDto? Agreement = null);

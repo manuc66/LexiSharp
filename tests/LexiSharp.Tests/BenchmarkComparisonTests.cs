@@ -72,7 +72,7 @@ public class BenchmarkComparisonTests
 
         var result = Run(queries, [BenchmarkConfig.Bm25()]);
 
-        Assert.Equal(1, result.PerQuery.Count);
+        Assert.Single(result.PerQuery);
         Assert.Equal(result.JudgedQueries, result.PerQuery.Count);
     }
 

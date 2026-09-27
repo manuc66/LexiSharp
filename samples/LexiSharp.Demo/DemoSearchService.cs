@@ -96,6 +96,7 @@ public sealed class DemoSearchService
     public ExplanationDto? Explain(string query, string lane, string documentId)
     {
         var stages = TraceChain(query, lane, documentId);
+        var agreement = Agreement(query, documentId);
 
         if (lane is "lexical" or "semantic")
         {
@@ -109,9 +110,9 @@ public sealed class DemoSearchService
                     Array.Empty<TermContributionDto>(),
                     new Dictionary<string, double>(StringComparer.Ordinal),
                     new Dictionary<string, double>(StringComparer.Ordinal),
-                    stages);
+                    stages, agreement);
 
-            return FromTerms(explanation, stages);
+            return FromTerms(explanation, stages, agreement);
         }
 
         if (lane == "dense")
@@ -133,7 +134,7 @@ public sealed class DemoSearchService
                 Array.Empty<TermContributionDto>(),
                 new Dictionary<string, double>(StringComparer.Ordinal) { ["dense"] = dense.Score },
                 new Dictionary<string, double>(StringComparer.Ordinal),
-                stages);
+                stages, agreement);
         }
 
         var match = _hybrid
@@ -153,8 +154,39 @@ public sealed class DemoSearchService
             Array.Empty<TermContributionDto>(),
             match.Contributions,
             new Dictionary<string, double>(StringComparer.Ordinal),
-            stages);
+            stages, agreement);
     }
+
+    /// <summary>
+    /// Classifies the document against the demo's three federated sources, so the panel can say
+    /// whether it is in the page because everything agreed or because one lane insisted. Null when
+    /// the document is not on the fused page at all - there is nothing to compare.
+    /// </summary>
+    private AgreementDto? Agreement(string query, string documentId)
+    {
+        var page = _hybrid.SearchWithDetails(query, new SearchOptions(Limit: 20));
+        var reports = RetrievalAgreementAnalyzer.Analyze(page, sourceNames: ["lexical", "semantic", "dense"]);
+
+        var report = reports.FirstOrDefault(entry =>
+            string.Equals(entry.DocumentId, documentId, StringComparison.Ordinal));
+
+        return report is null ? null : new AgreementDto(
+            ToLabel(report.Agreement),
+            report.Strengths,
+            report.StrongSources,
+            report.AbsentSources);
+    }
+
+    /// <summary>Lowercase name for the UI; the enum is structural so the labels stay camelCase.</summary>
+    private static string ToLabel(RetrievalAgreement agreement) => agreement switch
+    {
+        RetrievalAgreement.None => "none",
+        RetrievalAgreement.SingleSource => "singleSource",
+        RetrievalAgreement.Lukewarm => "lukewarm",
+        RetrievalAgreement.Disputed => "disputed",
+        RetrievalAgreement.Unanimous => "unanimous",
+        _ => agreement.ToString().ToLowerInvariant(),
+    };
 
     /// <summary>
     /// Replays a lane's search with a trace attached and returns the recorded steps for one
@@ -326,7 +358,10 @@ public sealed class DemoSearchService
         return terms.Count == 0 ? text : TextHighlighter.HighlightFull(text, terms, _spanTokenizer);
     }
 
-    private static ExplanationDto FromTerms(ScoreExplanation explanation, IReadOnlyList<TraceStageDto> stages)
+    private static ExplanationDto FromTerms(
+        ScoreExplanation explanation,
+        IReadOnlyList<TraceStageDto> stages,
+        AgreementDto? agreement)
     {
         var terms = new TermContributionDto[explanation.Terms.Count];
 
@@ -351,7 +386,8 @@ public sealed class DemoSearchService
             terms,
             new Dictionary<string, double>(StringComparer.Ordinal),
             explanation.Parameters,
-            stages);
+            stages,
+            agreement);
     }
 
     private static string Field(SearchDocument document, string key) =>
