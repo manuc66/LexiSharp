@@ -226,6 +226,10 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             results[i] = new SearchResult(entry.Document.Id, entry.Score, entry.Document);
         }
 
+        // Tracing happens here, on the cut page, not inside the scoring loop above: the score is
+        // already in hand, so a trace costs O(limit) after the fact and nothing per candidate.
+        options.Trace?.RecordScoreStage(_scorer.Name, results);
+
         return results;
     }
 

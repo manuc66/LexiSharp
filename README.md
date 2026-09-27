@@ -30,6 +30,16 @@ dotnet run --project samples/LexiSharp.Demo
 
 The demo is the fastest way to *see* what the composable pieces buy you: the whole wiring is
 `DemoSearchService` (five engines over one corpus) plus a single static `wwwroot/index.html`.
+Clicking a hit also shows the **`SearchTrace` chain** for that document — the stages it passed
+through and the score going in and out of each:
+
+```
+score   4.6925 -> 4.6925  BM25
+score   3.1642 -> 3.1642  BM25
+score   0.4867 -> 0.4867  Dense
+merge   0.0492 -> 0.0492  dense=0.4867 lexical=4.6925 semantic=3.1642
+rerank  0.0492 -> 100     CrossEncoder(QueryTermOverlap)
+```
 Each lane states what actually backs it — the semantic lane uses `PmiTermExpander`, the dense
 lane a `HashingEmbeddingProvider`, the rerank lane a local term-overlap `ICrossEncoderScorer`
 — and all three are swappable for a real model behind their existing seam. See
@@ -62,6 +72,12 @@ ArguAna against BEIR's published BM25 numbers in
   *and* in the combinations the docs describe. Stated plainly rather than hidden: not every
   pairing is exercised, so treat an unusual combination as supported but unproven until you
   test it on your data.
+- **Tracing cost is only partly measured.** `SearchTrace`'s allocation is pinned by
+  BenchmarkDotNet and is stable across runs (a saturated trace adds 0 bytes per search; a fresh
+  trace per search +0.47 KB). Its **time** cost is **unmeasured**: on the machine used for the run
+  the baseline benchmark itself varied 2.3× between identical runs, so no timing is quoted. Read it
+  as unknown, not as free.
+
 ### Scope and limits
 
 - **Version 0.4.0, single maintainer.** The library is young and its public API may still
@@ -178,6 +194,10 @@ ArguAna against BEIR's published BM25 numbers in
   `BooleanScorer` implement `IScoreExplainer`, and `RankedTextSearchEngine.Explain` returns a
   per-term breakdown (TF, IDF, term score, length normalization, parameter values) of any
   ranking decision.
+- **Ranking trace** (`SearchTrace`): opt-in, `SearchOptions.Trace` records every stage a document
+  passed through — score, merge (per-source scores), rerank (before/after), boost (factor/offset)
+  and the route a query took — so a final rank is walkable end to end. A null trace is inert and
+  a trace is bounded by the page, never the corpus.
 - **Calibrated confidence** (`ScoreConfidence`): maps a result set's raw scores — BM25 output
   and friends, whose scale is not a probability — to a per-result confidence in [0,1],
   either from the winner margin (gap to the next result, scale-invariant) or from a logistic
@@ -839,6 +859,59 @@ only queries need the `ISparseEmbeddingProvider` again:
 MessagePackSparseIndexPersistence.Save(sparseEngine, "splade.bin");
 var reloaded = MessagePackSparseIndexPersistence.Load("splade.bin", mySplade); // exact same search scores
 ```
+
+### Ranking trace (`SearchTrace`)
+
+`Explain` breaks down one scorer's arithmetic. `SearchTrace` goes further: it records **every stage
+a document passed through**, so a final rank can be walked back stage by stage — which engine
+scored it, what each merger contributed, what the reranker changed, what the boost did, and which
+route ran.
+
+```csharp
+using LexiSharp.Core;
+
+var trace = new SearchTrace();
+var hits = engine.Search("refresh token", new SearchOptions(Limit: 5, Trace: trace));
+
+foreach (var step in trace.Steps)
+    Console.WriteLine($"{step.Stage,-6} {step.DocumentId,-8} {step.Before,8:0.000} -> {step.After,8:0.000}  {step.Detail}");
+
+// route   d1              0.800 ->            dense (fallback: below threshold or no opinion)
+// score   d1      4.819997 ->      4.819997  BM25
+// merge   d1      0.016393 ->      0.016393  lexical=4.819997 dense=0.812003
+// rerank  d1      4.819997 ->      0.912000
+// boost   d1      0.912000 ->      1.824000  x2 +0
+```
+
+`SearchOptions.Trace` defaults to `null`, and a null trace is inert: no engine records, allocates
+or formats anything. Pass one and each stage appends to it as it runs, so a decorated pipeline
+accumulates its whole chain.
+
+**Cost — what is measured and what is not.** On `SearchBenchmarks` (10 000 documents, `Limit: 10`,
+2-term query), BenchmarkDotNet's `MemoryDiagnoser` gives a stable, reproducible number across
+repeated runs:
+
+| variant | allocated per search |
+|---|---:|
+| `Trace: null` (default) | 1.34 KB |
+| saturated trace | 1.34 KB (**+0 bytes**) |
+| fresh trace per search | 1.81 KB (**+0.47 KB**) |
+
+A **time** figure is deliberately **not** given. On the machine used for the run, the *baseline*
+benchmark itself varied between 1.52 ms and 3.57 ms (2.3×) across identical runs, and
+BenchmarkDotNet reported bimodal/multimodal distributions on the pre-existing search benchmarks as
+well. A delta smaller than that spread is not measurable there, so quoting one would be fiction.
+The allocation column above is the trustworthy part; re-run `SearchBenchmarks` on a quiet,
+multi-core machine to get a timing.
+
+**Bounds.** A trace stops recording past `Capacity` (default 256) and counts the overflow in
+`Dropped`; check `IsTruncated` rather than assuming `Steps` is the whole story. Stage recording is
+bounded by the page or the candidate shortlist, never by the corpus, so a trace cannot grow with
+the index — this is what the `ScoreStageIsBoundedByThePageNotTheCorpus` test pins on a 20 000-doc
+index.
+
+**Not thread-safe.** A trace is a mutable collector: give each concurrent search its own, the same
+way each gets its own `SearchOptions`.
 
 ### Explainable scoring and BM25 tuning
 

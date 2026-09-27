@@ -22,12 +22,18 @@ namespace LexiSharp.Core;
 /// words are corrected, so a correctly spelled word can no longer be degraded by unrelated
 /// close variants. Default: <c>false</c> (start from the base form and add close variants).
 /// </param>
+/// <param name="Trace">
+/// Optional <see cref="SearchTrace"/> to record each ranking stage into. Default: <c>null</c> —
+/// no engine records, allocates or formats anything. See <see cref="SearchTrace"/> for the bounds
+/// and the truncation contract.
+/// </param>
 public sealed record SearchOptions(
     int Limit = 10,
     double MinimumScore = double.NegativeInfinity,
     IReadOnlyList<MetadataFilter>? Filters = null,
     int Offset = 0,
-    bool FuzzyOnlyOutOfVocabulary = false)
+    bool FuzzyOnlyOutOfVocabulary = false,
+    SearchTrace? Trace = null)
 {
     public static readonly SearchOptions Default = new();
 

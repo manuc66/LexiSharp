@@ -243,12 +243,17 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
             results.Add(new SearchResult(documentId, score, document));
         }
 
-        return results
+        var page = results
             .OrderByDescending(x => x.Score)
             .ThenBy(x => x.DocumentId, StringComparer.Ordinal)
             .Skip(options.Offset)
             .Take(options.Limit)
             .ToList();
+
+        // Recorded on the cut page, not per scored term.
+        options.Trace?.RecordScoreStage("Sparse", page);
+
+        return page;
     }
 
     private void AddVector(SearchDocument document, IReadOnlyDictionary<string, float>? vector)
