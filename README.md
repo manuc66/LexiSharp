@@ -123,8 +123,10 @@ is reproducible with a command on the [evaluation page](docs/evaluation.md).
   BM25's 0.8751 on the reference corpus). BM25F has **no** measured win over a tuned BM25, and
   proximity hurts at full strength. **BM25+ and BM25L, tuned on their own δ, tie a tuned BM25 on the
   reference corpus and NFCorpus and edge it by 0.002–0.004 on SciFact** — an in-sample margin on
-  the queries that chose it, so an upper bound rather than a result. Not every combination of
-  engine, scorer, reranker and merger is exercised by a test.- **Version 0.4.0, one maintainer.** The public API may still change between minor
+  the queries that chose it, so an upper bound rather than a result. **ArguAna is untuned and is
+  their worst showing anywhere: 0.243 and 0.249 against BM25's 0.289 at a fixed δ, with no δ-tuned
+  row to say whether tuning closes it.** Not every combination of engine, scorer, reranker and
+  merger is exercised by a test.- **Version 0.4.0, one maintainer.** The public API may still change between minor
   versions — pin a version.
 
 Full scope and limits: [docs/reference.md](docs/reference.md#scope-and-limits).

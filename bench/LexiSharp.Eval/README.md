@@ -264,13 +264,27 @@ Default tokenizer, **no stemming** — see [Stemming](#stemming) for the same ru
 | BM25F (unweighted)                 |   0.344 |  0.231 |  0.231 | 0.695 |
 | BM25F (title 2.0)                  |   0.344 |  0.231 |  0.231 | 0.698 |
 | BM25F (title 4.0)                  |   0.340 |  0.227 |  0.227 | 0.696 |
+| BM25+ (delta=1.0)                  |   0.243 |  0.156 |  0.156 | 0.519 |
+| BM25L (delta=0.5)                  |   0.249 |  0.161 |  0.161 | 0.528 |
+
+**The BM25+ / BM25L rows here are the worst the variants do anywhere, and the one measurement in
+this repository where the missing δ knob is most likely to matter.** At a fixed paper δ they lose
+0.046 and 0.040 against BM25 — roughly 15 % relative, the same order as the 13–17 % that 9bb7c92
+retracted, but for a different reason and on a different corpus. That retraction was a
+transcription error on NFCorpus and SciFact; these rows are correctly transcribed and simply lose.
+ArguAna is also the corpus where a δ floor should plausibly do most work and least easily be
+recovered: a 125-point search over 1406 queries whose documents are whole arguments, on a single
+relevant document per query, is hours of compute, so **this run was `--no-tuned` and the variant
+rows are untuned-vs-untuned only.** Whether tuning δ closes a 0.046 gap here is **unmeasured**, and
+the NFCorpus/SciFact results do not transfer — SciFact was the one corpus where δ helped at all.
+Do not read these rows as the variants' verdict; read them as untuned, which is all they are.
 
 **The largest BM25F margin anywhere in this harness, and not because of the weighting — but also not
 established as a real gain.** 0.344 against BM25's 0.289 on 1406 queries. Two reasons to hold it
 loosely. The three rows say the weighting is not the cause: unweighted, title 2.0 and title 4.0 are
 within 0.004 of each other, and the heaviest weight is the worst. And it is a **default-vs-default**
-comparison — on the reference corpus, tuning closed exactly this kind of gap to the digit. Whether a
-tuned BM25 also reaches 0.344 here is unmeasured.
+comparison — on the reference corpus, tuning moved this kind of gap by 0.011, and on NFCorpus and
+SciFact it closed. Whether a tuned BM25 also reaches 0.344 here is unmeasured.
 
 ArguAna is also the corpus least like ordinary search — counter-argument retrieval, very long
 queries, a `title` that is a topic phrase rather than a headline. One more caveat on reading that

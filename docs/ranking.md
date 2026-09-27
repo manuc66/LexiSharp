@@ -138,6 +138,16 @@ pairs. What it is not is a fair number: 300 queries, binary relevance, fitted in
 same 300 queries, best-of-125. A 0.004 lead under those conditions is an upper bound. Treat it as
 « δ was not obviously harmful here », not as evidence the formula helps.
 
+**ArguAna is the exception, and it is the row this page does not have.** It is also where the
+untuned variants do worst anywhere: at a fixed paper δ, BM25+ scores 0.243 and BM25L 0.249 against
+BM25's 0.289 — about 15 % relative, the same order as the figure 9bb7c92 retracted, but on a
+different corpus and with nothing mis-transcribed. ArguAna was run `--no-tuned`: a 125-point search
+over 1406 queries of whole arguments is hours of compute, so **there is no δ-tuned ArguAna row and
+the gap's fate under tuning is unmeasured.** Given that SciFact was the only corpus where δ helped
+at all, and ArguAna is where it hurts most, this is the corpus where the result is least settled in
+either direction. Run it yourself before concluding anything about δ on long-document
+counter-argument retrieval.
+
 **What this retracts.** An earlier version of this page reported the variants beating a tuned BM25
 by **+0.017** on the reference corpus, and losing by 13–17 % on the BEIR corpora. Both numbers are
 gone. The +0.017 was a comparison of BM25+ at a *default* `δ` against BM25 at a *fitted* `(k1, b)`
