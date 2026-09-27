@@ -26,6 +26,8 @@ public class QueryPlanParityTests
     [InlineData("tfidf")]
     [InlineData("ql")]
     [InlineData("ql-tuned")]
+    [InlineData("bm25f")]
+    [InlineData("bm25f-weighted")]
     public void Plan_MatchesScore_Bitwise(string scorerKind)
     {
         ITextScorer scorer = scorerKind switch
@@ -34,10 +36,18 @@ public class QueryPlanParityTests
             "bm25-tuned" => new Bm25Scorer(0.9, 0.4),
             "tfidf" => new TfIdfScorer(),
             "ql" => new QueryLikelihoodScorer(),
+            "bm25f" => new Bm25FScorer(),
+            "bm25f-weighted" => new Bm25FScorer(
+                1.4, 0.6, new Dictionary<string, double> { ["title"] = 2.5 }),
             _ => new QueryLikelihoodScorer(0.7),
         };
         var index = new InMemoryTextIndex();
-        index.Index(Corpus.Select((text, i) => new SearchDocument(i.ToString(), text)));
+        index.Index(Corpus.Select((text, i) => new SearchDocument(
+            i.ToString(), text,
+            TextFields: new Dictionary<string, string>
+            {
+                ["title"] = Corpus[(i * 3) % Corpus.Length],
+            })));
 
         string[] queries = { "term", "the quick", "every letter scoring", "zulu missing term" };
 
