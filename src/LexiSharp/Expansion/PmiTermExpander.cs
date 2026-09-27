@@ -132,7 +132,21 @@ public sealed class PmiTermExpander : ITermExpander
             list.Sort((x, y) =>
             {
                 int byCount = y.Count.CompareTo(x.Count);
-                return byCount != 0 ? byCount : y.Pmi.CompareTo(x.Pmi);
+                if (byCount != 0)
+                    return byCount;
+
+                int byPmi = y.Pmi.CompareTo(x.Pmi);
+                if (byPmi != 0)
+                    return byPmi;
+
+                // Total order, or the sort is not one. Count and Pmi leave genuine ties -- two terms
+                // can share both -- and List<T>.Sort is unstable, so without a final key the order
+                // of the tied entries is whatever their insertion order happened to be. That
+                // insertion order comes from the dictionary walk above, hence from the corpus
+                // enumeration order, hence from the filesystem. The neighbours are then summed into
+                // a document score, so an unstable order here perturbs the last bits of that sum and
+                // reorders documents whose scores differ only by floating-point noise.
+                return string.CompareOrdinal(x.Neighbor, y.Neighbor);
             });
 
             int maxCount = list[0].Count;
