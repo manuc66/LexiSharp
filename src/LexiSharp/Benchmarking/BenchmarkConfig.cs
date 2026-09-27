@@ -99,6 +99,43 @@ public sealed record BenchmarkConfig
         new(name: fieldWeights is null or { Count: 0 } ? "BM25F" : "BM25F (weighted)", build: (index, tokenizer, _, _) =>
             new RankedTextSearchEngine(index, new Bm25FScorer(fieldWeights: fieldWeights), tokenizer));
 
+    /// <summary>
+    /// <see cref="Bm25FScorer"/> with <c>(k1, b)</c> and the weights of <paramref name="weightedFields"/>
+    /// fitted on the labeled queries by <see cref="Bm25FParameterTuner"/>.
+    /// </summary>
+    /// <remarks>
+    /// Measures the headroom tuning buys on the validation set itself, so it is an optimistic upper
+    /// bound rather than a fair baseline — the same caveat that applies to
+    /// <see cref="Bm25Tuned"/>, and for the same reason: the best of N configurations is scored on
+    /// the N queries that chose it. Compare it against <see cref="Bm25Tuned"/>, never against the
+    /// published numbers.
+    /// </remarks>
+    public static BenchmarkConfig Bm25FTuned(
+        IReadOnlyCollection<string>? weightedFields = null,
+        int topK = 10,
+        TuningMetric metric = TuningMetric.F1) =>
+        new(name: weightedFields is { Count: > 0 } ? "BM25F (tuned)" : "BM25F (tuned, no weights)", build: (index, tokenizer, queries, k) =>
+        {
+            var tuningQueries = queries
+                .Select(query => new Bm25ValidationQuery(query.Text, query.RelevantDocumentIds))
+                .ToList();
+
+            var tuner = new Bm25FParameterTuner(index, tuningQueries, tokenizer);
+
+            // The reference corpus has no text fields, so asking the tuner to weight a field it
+            // does not have would throw. Search whatever the index actually declares, and say so in
+            // the config name when there is nothing to weight.
+            var fields = weightedFields is { Count: > 0 }
+                ? weightedFields
+                : index.Fields.Where(field => field != TextFields.Default).ToArray();
+
+            var tuned = fields.Count == 0
+                ? tuner.Tune(topK: k, metric: metric)
+                : tuner.Tune(weightedFields: fields, topK: k, metric: metric);
+
+            return new RankedTextSearchEngine(index, new Bm25FScorer(tuned.Parameters), tokenizer);
+        });
+
     /// <summary>Stock <see cref="QueryLikelihoodScorer"/> ranking.</summary>
     public static BenchmarkConfig QueryLikelihood(double lambda = 0.2) =>
         new(name: "QueryLikelihood", build: (index, tokenizer, _, _) =>

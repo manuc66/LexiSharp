@@ -15,7 +15,7 @@ public static class Program
         + "  --qrels <file>       Relevance judgments: TSV 'qid\\tdocid[\\tgrade]', one per line ('#' comments)\n"
         + "  --top-k <n>          Retrieval depth for every metric (default: 10)\n"
         + "  --limit <n>          Cap the number of queries evaluated (default: all)\n"
-        + "  --configs <list>     Comma-separated: bm25, bm25-tuned, tfidf, ql, hybrid, bm25-semantic, bm25f, bm25f-title (default: bm25,tfidf,ql,hybrid,bm25-tuned)\n"
+        + "  --configs <list>     Comma-separated: bm25, bm25-tuned, tfidf, ql, hybrid, bm25-semantic, bm25f, bm25f-title, bm25f-tuned (default: bm25,tfidf,ql,hybrid,bm25-tuned)\n"
         + "  --json <path>        Write the results as JSON to this file\n"
         + "  --help, -h           Show this help\n"
         + "\n"
@@ -580,7 +580,10 @@ public static class Program
                 // A realistic title-over-body weighting, to see whether weighting moves the needle
                 // on a corpus that actually has a title field.
                 "bm25f-title" => BenchmarkConfig.Bm25F(new Dictionary<string, double> { ["title"] = 2.0 }),
-                _ => throw new ArgumentException($"Unknown configuration '{name}'. Valid: bm25, bm25-tuned, tfidf, ql, hybrid, bm25-semantic, bm25f, bm25f-title.", nameof(names)),
+                // Grid-searches k1, b and the title weight on the labeled queries. Fitted in-sample,
+                // so it is an upper bound, not a fair baseline.
+                "bm25f-tuned" => BenchmarkConfig.Bm25FTuned(),
+                _ => throw new ArgumentException($"Unknown configuration '{name}'. Valid: bm25, bm25-tuned, tfidf, ql, hybrid, bm25-semantic, bm25f, bm25f-title, bm25f-tuned.", nameof(names)),
             });
         }
 

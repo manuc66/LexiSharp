@@ -233,7 +233,9 @@ ArguAna against BEIR's published BM25 numbers in
   **graded** `nDCG@k` (exponential gains), plus `ReciprocalRank@k` (→ MRR) and
   `AveragePrecision@k` (→ MAP).
 - **BM25 tuning**: `Bm25ParameterTuner` grid-searches `k1`/`b` against your own validation
-  queries, judged by `Precision@k`, `Recall@k`, `F1@k` or `nDCG@k`.
+  queries, judged by `Precision@k`, `Recall@k`, `F1@k` or `nDCG@k`. `Bm25FParameterTuner` does the
+  same for BM25F's `k1`/`b` and per-field weights, and reports `WeightingHelped` — the answer to
+  "does weighting a field help on my corpus", which on every corpus tried here is no.
 - **Supervised classification** (`NaiveBayesClassifier`): multinomial Naive Bayes with
   Laplace smoothing, exposing a dedicated `ITextClassifier` interface.
 - **Configurable tokenizer**: Unicode NFKD normalization and diacritics removal,
@@ -1209,24 +1211,32 @@ queries, SciFact 300, ArguAna 1406. BM25's own row reproduces the numbers this R
 quoted for the same harness, which is the cross-check that the title-field change below left plain
 BM25 untouched.
 
-**Read this honestly, because it does not say what you might hope.** Two findings, and they are
-different:
+**A correction the numbers forced, and it matters more than the table.** The rows above compare
+*default* parameters against each other, and on the reference corpus tuning shows what that was worth:
 
-- **The field weighting is close to inert.** Across nine corpus/weight combinations the title weight
-  moves nDCG@10 by at most 0.003 — and on ArguAna the 4.0 row is *worse* than the unweighted one.
-  One move of +0.003 on SciFact (0.662 → 0.665) is inside the noise of a 300-query set, not evidence
-  that titles deserve double weight. There is no dataset here where weighting a title is
-  convincingly worth it.
-- **BM25F's length term, not the weighting, is what changes the ranking.** On ArguAna, where the
-  corpus is long and argument-shaped, BM25F reaches 0.344 against BM25's 0.289 — a gap far larger
-  than any weighting effect, and above the published 0.315. On NFCorpus the same scorer drops to
-  0.296 against BM25's 0.308.
+```
+Config                     nDCG@5      MAP@5      MRR@10        R@5
+BM25                       0.8751     0.7841     0.9015     0.8409
+BM25 (tuned)               0.8812     0.7917     0.9015     0.8409
+BM25F                      0.8189     0.7386     0.8561     0.7955
+BM25F (tuned)              0.8812     0.7917     0.9015     0.8409
+```
 
-So the defensible summary is: *BM25F's per-field length normalization is worth measuring on your
-corpus and can matter a lot on some; weighting a field is not shown to help anywhere here.* Both
-are statements about these three corpora, not about the method in general — ArguAna in particular
-is an outlier-shaped dataset (counter-argument retrieval, very long queries) and should not be
-generalized from.
+**Tuned BM25F equals tuned BM25 to the digit on the reference corpus**, and the un-tuned gap was
+BM25F's defaults (k1=1.2) being a worse fit for a 42-document corpus than BM25's (k1=1.5) — not a
+per-field length term doing something useful. So there is no measured case here where BM25F beats
+BM25 *after both are tuned*. The ArguAna 0.344 stands as an **un-tuned** comparison: whether it
+survives a tuned BM25 is untested, and running that grid on 1406 queries was not affordable here.
+
+**What the tuner adds is the negative answer, which is the useful one.** `Bm25FParameterTuner` reports
+`WeightingHelped = false` on the reference corpus: it searched the title weight and could not beat
+leaving it neutral. That is the same conclusion the hand-picked weights reached, arrived at by
+search instead of by guessing — and it is the instrument to re-run on your own corpus. The other
+standing finding is unchanged: the title weight itself moves nDCG@10 by at most 0.003 across nine
+corpus/weight combinations, and on ArguAna the heaviest weight was worse than none.
+
+Full tables are in [the eval harness README](bench/LexiSharp.Eval/README.md); reproduce the reference
+corpus numbers with `--configs bm25,bm25-tuned,bm25f,bm25f-title,bm25f-tuned --top-k 5`.
 
 The reference corpus moves the same way, and for a boring reason. Indexing its titles (see below)
 lifts plain BM25 from 0.8359 to 0.8751 nDCG@5, while BM25F sits at 0.8189 and its title-2.0 variant
@@ -1236,6 +1246,41 @@ What *is* verified about the scorer, rather than inferred: the arithmetic, the t
 contract, the plan parity, the explanation summing back to the score, and a test that a long body
 the term never appears in does *not* change the score under BM25F while it does under
 `Bm25Scorer`.
+
+### Tuning BM25F
+
+`Bm25FParameterTuner` grid-searches `(k1, b)` and the weight of each named field, in two stages:
+`(k1, b)` first with fields neutral, then the weights at that winner. That is coordinate descent,
+not an exhaustive product, and the class says so — a configuration that is only good jointly can be
+missed. The run is refused above a configuration cap, with the count, rather than silently trimmed.
+
+```csharp
+var result = new Bm25FParameterTuner(index, validationQueries).Tune(
+    weightedFields: ["title"],
+    weightValues: [1.0, 1.5, 2.0, 3.0],
+    topK: 10,
+    metric: TuningMetric.Ndcg);
+
+if (result.WeightingHelped)
+    Console.WriteLine($"title weighs {result.Parameters.FieldWeights["title"]}");
+else
+    Console.WriteLine($"no weighting beat neutral; best was k1={result.Parameters.K1} b={result.Parameters.B}");
+
+var engine = new RankedTextSearchEngine(index, new Bm25FScorer(result.Parameters));
+```
+
+Two things it deliberately reports rather than hides:
+
+- **`WeightingHelped` is the answer to "does weighting help on my corpus".** It is `false` on the
+  reference corpus and on all three BEIR corpora tried. `1.0` belongs in `weightValues` for exactly
+  this reason: without a neutral candidate the search cannot conclude that nothing helps.
+- **The best score is an oracle, not a fair baseline.** The winner was fitted on the same queries it
+  is scored on, and the more configurations were tried the more of the gain is fitting noise. Score
+  the result on a held-out set or treat it as an upper bound. `Bm25Tuned` has carried this caveat
+  all along; this one does too.
+
+Reuse the same `Bm25ValidationQuery` input as `Bm25ParameterTuner` — a single validation type for
+both, deliberately.
 
 **Without a field-aware index it refuses, by name.** Scoring against an index whose
 `HasFieldStatistics` is `false` throws `NotSupportedException` naming the index rather than ranking
