@@ -1,6 +1,5 @@
 ---
 title: Observability
-permalink: pretty
 nav_order: 10
 ---
 

@@ -1,6 +1,5 @@
 ---
 title: Pipelines
-permalink: pretty
 nav_order: 6
 ---
 

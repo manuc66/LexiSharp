@@ -1,6 +1,5 @@
 ---
 title: Ranking
-permalink: pretty
 nav_order: 5
 ---
 
