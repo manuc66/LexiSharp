@@ -264,12 +264,12 @@ jobs:
     # Allocation is counted in bytes and does not depend on how fast the host is, so it is the
     # one benchmark output that travels: a number from a shared runner means what it means
     # anywhere. That is what this job is for - the SearchTrace trace cost, whose allocation is
-    # pinned in BENCHMARKS.md and worth re-checking on a second host.
+    # pinned in docs/benchmarks.md and worth re-checking on a second host.
     #
     # The timing columns are NOT publishable from here. These are Azure VMs shared between
     # tenants, and Azure documents host-level contention as a source of performance variance;
     # the SearchTrace overhead is a few percent, so a shared runner cannot resolve it. Do not
-    # copy a Mean from this artifact into BENCHMARKS.md. It stays advisory and non-gating for the
+    # copy a Mean from this artifact into docs/benchmarks.md. It stays advisory and non-gating for the
     # same reason - and because the behaviour this repository actually needs protected is gated
     # deterministically by `verify` in the core job, which involves no clock at all.
     #

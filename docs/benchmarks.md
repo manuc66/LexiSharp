@@ -1,6 +1,11 @@
+---
+title: Benchmarks
+nav_order: 12
+---
+
 # Benchmarks
 
-Numbers in this file come from BenchmarkDotNet runs on a single, aging developer machine —
+Numbers on this page come from BenchmarkDotNet runs on a single, aging developer machine —
 they are **indicative only**, not a performance claim. Run the suite yourself before drawing
 any conclusion about your own corpus and hardware.
 
@@ -159,7 +164,7 @@ parameters through a real ranking — see the reference corpus README for the co
 this still cannot catch.
 It is worth running before trusting any number in this file: a baseline only means something if the
 code still reproduces it. See the
-[reference corpus README](bench/reference-corpus/README.md#the-golden-master).
+[reference corpus README](https://github.com/manuc66/LexiSharp/blob/main/bench/reference-corpus/README.md#the-golden-master).
 
 ## Reproduce
 
