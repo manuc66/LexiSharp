@@ -59,14 +59,20 @@ jobs:
       # deterministic, which is why it can gate a build when a benchmark cannot: no clock is
       # involved, so there is nothing to be noisy. Re-record with `lexisharp baseline` and read
       # the diff - never accept one to make the build pass.
+      #
+      # The config set is itself load-bearing. Each entry pushes a scorer's *default* parameters
+      # through a real ranking, so changing a public default surfaces as a reviewable diff instead of
+      # as somebody else's search results. `bm25f`, `bm25+`, `bm25l` and `bm25-proximity-full` are
+      # here for that reason: an audit of the suite found those four defaults were pinned by nothing
+      # at all. What that still cannot catch is recorded in the reference corpus README.
       - name: Golden master (ranking outputs must not drift)
         run: >
           dotnet run --project bench/LexiSharp.Cli -c Release --
           verify bench/reference-corpus/corpus
           --queries bench/reference-corpus/queries.json
           --qrels   bench/reference-corpus/qrels.tsv
-          --configs bm25,bm25-semantic --top-k 5
-          --against bench/reference-corpus/golden/bm25.txt
+          --configs bm25,bm25-semantic,bm25f,bm25+,bm25l,bm25-proximity-full --top-k 5
+          --against bench/reference-corpus/golden/rankings.txt
 
       - name: Upload coverage to Codecov
         # Auto-skipped until CODECOV_TOKEN is configured on the repository.

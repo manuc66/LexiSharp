@@ -110,9 +110,36 @@ Hence: hand-built, small, and owned by this project.
 
 ## The golden master
 
-`golden/bm25.txt` records what `bm25` and `bm25-semantic` return for every query, at top-k 5, over
-the corpus as committed. It is the artifact that makes a change to the scoring or merging path
-visible as a reviewable diff instead of a surprise in production.
+`golden/rankings.txt` records what six configurations return for every query, at top-k 5, over the
+corpus as committed. It is the artifact that makes a change to the scoring or merging path visible as
+a reviewable diff instead of a surprise in production.
+
+The config set is load-bearing, not decorative:
+
+```
+bm25                    the reference ranking
+bm25-semantic           the « semantic lexical » expansion variant
+bm25f                   field-weighted BM25F, at its default parameters
+bm25+                   BM25+, at its default delta
+bm25l                   BM25L, at its default delta
+bm25-proximity-full     proximity damping, at its default strength and floor
+```
+
+Four of the six are there for one reason: an audit of the test suite found that the **default
+parameters** of `Bm25FScorer`, `Bm25PlusScorer`, `Bm25LScorer` and `ProximityReranker` were pinned by
+nothing at all. Structural bugs in those classes were caught immediately — nine out of nine mutations
+failed the suite, including both BM25 transcription errors — but changing a *default* was silent,
+because no unit test should pin a default (that would be a specification, and it would change every
+published table at once). This file is the net for that: each config pushes a real default through a
+real ranking, so a change shows up as a diff.
+
+**What the net still does not catch, measured rather than assumed.** Re-running the audit against
+this extended baseline: it catches `Bm25FScorer`'s default `k1` and `ProximityReranker`'s default
+floor. It does **not** catch BM25L's or BM25+'s default `delta`, nor the proximity default strength —
+changing each of those leaves this corpus's ranking identical. That is a limit of 42 documents and 22
+queries, not of the tooling: a default that cannot change the ranking on the corpus available is
+invisible to it. More mutation testing would not help, since a mutant with no observable effect is
+correct to survive. Pinning those needs a corpus where they matter, not a better tool.
 
 **The baseline is versioned against how the corpus is loaded.** The benchmark harness promotes the
 front-matter `title` to a text field (`MarkdownLoadOptions.TextFieldNames = ["title"]`), so the
@@ -125,14 +152,19 @@ committing it.
 ```bash
 # check (exit 1 on drift, so it can gate a build)
 dotnet run --project bench/LexiSharp.Cli -c Release -- verify corpus \
-    --queries queries.json --qrels qrels.tsv --configs bm25,bm25-semantic --top-k 5 \
-    --against golden/bm25.txt
+    --queries queries.json --qrels qrels.tsv \
+    --configs bm25,bm25-semantic,bm25f,bm25+,bm25l,bm25-proximity-full --top-k 5 \
+    --against golden/rankings.txt
 
 # re-record - a separate command on purpose
 dotnet run --project bench/LexiSharp.Cli -c Release -- baseline corpus \
-    --queries queries.json --qrels qrels.tsv --configs bm25,bm25-semantic --top-k 5 \
-    --out golden/bm25.txt
+    --queries queries.json --qrels qrels.tsv \
+    --configs bm25,bm25-semantic,bm25f,bm25+,bm25l,bm25-proximity-full --top-k 5 \
+    --out golden/rankings.txt
 ```
+
+The config list must match on both sides: the baseline is keyed by each configuration's display
+name, so verifying a subset silently checks less than you think.
 
 `baseline` and `verify` are **separate subcommands**, not flags on one command, on purpose. A
 `--update` flag would make re-recording a keystroke, and a baseline nobody re-reads stops catching
@@ -142,7 +174,8 @@ read the diff.
 ### What it stores, and what it deliberately does not
 
 One line per query: the document ids in rank order and the six metrics to four decimals. No score
-vectors, no per-term breakdowns, no timings. A 22-query corpus produces a 54-line file. That is
+vectors, no per-term breakdowns, no timings. A 22-query corpus produces 132 lines across the six
+configurations. That is
 the point: a baseline nobody reads is not a baseline, and raw scores for every query would be
 unreadable while still looking like evidence.
 

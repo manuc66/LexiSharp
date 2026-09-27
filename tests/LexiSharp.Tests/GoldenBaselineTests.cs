@@ -264,7 +264,7 @@ public class GoldenBaselineTests
     {
         // The point of committing it: a real run has to reproduce it, or the gate is theatre.
         var root = RepositoryRoot();
-        var path = Path.Combine(root, "bench", "reference-corpus", "golden", "bm25.txt");
+        var path = Path.Combine(root, "bench", "reference-corpus", "golden", "rankings.txt");
 
         Assert.True(File.Exists(path), $"Missing committed baseline: {path}");
 
@@ -274,6 +274,20 @@ public class GoldenBaselineTests
         Assert.Equal(42, baseline.CorpusDocuments);
         Assert.NotEmpty(baseline.Entries);
         Assert.All(baseline.Entries, entry => Assert.NotEmpty(entry.DocumentIds));
+
+        // Four of the six configurations exist to put a scorer's *default* parameters through a real
+        // ranking, so that changing a public default is a reviewable diff. If one goes missing here
+        // the net silently stops covering that scorer, so the expected set is asserted.
+        Assert.Equal(
+            [
+                "BM25",
+                "BM25 + proximity (damp, s=1)",
+                "BM25 + semantic",
+                "BM25+",
+                "BM25F",
+                "BM25L",
+            ],
+            baseline.Entries.Select(entry => entry.Configuration).Distinct().Order(StringComparer.Ordinal));
     }
 
     private static string RepositoryRoot()
