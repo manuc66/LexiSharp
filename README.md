@@ -108,7 +108,9 @@ ArguAna against BEIR's published BM25 numbers in
   the scorer, tokenizer, fuzzy matching, synonyms and an optional reranker.
 - **Document sources** (`LexiSharp.Sources`): loaders for the data on your disk — markdown
   with YAML front matter, plain text files and JSON arrays — producing id + text + fields +
-  category records ready to index.
+  category records ready to index. `MarkdownLoadOptions.TextFieldNames` promotes named front-matter
+  keys (typically `title`) to indexed text fields, so a document's title is searchable rather than
+  only filterable.
 - **Benchmark CLI** (`LexiSharp.Cli` + `LexiSharp.Benchmarking`): an in-core runner compares
   stock scorers, tuned BM25 and RRF hybrids on your own corpus with labeled queries, reporting
   the standard retrieval metrics and latency; a console front-end drives it from the command
@@ -124,9 +126,20 @@ ArguAna against BEIR's published BM25 numbers in
   - `TfIdfScorer` — TF-IDF,
   - `QueryLikelihoodScorer` — probabilistic language model (Jelinek-Mercer smoothing),
   - `BooleanScorer` — exact AND/OR filter.
+- **BM25F** (`Bm25FScorer`): the same `ITextSearchEngine` contract over documents that declare
+  `TextFields`, so a term in a title can be weighted above the same term in a body — per-field
+  weights, per-field length normalization, and an explainable per-term breakdown. Requires an
+  index that tracks fields. **Its retrieval quality is unmeasured**; see *BM25F*.
 - **In-memory inverted index** (`InMemoryTextIndex`) with term positions, document
   frequencies, corpus statistics and incremental `Add`/`Remove`, plus an index statistics
   snapshot (`GetStatistics`: documents, vocabulary, tokens, average length, vocabulary richness).
+- **Multi-field documents**: a document's `TextFields` are indexed as named fields, and the index
+  answers per-field term frequency, field length, average field length and field document frequency
+  (`FieldTermFrequency`, `FieldLength`, `AverageFieldLength`, `FieldDocumentFrequency`, plus
+  `Fields` and `HasFieldStatistics`) — the groundwork a field-weighted scorer needs. The **flat**
+  statistics stay the union of every field, so a plain BM25 query still finds a term that only
+  occurs in a title, and a single-field document is unaffected. A quoted phrase matches inside one
+  field and never bridges two. See *Multi-field documents*.
 - **Score boosting** (`BoostedTextSearchEngine`): a decorator that applies **signed** score
   adjustments (multiplicative factor and/or additive offset) per result — boost a category or a
   priority, damp or penalize stale matches — without touching the underlying engine.
@@ -1033,6 +1046,206 @@ on the page through the merger with nobody enthusiastic, and some ride on a sing
 does not appear, and cannot: it classifies a document no source returned, so by definition it never
 shows up on a result page.
 
+### Multi-field documents
+
+A document is not only one blob of text. Give it named text sections and the index tracks each one
+separately, which is what a field-weighted ranking needs:
+
+```csharp
+using LexiSharp.Core;
+using LexiSharp.Indexing;
+
+var index = new InMemoryTextIndex();
+
+index.Index(new[]
+{
+    new SearchDocument(
+        Id: "1",
+        Text: "the article body goes on at some length about indexing",
+        TextFields: new Dictionary<string, string>
+        {
+            ["title"] = "a guide to search ranking",
+            ["summary"] = "an introduction",
+        }),
+});
+```
+
+Two views of the same data, and the distinction is the whole design:
+
+| | `TermFrequency` / `DocumentLength` / `DocumentFrequency` | `FieldTermFrequency` / `FieldLength` / `FieldDocumentFrequency` |
+|---|---|---|
+| Sees | the **union** of every field | one named field |
+| Answers | "does this document match, and how long is it" | "how much of the match is in the title" |
+| `b` normalizes against | the whole document | the field, against `AverageFieldLength(field)` |
+
+Because the flat view is the union, **a field-only term is still findable**. With the document above,
+a plain `new Bm25Scorer()` over `index` matches `ranking` even though it never appears in
+`SearchDocument.Text` — no separate index or query path is needed to make a description searchable.
+A document with no `TextFields` indexes exactly as before.
+
+```csharp
+// The flat view, field-unaware.
+index.TermFrequency("1", "ranking");            // 1
+index.DocumentLength("1");                      // body + title + summary
+
+// The per-field view, for a field-weighted scorer to be written against.
+index.Fields;                                    // ["", "summary", "title"] — default first, then ordinal
+index.FieldTermFrequency("1", "title", "guide"); // 1
+index.FieldLength("1", "title");                 // title tokens only
+index.AverageFieldLength("title");               // over every document declaring that field
+index.FieldDocumentFrequency("title", "ranking");
+```
+
+`TextFields.Default` is the empty string — it names the document's main `Text`, and it is the
+reserved default field. `Fields` always lists it first, then the named ones in ordinal order, so the
+sequence is stable and safe to assert on. A blank (whitespace-only) field name is rejected, since it
+could not be told apart from the default.
+
+**A quoted phrase matches inside one field and never bridges two.** Field tokens are indexed after
+the main text with a gap, so `"body guide"` cannot match across the boundary while `"a guide"`
+still matches inside the title.
+
+**On the typed facade**, `TextFields` defaults to the document's own `SearchDocument.TextFields`
+when you index `SearchDocument` directly, and is otherwise yours to set:
+
+```csharp
+var index = new LexiSharpIndex<Product>(o =>
+{
+    o.Id = p => p.Sku;
+    o.Text = p => p.Description;
+    o.TextFields = p => new Dictionary<string, string> { ["name"] = p.Name };
+});
+
+// index.TextIndex is the ITextIndex behind the searches, so a field-aware scorer can be built
+// over the very same index instead of a second one you have to keep in step by hand.
+```
+
+**What this is not.** No field-weighted scorer ships yet: the statistics BM25F needs are here, and
+the scorer that consumes them is not. `HasFieldStatistics` is `false` on an index that does not
+track fields, and the per-field members then throw `NotSupportedException` naming the index — they
+deliberately do not return `0`, which would make a field-weighted ranking quietly wrong with no
+error to show for it. Only `InMemoryTextIndex` and `ExpansionTextIndex` track fields; the PostgreSQL
+and ParadeDB backends implement `ITextSearchEngine` and are unaffected by the `ITextIndex` additions.
+
+**A field present but empty still counts.** A document that declares a title tokenizing to nothing
+is included in `AverageFieldLength(title)`, so the average reflects the documents that *have* the
+field rather than only the ones that filled it.
+
+**Loading a title from a source.** `MarkdownLoadOptions.TextFieldNames` names the front-matter keys
+to promote to text fields, and `LoadedDocument.ToSearchDocument()` carries them through:
+
+```csharp
+var documents = MarkdownLoader.LoadDirectory(
+    "notes/", new MarkdownLoadOptions { TextFieldNames = ["title"] });
+```
+
+It defaults to none, on purpose: front matter is mostly metadata — a date, a status, an author id —
+and promoting all of it would make those values match queries. A promoted key is **in addition to**
+the document field it already was, so the title stays filterable and facetable *and* becomes
+searchable. On the reference corpus this is worth a lot to plain BM25: nDCG@5 goes from **0.8359 to
+0.8751**, because before this a markdown document's title was not indexed at all. The committed
+golden master was re-recorded in the same change, and `verify` fails loudly without it.
+
+### BM25F (field-weighted BM25)
+
+`Bm25FScorer` ranks a document that has *fields*. The term frequencies of the fields are summed
+with a weight each, and the length normalization is taken over **the fields that contain the term**
+— so a term living only in a short title is not penalized for the length of a long body it never
+appears in. That is the real difference from running `Bm25Scorer` over the flattened text.
+
+```csharp
+using LexiSharp.Core;
+using LexiSharp.Indexing;
+using LexiSharp.Ranking;
+
+var index = new InMemoryTextIndex();
+index.Index(new[]
+{
+    new SearchDocument(
+        Id: "1",
+        Text: "the body is long and rambles on at some considerable length about many things",
+        TextFields: new Dictionary<string, string> { ["title"] = "ranking" }),
+});
+
+// A weight per field. A field left out keeps the neutral weight of 1, so an unset map means
+// « treat every field equally », not « search the main text only ». A weight of 0 removes the
+// field from the ranking entirely.
+var engine = new RankedTextSearchEngine(
+    index, new Bm25FScorer(fieldWeights: new Dictionary<string, double> { ["title"] = 2.0 }));
+
+engine.Search("ranking");
+```
+
+Or from a preset, chaining weights:
+
+```csharp
+var scorer = new Bm25FScorer(Bm25FParameters.Balanced.WithWeight("title", 2.0));
+```
+
+`Bm25FScorer` implements `IScoreExplainer` (a per-term breakdown whose reported total equals the
+score), `ITermOverlapScorer` (a document sharing no query term scores exactly `0`, so the engine
+keeps its candidate fast path) and `IQueryPlannableScorer` (a planned search is bit-identical to an
+unplanned one — both are asserted in the test suite).
+
+**The formula** is BM25F as given in Robertson, Zaragoza & Taylor, *New formal models of BM25*
+(2004), with two departures stated in the source so the behaviour is unambiguous: a single `b` for
+all fields where the paper allows one `b_f` per field, and `k1` unrescaled by field count. The
+`idf` is the document-level one, the same as `Bm25Scorer`'s.
+
+**Retrieval quality, measured on all three BEIR corpora the harness supports** (nDCG@10; full
+tables in [the eval harness README](bench/LexiSharp.Eval/README.md)):
+
+| Config | NFCorpus | SciFact | ArguAna |
+|---|---|---|---|
+| BM25 (k1=1.5, b=0.75) | 0.308 | 0.662 | 0.289 |
+| BM25 (tuned in-sample, oracle) | 0.311 | 0.664 | — |
+| BM25F (unweighted) | 0.296 | 0.662 | **0.344** |
+| BM25F (title 2.0) | 0.296 | **0.665** | **0.344** |
+| BM25F (title 4.0) | 0.296 | 0.664 | 0.340 |
+| BEIR's published BM25 | 0.325 | 0.665 | 0.315 |
+
+ArguAna was run with `--no-tuned` (its grid search is the dominant cost); NFCorpus 323 judged
+queries, SciFact 300, ArguAna 1406. BM25's own row reproduces the numbers this README already
+quoted for the same harness, which is the cross-check that the title-field change below left plain
+BM25 untouched.
+
+**Read this honestly, because it does not say what you might hope.** Two findings, and they are
+different:
+
+- **The field weighting is close to inert.** Across nine corpus/weight combinations the title weight
+  moves nDCG@10 by at most 0.003 — and on ArguAna the 4.0 row is *worse* than the unweighted one.
+  One move of +0.003 on SciFact (0.662 → 0.665) is inside the noise of a 300-query set, not evidence
+  that titles deserve double weight. There is no dataset here where weighting a title is
+  convincingly worth it.
+- **BM25F's length term, not the weighting, is what changes the ranking.** On ArguAna, where the
+  corpus is long and argument-shaped, BM25F reaches 0.344 against BM25's 0.289 — a gap far larger
+  than any weighting effect, and above the published 0.315. On NFCorpus the same scorer drops to
+  0.296 against BM25's 0.308.
+
+So the defensible summary is: *BM25F's per-field length normalization is worth measuring on your
+corpus and can matter a lot on some; weighting a field is not shown to help anywhere here.* Both
+are statements about these three corpora, not about the method in general — ArguAna in particular
+is an outlier-shaped dataset (counter-argument retrieval, very long queries) and should not be
+generalized from.
+
+The reference corpus moves the same way, and for a boring reason. Indexing its titles (see below)
+lifts plain BM25 from 0.8359 to 0.8751 nDCG@5, while BM25F sits at 0.8189 and its title-2.0 variant
+at 0.8248 — the weighting helps BM25F by 0.006 there and still does not reach BM25.
+
+What *is* verified about the scorer, rather than inferred: the arithmetic, the term-overlap
+contract, the plan parity, the explanation summing back to the score, and a test that a long body
+the term never appears in does *not* change the score under BM25F while it does under
+`Bm25Scorer`.
+
+**Without a field-aware index it refuses, by name.** Scoring against an index whose
+`HasFieldStatistics` is `false` throws `NotSupportedException` naming the index rather than ranking
+on zeros:
+
+```csharp
+// Throws: "BM25F needs per-field statistics, and FlatIndex has none…"
+new Bm25FScorer().Score("1", ["ranking"], someIndexWithoutFields);
+```
+
 ### Explainable scoring and BM25 tuning
 
 Audit any ranking decision term by term, then let the corpus pick its own parameters. The
@@ -1364,7 +1577,8 @@ LexiSharp.MessagePack   MessagePack (binary) persistence for the in-memory index
 Within the core package, separation of concerns mirrors the recommendations the library
 was designed from:
 
-- the **index** owns corpus statistics (tf, df, document length, positions, vocabulary);
+- the **index** owns corpus statistics (tf, df, document length, positions, vocabulary, and the
+  per-field statistics when a document declares `TextFields`);
 - the **scorer** is a pure strategy reading from the index;
 - the **engine** orchestrates query tokenization, scoring, filtering and ranking.
 

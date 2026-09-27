@@ -114,6 +114,14 @@ Hence: hand-built, small, and owned by this project.
 the corpus as committed. It is the artifact that makes a change to the scoring or merging path
 visible as a reviewable diff instead of a surprise in production.
 
+**The baseline is versioned against how the corpus is loaded.** The benchmark harness promotes the
+front-matter `title` to a text field (`MarkdownLoadOptions.TextFieldNames = ["title"]`), so the
+index holds the titles as searchable text — which plain BM25 benefits from substantially, nDCG@5
+0.8359 → 0.8751. The committed baseline was re-recorded when that landed. If you change the loading
+options, the right sequence is: run `verify` (it will fail, loudly, with a per-query diff), read the
+diff to confirm the change is the one you meant, then re-record and read *that* diff before
+committing it.
+
 ```bash
 # check (exit 1 on drift, so it can gate a build)
 dotnet run --project bench/LexiSharp.Cli -c Release -- verify corpus \
@@ -190,6 +198,7 @@ what it claims to.
 ## Adding to it
 
 - Documents: markdown with `title` / `category` front matter; any other key becomes a field.
+  The `title` is additionally promoted to an indexed text field, so a query can match it.
 - Keep the id stable. It is the join key between the corpus, the qrels and the baseline.
 - Add the query with its family prefix, and at least one judgment, or it is excluded from the
   averages and nobody notices.
