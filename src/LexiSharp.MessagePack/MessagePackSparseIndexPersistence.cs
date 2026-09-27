@@ -21,7 +21,13 @@ namespace LexiSharp.MessagePack;
 /// </remarks>
 public static class MessagePackSparseIndexPersistence
 {
-    private const int FormatVersion = 1;
+    private const int FormatVersion = 2;
+
+    /// <summary>
+    /// Oldest payload this build still reads. Version 1 had no <c>TextFields</c>, so loading one
+    /// yields documents with no text fields — which is what that file recorded.
+    /// </summary>
+    private const int OldestReadableVersion = 1;
 
     private static readonly MessagePackSerializerOptions SerializerOptions =
         MessagePackSerializerOptions.Standard
@@ -72,9 +78,11 @@ public static class MessagePackSparseIndexPersistence
             throw new InvalidOperationException("The stream does not contain a valid LexiSharp sparse index.", exception);
         }
 
-        if (stored.Version != FormatVersion)
+        if (stored.Version is not (FormatVersion or OldestReadableVersion))
             throw new NotSupportedException(
-                $"Unsupported sparse index format version {stored.Version} (expected {FormatVersion}).");
+                $"Unsupported sparse index format version {stored.Version} " +
+                $"(expected {FormatVersion}, or {OldestReadableVersion} for a file saved before " +
+                "text fields were persisted).");
 
         var engine = new SparseTextSearchEngine(embeddings);
         engine.Import(stored.Entries.Select(FromStored));
@@ -98,7 +106,10 @@ public static class MessagePackSparseIndexPersistence
             entry.Document.Id,
             entry.Document.Text,
             entry.Document.Fields is null ? null : new Dictionary<string, string>(entry.Document.Fields),
-            entry.Document.Category),
+            entry.Document.Category,
+            entry.Document.TextFields is null
+                ? null
+                : new Dictionary<string, string>(entry.Document.TextFields)),
         new Dictionary<string, float>(entry.Weights, StringComparer.Ordinal));
 
     private static SparseIndexEntry FromStored(StoredSparseEntry stored) => new(
@@ -106,6 +117,7 @@ public static class MessagePackSparseIndexPersistence
             stored.Document.Id,
             stored.Document.Text,
             stored.Document.Fields,
-            stored.Document.Category),
+            stored.Document.Category,
+            stored.Document.TextFields),
         stored.Weights);
 }

@@ -39,6 +39,7 @@ public sealed class LexiSharpIndex<TDocument>
     private readonly Func<TDocument, string> _text;
     private readonly Func<TDocument, string?> _category;
     private readonly Func<TDocument, IReadOnlyDictionary<string, string>?> _fields;
+    private readonly Func<TDocument, IReadOnlyDictionary<string, string>?> _textFields;
     private readonly bool _enableFuzzy;
     private readonly bool _fuzzyOnlyOutOfVocabulary;
 
@@ -70,6 +71,7 @@ public sealed class LexiSharpIndex<TDocument>
         _text = options.Text ?? DefaultText() ?? throw NewMappingError("Text");
         _category = options.Category ?? DefaultCategory() ?? NoCategory;
         _fields = options.Fields ?? DefaultFields() ?? NoFields;
+        _textFields = options.TextFields ?? DefaultTextFields() ?? NoFields;
 
         _enableFuzzy = options.EnableFuzzy;
         _fuzzyOnlyOutOfVocabulary = options.FuzzyOnlyOutOfVocabulary;
@@ -95,6 +97,16 @@ public sealed class LexiSharpIndex<TDocument>
 
     /// <summary>A snapshot of the corpus statistics (documents, vocabulary, tokens, ...).</summary>
     public TextIndexStatistics Statistics => _index.GetStatistics();
+
+    /// <summary>
+    /// The underlying index, for callers that need per-field statistics or the raw contract.
+    /// </summary>
+    /// <remarks>
+    /// Named for what it holds rather than <c>Index</c>, which is the batch-indexing method. Exposed
+    /// so a field-aware scorer can be built over the same index the facade searches, rather than a
+    /// second one the caller has to keep in step by hand.
+    /// </remarks>
+    public ITextIndex TextIndex => _index;
 
     /// <summary>The underlying search engine, for callers that need the raw interface.</summary>
     public ITextSearchEngine Engine => _engine;
@@ -253,7 +265,8 @@ public sealed class LexiSharpIndex<TDocument>
             _id(document),
             _text(document),
             _fields(document),
-            _category(document));
+            _category(document),
+            _textFields(document));
 
     /// <summary>Wraps engine results into typed hits, optionally highlighting each hit's text.</summary>
     private IReadOnlyList<LexiSharpHit<TDocument>> MapHits(
@@ -328,6 +341,14 @@ public sealed class LexiSharpIndex<TDocument>
             return null;
 
         return static document => ((SearchDocument)(object)document).Fields;
+    }
+
+    private static Func<TDocument, IReadOnlyDictionary<string, string>?>? DefaultTextFields()
+    {
+        if (typeof(TDocument) != typeof(SearchDocument))
+            return null;
+
+        return static document => ((SearchDocument)(object)document).TextFields;
     }
 
     private static string? NoCategory(TDocument _) => null;

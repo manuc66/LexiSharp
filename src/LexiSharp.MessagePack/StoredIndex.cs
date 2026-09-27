@@ -21,12 +21,18 @@ internal sealed record StoredTokenizer(
     [property: Key(6)] bool HasStemmer);
 
 /// <summary>Wire format of a single document.</summary>
+/// <remarks>
+/// <c>TextFields</c> was added at format version 2. A version 1 payload simply has no such key,
+/// which MessagePack decodes as a null map, so old files still load — they just carry no text
+/// fields, which is exactly what they did not have.
+/// </remarks>
 [MessagePackObject(AllowPrivate = true)]
 internal sealed record StoredDocument(
     [property: Key(0)] string Id,
     [property: Key(1)] string Text,
     [property: Key(2)] Dictionary<string, string>? Fields,
-    [property: Key(3)] string? Category);
+    [property: Key(3)] string? Category,
+    [property: Key(4)] Dictionary<string, string>? TextFields);
 
 /// <summary>Wire format of a persisted sparse engine (versioned).</summary>
 [MessagePackObject(AllowPrivate = true)]

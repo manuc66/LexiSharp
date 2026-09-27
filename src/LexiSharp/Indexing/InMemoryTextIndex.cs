@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using LexiSharp.Core;
 using LexiSharp.Linguistics;
@@ -22,6 +23,14 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
     private readonly Dictionary<string, IReadOnlyList<string>> _tokens = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _lengths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _corpusFrequencies = new(StringComparer.Ordinal);
+
+    // Per-field statistics, populated from SearchDocument.TextFields. The document's main Text is
+    // the field TextFields.Default, and it is tracked here as well as in the flat structures above
+    // so a field-aware scorer can read every field through one path.
+    private readonly Dictionary<string, Dictionary<string, Dictionary<string, int>>> _fieldFrequencies =
+        new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Dictionary<string, int>> _fieldLengths = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, long> _fieldTotalTokens = new(StringComparer.Ordinal);
 
     private long _totalTokens;
 
@@ -73,32 +82,121 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
 
         _documents[document.Id] = document;
 
-        var terms = _tokenizer.Tokenize(document.Text);
-        _tokens[document.Id] = terms;
-        _lengths[document.Id] = terms.Count;
-        _totalTokens += terms.Count;
+        var mainTerms = _tokenizer.Tokenize(document.Text);
 
-        for (int position = 0; position < terms.Count; position++)
+        for (int position = 0; position < mainTerms.Count; position++)
+            Post(document.Id, mainTerms[position], position);
+
+        RecordField(TextFields.Default, document.Id, mainTerms);
+
+        // Counted once, here, so the flat corpus total is right on both branches below. Every
+        // length-normalized scorer divides by it, so missing it silently rescales the whole
+        // ranking.
+        _totalTokens += mainTerms.Count;
+
+        if (document.TextFields is not { Count: > 0 })
         {
-            string term = terms[position];
-
-            if (!_postings.TryGetValue(term, out var postings))
-            {
-                postings = new Dictionary<string, List<int>>(StringComparer.Ordinal);
-                _postings[term] = postings;
-            }
-
-            if (!postings.TryGetValue(document.Id, out var positions))
-            {
-                positions = new List<int>(2);
-                postings[document.Id] = positions;
-            }
-
-            positions.Add(position);
-
-            _corpusFrequencies.TryGetValue(term, out int corpusCount);
-            _corpusFrequencies[term] = corpusCount + 1;
+            _tokens[document.Id] = mainTerms;
+            _lengths[document.Id] = mainTerms.Count;
+            return;
         }
+
+        // The flat view is the union of every field, so a document that only matches inside a
+        // TextField is still reachable by candidate generation and still scores. The list is only
+        // allocated when a document actually has text fields.
+        var allTerms = new List<string>(mainTerms);
+        int nextPosition = mainTerms.Count;
+
+        foreach (var (field, text) in document.TextFields)
+        {
+            TextFields.Validate(field, nameof(SearchDocument.TextFields));
+
+            var fieldTerms = _tokenizer.Tokenize(text);
+
+            // A gap between the previous run and this one, so a quoted phrase can match inside
+            // one field but never bridge two of them.
+            nextPosition += FieldPositionGap;
+
+            for (int i = 0; i < fieldTerms.Count; i++)
+                Post(document.Id, fieldTerms[i], nextPosition + i);
+
+            nextPosition += fieldTerms.Count;
+
+            RecordField(field, document.Id, fieldTerms);
+
+            allTerms.AddRange(fieldTerms);
+            _totalTokens += fieldTerms.Count;
+        }
+
+        _tokens[document.Id] = allTerms;
+        _lengths[document.Id] = allTerms.Count;
+    }
+
+    /// <summary>
+    /// Number of unused positions inserted between two token runs (main text to first field, field
+    /// to field), so positions belonging to different fields are never adjacent and a phrase
+    /// query cannot span a field boundary. Same idea, and same value, as
+    /// <see cref="ExpansionPositionOffset"/>.
+    /// </summary>
+    private const int FieldPositionGap = 2;
+
+    /// <summary>
+    /// Adds one occurrence of <paramref name="term"/> to the flat inverted lists at
+    /// <paramref name="position"/>.
+    /// </summary>
+    private void Post(string documentId, string term, int position)
+    {
+        if (!_postings.TryGetValue(term, out var postings))
+        {
+            postings = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+            _postings[term] = postings;
+        }
+
+        if (!postings.TryGetValue(documentId, out var positions))
+        {
+            positions = new List<int>(2);
+            postings[documentId] = positions;
+        }
+
+        positions.Add(position);
+
+        _corpusFrequencies.TryGetValue(term, out int corpusCount);
+        _corpusFrequencies[term] = corpusCount + 1;
+    }
+
+    /// <summary>
+    /// Records one field's tokens in the per-field statistics, replacing whatever the document
+    /// had for that field. The document is expected to have been removed already.
+    /// </summary>
+    private void RecordField(string field, string documentId, IReadOnlyList<string> terms)
+    {
+        if (!_fieldFrequencies.TryGetValue(field, out var byTerm))
+        {
+            byTerm = new Dictionary<string, Dictionary<string, int>>(StringComparer.Ordinal);
+            _fieldFrequencies[field] = byTerm;
+        }
+
+        foreach (string term in terms)
+        {
+            if (!byTerm.TryGetValue(term, out var byDocument))
+            {
+                byDocument = new Dictionary<string, int>(StringComparer.Ordinal);
+                byTerm[term] = byDocument;
+            }
+
+            byDocument.TryGetValue(documentId, out int count);
+            byDocument[documentId] = count + 1;
+        }
+
+        if (!_fieldLengths.TryGetValue(field, out var lengths))
+        {
+            lengths = new Dictionary<string, int>(StringComparer.Ordinal);
+            _fieldLengths[field] = lengths;
+        }
+
+        lengths[documentId] = terms.Count;
+        _fieldTotalTokens[field] = (_fieldTotalTokens.TryGetValue(field, out long total) ? total : 0)
+            + terms.Count;
     }
 
     /// <summary>
@@ -195,7 +293,56 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
         if (_lengths.Remove(documentId, out int length))
             _totalTokens -= length;
 
+        RemoveFromFieldStatistics(documentId);
+
         return true;
+    }
+
+    /// <summary>
+    /// Drops one document from every per-field structure, and forgets a field once no document
+    /// carries it any more, so <see cref="Fields"/> never reports a stale name.
+    /// </summary>
+    private void RemoveFromFieldStatistics(string documentId)
+    {
+        foreach (string field in _fieldFrequencies.Keys.ToList())
+        {
+            if (!_fieldFrequencies.TryGetValue(field, out var byTerm))
+                continue;
+
+            foreach (var entry in byTerm)
+            {
+                if (entry.Value.Remove(documentId) && entry.Value.Count == 0)
+                    byTerm.Remove(entry.Key);
+            }
+
+            if (byTerm.Count == 0)
+                _fieldFrequencies.Remove(field);
+        }
+
+        foreach (string field in _fieldLengths.Keys.ToList())
+        {
+            if (!_fieldLengths.TryGetValue(field, out var lengths))
+                continue;
+
+            if (!lengths.Remove(documentId, out int removedLength))
+                continue;
+
+            if (_fieldTotalTokens.TryGetValue(field, out long total) &&
+                total - removedLength <= 0)
+            {
+                _fieldTotalTokens.Remove(field);
+            }
+            else
+            {
+                _fieldTotalTokens[field] = total - removedLength;
+            }
+
+            if (lengths.Count == 0)
+            {
+                _fieldLengths.Remove(field);
+                _fieldTotalTokens.Remove(field);
+            }
+        }
     }
 
     /// <inheritdoc />
@@ -206,6 +353,9 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
         _tokens.Clear();
         _lengths.Clear();
         _corpusFrequencies.Clear();
+        _fieldFrequencies.Clear();
+        _fieldLengths.Clear();
+        _fieldTotalTokens.Clear();
         _totalTokens = 0;
     }
 
@@ -319,4 +469,83 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
 
     /// <inheritdoc />
     public TextIndexStatistics GetStatistics() => TextIndexStatistics.From(this);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The default field always comes first, the named ones after it in ordinal order, so the
+    /// sequence is stable across runs and safe to assert on.
+    /// </remarks>
+    public IReadOnlyCollection<string> Fields
+    {
+        get
+        {
+            // The default field lives in the same map as the named ones, so it has to be filtered
+            // out here rather than prepended blindly — it is not in `named`.
+            if (_fieldLengths.Count == 0)
+                return [TextFields.Default];
+
+            var named = _fieldLengths.Keys
+                .Where(name => name != TextFields.Default)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+
+            var fields = new string[named.Length + 1];
+            fields[0] = TextFields.Default;
+            named.CopyTo(fields, 1);
+            return fields;
+        }
+    }
+
+    /// <inheritdoc />
+    public bool HasFieldStatistics => true;
+
+    /// <inheritdoc />
+    public int FieldTermFrequency(string documentId, string field, string term)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(documentId);
+        TextFields.Validate(field, nameof(field));
+        ArgumentNullException.ThrowIfNull(term);
+
+        return _fieldFrequencies.TryGetValue(field, out var byTerm) &&
+               byTerm.TryGetValue(term, out var byDocument) &&
+               byDocument.TryGetValue(documentId, out int count)
+            ? count
+            : 0;
+    }
+
+    /// <inheritdoc />
+    public int FieldLength(string documentId, string field)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(documentId);
+        TextFields.Validate(field, nameof(field));
+
+        return _fieldLengths.TryGetValue(field, out var lengths) &&
+               lengths.TryGetValue(documentId, out int length)
+            ? length
+            : 0;
+    }
+
+    /// <inheritdoc />
+    public double AverageFieldLength(string field)
+    {
+        TextFields.Validate(field, nameof(field));
+
+        if (!_fieldLengths.TryGetValue(field, out var lengths) || lengths.Count == 0)
+            return 0;
+
+        return (double)(_fieldTotalTokens.TryGetValue(field, out long total) ? total : 0)
+            / lengths.Count;
+    }
+
+    /// <inheritdoc />
+    public int FieldDocumentFrequency(string field, string term)
+    {
+        TextFields.Validate(field, nameof(field));
+        ArgumentNullException.ThrowIfNull(term);
+
+        return _fieldFrequencies.TryGetValue(field, out var byTerm) &&
+               byTerm.TryGetValue(term, out var byDocument)
+            ? byDocument.Count
+            : 0;
+    }
 }

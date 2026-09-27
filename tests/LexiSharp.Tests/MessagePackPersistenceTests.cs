@@ -3,6 +3,7 @@ using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
 using LexiSharp.MessagePack;
 using LexiSharp.Ranking;
+using MessagePack;
 using Xunit;
 
 namespace LexiSharp.Tests;
@@ -235,6 +236,89 @@ public class MessagePackPersistenceTests
         using var stream = new MemoryStream([1, 2, 3, 4, 5, 6, 7, 8]);
 
         Assert.Throws<InvalidOperationException>(() => MessagePackTextIndexPersistence.Load(stream));
+    }
+
+    [Fact]
+    public void Roundtrip_PreservesTextFieldsAndTheirStatistics()
+    {
+        var original = new InMemoryTextIndex();
+        original.Index(new[]
+        {
+            new SearchDocument("1", "the body of the article", TextFields: new Dictionary<string, string>
+            {
+                ["title"] = "refresher guide",
+            }),
+            new SearchDocument("2", "another body", TextFields: new Dictionary<string, string>
+            {
+                ["title"] = "second article",
+            }),
+        });
+
+        using var stream = new MemoryStream();
+        MessagePackTextIndexPersistence.Save(original, stream);
+        stream.Position = 0;
+        var reloaded = MessagePackTextIndexPersistence.Load(stream);
+
+        // A text field lost on the way out would silently change every field-weighted ranking, so
+        // assert on the reconstructed documents, not only on the reloaded index.
+        Assert.True(reloaded.TryGetDocument("1", out var first));
+        Assert.Equal("refresher guide", first!.TextFields!["title"]);
+
+        Assert.Equal([TextFields.Default, "title"], reloaded.Fields);
+        Assert.Equal(1, reloaded.FieldTermFrequency("1", "title", "guide"));
+        Assert.Equal(2, reloaded.FieldLength("1", "title"));
+        Assert.Equal(2.0, reloaded.AverageFieldLength("title"), 6);
+
+        // The flat view must survive too, or the reloaded index would score differently.
+        Assert.Equal(7, reloaded.DocumentLength("1"));
+        Assert.Equal(
+            new Bm25Scorer().Score("1", ["guide"], original),
+            new Bm25Scorer().Score("1", ["guide"], reloaded),
+            12);
+    }
+
+    [Fact]
+    public void Load_StillReadsAVersion1PayloadWhichHadNoTextFields()
+    {
+        // Hand-built version 1 payload: the shape this library wrote before TextFields existed.
+        // It must load, with no text fields, rather than being rejected as an unknown version.
+        var stored = new StoredIndex(
+            1,
+            new StoredTokenizer(typeof(Tokenizer).FullName!, false, 1, 1, false, null, false),
+            [new StoredDocument("1", "the body of the article", null, null, null)]);
+
+        using var stream = new MemoryStream();
+        MessagePackSerializer.Serialize(
+            stream,
+            stored,
+            MessagePackSerializerOptions.Standard.WithCompression(MessagePackCompression.Lz4BlockArray));
+        stream.Position = 0;
+
+        var reloaded = MessagePackTextIndexPersistence.Load(stream);
+
+        Assert.Equal(1, reloaded.Count);
+        Assert.True(reloaded.TryGetDocument("1", out var document));
+        Assert.Null(document!.TextFields);
+        Assert.Equal([TextFields.Default], reloaded.Fields);
+        Assert.Equal(5, reloaded.DocumentLength("1"));
+    }
+
+    [Fact]
+    public void Load_StillRejectsAVersionThisBuildDoesNotKnow()
+    {
+        var stored = new StoredIndex(
+            0,
+            new StoredTokenizer(typeof(Tokenizer).FullName!, false, 1, 1, false, null, false),
+            []);
+
+        using var stream = new MemoryStream();
+        MessagePackSerializer.Serialize(
+            stream,
+            stored,
+            MessagePackSerializerOptions.Standard.WithCompression(MessagePackCompression.Lz4BlockArray));
+        stream.Position = 0;
+
+        Assert.Throws<NotSupportedException>(() => MessagePackTextIndexPersistence.Load(stream));
     }
 
     private sealed class PassthroughTokenizer : ITokenizer

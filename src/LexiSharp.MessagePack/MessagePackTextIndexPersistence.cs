@@ -31,7 +31,13 @@ namespace LexiSharp.MessagePack;
 /// </remarks>
 public static class MessagePackTextIndexPersistence
 {
-    private const int FormatVersion = 1;
+    private const int FormatVersion = 2;
+
+    /// <summary>
+    /// Oldest payload this build still reads. Version 1 had no <c>TextFields</c>, so loading one
+    /// yields an index whose documents have no text fields — which is what that file recorded.
+    /// </summary>
+    private const int OldestReadableVersion = 1;
 
     private static readonly MessagePackSerializerOptions SerializerOptions =
         MessagePackSerializerOptions.Standard
@@ -86,9 +92,11 @@ public static class MessagePackTextIndexPersistence
             throw new InvalidOperationException("The stream does not contain a valid LexiSharp index.", exception);
         }
 
-        if (stored.Version != FormatVersion)
+        if (stored.Version is not (FormatVersion or OldestReadableVersion))
             throw new NotSupportedException(
-                $"Unsupported index format version {stored.Version} (expected {FormatVersion}).");
+                $"Unsupported index format version {stored.Version} " +
+                $"(expected {FormatVersion}, or {OldestReadableVersion} for a file saved before " +
+                "text fields were persisted).");
 
         var restoredTokenizer = RestoreTokenizer(stored.Tokenizer, tokenizer);
         var index = new InMemoryTextIndex(restoredTokenizer);
@@ -164,11 +172,13 @@ public static class MessagePackTextIndexPersistence
         document.Id,
         document.Text,
         document.Fields is null ? null : new Dictionary<string, string>(document.Fields),
-        document.Category);
+        document.Category,
+        document.TextFields is null ? null : new Dictionary<string, string>(document.TextFields));
 
     private static SearchDocument FromStored(StoredDocument stored) => new(
         stored.Id,
         stored.Text,
         stored.Fields,
-        stored.Category);
+        stored.Category,
+        stored.TextFields);
 }

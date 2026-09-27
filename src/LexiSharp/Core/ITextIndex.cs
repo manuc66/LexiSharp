@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 
 namespace LexiSharp.Core;
@@ -67,4 +68,68 @@ public interface ITextIndex
     /// <see cref="ITextIndex"/> implementation gets statistics for free.
     /// </remarks>
     TextIndexStatistics GetStatistics() => TextIndexStatistics.From(this);
+
+    /// <summary>
+    /// Names of the fields this index can answer per-field questions about. Always contains
+    /// <see cref="TextFields.Default"/>; a single-field index returns only that.
+    /// </summary>
+    IReadOnlyCollection<string> Fields => [TextFields.Default];
+
+    /// <summary>
+    /// Whether the index tracks per-field statistics, i.e. whether the per-field members below
+    /// are supported. False means the index has a single field and cannot weight fields.
+    /// </summary>
+    /// <remarks>
+    /// A field-aware scorer must check this before calling the per-field members: the default
+    /// implementations throw rather than return a plausible-looking zero, because a silent zero
+    /// would make a field-weighted ranking wrong with no error to show for it.
+    /// </remarks>
+    bool HasFieldStatistics => false;
+
+    /// <summary>
+    /// How many times <paramref name="term"/> occurs in one field of one document.
+    /// </summary>
+    /// <param name="documentId">A document currently held in the index.</param>
+    /// <param name="field">A field name from <see cref="Fields"/>.</param>
+    /// <param name="term">A token as produced by the index's tokenizer.</param>
+    /// <exception cref="NotSupportedException">The index has no per-field statistics.</exception>
+    int FieldTermFrequency(string documentId, string field, string term) =>
+        throw NoFieldStatistics();
+
+    /// <summary>
+    /// Tokens in one field of one document; <c>0</c> when the document does not carry the field.
+    /// </summary>
+    /// <param name="documentId">A document currently held in the index.</param>
+    /// <param name="field">A field name from <see cref="Fields"/>.</param>
+    /// <exception cref="NotSupportedException">The index has no per-field statistics.</exception>
+    int FieldLength(string documentId, string field) =>
+        throw NoFieldStatistics();
+
+    /// <summary>
+    /// Mean tokens per document over the documents carrying <paramref name="field"/>, including
+    /// those where it is present but empty. <c>0</c> when no document carries the field.
+    /// </summary>
+    /// <param name="field">A field name from <see cref="Fields"/>.</param>
+    /// <exception cref="NotSupportedException">The index has no per-field statistics.</exception>
+    double AverageFieldLength(string field) =>
+        throw NoFieldStatistics();
+
+    /// <summary>
+    /// How many documents carry <paramref name="term"/> in <paramref name="field"/>. This counts
+    /// the field's own documents, so it can be lower than <see cref="DocumentFrequency"/>: a term
+    /// present in both a title and a body contributes 1 to each field and 1 to the flat count.
+    /// </summary>
+    /// <param name="field">A field name from <see cref="Fields"/>.</param>
+    /// <param name="term">A token as produced by the index's tokenizer.</param>
+    /// <exception cref="NotSupportedException">The index has no per-field statistics.</exception>
+    int FieldDocumentFrequency(string field, string term) =>
+        throw NoFieldStatistics();
+
+    /// <summary>
+    /// The error a default per-field member raises, naming the index so the caller learns which
+    /// implementation lacks the capability rather than seeing a bare "not supported".
+    /// </summary>
+    private NotSupportedException NoFieldStatistics() => new(
+        $"{GetType().Name} tracks no per-field statistics, so no field but the default one can be " +
+        $"queried. Index {nameof(SearchDocument)}.{nameof(SearchDocument.TextFields)} to get them.");
 }
