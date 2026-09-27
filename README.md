@@ -7,13 +7,62 @@
 [![NuGet](https://img.shields.io/nuget/v/LexiSharp.svg)](https://www.nuget.org/packages/LexiSharp/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> A lightweight lexical text search and classification library for .NET.
+> A lexical text search and classification library for .NET — zero runtime dependencies in
+> the core.
 
-LexiSharp provides a small, dependency-free set of interfaces and implementations for
-indexing plain text and retrieving/ranking/classifying documents **without any semantic
-or ML model** — pure lexical statistics.
+LexiSharp provides composable interfaces and implementations for indexing plain text and
+retrieving/ranking/classifying documents **without any semantic or ML model** — pure lexical
+statistics.
+
+## See it running
+
+Five retrieval strategies over one corpus, compared live — plain BM25, corpus-derived
+semantic expansion, dense hashing embeddings, reciprocal-rank fusion and a term-overlap
+rerank — with per-lane latency, highlighting and a click-through "why did this rank here?"
+panel. No model, no external service.
+
+```bash
+dotnet run --project samples/LexiSharp.Demo
+# → http://localhost:5000
+```
+
+![The demo comparing five retrieval strategies over one corpus — BM25, PMI expansion, hashing embeddings, RRF fusion and a term-overlap rerank, with per-lane latency and highlighting](docs/images/demo.png)
+
+The demo is the fastest way to *see* what the composable pieces buy you: the whole wiring is
+`DemoSearchService` (five engines over one corpus) plus a single static `wwwroot/index.html`.
+Each lane states what actually backs it — the semantic lane uses `PmiTermExpander`, the dense
+lane a `HashingEmbeddingProvider`, the rerank lane a local term-overlap `ICrossEncoderScorer`
+— and all three are swappable for a real model behind their existing seam. See
+[Reference demo](#reference-demo-sampleslexisharpdemo) for the details.
+
+Want evidence rather than a demo? The same engines are scored on NFCorpus, SciFact and
+ArguAna against BEIR's published BM25 numbers in
+[the eval harness](bench/LexiSharp.Eval/README.md), which you can run yourself.
 
 ## Status & scope
+
+### Evidence
+
+- **Measured against published baselines.** `bench/LexiSharp.Eval` runs the engines over three
+  public BEIR corpora (NFCorpus, SciFact, ArguAna), md5-verified on download, and reports
+  nDCG@10/MAP@10/MRR@10/R@10 next to the published BM25 numbers: BM25 lands within 0.5 % of
+  the reference on SciFact and slightly above it on ArguAna, and the best stack — BM25 + dense,
+  RRF-fused, cross-encoder reranked — reaches **0.346** on NFCorpus against BEIR's **0.325**.
+  Reproduce it with `dotnet run --project bench/LexiSharp.Eval`; full tables, per-dataset
+  numbers and the known gap (no stemming) are in
+  [its README](bench/LexiSharp.Eval/README.md).
+- **Zero runtime dependencies in the core.** The `LexiSharp` package references no NuGet
+  package at all — inverted index, BM25, every scorer and every decorator are BCL only.
+  `LexiSharp.MessagePack`, `LexiSharp.Postgres` and the eval harness each bring their own
+  (MessagePack, Npgsql, ONNX Runtime).
+- **Behavior is specified by tests.** The documented behavior below is covered by the xUnit
+  suite; the Postgres/ParadeDB integration tests run against a live instance when
+  `POSTGRES_TEST_CONNECTION` is set and self-skip otherwise (see *Building & testing*).
+- **Combinatorial coverage.** Engines, scorers, rerankers and mergers are tested individually
+  *and* in the combinations the docs describe. Stated plainly rather than hidden: not every
+  pairing is exercised, so treat an unusual combination as supported but unproven until you
+  test it on your data.
+### Scope and limits
 
 - **Version 0.4.0, single maintainer.** The library is young and its public API may still
   change between minor versions — pin a version and read the release notes if you adopt it
@@ -21,17 +70,14 @@ or ML model** — pure lexical statistics.
 - **Built on established IR.** The techniques implemented (BM25, RRF, SPLADE-style sparse
   retrieval, MaxSim) follow well-documented information-retrieval literature; the value here
   is a small, dependency-free .NET implementation of them, not new research.
-- **Behavior is specified by tests.** The documented behavior below is covered by the xUnit
-  suite; the Postgres/ParadeDB integration tests run against a live instance when
-  `POSTGRES_TEST_CONNECTION` is set and self-skip otherwise (see *Building & testing*).
-  Performance numbers live in [BENCHMARKS.md](BENCHMARKS.md) and are indicative — always
-  measure on your own corpus.
-- **Combinatorial coverage.** Engines, scorers, rerankers and mergers are tested individually
-  and in documented combinations; not every pairing is exercised yet, so treat an unusual
-  combination as supported but unproven until you test it on your data.
+- **Performance numbers are indicative.** They live in [BENCHMARKS.md](BENCHMARKS.md) and were
+  measured on one machine — always measure on your own corpus.
 
 ## Features
 
+- **BCL-only core**: the `LexiSharp` package pulls in no NuGet dependency at all — index,
+  scorers, rerankers and decorators are all base class library. Reach for
+  `LexiSharp.MessagePack` or `LexiSharp.Postgres` only when you want persistence or SQL.
 - **Pluggable architecture**: an `ITextIndex`, `ITextScorer` and `ITokenizer` are
   independent contracts; algorithms can be swapped without touching the engine.
 - **Drop-in entry point** (`LexiSharpIndex<T>`): a typed facade that maps your own document
@@ -79,8 +125,8 @@ or ML model** — pure lexical statistics.
   either to documents (`ExpansionTextIndex`) or to the query (`ExpandingTextSearchEngine`),
   zero-new-dependencies, pure .NET core; the seam is where a real neural SPLADE model plugs in later.
 - **Reference demo app** (`samples/LexiSharp.Demo`): an ASP.NET Core page that compares BM25,
-  semantic expansion, dense hashing embeddings, hybrid RRF and cross-encoder rerank side by side
-  on one corpus, with latency, highlighting and a click-through "why did this rank here?"
+  semantic expansion, dense hashing embeddings, hybrid RRF and a term-overlap rerank side by
+  side on one corpus, with latency, highlighting and a click-through "why did this rank here?"
   explanation — no model, no external service.
 - **Metadata filters**: declarative, AND-composed filters over document fields
   (`MetadataFilterOperator`: equal, not-equal, contains, numeric-or-ordinal greater/less than)
@@ -148,7 +194,8 @@ or ML model** — pure lexical statistics.
   lowercasing, optional stop-word removal, optional n-grams, and a pluggable
   `IStemmer` seam (no stemmer ships with the library — bring your own, e.g. Snowball).
   Tokenization is SIMD-accelerated (`SearchValues` + `IndexOfAnyExcept`, with a
-  `System.Text.Ascii` fast path in normalization).
+  `System.Text.Ascii` fast path in normalization) — measured at ~5× faster on ASCII-only
+  input than on input requiring accent removal ([BENCHMARKS.md](BENCHMARKS.md)).
 - **Optional backends**, shipped as separate packages:
   - `LexiSharp.Postgres` — PostgreSQL backends implementing the same `ITextSearchEngine`:
     a lexical engine over `tsvector` + GIN + `unaccent`, an ANN engine over `pgvector`
@@ -351,7 +398,7 @@ var hits = engine.Search("refresh"); // query becomes "refresh token access oaut
 
 A self-contained ASP.NET Core app that runs **five retrieval strategies over the same corpus**
 and compares them live — plain BM25, corpus-derived semantic expansion, dense hashing
-embeddings, reciprocal-rank fusion, and a cross-encoder rerank — with per-lane latency and
+embeddings, reciprocal-rank fusion, and a term-overlap rerank — with per-lane latency and
 highlighting. Clicking any hit opens a **"why did this rank here?"** panel powered by
 `LexiSharpIndex.Explain` (per-term contributions, IDF, length) or, for the federated/dense
 lanes, the per-source scores from `HybridTextSearchEngine.SearchWithDetails`. No external model
@@ -364,8 +411,7 @@ dotnet run --project samples/LexiSharp.Demo
 # → http://localhost:5000  (search box + five comparison columns)
 ```
 
-The demo is the fastest way to *see* what the composable pieces buy you; its whole wiring is
-`DemoSearchService` (five engines over one corpus) plus a single static `wwwroot/index.html`.
+See [See it running](#see-it-running) for what this buys you and how to read the lanes.
 
 ### Classification
 

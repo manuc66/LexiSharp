@@ -143,10 +143,11 @@ multi-config table is left to `--no-tuned --limit` smoke runs or a calmer machin
   Evaluation of Information Retrieval Models*: BM25 nDCG@10 = **0.325** (NFCorpus), **0.665**
   (SciFact), **0.315** (ArguAna) in Table 2. <https://arxiv.org/abs/2104.08663>
 - LexiSharp's default tokenizer lowercases, folds diacritics and splits on
-  non-alphanumerics, **but does not stem** — the dominant cause of the (small, systematic,
-  dataset-scaled) gap below the published baselines. On NFCorpus (inflected medical
-  vocabulary) it costs ~5 %; on SciFact (exact terminology) it is ~0.5 %. The *relative*
-  ordering of the configs is the meaningful signal.
+  non-alphanumerics, **but does not stem** — the dominant cause of the small, systematic,
+  dataset-scaled gap to the published baselines. It costs ~5 % on NFCorpus (inflected
+  medical vocabulary) and ~0.5 % on SciFact (exact terminology), while ArguAna lands
+  slightly *above* the reference. The *relative* ordering of the configs is the meaningful
+  signal.
 - `BM25 tuned` (shown at run time) tunes k1/b **in-sample** on the very queries being scored —
   an oracle, not a fair baseline; it is reported only to exercise
   `Bm25ParameterTuner` end to end.

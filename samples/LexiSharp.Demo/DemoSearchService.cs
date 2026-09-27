@@ -18,7 +18,7 @@ namespace LexiSharp.Demo;
 ///   <item>semantic — BM25 over an index whose documents were widened with PPMI-derived terms;</item>
 ///   <item>dense — cosine similarity over deterministic hashing embeddings;</item>
 ///   <item>hybrid — lexical, semantic and dense fused by reciprocal rank fusion;</item>
-///   <item>rerank — the hybrid shortlist reordered by a cross-encoder.</item>
+///   <item>rerank — the hybrid shortlist reordered by a query-term-overlap scorer.</item>
 /// </list>
 /// Every lane reuses an existing LexiSharp piece; the demo only wires them together.
 /// </summary>
@@ -80,7 +80,7 @@ public sealed class DemoSearchService
             Measure("semantic", "Semantic · BM25 + PMI expansion", "documents carry corpus-derived related terms", () => SemanticHits(query, limit)),
             Measure("dense", "Dense · hashing embedding", "cosine over deterministic hashed vectors", () => DenseHits(query, limit)),
             Measure("hybrid", "Hybrid · RRF fusion", "lexical, semantic and dense fused by rank", () => HybridHits(query, limit)),
-            Measure("rerank", "Hybrid + reranker", "cross-encoder reorders the hybrid shortlist", () => RerankHits(query, limit)),
+            Measure("rerank", "Hybrid + reranker", "query-term overlap reorders the hybrid shortlist", () => RerankHits(query, limit)),
         };
 
         return new CompareResponse(query, lanes);
