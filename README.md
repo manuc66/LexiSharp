@@ -30,14 +30,14 @@ dotnet run --project samples/LexiSharp.Demo
 # → http://localhost:5000
 ```
 
-![The demo comparing five retrieval strategies over one corpus — BM25, PMI expansion, hashing embeddings, RRF fusion and a term-overlap rerank, with per-lane latency and highlighting](docs/images/demo.png)
+![The demo comparing five retrieval strategies over one corpus — BM25, PMI expansion, hashing embeddings, RRF fusion and a term-overlap rerank, with per-lane latency and highlighting](https://raw.githubusercontent.com/manuc66/LexiSharp/main/docs/images/demo.png)
 
 The demo is the fastest way to *see* what the composable pieces buy you: the whole wiring is
 `DemoSearchService` (five engines over one corpus) plus a single static `wwwroot/index.html`.
 Clicking a hit also shows the **`SearchTrace` chain** for that document — the stages it passed
 through and the score going in and out of each:
 
-![The explain panel of the demo, with the ranking chain of one document in the rerank lane: two BM25 scores from the lexical and semantic lanes, the dense score, the RRF merge with its per-source scores, and the cross-encoder verdict, each with the score going in and coming out](docs/images/demo-explain.png)
+![The explain panel of the demo, with the ranking chain of one document in the rerank lane: two BM25 scores from the lexical and semantic lanes, the dense score, the RRF merge with its per-source scores, and the cross-encoder verdict, each with the score going in and coming out](https://raw.githubusercontent.com/manuc66/LexiSharp/main/docs/images/demo-explain.png)
 
 ```
 score   4.6925 -> 4.6925  BM25
