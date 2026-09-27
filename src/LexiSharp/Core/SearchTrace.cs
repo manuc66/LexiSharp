@@ -101,6 +101,29 @@ public sealed class SearchTrace
     /// <summary>True when steps were dropped, i.e. <see cref="Steps"/> is not the whole story.</summary>
     public bool IsTruncated => Dropped > 0;
 
+    /// <summary>
+    /// How many steps each recorded stage holds, keyed by <see cref="TraceStage"/> and including
+    /// only the stages actually recorded.
+    /// </summary>
+    /// <remarks>
+    /// Read-only over <see cref="Steps"/>, so the counts are O(steps) and only reflect the
+    /// per-document steps — a stage that ran but matched nothing is absent rather than counted as
+    /// zero. Engines that know a stage's wall-clock cost report it through
+    /// <see cref="IRetrievalMetrics"/> instead; this method counts steps, it does not time them.
+    /// </remarks>
+    public IReadOnlyDictionary<TraceStage, int> StageCounts()
+    {
+        var counts = new Dictionary<TraceStage, int>();
+
+        foreach (TraceStep step in _steps)
+        {
+            counts.TryGetValue(step.Stage, out int seen);
+            counts[step.Stage] = seen + 1;
+        }
+
+        return counts;
+    }
+
     /// <summary>Records one step, unless the trace is already at <see cref="Capacity"/>.</summary>
     public void Record(in TraceStep step)
     {

@@ -29,6 +29,12 @@ public sealed class RerankedTextSearchEngine : ITextSearchEngine, IQueryCostProb
     private readonly IReranker _reranker;
     private readonly int _maxCandidates;
     private readonly string _rerankerName;
+    private readonly RetrievalTelemetry _telemetry;
+
+    /// <summary>
+    /// Name this engine reports to <see cref="RetrievalTelemetry"/> and its metrics sinks.
+    /// </summary>
+    public const string EngineName = "RerankedTextSearchEngine";
 
     /// <param name="inner">The engine producing the base ranking (never disposed by this wrapper).</param>
     /// <param name="reranker">Second-stage strategy applied to the inner shortlist.</param>
@@ -36,7 +42,16 @@ public sealed class RerankedTextSearchEngine : ITextSearchEngine, IQueryCostProb
     /// Number of candidates requested from the inner engine so re-ranking has room to re-order;
     /// defaults to 50. Never below the final limit.
     /// </param>
-    public RerankedTextSearchEngine(ITextSearchEngine inner, IReranker reranker, int maxCandidates = 50)
+    /// <param name="telemetry">
+    /// Optional observability sink. Reports a <c>retrieve</c> stage for the inner engine and a
+    /// <c>rerank:&lt;name&gt;</c> stage for the second stage, which is where a cross-encoder's
+    /// latency shows up. Defaults to <see cref="RetrievalTelemetry.None"/>.
+    /// </param>
+    public RerankedTextSearchEngine(
+        ITextSearchEngine inner,
+        IReranker reranker,
+        int maxCandidates = 50,
+        RetrievalTelemetry? telemetry = null)
     {
         ArgumentNullException.ThrowIfNull(inner);
         ArgumentNullException.ThrowIfNull(reranker);
@@ -47,6 +62,7 @@ public sealed class RerankedTextSearchEngine : ITextSearchEngine, IQueryCostProb
         // Read once: the name is a property on a consumer-supplied seam, and a trace step should
         // not call into it per candidate.
         _rerankerName = reranker.Name;
+        _telemetry = telemetry ?? RetrievalTelemetry.None;
     }
 
     /// <inheritdoc />
@@ -80,6 +96,9 @@ public sealed class RerankedTextSearchEngine : ITextSearchEngine, IQueryCostProb
 
         options ??= SearchOptions.Default;
 
+        bool instrumented = _telemetry.IsEnabled;
+        long started = instrumented ? RetrievalTelemetry.StartTimer() : 0;
+
         if (options.IsEmpty)
             return Array.Empty<SearchResult>();
 
@@ -91,6 +110,7 @@ public sealed class RerankedTextSearchEngine : ITextSearchEngine, IQueryCostProb
 
         // Do not pre-filter with MinimumScore here: it must apply to the *final* score, after
         // the reranker has spoken — a re-scored match can fall out, a promoted one can get in.
+        long retrieveStarted = instrumented ? RetrievalTelemetry.StartTimer() : 0;
         var candidates = _inner.Search(query, options with
         {
             Offset = 0,
@@ -98,10 +118,31 @@ public sealed class RerankedTextSearchEngine : ITextSearchEngine, IQueryCostProb
             MinimumScore = double.NegativeInfinity,
         });
 
-        if (candidates.Count == 0)
-            return Array.Empty<SearchResult>();
+        if (instrumented)
+            _telemetry.StageCompleted(EngineName, "retrieve", candidates.Count, retrieveStarted);
 
+        if (candidates.Count == 0)
+        {
+            if (instrumented)
+                _telemetry.Warning(EngineName, "retrieval produced no candidate: the reranker had nothing to re-order");
+
+            return Array.Empty<SearchResult>();
+        }
+
+        long rerankStarted = instrumented ? RetrievalTelemetry.StartTimer() : 0;
         var reranked = _reranker.Rerank(query, candidates);
+
+        if (instrumented)
+        {
+            double rerankMs = RetrievalTelemetry.ElapsedMs(rerankStarted);
+            _telemetry.StageCompleted(EngineName, "rerank:" + _rerankerName, candidates.Count, rerankStarted);
+
+            // A slow second stage is the single most useful production signal here: the first stage
+            // is usually a memory scan, while a cross-encoder pays a model call per candidate. The
+            // threshold is deliberately a constant rather than a guess tuned to any corpus.
+            if (rerankMs >= 100)
+                _telemetry.Warning(EngineName, $"rerank stage took {rerankMs:0.#} ms for {candidates.Count} candidate(s)");
+        }
 
         // The reranker owns the order (best-first by contract); here we only drop broken or
         // non-matching scores, then cut the requested page, preserving its relative order.
@@ -113,6 +154,9 @@ public sealed class RerankedTextSearchEngine : ITextSearchEngine, IQueryCostProb
             .ToList();
 
         RecordRerankStage(options.Trace, candidates, page);
+
+        if (instrumented)
+            _telemetry.SearchCompleted(EngineName, started, page.Count);
 
         return page;
     }

@@ -89,6 +89,13 @@ public sealed class LexiSharpIndexOptions<TDocument>
     public int RerankerMaxCandidates { get; set; } = 50;
 
     /// <summary>
+    /// Optional observability sink, handed to every engine this index builds. Set it to log search
+    /// latency and candidate counts, to collect metrics, or to do both; leave it <c>null</c> (the
+    /// default) and no engine reads a clock or records anything.
+    /// </summary>
+    public RetrievalTelemetry? Telemetry { get; set; }
+
+    /// <summary>
     /// When set, plain queries are rewritten so every term is fuzzy-matched
     /// (<c>term</c> behaves like <c>term~1</c>). Queries that already carry an explicit
     /// <c>*</c>/<c>~</c> operator or a quoted phrase are left untouched.

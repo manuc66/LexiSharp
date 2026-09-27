@@ -32,6 +32,12 @@ public sealed class BoostedTextSearchEngine : ITextSearchEngine, IQueryCostProbe
     private readonly ITextSearchEngine _inner;
     private readonly Func<SearchResult, ScoreBoost> _boost;
     private readonly int _maxCandidates;
+    private readonly RetrievalTelemetry _telemetry;
+
+    /// <summary>
+    /// Name this engine reports to <see cref="RetrievalTelemetry"/> and its metrics sinks.
+    /// </summary>
+    public const string EngineName = "BoostedTextSearchEngine";
 
     /// <param name="inner">The engine producing the base ranking (never disposed by this wrapper).</param>
     /// <param name="boost">Signed score adjustment per <see cref="SearchResult"/>.</param>
@@ -39,7 +45,15 @@ public sealed class BoostedTextSearchEngine : ITextSearchEngine, IQueryCostProbe
     /// Number of candidates requested from the inner engine so boosting has room to re-order;
     /// defaults to 50. Never below the final limit.
     /// </param>
-    public BoostedTextSearchEngine(ITextSearchEngine inner, Func<SearchResult, ScoreBoost> boost, int maxCandidates = 50)
+    /// <param name="telemetry">
+    /// Optional observability sink. Reports a <c>retrieve</c> stage for the inner engine and a
+    /// <c>boost</c> stage. Defaults to <see cref="RetrievalTelemetry.None"/>.
+    /// </param>
+    public BoostedTextSearchEngine(
+        ITextSearchEngine inner,
+        Func<SearchResult, ScoreBoost> boost,
+        int maxCandidates = 50,
+        RetrievalTelemetry? telemetry = null)
     {
         ArgumentNullException.ThrowIfNull(inner);
         ArgumentNullException.ThrowIfNull(boost);
@@ -47,6 +61,7 @@ public sealed class BoostedTextSearchEngine : ITextSearchEngine, IQueryCostProbe
         _inner = inner;
         _boost = boost;
         _maxCandidates = Math.Max(1, maxCandidates);
+        _telemetry = telemetry ?? RetrievalTelemetry.None;
     }
 
     /// <inheritdoc />
@@ -80,6 +95,9 @@ public sealed class BoostedTextSearchEngine : ITextSearchEngine, IQueryCostProbe
 
         options ??= SearchOptions.Default;
 
+        bool instrumented = _telemetry.IsEnabled;
+        long started = instrumented ? RetrievalTelemetry.StartTimer() : 0;
+
         if (options.IsEmpty)
             return Array.Empty<SearchResult>();
 
@@ -93,6 +111,7 @@ public sealed class BoostedTextSearchEngine : ITextSearchEngine, IQueryCostProbe
         // Do not pre-filter with MinimumScore here: it must apply to the *boosted* score so a
         // damped match can fall out and a boosted one can get in. Same for Offset: the inner
         // ranking is only a candidate pool; the skip is cut from the boosted ordering.
+        long retrieveStarted = instrumented ? RetrievalTelemetry.StartTimer() : 0;
         var candidates = _inner.Search(query, options with
         {
             Offset = 0,
@@ -100,6 +119,10 @@ public sealed class BoostedTextSearchEngine : ITextSearchEngine, IQueryCostProbe
             MinimumScore = double.NegativeInfinity,
         });
 
+        if (instrumented)
+            _telemetry.StageCompleted(EngineName, "retrieve", candidates.Count, retrieveStarted);
+
+        long boostStarted = instrumented ? RetrievalTelemetry.StartTimer() : 0;
         var results = new List<SearchResult>(candidates.Count);
 
         foreach (var candidate in candidates)
@@ -136,12 +159,22 @@ public sealed class BoostedTextSearchEngine : ITextSearchEngine, IQueryCostProbe
                 SearchTrace.FormatBoost(boost)));
         }
 
-        return results
+        var page = results
             .OrderByDescending(x => x.Score)
             .ThenBy(x => x.DocumentId)
             .Skip(options.Offset)
             .Take(options.Limit)
             .ToList();
+
+        if (instrumented)
+        {
+            // The boost stage consumed every candidate, while the search returned the cut page:
+            // the two counts are deliberately different numbers.
+            _telemetry.StageCompleted(EngineName, "boost", candidates.Count, boostStarted);
+            _telemetry.SearchCompleted(EngineName, started, page.Count);
+        }
+
+        return page;
     }
 
     /// <inheritdoc />
