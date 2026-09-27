@@ -32,9 +32,23 @@ internal static class Evaluation
             .Take(limit ?? int.MaxValue)
             .ToList();
 
+        // Title and text go in as what they are — a named text field and the body — rather than being
+        // concatenated. For BM25 this is bit-identical to the flattened form: the flat view is the
+        // union of the fields, so the same tokens land at the same frequencies and lengths, and only
+        // their order differs, which BM25 does not read. What it buys is a field a field-weighted
+        // scorer can actually weigh.
         var documents = corpus.Documents
-            .Select(document => new SearchDocument(document.Id, CombineTitleAndText(document)))
+            .Select(document => new SearchDocument(
+                document.Id,
+                document.Text,
+                TextFields: string.IsNullOrEmpty(document.Title)
+                    ? null
+                    : new Dictionary<string, string> { ["title"] = document.Title }))
             .ToList();
+
+        // ArguAna carries no title, so a field-weighted configuration there would be the same three
+        // rows over again with an inert weight. Say so instead of padding the table.
+        bool anyTitle = corpus.Documents.Any(document => !string.IsNullOrEmpty(document.Title));
 
         var builders = new (string Name, Func<ITextSearchEngine> Factory)[]
         {
@@ -47,6 +61,22 @@ internal static class Evaluation
             ("Hybrid BM25+QL RRF", () => Hybrid(documents,
                 new ReciprocalRankFusionMerger(), tokenizer)),
         };
+
+        if (anyTitle)
+        {
+            // Three weights rather than one: the question is whether weighting a title helps at all
+            // here, and a single point cannot show a direction. BM25F neutral is included because it
+            // is not BM25 — on one field it is a different length term, so its own row is the
+            // baseline the weighted rows have to beat.
+            builders = builders
+                .Concat(new (string, Func<ITextSearchEngine>)[]
+                {
+                    ("BM25F (unweighted)", () => Ranked(documents, TitleWeighted(1.0), tokenizer)),
+                    ("BM25F (title 2.0)", () => Ranked(documents, TitleWeighted(2.0), tokenizer)),
+                    ("BM25F (title 4.0)", () => Ranked(documents, TitleWeighted(4.0), tokenizer)),
+                })
+                .ToArray();
+        }
 
         var buildersList = builders.ToList();
 
@@ -156,6 +186,10 @@ internal static class Evaluation
              + $"b={tuned.Parameters.B.ToString("0.####", CultureInfo.InvariantCulture)}, "
              + $"nDCG@10={result.NdcgAt10.ToString("0.###", CultureInfo.InvariantCulture)}";
     }
+
+    /// <summary>BM25F weighting the corpus's <c>title</c> field, everything else neutral.</summary>
+    private static Bm25FScorer TitleWeighted(double weight) =>
+        new(fieldWeights: new Dictionary<string, double> { ["title"] = weight });
 
     private static ITextSearchEngine Ranked(IReadOnlyList<SearchDocument> documents, ITextScorer scorer, ITokenizer tokenizer)
     {

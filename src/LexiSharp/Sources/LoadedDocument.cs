@@ -13,12 +13,18 @@ namespace LexiSharp.Sources;
 /// through facet buckets and metadata filters.
 /// </param>
 /// <param name="Category">Optional category used for supervised classification.</param>
+/// <param name="TextFields">
+/// Optional named text sections of the document (e.g. <c>title</c>), the ones a field-weighted
+/// scorer can weigh. Distinct from <paramref name="Fields"/>: a key may appear in both, remaining
+/// filterable <i>and</i> searchable. Null when the source named no text field.
+/// </param>
 public sealed record LoadedDocument(
     string Id,
     string Text,
     IReadOnlyDictionary<string, string>? Fields = null,
-    string? Category = null)
+    string? Category = null,
+    IReadOnlyDictionary<string, string>? TextFields = null)
 {
     /// <summary>Converts the loaded document into the engine's <see cref="SearchDocument"/>.</summary>
-    public SearchDocument ToSearchDocument() => new(Id, Text, Fields, Category);
+    public SearchDocument ToSearchDocument() => new(Id, Text, Fields, Category, TextFields);
 }

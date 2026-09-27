@@ -15,7 +15,7 @@ public static class Program
         + "  --qrels <file>       Relevance judgments: TSV 'qid\\tdocid[\\tgrade]', one per line ('#' comments)\n"
         + "  --top-k <n>          Retrieval depth for every metric (default: 10)\n"
         + "  --limit <n>          Cap the number of queries evaluated (default: all)\n"
-        + "  --configs <list>     Comma-separated: bm25, bm25-tuned, tfidf, ql, hybrid, bm25-semantic (default: bm25,tfidf,ql,hybrid,bm25-tuned)\n"
+        + "  --configs <list>     Comma-separated: bm25, bm25-tuned, tfidf, ql, hybrid, bm25-semantic, bm25f, bm25f-title (default: bm25,tfidf,ql,hybrid,bm25-tuned)\n"
         + "  --json <path>        Write the results as JSON to this file\n"
         + "  --help, -h           Show this help\n"
         + "\n"
@@ -446,7 +446,14 @@ public static class Program
             throw new DirectoryNotFoundException($"Corpus directory not found: {root}");
 
         var documents = new List<SearchDocument>();
-        documents.AddRange(MarkdownLoader.LoadDirectory(root).Select(document => document.ToSearchDocument()));
+
+        // Promote the front-matter title to a text field: the reference corpus gives every document
+        // one, and a field-weighted configuration is only measurable where fields actually exist.
+        // Note this changes what the index holds, so the committed golden master is recorded against
+        // a different index than before — hence a re-recorded baseline in the same change.
+        documents.AddRange(MarkdownLoader
+            .LoadDirectory(root, new MarkdownLoadOptions { TextFieldNames = ["title"] })
+            .Select(document => document.ToSearchDocument()));
         documents.AddRange(TextFileLoader
             .ScanDirectory(root, new TextFileLoadOptions { Extensions = new[] { ".txt" } })
             .Select(document => document.ToSearchDocument()));
@@ -569,7 +576,11 @@ public static class Program
                 "ql" => BenchmarkConfig.QueryLikelihood(),
                 "hybrid" => BenchmarkConfig.HybridRrf(new Bm25Scorer(), new TfIdfScorer()),
                 "bm25-semantic" => BenchmarkConfig.Bm25Semantic(),
-                _ => throw new ArgumentException($"Unknown configuration '{name}'. Valid: bm25, bm25-tuned, tfidf, ql, hybrid, bm25-semantic.", nameof(names)),
+                "bm25f" => BenchmarkConfig.Bm25F(),
+                // A realistic title-over-body weighting, to see whether weighting moves the needle
+                // on a corpus that actually has a title field.
+                "bm25f-title" => BenchmarkConfig.Bm25F(new Dictionary<string, double> { ["title"] = 2.0 }),
+                _ => throw new ArgumentException($"Unknown configuration '{name}'. Valid: bm25, bm25-tuned, tfidf, ql, hybrid, bm25-semantic, bm25f, bm25f-title.", nameof(names)),
             });
         }
 
