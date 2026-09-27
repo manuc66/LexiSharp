@@ -20,6 +20,50 @@ against its published md5.
 | SciFact  | `5f7d1de60b170fc8027bb7898e2efca1` | 300 | binary | 0.665 |
 | ArguAna  | `8ad3e3c2a5867cdced806d6503f29b99` | 1406 | binary | 0.315 |
 
+The three md5 values are the ones published in the BEIR README, so the zips this harness
+verifies are the same artifacts BEIR distributes. The mirror is deliberate: BEIR datasets are
+re-hosted on Hugging Face, and re-hosts have not always matched the original content, which
+would silently turn a pinned hash into a different experiment.
+
+## Dataset licenses
+
+**LexiSharp.Eval grants no license over these datasets and redistributes none of them.** The
+harness downloads a zip at run time, indexes it in memory, and reports metrics. Attribution and
+the right to use the data remain the dataset owner's terms — which is also what the BEIR project
+itself says:
+
+> we just downloaded and prepared public datasets. We only distribute these datasets in a specific
+> format, but we do not vouch for their quality or fairness, **or claim that you have license to
+> use the dataset**. It remains the user's responsibility to determine whether you as a user have
+> permission to use the dataset under the dataset's license and to cite the right owner of the
+> dataset.
+> — [BEIR README, Disclaimer](https://github.com/beir-cellar/beir#beers-disclaimer)
+
+BEIR's own code is Apache-2.0; that license covers the repository, not the data it repackages.
+
+| Dataset | Queries + qrels | Documents | Where the terms were read |
+|---------|----------------|-----------|---------------------------|
+| SciFact | CC BY 4.0 | **ODC-By 1.0** (abstracts from Semantic Scholar S2ORC) | [`allenai/scifact` LICENSE.md](https://github.com/allenai/scifact/blob/master/LICENSE.md) |
+| NFCorpus | **unconfirmed** | **unconfirmed** | dataset homepage states no data license |
+| ArguAna | **unconfirmed** | **unconfirmed** | dataset homepage unreachable (HTTP 403) at time of writing |
+
+Two things worth stating rather than glossing over:
+
+- **SciFact's terms are split, and not uniformly CC BY.** The claims and their relevance
+  judgments are CC BY 4.0; the documents are abstracts from S2ORC under ODC-By 1.0, a *data*
+  license that requires attribution and is not a content license.
+- **The Hugging Face `BeIR/*` dataset cards declare `cc-by-sa-4.0` for all three.** That
+  contradicts the SciFact primary source above, so treat those cards as a convenience rather than
+  as the terms. If you need certainty for NFCorpus or ArguAna, ask the dataset owners or open an
+  issue on [beir-cellar/beir](https://github.com/beir-cellar/beir/issues) — the two rows marked
+  *unconfirmed* were not resolvable from public pages.
+
+Because a measured score is a fact about an experiment rather than a derivative work of the
+corpus, publishing the metrics above does not make LexiSharp a derivative of any dataset. If you
+build a tool that *redistributes* corpus text (a vendored sample, a derived golden-master file),
+these terms become your problem to solve — which is why the reference corpus planned for the
+benchmark CLI is hand-built and owned by this project rather than sliced out of BEIR.
+
 ## Usage
 
 ```bash
