@@ -1,5 +1,6 @@
 ---
 title: Benchmarks
+permalink: pretty
 nav_order: 12
 ---
 

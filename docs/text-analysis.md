@@ -1,5 +1,6 @@
 ---
 title: Text analysis
+permalink: pretty
 nav_order: 8
 ---
 
