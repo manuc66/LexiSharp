@@ -224,7 +224,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         // OrderByDescending(Score).Skip(offset).Take(limit) with equal scores ordered by document id.
         // SearchResult objects are materialized only for the kept entries.
         int window = options.Window;
-        var top = new List<(double Score, SearchDocument Document, long Ordinal)>(Math.Min(window, 1024));
+        var top = new TopRankedWindow(window);
         long ordinal = 0;
 
         foreach (var document in candidateDocuments)
@@ -249,7 +249,8 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             // independent of the Offset/Limit window cut below.
             facets?.Count(document);
 
-            InsertRanked(top, window, (score, document, ordinal++));
+            top.Add(score, document);
+            ordinal++;
         }
 
         // The accumulated window holds at most Offset + Limit entries; skip the Offset prefix
@@ -257,12 +258,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         int skip = Math.Min(options.Offset, top.Count);
         int count = top.Count - skip;
         var results = new SearchResult[count];
-
-        for (int i = 0; i < count; i++)
-        {
-            var entry = top[top.Count - 1 - (skip + i)];
-            results[i] = new SearchResult(entry.Document.Id, entry.Score, entry.Document);
-        }
+        top.CopyBestTo(results, skip, count);
 
         // Tracing happens here, on the cut page, not inside the scoring loop above: the score is
         // already in hand, so a trace costs O(limit) after the fact and nothing per candidate.
@@ -278,67 +274,6 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
         return results;
     }
-
-    /// <summary>
-    /// Inserts an entry into the worst-first top-L list, dropping the current worst when full.
-    /// An entry ranks above another when its score is higher, or its score is equal and its document
-    /// id sorts lower — byte-for-byte the behavior of a descending sort that then orders ties by id.
-    /// </summary>
-    private static void InsertRanked(
-        List<(double Score, SearchDocument Document, long Ordinal)> top,
-        int limit,
-        (double Score, SearchDocument Document, long Ordinal) entry)
-    {
-        if (top.Count < limit)
-        {
-            top.Add(entry);
-
-            for (int j = top.Count - 1; j > 0; j--)
-            {
-                if (IsRankedAscending(top[j - 1], top[j]))
-                    break;
-
-                (top[j - 1], top[j]) = (top[j], top[j - 1]);
-            }
-
-            return;
-        }
-
-        if (IsRankedAscending(entry, top[0]))
-            return;
-
-        top[0] = entry;
-
-        for (int j = 0; j < top.Count - 1; j++)
-        {
-            if (IsRankedAscending(top[j], top[j + 1]))
-                break;
-
-            (top[j], top[j + 1]) = (top[j + 1], top[j]);
-        }
-    }
-
-    /// <summary>Whether <paramref name="lower"/> may sit before <paramref name="higher"/> in the worst-first list.</summary>
-    private static bool IsRankedAscending(
-        (double Score, SearchDocument Document, long Ordinal) lower,
-        (double Score, SearchDocument Document, long Ordinal) higher)
-        // The id is what makes the order total. Tie-breaking on Ordinal -- i.e. on enumeration order
-        // -- did not, because that order came from Directory.EnumerateFiles and is therefore a
-        // property of the filesystem: the same checkout ranked differently on a developer machine and
-        // on a CI runner, which is what made the golden master gate environment-dependent. Document
-        // ids are unique, so Ordinal is now unreachable as a tie-break and is retained only because
-        // callers still count scored documents with it.
-        => lower.Score < higher.Score
-           || (ScoresAreTied(lower.Score, higher.Score)
-               && string.CompareOrdinal(lower.Document.Id, higher.Document.Id) > 0);
-
-    /// <summary>
-    /// Whether two scores are the same value. Bitwise equality on purpose, so this cannot be
-    /// "fixed" into a tolerance comparison: an epsilon here would treat two documents whose scores
-    /// differ in the last bits as interchangeable and then order them by id, quietly overriding the
-    /// ranking the scores actually expressed.
-    /// </summary>
-    private static bool ScoresAreTied(double left, double right) => left == right; // NOSONAR:S1244
 
     /// <summary>
     /// Whether every phrase appears at consecutive document positions; phrases are AND-ed
