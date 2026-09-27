@@ -15,4 +15,13 @@ public sealed record BenchmarkConfigResult(
     BenchmarkMetrics Metrics,
     double TotalMilliseconds,
     double MillisecondsPerQuery,
-    int JudgedQueries);
+    int JudgedQueries)
+{
+    /// <summary>
+    /// One entry per judged query, in query-set order. Present so a run can be interrogated
+    /// per query: a mean hides which queries moved, and two configurations whose means differ by
+    /// one point can differ by one query regressing and three improving. An empty list means the
+    /// result was not produced by <see cref="CorpusBenchmark"/>.
+    /// </summary>
+    public IReadOnlyList<BenchmarkQueryResult> PerQuery { get; init; } = [];
+}

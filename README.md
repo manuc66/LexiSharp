@@ -336,6 +336,46 @@ The same comparison is available in-process through `CorpusBenchmark.Run` over a
 `IReadOnlyCollection<SearchDocument>` and `BenchmarkQuery` set, with custom engines reachable
 through the public `BenchmarkConfig` constructor.
 
+### Comparing two configurations, query by query
+
+A pair of means cannot tell you what a change actually did. Two configurations can land 0.015 apart
+while one of them rescued a query and lost two others — and the mean is silent about both.
+
+```bash
+dotnet run --project bench/LexiSharp.Cli -c Release -- diff ./notes \
+    --queries queries.json --qrels qrels.tsv \
+    --baseline bm25 --candidate bm25-semantic --top-k 5
+```
+
+```
+mean nDCG@5: 0,8359 -> 0,8209 (-0,0150 per query)
+queries: 1 improved, 2 degraded, 19 unchanged (net -1)
+
+DEGRADED by BM25 + semantic
+  long-document-02    0,500 -> 0,000 (-0,500)  lost: the judged document at rank 3 is gone
+    "how often should a token be exchanged"
+  paraphrase-02       0,579 -> 0,459 (-0,120)  demoted: rank 2 -> 3
+    "how long is an access token valid"
+
+IMPROVED by BM25 + semantic
+  multilingual-01     0,710 -> 1,000 (+0,290)  same rank 1, score moved on the rest of the page
+    "certificate rotation"
+```
+
+The `Reading` on each line names the cause rather than restating the numbers, because *lost*,
+*rescued*, *demoted* and *same rank* are four different bugs. A net of zero is not "no change": it
+is movements that cancelled out, which is precisely what a mean hides.
+
+`CorpusBenchmark.Run` returns the same breakdown in `BenchmarkConfigResult.PerQuery` (metrics per
+query, the retrieved ids, and the 1-based rank of the first judged document), and
+`BenchmarkComparer.Compare(baseline, candidate, epsilon)` builds the comparison. It refuses runs over
+different query sets or in different orders rather than reporting a comparison against nothing.
+`--epsilon` (default `1e-9`) is the score difference below which a query counts as unchanged; the
+reported mean delta stays raw arithmetic.
+
+The [reference corpus](bench/reference-corpus/README.md) is the corpus the command above was run
+against.
+
 ### ASP.NET Core search endpoint (`LexiSharp.AspNetCore`)
 
 A minimal-API endpoint that exposes any registered `LexiSharpIndex<T>` over HTTP — a thin
