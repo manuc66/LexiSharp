@@ -111,6 +111,83 @@ Read at this scale (roughly): a 10k-document, 50-word corpus indexes in ~0.16 s 
 ~65 MB in the process. Nothing is claimed here about larger corpora, search latency under
 load, or memory behavior beyond a single run.
 
+## Second pass: SIMD, shared term instances, bounded windows
+
+Same machine, same corpus as above. **Method matters more than usual here.** The host drifts by
+±10–16 % between process launches, so "7 rounds of A, then 7 rounds of B" produced a
+confident-looking +10 % regression on BM25 that a three-way interleaved run in a single session
+showed was noise. Every timing row below comes from binaries alternated **within** one loop, and
+the byte counts are the load-bearing evidence, because they do not depend on the clock.
+
+| What                             | Baseline   | After     | Delta      |
+|----------------------------------|-----------:|----------:|-----------:|
+| Dense search, 10k docs × 384-dim |  5,728 µs  |  1,257 µs | **−78 %** |
+| Dense search allocation          | 424,568 B  |   3,008 B | **−99.3 %** |
+| `InMemoryTextIndex` retained     |  58.91 MB  |  40.88 MB | **−30.6 %** |
+| Index build, retained            |  52.08 MB  |  35.85 MB | **−31.2 %** |
+| Index build, allocated           |  82.58 MB  |  86.93 MB | +5.3 %     |
+| Index build, time                |   ~160 ms  |   ~159 ms | no change  |
+| BM25 search allocation           |   1,360 B  |   1,280 B | −5.9 %     |
+| BM25 search time                 |  ~2.9 ms   |  ~2.9 ms  | no change  |
+| Naive Bayes `Predict`            |   9.5 µs   |   7.2 µs  | −24 %      |
+| Naive Bayes `Predict` allocation |   2,385 B  |   2,505 B | +5.0 %     |
+
+**Dense search, 4.5×.** `VectorSimilarity` now runs on `Vector<float>` (AVX2/AVX-512 where the host
+has it) with two independent accumulator chains, and the engine computes each document's squared
+norm once at insert time, so a scan costs a dot product per document instead of a dot product
+plus two norm accumulations. Vectors moved into one contiguous dimension-strided block, so a scan
+walks memory linearly rather than a dictionary entry per document. The page is cut by a bounded
+worst-first window instead of materializing and sorting every document that scored above zero,
+which is where the 99.3 % allocation drop comes from: the old path built a `SearchResult` for all
+10,000 documents and a LINQ sort chain on top, to return 10 rows. The worst "after" sample
+(2,206 µs) still beats the best "baseline" sample (4,900 µs), so the distributions do not overlap.
+
+**Index size, −31 %.** The tokenizer allocates a fresh string per token occurrence, so the index
+was holding one string object per *token* — 500,000 objects to represent 38 distinct words on
+this corpus. `InMemoryTextIndex` now keeps one instance per term in its posting list and rewrites
+each occurrence to it, so the corpus holds a vocabulary. It costs no extra hashing, because
+resolving a term to its posting list was already a required lookup; the shared instance rides
+along. Build allocation rises 5.3 % (a second, exactly-sized token list per document) and build
+time is unchanged within this host's resolution.
+
+**Lexical search: unchanged, and that is a measurement rather than an absence of one.** The pass
+touched the scoring path only through the shared top-L window. It allocates 5.9 % less per search
+and, timed, is indistinguishable from the baseline in a three-way interleaved run (minima
+2,920 / 2,945 / 2,877 µs for baseline / with-window / with-window-reverted). The third build
+exists to make that check falsifiable.
+
+**Naive Bayes, −24 %.** The per-token idf weight and vocabulary flag were recomputed once per
+class inside the scoring loop, i.e. a dictionary lookup per (class, token) pair. They are now
+resolved once per prediction into a single array, and the corpus count and vocabulary flag are
+materialized only when `Complement` / `SkipOutOfVocabularyTokens` are on, so a default model pays
+for one array rather than five. Costs 5 % more allocation.
+
+Behaviour is unchanged: the full test suite passes and `lexisharp verify` reports 132 unchanged,
+0 changed against the golden master. The `VectorSimilarity` kernels change the summation order,
+which the existing property tests cover with their tolerances (1e-6 symmetric, 1e-3
+scale-invariant).
+
+### Measured but not shipped: term-at-a-time scoring
+
+The largest remaining win is structural, and it was prototyped rather than landed. Every range
+scorer is document-at-a-time: `Bm25QueryPlan.Score` asks `index.TermFrequency(documentId, term)`
+for each (document, term) pair, and that is two string-dictionary lookups. On this corpus
+10,000 × 8 of those lookups cost ~8 ms, and a 2-term query spends most of its 2.0 ms in
+`GetCandidateDocuments` alone.
+
+A prototype that walks CSR posting lists into a score accumulator indexed by an integer document
+ordinal — one dictionary lookup per *term*, then integer arithmetic per posting — measured
+**0.097 ms against the current 2.00 ms** for the same 2-term query over 10,000 documents: a 20×
+difference. The same layout would also replace the 26.1 MB of nested posting dictionaries with
+about 2.1 MB of `int[]`, measured the same way.
+
+It is not in this pass because it cannot be done as a local change. The win depends entirely on
+inverting the loop, and the interface is `TermFrequency(documentId, term)`, so a scorer can only
+reach postings one document at a time. It needs document ordinals in the index plus a
+posting-list capability interface, and the storage has to stay mutable for
+`Add`/`Remove`/`AddExpansionTerms` or be rebuilt on mutation. The 20× is a prototype
+measurement on this corpus, not a shipped number.
+
 ## Tokenizer (`TokenizerBenchmarks`)
 
 Tokenizing the same text under different normalizations. The `Ratio` column is only

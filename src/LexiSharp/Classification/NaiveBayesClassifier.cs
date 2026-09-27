@@ -157,6 +157,11 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
     {
         var tokenList = tokens.ToList();
 
+        // Everything that depends only on the query token is resolved once here, not once per
+        // class: the class loop below is the outer one, so leaving these lookups inside it
+        // re-hashed every term once per class.
+        var query = ResolveQueryTerms(tokenList);
+
         var logProbabilities = new double[_classCount];
         var categories = new string[_classCount];
 
@@ -167,7 +172,7 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
             if (excludedCategories is not null && excludedCategories.Contains(pair.Key))
                 continue;
 
-            logProbabilities[idx] = LogProbability(pair.Key, pair.Value, tokenList) / _options.Temperature;
+            logProbabilities[idx] = LogProbability(pair.Key, pair.Value, query) / _options.Temperature;
             categories[idx] = pair.Key;
             idx++;
         }
@@ -175,23 +180,69 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
         return NormalizeAndRank(categories, logProbabilities, idx, limit);
     }
 
+    /// <summary>
+    /// The per-token quantities a prediction needs, resolved in a single pass over the query.
+    /// Building this up front turns the per-class scoring loop into arithmetic over an array
+    /// instead of a dictionary lookup per (class, token) pair.
+    /// </summary>
+    /// <remarks>
+    /// Only the lookups the active options actually use are materialized. The idf weight is always
+    /// resolved because it is a function of the term alone and would otherwise be recomputed once
+    /// per class; the corpus count and the vocabulary flag are resolved only when
+    /// <see cref="NaiveBayesOptions.Complement"/> or
+    /// <see cref="NaiveBayesOptions.SkipOutOfVocabularyTokens"/> is on, so a default model pays for
+    /// one array per prediction rather than five.
+    /// </remarks>
+    private QueryTerms ResolveQueryTerms(List<WeightedToken> tokens)
+    {
+        bool needsGlobalCounts = _options.Complement;
+        bool needsVocabulary = _options.SkipOutOfVocabularyTokens;
+
+        var query = new QueryTerms(tokens, needsGlobalCounts, needsVocabulary);
+
+        // Local, non-nullable handles: the arrays only exist when the matching option is on, and
+        // holding them here keeps the loop free of null checks.
+        var globalCounts = query.GlobalCounts;
+        var inVocabularyFlags = query.InVocabulary;
+
+        for (int i = 0; i < tokens.Count; i++)
+        {
+            string term = tokens[i].Token;
+
+            if (globalCounts is not null)
+                globalCounts[i] = _globalTermCounts.TryGetValue(term, out int global) ? global : 0;
+
+            bool inVocabulary = inVocabularyFlags is null
+                                || (_termDocumentFrequencies.TryGetValue(term, out int df) && df > 0);
+
+            if (inVocabularyFlags is not null)
+                inVocabularyFlags[i] = inVocabulary;
+
+            // A function of the term alone, so it is identical for every class: resolved once here
+            // rather than inside the class loop.
+            query.IdfWeights[i] = _options.IdfMode == IdfMode.None ? 1.0 : IdfWeight(term, inVocabulary);
+        }
+
+        return query;
+    }
+
     private double LogProbability(
         string category,
         Dictionary<string, int> classTerms,
-        List<WeightedToken> tokenList)
+        QueryTerms query)
     {
         _classTokenCounts.TryGetValue(category, out int classTokenCount);
         _classDocumentCounts.TryGetValue(category, out int classDocumentCount);
 
         return _options.Complement
-            ? ComplementLogProbability(classTerms, classTokenCount, tokenList)
-            : ClassicLogProbability(classTerms, classTokenCount, classDocumentCount, tokenList);
+            ? ComplementLogProbability(classTerms, classTokenCount, query)
+            : ClassicLogProbability(classTerms, classTokenCount, classDocumentCount, query);
     }
 
     private double ComplementLogProbability(
         Dictionary<string, int> classTerms,
         int classTokenCount,
-        List<WeightedToken> tokenList)
+        QueryTerms query)
     {
         // A query is scored as the negative log-likelihood of its tokens in the complement
         // distribution, so the class whose complement explains the query least is the best pick
@@ -202,21 +253,22 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
         double complementDenominator = complementTokenCount + _options.Alpha * _vocabularySize;
         double logProbability = 0.0;
 
-        foreach (var token in tokenList)
+        if (complementDenominator <= 0)
+            return logProbability;
+
+        var tokens = query.Tokens;
+        var globalCounts = query.GlobalCounts!;
+
+        for (int i = 0; i < query.Count; i++)
         {
-            if (_options.SkipOutOfVocabularyTokens && !IsInVocabulary(token.Token))
+            if (query.InVocabulary is not null && !query.InVocabulary[i])
                 continue;
 
-            _globalTermCounts.TryGetValue(token.Token, out int globalTermCount);
-            classTerms.TryGetValue(token.Token, out int termCount);
-            int complementTermCount = globalTermCount - termCount;
+            classTerms.TryGetValue(tokens[i].Token, out int termCount);
+            int complementTermCount = globalCounts[i] - termCount;
 
-            if (complementDenominator > 0)
-            {
-                double idf = IdfWeight(token.Token);
-                logProbability += token.Weight * idf
-                    * -Math.Log((complementTermCount + _options.Alpha) / complementDenominator);
-            }
+            logProbability += tokens[i].Weight * query.IdfWeights[i]
+                * -Math.Log((complementTermCount + _options.Alpha) / complementDenominator);
         }
 
         return logProbability;
@@ -226,7 +278,7 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
         Dictionary<string, int> classTerms,
         int classTokenCount,
         int classDocumentCount,
-        List<WeightedToken> tokenList)
+        QueryTerms query)
     {
         double smoothingDenominator = classTokenCount + _options.Alpha * _vocabularySize;
 
@@ -235,26 +287,54 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
                        / (_documentCount + _options.Alpha * _classCount))
             : Math.Log((double)classDocumentCount / _documentCount);
 
-        foreach (var token in tokenList)
+        if (smoothingDenominator <= 0)
+            return logProbability;
+
+        var tokens = query.Tokens;
+
+        for (int i = 0; i < query.Count; i++)
         {
-            if (_options.SkipOutOfVocabularyTokens && !IsInVocabulary(token.Token))
+            if (query.InVocabulary is not null && !query.InVocabulary[i])
                 continue;
 
-            classTerms.TryGetValue(token.Token, out int termCount);
+            classTerms.TryGetValue(tokens[i].Token, out int termCount);
 
-            if (smoothingDenominator > 0)
-            {
-                double idf = IdfWeight(token.Token);
-                logProbability += token.Weight * idf
-                    * Math.Log((termCount + _options.Alpha) / smoothingDenominator);
-            }
+            logProbability += tokens[i].Weight * query.IdfWeights[i]
+                * Math.Log((termCount + _options.Alpha) / smoothingDenominator);
         }
 
         return logProbability;
     }
 
-    private bool IsInVocabulary(string term) =>
-        _termDocumentFrequencies.TryGetValue(term, out int docFrequency) && docFrequency > 0;
+    /// <summary>
+    /// A prediction's query tokens with every term-only lookup the active options use already
+    /// resolved. Holds the caller's token list rather than copying it.
+    /// </summary>
+    private sealed class QueryTerms
+    {
+        public QueryTerms(List<WeightedToken> tokens, bool needsGlobalCounts, bool needsVocabulary)
+        {
+            Tokens = tokens;
+            IdfWeights = new double[tokens.Count];
+            GlobalCounts = needsGlobalCounts ? new int[tokens.Count] : null;
+            InVocabulary = needsVocabulary ? new bool[tokens.Count] : null;
+        }
+
+        /// <summary>The caller's tokens, in query order.</summary>
+        public List<WeightedToken> Tokens { get; }
+
+        /// <summary>Number of tokens.</summary>
+        public int Count => Tokens.Count;
+
+        /// <summary>Per-token idf weight, identical across classes.</summary>
+        public double[] IdfWeights { get; }
+
+        /// <summary>Corpus-wide occurrence count, for the complement model; null when unused.</summary>
+        public int[]? GlobalCounts { get; }
+
+        /// <summary>Vocabulary membership, for the out-of-vocabulary skip; null when unused.</summary>
+        public bool[]? InVocabulary { get; }
+    }
 
     /// <summary>
     /// Inverse-document-frequency weight for a term, per <see cref="NaiveBayesOptions.IdfMode"/>:
@@ -263,13 +343,18 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
     /// corner cases only reachable when <see cref="NaiveBayesOptions.SkipOutOfVocabularyTokens"/>
     /// is off; they are weighted like an unseen term (1.0 / 0.0 respectively).
     /// </summary>
-    private double IdfWeight(string term)
+    /// <param name="term">The term to weight.</param>
+    /// <param name="inVocabulary">
+    /// Whether the term is in the corpus vocabulary, resolved by the caller so this stays a pure
+    /// computation on the scoring path.
+    /// </param>
+    private double IdfWeight(string term, bool inVocabulary)
     {
         switch (_options.IdfMode)
         {
             case IdfMode.ClassCount:
             {
-                if (!IsInVocabulary(term) || _classCount <= 0)
+                if (!inVocabulary || _classCount <= 0)
                     return 0.0;
 
                 return Math.Max(0.0, Math.Log((double)_classCount / _termDocumentFrequencies[term]));
@@ -277,7 +362,7 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
 
             case IdfMode.DocumentCount:
             {
-                if (_documentCount == 0 || !IsInVocabulary(term))
+                if (_documentCount == 0 || !inVocabulary)
                     return 1.0;
 
                 return Math.Log(1.0 + _documentCount / (double)_termDocumentFrequencies[term]);

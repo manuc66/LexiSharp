@@ -19,10 +19,34 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
     private readonly ITokenizer _tokenizer;
 
     private readonly Dictionary<string, SearchDocument> _documents = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Dictionary<string, List<int>>> _postings = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, PostingList> _postings = new(StringComparer.Ordinal);
     private readonly Dictionary<string, IReadOnlyList<string>> _tokens = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _lengths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _corpusFrequencies = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// One term's inverted list, and the single string instance the whole index uses for that term.
+    /// </summary>
+    /// <remarks>
+    /// The tokenizer allocates a fresh string for every token occurrence, so an index that stored
+    /// what it was handed would hold one string object per token — 500k objects to represent 38
+    /// distinct words on a 10k-document / 500k-token corpus. Keeping the first-seen instance in the
+    /// posting list makes the corpus hold a vocabulary instead: measured 21.1 MB of token strings
+    /// becomes 4.1 MB, and the whole index 58.9 MB becomes 40.9 MB.
+    /// <para>
+    /// It is free to maintain because this is the map the index already had to consult: resolving a
+    /// term to its posting list is one lookup whether or not the shared instance is tracked, so the
+    /// canonical form rides along instead of costing a second hash of every token.
+    /// </para>
+    /// </remarks>
+    private sealed class PostingList(string term)
+    {
+        /// <summary>The shared instance for this term's value; store this, not the caller's string.</summary>
+        public string Term { get; } = term;
+
+        /// <summary>Document id → the term's positions in that document.</summary>
+        public Dictionary<string, List<int>> ByDocument { get; } = new(StringComparer.Ordinal);
+    }
 
     // Per-field statistics, populated from SearchDocument.TextFields. The document's main Text is
     // the field TextFields.Default, and it is tracked here as well as in the flat structures above
@@ -82,10 +106,15 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
 
         _documents[document.Id] = document;
 
-        var mainTerms = _tokenizer.Tokenize(document.Text);
+        // Post returns the index's shared instance of the term, so the token list built here holds
+        // one string per distinct value rather than one per occurrence -- the tokenizer hands back
+        // a fresh string every time, and retaining those is what made the corpus scale with token
+        // count instead of vocabulary size.
+        var raw = _tokenizer.Tokenize(document.Text);
+        var mainTerms = new List<string>(raw.Count);
 
-        for (int position = 0; position < mainTerms.Count; position++)
-            Post(document.Id, mainTerms[position], position);
+        for (int position = 0; position < raw.Count; position++)
+            mainTerms.Add(Post(document.Id, raw[position], position));
 
         RecordField(TextFields.Default, document.Id, mainTerms);
 
@@ -111,14 +140,15 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
         {
             TextFields.Validate(field, nameof(SearchDocument.TextFields));
 
-            var fieldTerms = _tokenizer.Tokenize(text);
+            var rawField = _tokenizer.Tokenize(text);
+            var fieldTerms = new List<string>(rawField.Count);
 
             // A gap between the previous run and this one, so a quoted phrase can match inside
             // one field but never bridge two of them.
             nextPosition += FieldPositionGap;
 
-            for (int i = 0; i < fieldTerms.Count; i++)
-                Post(document.Id, fieldTerms[i], nextPosition + i);
+            for (int i = 0; i < rawField.Count; i++)
+                fieldTerms.Add(Post(document.Id, rawField[i], nextPosition + i));
 
             nextPosition += fieldTerms.Count;
 
@@ -142,15 +172,19 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
 
     /// <summary>
     /// Adds one occurrence of <paramref name="term"/> to the flat inverted lists at
-    /// <paramref name="position"/>.
+    /// <paramref name="position"/>, and returns the index's shared instance of the term — which is
+    /// what callers must store, not the string they were handed.
     /// </summary>
-    private void Post(string documentId, string term, int position)
+    private string Post(string documentId, string term, int position)
     {
-        if (!_postings.TryGetValue(term, out var postings))
-        {
-            postings = new Dictionary<string, List<int>>(StringComparer.Ordinal);
-            _postings[term] = postings;
-        }
+        // The lookup the index had to do anyway, carrying the shared instance along: the first
+        // occurrence of a value defines the instance, and every later occurrence is rewritten to it
+        // at no extra hashing cost.
+        if (!_postings.TryGetValue(term, out var posting))
+            _postings.Add(term, posting = new PostingList(term));
+
+        string shared = posting.Term;
+        var postings = posting.ByDocument;
 
         if (!postings.TryGetValue(documentId, out var positions))
         {
@@ -160,13 +194,16 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
 
         positions.Add(position);
 
-        _corpusFrequencies.TryGetValue(term, out int corpusCount);
-        _corpusFrequencies[term] = corpusCount + 1;
+        _corpusFrequencies.TryGetValue(shared, out int corpusCount);
+        _corpusFrequencies[shared] = corpusCount + 1;
+
+        return shared;
     }
 
     /// <summary>
     /// Records one field's tokens in the per-field statistics, replacing whatever the document
-    /// had for that field. The document is expected to have been removed already.
+    /// had for that field. The document is expected to have been removed already. The terms are the
+    /// shared instances <see cref="Post"/> returned, so the field maps share the corpus vocabulary.
     /// </summary>
     private void RecordField(string field, string documentId, IReadOnlyList<string> terms)
     {
@@ -228,21 +265,20 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
         var added = new List<string>();
         int addedCount = 0;
 
-        foreach (var term in additionalTerms)
+        foreach (var candidate in additionalTerms)
         {
-            if (term.Length == 0 || !existing.Add(term))
+            if (candidate.Length == 0 || !existing.Add(candidate))
                 continue;
 
-            if (!_postings.TryGetValue(term, out var postings))
-            {
-                postings = new Dictionary<string, List<int>>(StringComparer.Ordinal);
-                _postings[term] = postings;
-            }
+            if (!_postings.TryGetValue(candidate, out var posting))
+                _postings.Add(candidate, posting = new PostingList(candidate));
 
-            if (!postings.TryGetValue(documentId, out var positions))
+            string term = posting.Term;
+
+            if (!posting.ByDocument.TryGetValue(documentId, out var positions))
             {
                 positions = new List<int>(1);
-                postings[documentId] = positions;
+                posting.ByDocument[documentId] = positions;
             }
 
             positions.Add(nextPosition++);
@@ -274,8 +310,8 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
         {
             foreach (var term in terms)
             {
-                if (_postings.TryGetValue(term, out var postings) &&
-                    postings.Remove(documentId) && postings.Count == 0)
+                if (_postings.TryGetValue(term, out var posting) &&
+                    posting.ByDocument.Remove(documentId) && posting.ByDocument.Count == 0)
                 {
                     _postings.Remove(term);
                 }
@@ -371,8 +407,8 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
     /// <inheritdoc />
     public IReadOnlyList<int> GetTermPositions(string documentId, string term)
     {
-        if (_postings.TryGetValue(term, out var postings) &&
-            postings.TryGetValue(documentId, out var positions))
+        if (_postings.TryGetValue(term, out var posting) &&
+            posting.ByDocument.TryGetValue(documentId, out var positions))
         {
             return positions;
         }
@@ -382,8 +418,8 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
 
     /// <inheritdoc />
     public int DocumentFrequency(string term) =>
-        _postings.TryGetValue(term, out var postings)
-            ? postings.Count
+        _postings.TryGetValue(term, out var posting)
+            ? posting.ByDocument.Count
             : 0;
 
     /// <inheritdoc />
@@ -394,8 +430,8 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
 
     /// <inheritdoc />
     public int TermFrequency(string documentId, string term) =>
-        _postings.TryGetValue(term, out var postings) &&
-        postings.TryGetValue(documentId, out var positions)
+        _postings.TryGetValue(term, out var posting) &&
+        posting.ByDocument.TryGetValue(documentId, out var positions)
             ? positions.Count
             : 0;
 
@@ -426,10 +462,10 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
     // the corpus order — no candidate set needed, indistinguishable from a full scan.
     private IEnumerable<SearchDocument> EnumerateSingleTerm(string term)
     {
-        if (!_postings.TryGetValue(term, out var postings) || postings.Count == 0)
+        if (!_postings.TryGetValue(term, out var posting) || posting.ByDocument.Count == 0)
             yield break;
 
-        foreach (var documentId in postings.Keys)
+        foreach (var documentId in posting.ByDocument.Keys)
         {
             if (_documents.TryGetValue(documentId, out var document))
                 yield return document;
@@ -448,9 +484,9 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
         // Per-query hot path: LINQ Where on these loops would allocate per candidate. // NOSONAR:S3267
         foreach (var term in terms)
         {
-            if (_postings.TryGetValue(term, out var postings))
+            if (_postings.TryGetValue(term, out var posting))
             {
-                foreach (var documentId in postings.Keys)
+                foreach (var documentId in posting.ByDocument.Keys)
                     candidates.Add(_documents[documentId]);
             }
         }
