@@ -126,6 +126,9 @@ ArguAna against BEIR's published BM25 numbers in
   - `TfIdfScorer` — TF-IDF,
   - `QueryLikelihoodScorer` — probabilistic language model (Jelinek-Mercer smoothing),
   - `BooleanScorer` — exact AND/OR filter.
+  - `Bm25PlusScorer` and `Bm25LScorer` — the published BM25+ (Lv & Zhai 2011) and BM25L
+    (Lv et al. 2006) variants, each with a lower bound `delta` on the term frequency.
+    **Measured: neither beats a tuned BM25 on any corpus tried here** — see *BM25 variants*.
 - **BM25F** (`Bm25FScorer`): the same `ITextSearchEngine` contract over documents that declare
   `TextFields`, so a term in a title can be weighted above the same term in a body — per-field
   weights, per-field length normalization, and an explainable per-term breakdown. Requires an
@@ -1302,6 +1305,59 @@ So the honest reading: **do not assume proximity helps.** It is here because the
 well-defined, tested, and cheap to evaluate on your own corpus —
 `--configs bm25,bm25-proximity,bm25-proximity-boost`. It is the right tool when a spread-out match
 really is a weaker match, which is a property of your data, not of the technique.
+
+### BM25 variants
+
+Two published single-field variants of BM25, both behind the same `ITextSearchEngine` contract, both
+with an `IScoreExplainer` breakdown, a query plan, and a `delta` lower bound on the term frequency.
+
+**BM25+** (Lv & Zhai 2011) replaces BM25's hard term-presence cut with a lower-bounded one, so a
+document matching *more distinct* query terms gains over one repeating a single term many times:
+
+```
+score(q,d) = Σ_t  idf(t) · (k1 + 1) · (tf(t,d) + δ) / (k1 · (1 − b + b·|d|/avgdl) + tf(t,d) + δ)
+```
+
+**BM25L** (Lv et al. 2006) uses a *compressed* term frequency in the numerator and the raw one in the
+denominator. That asymmetry is the variant:
+
+```
+ctd(t,d) = tf(t,d) / (1 − b + b·|d|/avgdl)
+score(q,d) = Σ_t  idf(t) · (k1 + 1) · (ctd(t,d) + δ) / (k1 · (1 − b + b·|d|/avgdl) + tf(t,d))
+```
+
+One departure in both, and it is load-bearing: read literally these formulas give a positive
+contribution to a term a document does **not** contain, which would make every document match every
+query and break the « score 0 means no match » convention. So both only sum over terms the document
+actually has, which is what keeps them `ITermOverlapScorer`. A test pins that a `delta` of 100 still
+leaves an unrelated document at exactly 0.
+
+`Bm25PlusScorer` degenerates to `Bm25Scorer` at `delta = 0`, and a test asserts that bit for bit
+across four parameter pairs — the only reliable check that a published formula was transcribed
+correctly rather than merely plausibly. BM25L does **not** degenerate to BM25 even at `delta = 0`,
+because of the numerator/denominator asymmetry; its test asserts well-formedness instead.
+
+**And the measurement, which is negative.** Against **tuned** BM25, not the default:
+
+| Config | reference (nDCG@5) | NFCorpus (nDCG@10) | SciFact (nDCG@10) |
+|---|---|---|---|
+| BM25 (default) | 0.8751 | 0.308 | 0.662 |
+| **BM25 (tuned)** | **0.8812** | **0.311** | **0.664** |
+| BM25+ (δ=1.0) | 0.8644 | 0.300 | 0.663 |
+| BM25L (δ=0.5) | 0.8073 | 0.257 | 0.575 |
+
+**Neither beats a tuned BM25 anywhere.** BM25+ is within 0.001 of it on SciFact, which on 300 queries
+is noise. BM25L is clearly worse, and badly so on the two BEIR corpora — 0.257 against 0.311 on
+NFCorpus, 0.575 against 0.664 on SciFact.
+
+**The obvious objection, stated before you make it:** the variants were measured at a *default* `δ`
+while BM25 got tuned, so this is not a fair fight. `Bm25ParameterTuner` only tunes `(k1, b)`, and
+there is no tuner for `δ` yet — that is the honest caveat, and it is also the fix. But BM25L is
+13–17 % behind, which is a lot for a missing knob to close.
+
+They ship because the formulas are well-defined, cheap, correctly transcribed, and measured — and
+because a negative result with a number attached is worth more than an omission. Re-measure with
+`--configs bm25,bm25-tuned,bm25+,bm25l` on your own corpus before dismissing them.
 
 ### Tuning BM25F
 
