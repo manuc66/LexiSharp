@@ -63,12 +63,18 @@ baseline in one run, which is physically impossible. A delta below that spread i
 here, so quoting one would be invention. Both benchmarks are in `SearchBenchmarks`; running them on
 a quiet multi-core machine is what would produce a publishable timing.
 
-The `Search cost (advisory)` CI job does exactly that on every run: it executes the whole
-`SearchBenchmarks` class at `--job medium` and uploads the raw report together with the host
-configuration it ran on. It is advisory — `continue-on-error`, not a gate — because a shared runner
-is not a quiet machine either, and because a benchmark number that blocks a build is a benchmark
-people disable. Its artifact is also how the main Search table above can be refreshed, since that
-one was collected on an older host.
+The `Search allocation (advisory)` CI job re-measures this on a second host on every run, and
+uploads the raw report with the machine configuration next to it. **Read only its `Allocated`
+column.** Allocation is counted in bytes and does not depend on how fast the host is, so that number
+travels; the `Mean` column does not. These are Azure VMs shared between tenants, where host-level
+contention is a documented source of variance, and the effect being measured here is a few
+percent — a shared runner cannot resolve it, and a `Mean` copied from that artifact into this file
+would not be a measurement. The job is `continue-on-error` and gates nothing, deliberately.
+
+What *does* gate, deterministically, is `lexisharp verify` in the `core` CI job: it replays this
+corpus against the committed baseline and fails the build on any drift in ranking or metrics. No
+clock is involved, so there is nothing to be noisy — which is the difference between a benchmark
+and a regression test, and the reason behaviour is protected that way rather than by a threshold.
 
 ### Before / after the search optimization pass (same env)
 
@@ -133,6 +139,23 @@ Synthetic in-memory Naive Bayes classifier (no external data or network):
 |---------------- |------------:|----------:|----------:|-----------:|
 | TrainClassifier | 2,097.52 us | 30.799 us | 25.719 us | 1571.28 KB |
 | PredictText     |    10.59 us |  0.209 us |  0.280 us |    9.44 KB |
+
+## Behavioural gate (`lexisharp verify`)
+
+Not a benchmark, and the distinction matters. `verify` replays the reference corpus against a
+committed baseline and fails when any ranking or metric moves — a regression test made of retrieval
+outputs:
+
+```bash
+dotnet run --project bench/LexiSharp.Cli -c Release -- verify bench/reference-corpus/corpus \
+    --queries bench/reference-corpus/queries.json --qrels bench/reference-corpus/qrels.tsv \
+    --configs bm25,bm25-semantic --top-k 5 --against bench/reference-corpus/golden/bm25.txt
+```
+
+It runs in the `core` CI job and gates the build, which no benchmark here does and none ever should.
+It is worth running before trusting any number in this file: a baseline only means something if the
+code still reproduces it. See the
+[reference corpus README](bench/reference-corpus/README.md#the-golden-master).
 
 ## Reproduce
 
