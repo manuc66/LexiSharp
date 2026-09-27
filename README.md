@@ -1321,56 +1321,49 @@ the right tool when a spread-out match really is a weaker match, which is a prop
 Two published single-field variants of BM25, both behind the same `ITextSearchEngine` contract, both
 with an `IScoreExplainer` breakdown, a query plan, and a `delta` lower bound on the term frequency.
 
-**BM25+** (Lv & Zhai 2011) replaces BM25's hard term-presence cut with a lower-bounded one, so a
-document matching *more distinct* query terms gains over one repeating a single term many times:
+**BM25+** (Lv & Zhai 2011) adds a floor δ to the whole term weight — **outside** the fraction:
 
 ```
-score(q,d) = Σ_t  idf(t) · (k1 + 1) · (tf(t,d) + δ) / (k1 · (1 − b + b·|d|/avgdl) + tf(t,d) + δ)
+norm(t,d) = 1 − b + b·|d|/avgdl
+score(q,d) = Σ_t  idf(t) · ( tf(t,d)·(k1 + 1) / (tf(t,d) + k1·norm(t,d)) + δ )
 ```
 
-**BM25L** (Lv et al. 2006) uses a *compressed* term frequency in the numerator and the raw one in the
-denominator. That asymmetry is the variant:
+**BM25L** (Lv, *When documents are very long, BM25 fails!*, SIGIR 2011) compresses the term frequency
+and uses **the compressed value in the denominator too**:
 
 ```
-ctd(t,d) = tf(t,d) / (1 − b + b·|d|/avgdl)
-score(q,d) = Σ_t  idf(t) · (k1 + 1) · (ctd(t,d) + δ) / (k1 · (1 − b + b·|d|/avgdl) + tf(t,d))
+ctd(t,d) = tf(t,d) / norm(t,d)
+score(q,d) = Σ_t  idf(t) · (k1 + 1)·(ctd(t,d) + δ) / (k1 + ctd(t,d) + δ)
 ```
 
-One departure in both, and it is load-bearing: read literally these formulas give a positive
-contribution to a term a document does **not** contain, which would make every document match every
-query and break the « score 0 means no match » convention. So both only sum over terms the document
-actually has, which is what keeps them `ITermOverlapScorer`. A test pins that a `delta` of 100 still
-leaves an unrelated document at exactly 0.
+`Bm25PlusScorer` degenerates to `Bm25Scorer` at `delta = 0`, and a test asserts that bit for bit —
+but that test **cannot** see where δ sits, since a formula that shifted `tf` by δ inside the fraction
+would satisfy it too. `Bm25PlusAddsDeltaOutsideTheFraction` is the test that discriminates, and
+`Bm25LUsesTheCompressedDenominatorNotBm25s` does the same job for BM25L against BM25's denominator.
+Both exist because the first version of this section got both wrong — see the correction below.
 
-`Bm25PlusScorer` degenerates to `Bm25Scorer` at `delta = 0`, and a test asserts that bit for bit
-across four parameter pairs — the only reliable check that a published formula was transcribed
-correctly rather than merely plausibly. BM25L does **not** degenerate to BM25 even at `delta = 0`,
-because of the numerator/denominator asymmetry; its test asserts well-formedness instead.
+One departure for BM25+: read literally, `idf(t)·δ` applies even to terms the document lacks, so the
+paper's model scores non-matching documents above zero. Reference implementations handle that by
+computing and subtracting a non-occurrence term (`bm25s` does exactly this). That conflicts with the
+« score 0 means no match » convention, so this implementation only sums over terms the document
+actually has. BM25L needs no such accommodation — its term weight is already 0 at `tf = 0`.
 
-**And the measurement, which is negative.** Against **tuned** BM25, not the default:
+**And the measurement, which is now a split verdict:**
 
 | Config | reference (nDCG@5) | NFCorpus (nDCG@10) | SciFact (nDCG@10) |
 |---|---|---|---|
 | BM25 (default) | 0.8751 | 0.308 | 0.662 |
-| **BM25 (tuned)** | **0.8812** | **0.311** | **0.664** |
-| BM25+ (δ=1.0) | 0.8644 | 0.300 | 0.663 |
-| BM25L (δ=0.5) | 0.8073 | 0.257 | 0.575 |
+| BM25 (tuned) | 0.8812 | 0.311 | 0.664 |
+| **BM25+ (δ=1.0)** | **0.8978** | 0.302 | 0.656 |
+| **BM25L (δ=0.5)** | **0.8978** | 0.305 | 0.655 |
 
-**Neither beats a tuned BM25 anywhere.** BM25+ is within 0.001 of it on SciFact, which on 300 queries
-is noise. BM25L is clearly worse, and badly so on the two BEIR corpora — 0.257 against 0.311 on
-NFCorpus, 0.575 against 0.664 on SciFact.
+**On the reference corpus both variants beat a tuned BM25, by +0.017.** On NFCorpus and SciFact they
+lose, but by 0.006–0.009 — not the 13–17 % an earlier, broken transcription appeared to show. BM25L's
+previous showing on those two corpora (0.257 / 0.575) was almost entirely the wrong denominator.
 
-**The obvious objection, stated before you make it:** the variants were measured at a *default* `δ`
-while BM25 got tuned, so this is not a fair fight. Checked directly, and the verdict survives — against
-**untuned** BM25 the same run reads 0.8751 / 0.8644 / 0.8073, and on NFCorpus 0.308 / 0.300 / 0.257.
-So the variants lose on the merit of the formula, not only because the baseline got a tuning
-advantage. What remains genuinely untested is whether a *tuned* `δ` would change that:
-`Bm25ParameterTuner` only searches `(k1, b)` and there is no `δ` tuner, which is the honest caveat
-and the obvious next step. BM25L is 13–17 % behind, though, which is a lot for a missing knob.
-
-They ship because the formulas are well-defined, cheap, correctly transcribed, and measured — and
-because a negative result with a number attached is worth more than an omission. Re-measure with
-`--configs bm25,bm25-tuned,bm25+,bm25l` on your own corpus before dismissing them.
+The caveat stands: the variants run at a default `δ` while BM25 is tuned, and `Bm25ParameterTuner`
+only searches `(k1, b)`. With a δ tuner the BEIR numbers might move, and on the reference corpus the
+gain might not survive it either. Re-measure with `--configs bm25,bm25-tuned,bm25+,bm25l`.
 
 ### Tuning BM25F
 

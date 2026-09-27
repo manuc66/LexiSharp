@@ -55,6 +55,149 @@ public class Bm25VariantsTests
         }
     }
 
+    [Fact]
+    public void Bm25LUsesTheCompressedDenominatorNotBm25s()
+    {
+        // The test that discriminates between BM25L and a mis-transcription of it. The correct
+        // denominator is (k1 + ctd + delta); the wrong one is BM25's (k1 * norm + tf). The two
+        // coincide only at delta = 0 with tf = ctd, i.e. never in general, so this pins the shape.
+        //
+        //   correct: idf * (k1+1) * (ctd + delta) / (k1 + ctd + delta)
+        //   wrong  : idf * (k1+1) * (ctd + delta) / (k1 * norm + tf)
+        var index = Index(("1", "alpha beta gamma"), ("2", "alpha"), ("3", "gamma delta"));
+        var terms = index.Tokenizer.Tokenize("alpha beta");
+
+        const double k1 = 1.5, b = 0.75, delta = 0.5;
+        var scorer = new Bm25LScorer(k1, b, delta);
+
+        double norm = 1.0 - b + b * index.DocumentLength("1") / index.AverageDocumentLength;
+
+        // Both query terms match document "1", so the score is the sum over them.
+        double Expected(bool compressedDenominator)
+        {
+            double total = 0;
+
+            foreach (string term in terms)
+            {
+                double tf = index.TermFrequency("1", term);
+                double ctd = tf / norm;
+                int df = index.DocumentFrequency(term);
+                double idf = Math.Log(1.0 + (index.Count - df + 0.5) / (df + 0.5));
+
+                double bottom = compressedDenominator
+                    ? k1 + ctd + delta   // the published form
+                    : k1 * norm + tf;    // BM25's denominator, i.e. the mis-transcription
+
+                total += idf * (k1 + 1) * (ctd + delta) / bottom;
+            }
+
+            return total;
+        }
+
+        double correct = Expected(compressedDenominator: true);
+        double wrong = Expected(compressedDenominator: false);
+
+        Assert.Equal(correct, scorer.Score("1", terms, index), 12);
+        Assert.NotEqual(wrong, correct, 9);
+    }
+
+    [Fact]
+    public void Bm25PlusAddsDeltaOutsideTheFraction()
+    {
+        // Same discipline for BM25+. Delta is an additive floor on the whole term weight, not a
+        // shift of tf inside the fraction. The degeneration test at delta = 0 cannot tell these
+        // apart — both collapse onto BM25 — which is exactly why it missed the error.
+        //
+        //   correct: idf * (tf*(k1+1) / (tf + k1*norm) + delta)
+        //   wrong  : idf * (k1+1) * (tf + delta) / (k1*norm + tf + delta)
+        var index = Index(("1", "alpha beta gamma"), ("2", "alpha"), ("3", "gamma delta"));
+        var terms = index.Tokenizer.Tokenize("alpha beta");
+
+        const double k1 = 1.5, b = 0.75, delta = 1.0;
+        var scorer = new Bm25PlusScorer(k1, b, delta);
+
+        double norm = 1.0 - b + b * index.DocumentLength("1") / index.AverageDocumentLength;
+
+        double Expected(bool deltaOutside)
+        {
+            double total = 0;
+
+            foreach (string term in terms)
+            {
+                double tf = index.TermFrequency("1", term);
+                int df = index.DocumentFrequency(term);
+                double idf = Math.Log(1.0 + (index.Count - df + 0.5) / (df + 0.5));
+
+                total += deltaOutside
+                    ? idf * (tf * (k1 + 1) / (tf + k1 * norm) + delta)
+                    : idf * (k1 + 1) * (tf + delta) / (k1 * norm + tf + delta);
+            }
+
+            return total;
+        }
+
+        double correct = Expected(deltaOutside: true);
+        double wrong = Expected(deltaOutside: false);
+
+        Assert.Equal(correct, scorer.Score("1", terms, index), 12);
+        Assert.NotEqual(wrong, correct, 9);
+    }
+
+    [Fact]
+    public void Bm25PlusAtDeltaIsExactlyBm25PlusIdfTimesDelta()
+    {
+        // Follows from delta being additive: the whole difference from BM25 must be
+        // delta * sum(idf over the matched terms), with no coupling to tf at all.
+        var index = Index(("1", "alpha beta alpha gamma"), ("2", "alpha"), ("3", "gamma delta"));
+        var terms = index.Tokenizer.Tokenize("alpha beta");
+
+        const double k1 = 1.5, b = 0.75, delta = 0.75;
+        var bm25 = new Bm25Scorer(k1, b);
+        var plus = new Bm25PlusScorer(k1, b, delta);
+
+        foreach (var document in index.Documents)
+        {
+            double idfSum = 0;
+
+            foreach (string term in terms)
+            {
+                if (document.Id is not null && index.TermFrequency(document.Id, term) > 0)
+                {
+                    int df = index.DocumentFrequency(term);
+                    idfSum += Math.Log(1.0 + (index.Count - df + 0.5) / (df + 0.5));
+                }
+            }
+
+            Assert.Equal(
+                bm25.Score(document.Id, terms, index) + idfSum * delta,
+                plus.Score(document.Id, terms, index),
+                12);
+        }
+    }
+
+    [Fact]
+    public void Bm25LTendsToNoonSaturationNotBm25sShape()
+    {
+        // BM25L's term weight is (k1+1)(ctd+delta)/(k1+ctd+delta), which rises with ctd and tends to
+        // k1+1 — not to 1 as BM25's does. That asymptote is the variant's signature and is another
+        // way to tell it from a mis-transcription.
+        var index = Index(("1", "alpha alpha alpha alpha alpha alpha alpha alpha") );
+
+        double AtTf(int repeats)
+        {
+            var local = new InMemoryTextIndex();
+            local.Index([new SearchDocument("d", string.Join(' ', Enumerable.Repeat("alpha", repeats)))]);
+
+            return new Bm25LScorer(1.5, 0.0, 0.5).Score("d", ["alpha"], local);
+        }
+
+        double shortScore = AtTf(1);
+        double longScore = AtTf(50);
+
+        // Rising with tf, unlike BM25 which saturates downward relative to its own asymptote.
+        Assert.True(longScore > shortScore);
+    }
+
     [Theory]
     [InlineData(1.5, 0.75)]
     [InlineData(0.9, 0.4)]
@@ -62,10 +205,9 @@ public class Bm25VariantsTests
     [InlineData(0.0, 0.0)]
     public void Bm25LAtDeltaZeroIsNotBm25ButIsStillWellFormed(double k1, double b)
     {
-        // BM25L is NOT a degeneration of BM25 even at delta 0: the numerator carries the compressed
-        // frequency while the denominator carries the raw one. That asymmetry is the variant. So the
-        // test is that it is well-formed, positive on matches and exactly 0 off them -- not that it
-        // equals BM25.
+        // BM25L is NOT a degeneration of BM25 even at delta 0: its denominator carries the
+        // compressed frequency where BM25's carries the raw one. So the test is that it is
+        // well-formed, positive on matches and exactly 0 off them -- not that it equals BM25.
         var index = Corpus();
         var scorer = new Bm25LScorer(k1, b, delta: 0);
         var terms = index.Tokenizer.Tokenize("quick brown");

@@ -8,26 +8,33 @@ namespace LexiSharp.Ranking;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The formula is BM25L as given in Lv, Fan, Nie &amp; Ma (<i>Improving BM25 for web page
-/// retrieval</i>, 2006), using their correction to the base TF-IDF formulation:
+/// The formula is BM25L as given in Lv (<i>When documents are very long, BM25 fails!</i>, SIGIR
+/// 2011), and reproduced in the large-scale reproducibility study <i>Which BM25 Do You Mean?</i>
+/// (ECIR 2022):
 /// </para>
 /// <code>
 /// ctd(t,d) = tf(t,d) / (1 &#8722; b + b &#183; |d| / avgdl)          compressed term frequency
 ///
 /// score(q,d) = &#8721;_t  idf(t) &#183; (k1 + 1) &#183; (ctd(t,d) + &#948;)
-///                 / (k1 &#183; (1 &#8722; b + b &#183; |d| / avgdl) + tf(t,d))
+///                 / (k1 + ctd(t,d) + &#948;)
 /// </code>
 /// <para>
-/// Note the asymmetry, which is the whole point: the <b>numerator</b> carries the compressed
-/// frequency plus the lower bound, while the <b>denominator</b> uses the raw <c>tf</c>. That
-/// asymmetry is what makes a term in a long document count for more than Okapi BM25 would give it,
-/// and why BM25L is not simply BM25 with a different saturation curve.
+/// <b>The denominator is the compressed frequency, not the raw one.</b> That is the whole variant,
+/// and getting it wrong is easy: writing <c>k1 &#183; (1 &#8722; b + b|d|/avgdl) + tf</c> there —
+/// the plain BM25 denominator — silently produces something that is neither BM25L nor BM25. An
+/// earlier version of this class did exactly that; <c>Bm25LUsesTheCompressedDenominator</c> is the
+/// test that discriminates.
 /// </para>
 /// <para>
-/// As with <see cref="Bm25PlusScorer"/>, terms absent from the document are skipped so the score
-/// stays exactly <c>0</c> for a document sharing no query term. <c>&#948;</c> is not redundant here
-/// either: it is what stops a term occurring once in a very long document from being rounded away
-/// by the denominator.
+/// <c>&#948;</c> appears in both numerator and denominator, which is what keeps the term weight
+/// bounded below and stops a single occurrence in a very long document from being rounded away. The
+/// paper reports <c>&#948; = 0.5</c> as most effective.
+/// </para>
+/// <para>
+/// As with <see cref="Bm25PlusScorer"/>, terms absent from the document are skipped, so the score
+/// stays exactly <c>0</c> for a document sharing no query term. Note that the correct BM25L does not
+/// require that gate to preserve the convention — its term weight is already <c>0</c> at
+/// <c>tf = 0</c> — so the gate is here only to skip the work, not to change the result.
 /// </para>
 /// <para>
 /// <b>No claim that this retrieves better.</b> BM25L is a single-field variant, so it competes only
@@ -98,7 +105,7 @@ public sealed class Bm25LScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
             double idf = Math.Log(1.0 + (documentCount - df + 0.5) / (df + 0.5));
             double compressed = tf / normalization;
 
-            score += idf * (_k1 + 1.0) * (compressed + _delta) / (_k1 * normalization + tf);
+            score += idf * (_k1 + 1.0) * (compressed + _delta) / (_k1 + compressed + _delta);
         }
 
         return score;
@@ -141,7 +148,7 @@ public sealed class Bm25LScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
                 int df = index.DocumentFrequency(terms[i]);
                 double idf = Math.Log(1.0 + (documentCount - df + 0.5) / (df + 0.5));
                 double compressed = tf / normalization;
-                double termScore = idf * (_k1 + 1.0) * (compressed + _delta) / (_k1 * normalization + tf);
+                double termScore = idf * (_k1 + 1.0) * (compressed + _delta) / (_k1 + compressed + _delta);
 
                 contributions.Add(new TermContribution(terms[i], tf, df, idf, termScore));
                 total += termScore;
@@ -226,7 +233,7 @@ public sealed class Bm25LScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
                     continue;
 
                 double compressed = tf / normalization;
-                score += _idf[i] * (_k1 + 1.0) * (compressed + _delta) / (_k1 * normalization + tf);
+                score += _idf[i] * (_k1 + 1.0) * (compressed + _delta) / (_k1 + compressed + _delta);
             }
 
             return score;

@@ -10,27 +10,32 @@ namespace LexiSharp.Ranking;
 /// <remarks>
 /// <para>
 /// The formula is BM25+ as given in Lv &amp; Zhai (<i>Optimizing inverted index with term
-/// dependence model for text retrieval</i>, 2011):
+/// dependence model for text retrieval</i>, 2011). Note that <c>&#948;</c> is added
+/// <b>outside</b> the fraction — it is an additive floor on the whole term weight, not a shift of
+/// the term frequency:
 /// </para>
 /// <code>
-/// score(q,d) = &#8721;_t  idf(t) &#183; (k1 + 1) &#183; (tf(t,d) + &#948;)
-///                 / (k1 &#183; (1 &#8722; b + b &#183; |d| / avgdl) + tf(t,d) + &#948;)
+/// norm(t,d) = 1 &#8722; b + b &#183; |d| / avgdl
+///
+/// score(q,d) = &#8721;_t  idf(t) &#183; ( tf(t,d) &#183; (k1 + 1) / (tf(t,d) + k1 &#183; norm(t,d)) + &#948; )
 /// </code>
 /// <para>
-/// <b>One departure, and it is load-bearing.</b> Read literally, the formula assigns a positive
-/// contribution to a term the document does not contain, which would make every document in the
-/// corpus match every query and break the engine's « score 0 means no match » convention
-/// (see <i>Scoring conventions</i> in the README). This implementation therefore only sums over
-/// terms the
-/// document actually contains, which is the standard practical reading of BM25+ and keeps the
-/// scorer an <see cref="ITermOverlapScorer"/>. The lower bound is not redundant: it still raises
-/// documents with a single occurrence of many terms relative to one term repeated many times,
-/// which is the coordination effect the paper is after.
+/// Read literally this gives every term a contribution of <c>idf(t) &#183; &#948;</c> even when the
+/// document does not contain it, so the paper's model scores non-matching documents above zero —
+/// that is the point of a lower bound, and reference implementations handle it by computing and
+/// subtracting a <i>non-occurrence</i> term (see <c>bm25s</c>). That is incompatible with the
+/// engine's « score 0 means no match » convention (see <i>Scoring conventions</i> in the README), so
+/// this implementation only sums over terms the document actually contains. The <c>&#948;</c> floor
+/// is still load-bearing for the terms that do match: it lifts a single occurrence above what BM25
+/// would give it.
+/// </para>
+/// document actually contains, which keeps the scorer an <see cref="ITermOverlapScorer"/>.
 /// </para>
 /// <para>
-/// <c>tf + &#948;</c> in both numerator and denominator is what differs from
-/// <see cref="Bm25Scorer"/>: with <c>&#948; = 0</c> the two coincide, and a document with no
-/// matching term contributes nothing under either.
+/// <c>&#948; = 0</c> leaves exactly <see cref="Bm25Scorer"/>'s term weight. That equality pins the
+/// saturation but <b>not</b> where <c>&#948;</c> sits: a formula that shifted <c>tf</c> by
+/// <c>&#948;</c> inside the fraction would satisfy it too. <c>Bm25PlusAddsDeltaOutsideTheFraction</c>
+/// is the test that actually discriminates between the two readings.
 /// </para>
 /// <para>
 /// <b>No claim that this retrieves better.</b> BM25+ is a single-field variant, so it competes only
@@ -102,9 +107,8 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
 
             int df = index.DocumentFrequency(terms[i]);
             double idf = Math.Log(1.0 + (documentCount - df + 0.5) / (df + 0.5));
-            double lowered = tf + _delta;
 
-            score += idf * (_k1 + 1.0) * lowered / (_k1 * normalization + lowered);
+            score += idf * (tf * (_k1 + 1.0) / (tf + _k1 * normalization) + _delta);
         }
 
         return score;
@@ -146,8 +150,7 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
 
                 int df = index.DocumentFrequency(terms[i]);
                 double idf = Math.Log(1.0 + (documentCount - df + 0.5) / (df + 0.5));
-                double lowered = tf + _delta;
-                double termScore = idf * (_k1 + 1.0) * lowered / (_k1 * normalization + lowered);
+                double termScore = idf * (tf * (_k1 + 1.0) / (tf + _k1 * normalization) + _delta);
 
                 contributions.Add(new TermContribution(terms[i], tf, df, idf, termScore));
                 total += termScore;
@@ -231,8 +234,7 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
                 if (tf == 0)
                     continue;
 
-                double lowered = tf + _delta;
-                score += _idf[i] * (_k1 + 1.0) * lowered / (_k1 * normalization + lowered);
+                score += _idf[i] * (tf * (_k1 + 1.0) / (tf + _k1 * normalization) + _delta);
             }
 
             return score;
