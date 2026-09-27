@@ -235,3 +235,49 @@ jobs:
         run: >
           dotnet run --project bench/LexiSharp.Benchmarks -c Release --
           --filter '*TokenizerBenchmarks*' --job short
+
+  search-cost:
+    # Publishes the SearchBenchmarks table on a host whose configuration is recorded, which is
+    # what BENCHMARKS.md is missing: the SearchTrace *allocation* is already there, but no host
+    # tried so far could resolve its *timing*, because on a single-core sandbox the baseline
+    # itself moved 2.3x between identical runs and BenchmarkDotNet flagged bimodal distributions
+    # on the pre-existing benchmarks. A shared runner is not a quiet machine either, so this job
+    # is advisory - it publishes numbers, it does not gate the build, and BENCHMARKS.md keeps its
+    # "measure on your own corpus" caveat.
+    #
+    # The filter is a single glob: BenchmarkDotNet accepts neither '|' alternation nor a repeated
+    # --filter (both were tried and both matched nothing), so this covers the whole search class
+    # rather than the three trace rows. That is the more useful half anyway - the main Search
+    # table in BENCHMARKS.md was collected on an older host and can be refreshed from this artifact.
+    name: Search cost (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94b95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Record the host these numbers come from
+        run: |
+          {
+            echo "cores: $(nproc)"
+            grep -m1 'model name' /proc/cpuinfo || true
+            dotnet --info
+          } | tee search-cost-host.txt
+
+      - name: Run the search benchmarks
+        run: >
+          dotnet run --project bench/LexiSharp.Benchmarks -c Release --
+          --filter '*SearchBenchmarks*' --job medium
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@65462800fd760344b1a7b4385471273a0abfb9cf9 # v4
+        with:
+          name: search-cost
+          path: |
+            bench/LexiSharp.Benchmarks/BenchmarkDotNet.Artifacts/results/
+            search-cost-host.txt
+          if-no-files-found: ignore

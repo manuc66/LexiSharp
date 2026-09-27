@@ -63,6 +63,13 @@ baseline in one run, which is physically impossible. A delta below that spread i
 here, so quoting one would be invention. Both benchmarks are in `SearchBenchmarks`; running them on
 a quiet multi-core machine is what would produce a publishable timing.
 
+The `Search cost (advisory)` CI job does exactly that on every run: it executes the whole
+`SearchBenchmarks` class at `--job medium` and uploads the raw report together with the host
+configuration it ran on. It is advisory — `continue-on-error`, not a gate — because a shared runner
+is not a quiet machine either, and because a benchmark number that blocks a build is a benchmark
+people disable. Its artifact is also how the main Search table above can be refreshed, since that
+one was collected on an older host.
+
 ### Before / after the search optimization pass (same env)
 
 | Method                          | Before          | After          | Mean Δ   | Alloc Δ   |
