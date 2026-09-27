@@ -28,7 +28,12 @@ public class Bm25VariantsTests
         return index;
     }
 
-    // ---- the degeneration property, for both ----------------------------------------------------
+    // ---- the two tests that can actually catch a wrong transcription -------------------------------
+    //
+    // The delta = 0 degeneration test below is necessary but NOT sufficient: it pins the saturation
+    // and says nothing about WHERE delta sits or WHICH denominator is used, because every wrong
+    // variant I have written collapses onto BM25 at delta = 0. Verified by reverting each formula
+    // and confirming these two fail while the degeneration test does not.
 
     [Theory]
     [InlineData(1.5, 0.75)]
@@ -175,39 +180,20 @@ public class Bm25VariantsTests
         }
     }
 
-    [Fact]
-    public void Bm25LTendsToNoonSaturationNotBm25sShape()
-    {
-        // BM25L's term weight is (k1+1)(ctd+delta)/(k1+ctd+delta), which rises with ctd and tends to
-        // k1+1 — not to 1 as BM25's does. That asymptote is the variant's signature and is another
-        // way to tell it from a mis-transcription.
-        var index = Index(("1", "alpha alpha alpha alpha alpha alpha alpha alpha") );
-
-        double AtTf(int repeats)
-        {
-            var local = new InMemoryTextIndex();
-            local.Index([new SearchDocument("d", string.Join(' ', Enumerable.Repeat("alpha", repeats)))]);
-
-            return new Bm25LScorer(1.5, 0.0, 0.5).Score("d", ["alpha"], local);
-        }
-
-        double shortScore = AtTf(1);
-        double longScore = AtTf(50);
-
-        // Rising with tf, unlike BM25 which saturates downward relative to its own asymptote.
-        Assert.True(longScore > shortScore);
-    }
-
     [Theory]
     [InlineData(1.5, 0.75)]
     [InlineData(0.9, 0.4)]
     [InlineData(2.0, 1.0)]
     [InlineData(0.0, 0.0)]
-    public void Bm25LAtDeltaZeroIsNotBm25ButIsStillWellFormed(double k1, double b)
+    public void Bm25LIsWellFormedAtDeltaZeroEvenThoughItIsNotBm25(double k1, double b)
     {
-        // BM25L is NOT a degeneration of BM25 even at delta 0: its denominator carries the
-        // compressed frequency where BM25's carries the raw one. So the test is that it is
-        // well-formed, positive on matches and exactly 0 off them -- not that it equals BM25.
+        // Honest about its own reach: this checks sign, finiteness and the zero-off-match property,
+        // NOT the formula's shape. It passes against a wrong denominator too — it cannot tell the
+        // published form from BM25's, and that is exactly why
+        // Bm25LUsesTheCompressedDenominatorNotBm25s exists separately.
+        //
+        // BM25L is not a degeneration of BM25 at delta 0: its denominator carries the compressed
+        // frequency where BM25's carries the raw one.
         var index = Corpus();
         var scorer = new Bm25LScorer(k1, b, delta: 0);
         var terms = index.Tokenizer.Tokenize("quick brown");
