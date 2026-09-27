@@ -1,0 +1,43 @@
+# qid	docid	grade
+# Graded relevance, consumed as qid / docid / grade by LexiSharp.Cli.
+#
+# Grades: 3 answers the question completely, 2 answers part of it, 1 mentions the
+# subject without answering. The scale is deliberately coarse; NFCorpus's three
+# graded levels are the reference, not a finer granularity.
+#
+# The AMBIGUOUS family is where the levels carry the information: both documents
+# are topically relevant, so a binary qrels file would score them identically and
+# the run would not be able to tell a diagnosis from a workaround.
+identifier-01	hard/identifier/mz-77e2t0.md	3
+identifier-02	hard/identifier/mz-77e2t1.md	3
+synonym-01	hard/synonym/automobile-fleet-log.md	3
+synonym-01	hard/synonym/car-servicing.md	2
+synonym-02	hard/synonym/car-servicing.md	3
+synonym-02	hard/synonym/automobile-fleet-log.md	1
+paraphrase-01	hard/paraphrase/credential-rotation.md	3
+paraphrase-01	hard/paraphrase/access-token-lifetime.md	2
+paraphrase-02	hard/paraphrase/access-token-lifetime.md	3
+paraphrase-02	hard/paraphrase/credential-rotation.md	1
+rare-term-01	hard/rare-term/fahlinterop.md	3
+rare-term-01	hard/metadata-conflict/triage-notes.md	1
+rare-term-02	hard/rare-term/fahlinterop.md	3
+multilingual-01	hard/multilingual/certificat-de-rotation.md	3
+multilingual-01	hard/multilingual/zertifikatrotation.md	1
+multilingual-02	hard/multilingual/certificat-de-rotation.md	3
+multilingual-02	hard/multilingual/zertifikatrotation.md	1
+long-document-01	hard/long-document/session-renewal.md	3
+long-document-02	hard/long-document/session-renewal.md	3
+ambiguous-01	hard/ambiguous/dashboard-flicker.md	3
+ambiguous-01	hard/ambiguous/widget-render-loop.md	2
+ambiguous-01	hard/ambiguous/known-issues.md	1
+ambiguous-02	hard/ambiguous/known-issues.md	2
+ambiguous-02	hard/ambiguous/widget-render-loop.md	2
+metadata-conflict-01	hard/metadata-conflict/triage-notes.md	3
+metadata-conflict-01	hard/metadata-conflict/category-taxonomy.md	1
+metadata-conflict-02	hard/metadata-conflict/triage-notes.md	3
+ordinary-01	ordinary/connection-pooling.md	3
+ordinary-02	ordinary/snippet-extraction.md	3
+ordinary-03	ordinary/facet-counting.md	3
+ordinary-04	ordinary/ranking-stability.md	3
+ordinary-05	ordinary/rate-limiting.md	3
+ordinary-06	ordinary/index-rebuild.md	3
