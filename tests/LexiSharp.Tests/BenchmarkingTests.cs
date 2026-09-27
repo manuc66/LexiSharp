@@ -89,6 +89,23 @@ public class BenchmarkingTests
     }
 
     [Fact]
+    public void Run_Bm25VariantTunedConfigsTakeTheLabeledQueriesIntoAccount()
+    {
+        var results = CorpusBenchmark.Run(
+            Corpus(),
+            Queries(),
+            new[] { BenchmarkConfig.Bm25PlusTuned(), BenchmarkConfig.Bm25LTuned() });
+
+        Assert.Equal(["BM25+ (tuned)", "BM25L (tuned)"], results.Select(result => result.Name));
+
+        foreach (var result in results)
+        {
+            Assert.Equal(4, result.JudgedQueries);
+            Assert.InRange(result.Metrics.NdcgAtK, 0, 1);
+        }
+    }
+
+    [Fact]
     public void Run_SkipsQueriesWithoutRelevance()
     {
         var queries = Queries()

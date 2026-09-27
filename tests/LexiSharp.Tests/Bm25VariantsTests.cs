@@ -64,8 +64,10 @@ public class Bm25VariantsTests
     public void Bm25LUsesTheCompressedDenominatorNotBm25s()
     {
         // The test that discriminates between BM25L and a mis-transcription of it. The correct
-        // denominator is (k1 + ctd + delta); the wrong one is BM25's (k1 * norm + tf). The two
-        // coincide only at delta = 0 with tf = ctd, i.e. never in general, so this pins the shape.
+        // denominator is (k1 + ctd + delta); the wrong one is BM25's (k1 * norm + tf). The two agree
+        // at delta = 0, because the compression cancels there — which is exactly why this test needs
+        // a non-zero delta, and why Bm25LAtDeltaZeroIsExactlyBm25 cannot be the one that pins the
+        // shape.
         //
         //   correct: idf * (k1+1) * (ctd + delta) / (k1 + ctd + delta)
         //   wrong  : idf * (k1+1) * (ctd + delta) / (k1 * norm + tf)
@@ -185,26 +187,40 @@ public class Bm25VariantsTests
     [InlineData(0.9, 0.4)]
     [InlineData(2.0, 1.0)]
     [InlineData(0.0, 0.0)]
-    public void Bm25LIsWellFormedAtDeltaZeroEvenThoughItIsNotBm25(double k1, double b)
+    public void Bm25LAtDeltaZeroIsExactlyBm25(double k1, double b)
     {
-        // Honest about its own reach: this checks sign, finiteness and the zero-off-match property,
-        // NOT the formula's shape. It passes against a wrong denominator too — it cannot tell the
-        // published form from BM25's, and that is exactly why
-        // Bm25LUsesTheCompressedDenominatorNotBm25s exists separately.
+        // BM25L degenerates to BM25 at delta = 0, and not by accident of the corpus: the compression
+        // cancels, because it is applied to the numerator as well as the denominator.
         //
-        // BM25L is not a degeneration of BM25 at delta 0: its denominator carries the compressed
-        // frequency where BM25's carries the raw one.
+        //   BM25L:  ctd / (k1 + ctd)          with ctd = tf / norm
+        //         = (tf / norm) / (k1 + tf / norm)
+        //         = tf / (k1 * norm + tf)    ... multiplying top and bottom by norm
+        //   BM25:   tf (k1 + 1) / (tf + k1 * norm)
+        //
+        // The two term weights are the same function, so the ranking is the same at delta = 0 for
+        // any (k1, b). This corrects an earlier claim in this file — that BM25L "is not a
+        // degeneration of BM25 at delta 0" because its denominator carries the compressed
+        // frequency. It does, and BM25's numerator does not need compensating: the compression
+        // appears on both sides and cancels.
+        //
+        // It matters beyond tidiness. It is what lets Bm25LParameterTuner's delta = 0 grid report
+        // Bm25ParameterTuner's own score, so a BM25L result can be read against a BM25 result at
+        // all, and it is why delta is the ONLY thing that distinguishes these two variants.
         var index = Corpus();
         var scorer = new Bm25LScorer(k1, b, delta: 0);
-        var terms = index.Tokenizer.Tokenize("quick brown");
+        var bm25 = new Bm25Scorer(k1, b);
 
-        foreach (var document in index.Documents)
+        foreach (string query in new[] { "quick", "quick brown", "lazy dog", "nothing here" })
         {
-            double score = scorer.Score(document.Id, terms, index);
-            bool hasBothTerms = document.Id is "1" or "2" or "4";
+            var terms = index.Tokenizer.Tokenize(query);
 
-            Assert.Equal(hasBothTerms, score > 0);
-            Assert.True(double.IsFinite(score));
+            foreach (var document in index.Documents)
+            {
+                Assert.Equal(
+                    bm25.Score(document.Id, terms, index),
+                    scorer.Score(document.Id, terms, index),
+                    12);
+            }
         }
     }
 

@@ -125,6 +125,27 @@ bm25l                   BM25L, at its default delta
 bm25-proximity-full     proximity damping, at its default strength and floor
 ```
 
+**The six are all at default parameters, and that is the point** — this baseline pins *defaults*, so
+it is deliberately not the place to read a tuned number. For those, use `benchmark` with
+`--metric`:
+
+```bash
+dotnet run --project bench/LexiSharp.Cli -c Release -- benchmark corpus \
+    --queries queries.json --qrels qrels.tsv --top-k 5 --metric ndcg \
+    --configs bm25,bm25-tuned,bm25+,bm25+-tuned,bm25l,bm25l-tuned
+```
+
+`--metric` is not optional politeness. Every `*-tuned` configuration maximizes the metric you name,
+and the **default is F1@5, which is flat on this corpus** (0.3588 for all six of the configurations
+above). A tuner pointed at a flat objective has no signal to fit, so its "winner" is whichever point
+the tie-break reached first. Measured on nDCG@5 the same six configurations give BM25 0.8751 and
+BM25 tuned **0.8978**, where the F1 objective reports 0.8812. Two tuned rows in this repository's
+history were quietly wrong for exactly that reason.
+
+Adding `bm25+-tuned` / `bm25l-tuned` to the *golden master* is deliberately not done: a baseline
+whose entries depend on a 125-point grid search is a much larger and much more brittle file, and the
+defaults are what this file exists to catch.
+
 Four of the six are there for one reason: an audit of the test suite found that the **default
 parameters** of `Bm25FScorer`, `Bm25PlusScorer`, `Bm25LScorer` and `ProximityReranker` were pinned by
 nothing at all. Structural bugs in those classes were caught immediately — nine out of nine mutations

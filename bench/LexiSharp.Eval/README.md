@@ -147,6 +147,11 @@ Default tokenizer, **no stemming** — see [Stemming](#stemming) for the same ru
 | BM25F (unweighted)                 |   0.296 |  0.211 |  0.484 | 0.141 |
 | BM25F (title 2.0)                  |   0.296 |  0.210 |  0.484 | 0.140 |
 | BM25F (title 4.0)                  |   0.296 |  0.211 |  0.492 | 0.139 |
+| BM25+ (delta=1.0)                  |   0.302 |  0.217 |  0.505 | 0.143 |
+| BM25L (delta=0.5)                  |   0.305 |  0.218 |  0.508 | 0.144 |
+| BM25 tuned (k1=2, b=0.5)           |   0.311 |  0.224 |  0.526 | 0.146 |
+| BM25+ tuned (k1=2, b=0.5, δ=0)     |   0.311 |  0.224 |  0.526 | 0.146 |
+| BM25L tuned (k1=2, b=0.5, δ=0)     |   0.311 |  0.224 |  0.526 | 0.146 |
 | Dense multilingual-e5-small        |   0.304 |  0.216 |  0.502 | 0.144 |
 | Hybrid BM25+Dense (weighted)       |   0.323 |  0.230 |  0.534 | 0.156 |
 | Hybrid BM25+Dense (RRF)            |   0.333 |  0.239 |  0.550 | 0.160 |
@@ -161,6 +166,26 @@ and only their order changes, which it does not read. `FieldSplitInvarianceTests
 property, so a future change that broke it would fail the suite rather than quietly rewrite these
 tables.
 
+**The BM25+ / BM25L rows are the tuned-vs-tuned comparison, and the numbers do not flatter the
+variants.** Each `δ` is now fitted by `Bm25PlusParameterTuner` / `Bm25LParameterTuner` over the full
+`k1 × b × δ` product (125 points) on the same queries, on nDCG, as `BM25 tuned` — previously the
+variants sat at a fixed paper `δ` while BM25's `(k1, b)` were fitted, which is not a comparison of
+the formulas.
+
+| Corpus | `BM25 tuned` | `BM25+ tuned` | `BM25L tuned` | unfloored baseline | `DeltaHelped` |
+|---|---|---|---|---|---|
+| NFCorpus | 0.311 (k1=2, b=0.5) | 0.311 (δ=0) | 0.311 (δ=0) | 0.311 | false, both |
+| SciFact | 0.664 (k1=1.5, b=1) | 0.666 (δ=0.25) | 0.668 (δ=0.25) | **0.664** | true, both |
+
+On NFCorpus the three tuners independently select identical parameters and identical scores, so
+those three rows are one result reported three times: the δ search picks no bound and hands back
+BM25. On SciFact δ = 0.25 wins, and the **unfloored baseline the harness prints is 0.664 — exactly
+`BM25 tuned`'s score**, which confirms at corpus scale that both variants reduce to BM25 at δ = 0.
+That makes the +0.002 / +0.004 attributable to δ rather than to a wider grid, since both searches
+cover the same 25 `(k1, b)` pairs. It is still 300 queries, binary relevance, best-of-125, fitted
+in-sample on the queries it is scored on: an upper bound, not a result. ArguAna was run
+`--no-tuned`, so it has no variant rows at all rather than a half-affordable one.
+
 **Proximity rows** (`BM25 + proximity`, three shapes, identical first stage so the difference is
 proximity alone): damp at full strength 0.302, damp at quarter 0.308, boost 0.308, against BM25's
 0.308. Neutral to slightly negative. An earlier version of `ProximityReranker` reported 0.298 here
@@ -171,11 +196,17 @@ the main README.
 (0.296 vs 0.308) and the title weight moves nothing at all.
 
 The honest reading is that these rows compare **default parameters**, not tuned ones. On the
-reference corpus, tuning settles it: `bm25f-tuned` reaches **0.8812 nDCG@5, identical to
-`bm25-tuned`'s 0.8812**, against BM25F's untuned 0.8189. So the un-tuned gap was BM25F's default
+reference corpus, tuning settles it: `bm25f-tuned` reaches **0.8867 nDCG@5 against
+`bm25-tuned`'s 0.8978**, from BM25F's untuned 0.8189. So the un-tuned gap was BM25F's default
 k1=1.2 being a worse fit for a 42-document corpus than BM25's k1=1.5 — **not** a per-field length
 term doing something useful. There is no measured case in this repository where BM25F beats BM25
 after both are tuned.
+
+Those two figures were **equal at 0.8812** in an earlier version of this file. The equality was an
+artifact of the objective, not a property: the run tuned on F1@5, which is flat on the reference
+corpus (0.3588 for every configuration), so neither tuner had any signal to fit and both took the
+first grid point their tie-break reached. Re-fitted on nDCG@5 — the metric they are reported in —
+BM25F tuned *loses* to BM25 tuned by 0.011. The conclusion is unchanged and better supported.
 
 Which leaves the ArguAna 0.344 as an **untested** claim, not a result: it too is default-vs-default,
 and whether it survives a tuned BM25 was not measured, because a grid over 1406 queries did not fit
@@ -203,7 +234,11 @@ Default tokenizer, **no stemming** — see [Stemming](#stemming) for the same ru
 | BM25F (unweighted)                 |   0.662 |  0.616 |  0.626 | 0.791 |
 | BM25F (title 2.0)                  |   0.665 |  0.623 |  0.634 | 0.780 |
 | BM25F (title 4.0)                  |   0.664 |  0.621 |  0.632 | 0.783 |
+| BM25+ (delta=1.0)                  |   0.656 |  0.612 |  0.622 | 0.778 |
+| BM25L (delta=0.5)                  |   0.655 |  0.609 |  0.620 | 0.782 |
 | BM25 tuned (k1=1.5, b=1)           |   0.664 |  0.619 |  0.630 | 0.789 |
+| BM25+ tuned (k1=2, b=1, δ=0.25)    |   0.666 |  0.620 |  0.631 | 0.792 |
+| BM25L tuned (k1=2, b=1, δ=0.25)    |   0.668 |  0.623 |  0.633 | 0.792 |
 
 BM25 at 0.662 vs the 0.665 BEIR reference — within 0.5 % on a dataset whose claims use exact
 terminology, so the stemming gap (large on NFCorpus, see [Stemming](#stemming)) nearly disappears

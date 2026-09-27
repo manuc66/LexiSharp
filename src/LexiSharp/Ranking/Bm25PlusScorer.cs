@@ -29,8 +29,6 @@ namespace LexiSharp.Ranking;
 /// is still load-bearing for the terms that do match: it lifts a single occurrence above what BM25
 /// would give it.
 /// </para>
-/// document actually contains, which keeps the scorer an <see cref="ITermOverlapScorer"/>.
-/// </para>
 /// <para>
 /// <c>&#948; = 0</c> leaves exactly <see cref="Bm25Scorer"/>'s term weight. That equality pins the
 /// saturation but <b>not</b> where <c>&#948;</c> sits: a formula that shifted <c>tf</c> by
@@ -42,7 +40,9 @@ namespace LexiSharp.Ranking;
 /// with <see cref="Bm25Scorer"/>, and the published BEIR comparison against BM25L was measured on a
 /// different corpus. Measure it on yours against a <i>tuned</i> BM25, not a default one —
 /// <see cref="Bm25ParameterTuner"/> — because a default-versus-default comparison mostly measures
-/// which default fits the corpus.
+/// which default fits the corpus. Tune this scorer's own <c>&#948;</c> the same way, with
+/// <see cref="Bm25PlusParameterTuner"/>: the bound is a free parameter, so a row that fixes it at
+/// the paper's starting value is not a tuned row whatever <c>k1</c> and <c>b</c> it carries.
 /// </para>
 /// </remarks>
 public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQueryPlannableScorer

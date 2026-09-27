@@ -89,12 +89,21 @@ Relevance grades come from the qrels file. A query carrying no judgement is load
 counted in the run, but excluded from the averages rather than scored as a zero — silently
 averaging in a zero is how a harness flatters itself.
 
-## Tuning BM25 and BM25F
+## Tuning BM25, BM25F, BM25+ and BM25L
 
 Let the corpus pick its own parameters. `Bm25ParameterTuner` grid-searches `k1` and `b`
 against your own validation queries, judged by `Precision@k`, `Recall@k`, `F1@k` or
 `nDCG@k`; `Bm25FParameterTuner` does the same for BM25F's `k1`/`b` and its per-field
-weights, and adds one question of its own.
+weights, and adds one question of its own. `Bm25PlusParameterTuner` and
+`Bm25LParameterTuner` search the single-field variants' third parameter, the `delta` lower
+bound, over the full `k1 × b × delta` product.
+
+| Tuner | Searches | Default points | Reports |
+|---|---|---|---|
+| `Bm25ParameterTuner` | `k1 × b` | 25 | — |
+| `Bm25FParameterTuner` | `(k1, b)`, then field weights | 25 + Π weights | `WeightingHelped` |
+| `Bm25PlusParameterTuner` | `k1 × b × delta` | 125 | `DeltaHelped` |
+| `Bm25LParameterTuner` | `k1 × b × delta` | 125 | `DeltaHelped` |
 
 **A tuned score is an oracle, not a fair baseline.** The winner was fitted on the same
 queries it is scored on, and the more configurations were tried, the more of the gain is
@@ -103,11 +112,57 @@ in this documentation that claims a scorer "beats" another was run tuned-against
 exactly this reason — a default-vs-default comparison mostly measures which default fits
 the corpus.
 
+**State the objective, and check it is not flat.** Every tuner maximizes the metric you name, and
+the default is `F1@k`. On the reference corpus `F1@5` is **0.3588 for all six configurations** — a
+flat objective gives a tuner no signal, so its "winner" is whichever grid point the tie-break
+reached first, and a tuned row built on it is a number that means nothing. Two figures in this
+repository's history were quietly wrong for that reason alone: BM25F-tuned and BM25-tuned both read
+0.8812, and re-fitting both on the nDCG they were being reported in moved them to 0.8867 and
+0.8978. The `lexisharp benchmark` CLI takes `--metric ndcg` for exactly this, and prints the
+objective it used.
+
+**`DeltaHelped` is the answer to "does the lower bound help on my corpus".** It is `false` on the
+reference corpus and on NFCorpus — where all three tuners settled on identical parameters
+(`k1=2, b=0.5, δ=0`) and an identical 0.311 nDCG@10, the δ search choosing no bound and handing
+back BM25. On the reference corpus `false` is the weaker of the two reasons: 46 of the 125 points tie
+at the maximum and every δ from 0 to 1 is among them, so δ = 0 is what the tie-break reached rather
+than a preference — that corpus cannot separate the formulas at all. It is `true` on SciFact, by
+0.002 and 0.004 nDCG@10 at `δ=0.25`, fitted in-sample on the 300 queries that chose it. The harness
+prints each variant's own unfloored score beside it, and on SciFact that baseline reads **0.664 —
+identical to `BM25 tuned`**, so the two 125-point searches agree with `Bm25ParameterTuner` on the
+no-bound slice and the margin is δ's rather than the price of a wider grid. It is still a 0.004 lead
+fitted in-sample over 125 candidates, so an upper bound rather than a result. `0.0` belongs in
+`deltaValues` for the other reason: without a no-bound candidate the search cannot conclude that
+nothing helps, and `UnflooredMetricScore` is `NaN` rather than a fabricated comparison.
+
+**Both variants degenerate to BM25 at `δ = 0`, which is what makes the tables readable.** Obvious for
+BM25+, whose `δ` is additive. For BM25L it is not, and used to be documented here as *not* holding —
+its denominator carries the compressed frequency where BM25's carries the raw one. The compression is
+on the numerator too, so it cancels: `ctd / (k1 + ctd) = tf / (k1·norm + tf)`, BM25's term weight. A
+`δ = 0` grid therefore returns `Bm25ParameterTuner`'s own winner and score, which
+`AZeroDeltaGridReproducesTheBm25ParameterTunerExactly` asserts across all three tuners.
+
+```csharp
+var plus = new Bm25PlusParameterTuner(index, validationQueries).Tune(topK: 10, metric: TuningMetric.Ndcg);
+
+if (plus.DeltaHelped)
+    Console.WriteLine($"delta {plus.Delta} beat no delta; k1={plus.K1} b={plus.B}");
+else
+    Console.WriteLine($"no delta beat no delta; best was k1={plus.K1} b={plus.B}");
+
+var plusEngine = new RankedTextSearchEngine(index, new Bm25PlusScorer(plus.K1, plus.B, plus.Delta));
+var lEngine = new RankedTextSearchEngine(
+    index, new Bm25LScorer(l.K1, l.B, l.Delta));
+```
+
+At 125 points the δ tuners cost five times a BM25 search, so both are capped at 512 configurations
+and refuse above it with the count rather than trimming the grid.
 
 `Bm25FParameterTuner` grid-searches `(k1, b)` and the weight of each named field, in two stages:
 `(k1, b)` first with fields neutral, then the weights at that winner. That is coordinate descent,
 not an exhaustive product, and the class says so — a configuration that is only good jointly can be
-missed. The run is refused above a configuration cap, with the count, rather than silently trimmed.
+missed. The δ tuners have no such caveat: their product *is* searched in full. The run is refused
+above a configuration cap, with the count, rather than silently trimmed.
 
 ```csharp
 var result = new Bm25FParameterTuner(index, validationQueries).Tune(
@@ -162,7 +217,14 @@ dotnet run --project bench/LexiSharp.Cli -c Release -- benchmark ./notes \
 - `--qrels` is a TSV `qid⇥docid[⇥grade]` (grades are read as binary relevance); a query
   without any judgment is loaded but excluded from the metric averages.
 - `--configs` selects the comparison: `bm25`, `bm25-tuned` (fits `(k1, b)` on the labeled
-  queries), `tfidf`, `ql` (query likelihood), `hybrid` (RRF over BM25 + TF-IDF).
+  queries), `tfidf`, `ql` (query likelihood), `hybrid` (RRF over BM25 + TF-IDF),
+  `bm25+`/`bm25l` (the variants at a fixed `delta`) and `bm25+-tuned`/`bm25l-tuned` (fitted
+  on `(k1, b, delta)`), `bm25f`, `bm25f-title`, `bm25f-tuned`, the three `bm25-proximity*`
+  shapes, and `bm25-semantic`.
+- `--metric <precision|recall|f1|ndcg>` chooses what every `*-tuned` configuration maximizes.
+  The default is `f1`, and **a flat objective makes a tuned row meaningless** — see the tuning
+  section above. Pass the metric you intend to report. The objective actually used is echoed in the
+  run's output.
 - `--json <path>` writes the results as a machine-readable report.
 
 The same comparison is available in-process through `CorpusBenchmark.Run` over any

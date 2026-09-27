@@ -80,6 +80,9 @@ internal static class Evaluation
 
         // Single-field BM25 variants, measured against the tuned BM25 row rather than the default
         // one: a default-versus-default comparison mostly measures which default fits the corpus.
+        // These two rows fix delta at the papers' starting value, which is why RunTunedVariants adds
+        // a tuned row for each of them — otherwise the table compares a fitted BM25 against two
+        // unfitted variants and calls it a verdict on the formula.
         builders = builders
             .Concat(new (string, Func<ITextSearchEngine>)[]
             {
@@ -141,6 +144,16 @@ internal static class Evaluation
             results.Add(RunConfig(name, factory(), queries, topK));
 
         string tunedDescription = tuned ? RunTuned(documents, corpus, queries, topK, tokenizer, results) : "skipped (--no-tuned)";
+
+        if (tuned)
+        {
+            // The delta axis is a free parameter of both variants, so "tuned BM25" next to "BM25+ at
+            // delta=1.0" is tuned-against-unfitted. These two rows close that, which is the only way
+            // the variant rows in docs/ranking.md mean what a reader takes them to mean.
+            RunTunedVariants(documents, queries, topK, tokenizer, results, out string plusDelta, out string lDelta);
+
+            tunedDescription += $"; {plusDelta}, {lDelta}";
+        }
 
         return (results, tunedDescription);
     }
@@ -207,6 +220,78 @@ internal static class Evaluation
         return $"k1={tuned.Parameters.K1.ToString("0.####", CultureInfo.InvariantCulture)}, "
              + $"b={tuned.Parameters.B.ToString("0.####", CultureInfo.InvariantCulture)}, "
              + $"nDCG@10={result.NdcgAt10.ToString("0.###", CultureInfo.InvariantCulture)}";
+    }
+
+    /// <summary>
+    /// Fits <c>(k1, b, delta)</c> for both variants on the same queries as the tuned BM25 row, and
+    /// reports each winner's delta plus whether the bound beat no bound.
+    /// </summary>
+    /// <remarks>
+    /// Fitted in-sample on all three rows, so the comparison is fair between them and none of them
+    /// is a held-out number. The variants search 125 configurations to BM25's 25, so their margins
+    /// carry more fitted noise — the reason the winner's own nDCG is printed next to the parameters
+    /// rather than the delta alone.
+    /// </remarks>
+    private static void RunTunedVariants(
+        IReadOnlyList<SearchDocument> documents,
+        IReadOnlyList<EvaluatedQuery> queries,
+        int topK,
+        ITokenizer tokenizer,
+        List<ConfigResult> results,
+        out string plusDelta,
+        out string lDelta)
+    {
+        var validation = queries
+            .Select(evaluated => new Bm25ValidationQuery(
+                evaluated.Query.Text,
+                evaluated.Graded.Keys.ToArray()))
+            .ToList();
+
+        var index = new InMemoryTextIndex(tokenizer);
+        index.Index(documents);
+
+        var plus = new Bm25PlusParameterTuner(index, validation, tokenizer)
+            .Tune(topK: topK, metric: TuningMetric.Ndcg);
+
+        results.Add(RunConfig(
+            $"BM25+ tuned (k1={plus.K1:0.##}, b={plus.B:0.##}, delta={plus.Delta:0.##})",
+            new RankedTextSearchEngine(index, new Bm25PlusScorer(plus.K1, plus.B, plus.Delta), tokenizer),
+            queries,
+            topK));
+
+        // BM25+ at delta = 0 IS Bm25Scorer, so the tuner's own unfloored score is BM25's on the same
+        // grid. Worth stating in the output: it means this row and the bm25-tuned row are fitted by
+        // the same search over the same 25 (k1, b) pairs, and the ONLY thing the variant search adds
+        // is the delta axis. So the gap between this row and the unfloored score is what delta bought.
+        plusDelta = Describe("BM25+", plus.Delta, plus.UnflooredMetricScore, plus.MetricScore, plus.DeltaHelped);
+
+        var l = new Bm25LParameterTuner(index, validation, tokenizer)
+            .Tune(topK: topK, metric: TuningMetric.Ndcg);
+
+        results.Add(RunConfig(
+            $"BM25L tuned (k1={l.K1:0.##}, b={l.B:0.##}, delta={l.Delta:0.##})",
+            new RankedTextSearchEngine(index, new Bm25LScorer(l.K1, l.B, l.Delta), tokenizer),
+            queries,
+            topK));
+
+        // Same reading applies: BM25L at delta = 0 is BM25 too, the compression cancelling.
+        lDelta = Describe("BM25L", l.Delta, l.UnflooredMetricScore, l.MetricScore, l.DeltaHelped);
+    }
+
+    /// <summary>
+    /// The tuner's own verdict on its added axis, with both scores so the claim is checkable rather
+    /// than asserted: <c>unfloored</c> is the best any (k1, b) reached with no lower bound, which
+    /// for both variants is plain BM25 over the same grid.
+    /// </summary>
+    private static string Describe(
+        string name, double delta, double unfloored, double scored, bool helped)
+    {
+        string reading = double.IsNaN(unfloored)
+            ? "no delta=0 in the grid, so nothing was compared"
+            : $"{(helped ? "beat" : "did not beat")} the unfloored {unfloored.ToString("0.###", CultureInfo.InvariantCulture)}";
+
+        return $"{name} delta={delta.ToString("0.####", CultureInfo.InvariantCulture)}"
+             + $" ({reading}, scored {scored.ToString("0.###", CultureInfo.InvariantCulture)})";
     }
 
     /// <summary>BM25 over an index, re-ranked by proximity. The first stage matches the BM25 row.</summary>
