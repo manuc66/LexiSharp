@@ -149,10 +149,14 @@ outputs:
 ```bash
 dotnet run --project bench/LexiSharp.Cli -c Release -- verify bench/reference-corpus/corpus \
     --queries bench/reference-corpus/queries.json --qrels bench/reference-corpus/qrels.tsv \
-    --configs bm25,bm25-semantic --top-k 5 --against bench/reference-corpus/golden/bm25.txt
+    --configs bm25,bm25-semantic,bm25f,bm25+,bm25l,bm25-proximity-full --top-k 5 \
+    --against bench/reference-corpus/golden/rankings.txt
 ```
 
 It runs in the `core` CI job and gates the build, which no benchmark here does and none ever should.
+It covers six configurations, four of which are there specifically to put a scorer's *default*
+parameters through a real ranking — see the reference corpus README for the config list and for what
+this still cannot catch.
 It is worth running before trusting any number in this file: a baseline only means something if the
 code still reproduces it. See the
 [reference corpus README](bench/reference-corpus/README.md#the-golden-master).
