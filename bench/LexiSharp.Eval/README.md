@@ -161,10 +161,19 @@ and only their order changes, which it does not read. `FieldSplitInvarianceTests
 property, so a future change that broke it would fail the suite rather than quietly rewrite these
 tables.
 
-**The BM25F rows are a negative result, stated as one.** On this corpus BM25F sits *below* BM25
-(0.296 vs 0.308) and the title weight moves nothing at all. ArguAna tells the opposite story about
-the length term (0.344 vs 0.289) while still showing no gain from the weight. The weight is the
-part that does not pay; the per-field length normalization is the part that sometimes does.
+**The BM25F rows are a negative result, and a correction.** On this corpus BM25F sits *below* BM25
+(0.296 vs 0.308) and the title weight moves nothing at all.
+
+The honest reading is that these rows compare **default parameters**, not tuned ones. On the
+reference corpus, tuning settles it: `bm25f-tuned` reaches **0.8812 nDCG@5, identical to
+`bm25-tuned`'s 0.8812**, against BM25F's untuned 0.8189. So the un-tuned gap was BM25F's default
+k1=1.2 being a worse fit for a 42-document corpus than BM25's k1=1.5 — **not** a per-field length
+term doing something useful. There is no measured case in this repository where BM25F beats BM25
+after both are tuned.
+
+Which leaves the ArguAna 0.344 as an **untested** claim, not a result: it too is default-vs-default,
+and whether it survives a tuned BM25 was not measured, because a grid over 1406 queries did not fit
+the compute available here. Do not quote it as a length-term advantage.
 
 The dense retriever lands at BM25 level on its own (0.304 vs 0.308), and fusing it with BM25
 **beats both the dense-only and the lexical-only engines** (0.323–0.333), above the 0.325 BM25
@@ -215,18 +224,19 @@ Default tokenizer, **no stemming** — see [Stemming](#stemming) for the same ru
 | BM25F (title 2.0)                  |   0.344 |  0.231 |  0.231 | 0.698 |
 | BM25F (title 4.0)                  |   0.340 |  0.227 |  0.227 | 0.696 |
 
-**The largest BM25F margin anywhere in this harness, and not because of the weighting.** 0.344
-against BM25's 0.289 on 1406 queries, and above the 0.315 published reference. But the three rows
-say the useful part: unweighted, title 2.0 and title 4.0 are within 0.004 of each other, and the
-heaviest weight is the worst of the three. The gain comes from BM25F's per-field length term, not
-from the weight.
+**The largest BM25F margin anywhere in this harness, and not because of the weighting — but also not
+established as a real gain.** 0.344 against BM25's 0.289 on 1406 queries. Two reasons to hold it
+loosely. The three rows say the weighting is not the cause: unweighted, title 2.0 and title 4.0 are
+within 0.004 of each other, and the heaviest weight is the worst. And it is a **default-vs-default**
+comparison — on the reference corpus, tuning closed exactly this kind of gap to the digit. Whether a
+tuned BM25 also reaches 0.344 here is unmeasured.
 
 ArguAna is also the corpus least like ordinary search — counter-argument retrieval, very long
 queries, a `title` that is a topic phrase rather than a headline. One more caveat on reading that
 0.344: **each ArguAna test query has exactly one relevant document** (the counter-argument), so
 Recall is quantized and nDCG is far easier to move than on a corpus with a dozen relevant documents
 per query. A scorer that gets the one right document higher gains a lot; one that reshuffles the
-bottom gains nothing. Do not generalize from it; measure on your own corpus.
+bottom gains nothing.
 
 BM25 over the full 1406-query test split lands at **0.289 against the 0.315 BEIR reference**, so
 ArguAna sits **8 % below** it — the largest gap of the three corpora, and the opposite of what
