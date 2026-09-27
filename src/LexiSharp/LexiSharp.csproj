@@ -10,7 +10,7 @@
     <RootNamespace>LexiSharp</RootNamespace>
     <PackageId>LexiSharp</PackageId>
     <Title>LexiSharp</Title>
-    <Description>Lightweight lexical text search and classification for .NET: BM25/TF-IDF scoring, hybrid federation (RRF, cascade, MMR, MaxSim rerankers), and an in-memory inverted index.</Description>
+    <Description>A composable information retrieval toolkit for .NET: in-memory inverted index, BM25/TF-IDF/query-likelihood/boolean scorers, rank fusion (RRF, cascade, MMR, MaxSim, cross-encoder) and model-agnostic dense/learned-sparse seams, plus IR metrics, BM25 tuning and end-to-end search traces. The core package has no runtime dependency.</Description>
     <Authors>manu</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryType>git</RepositoryType>

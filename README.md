@@ -1029,9 +1029,12 @@ score at which a document counts as strongly supported. It is a round number cho
 readability, **not a value validated against relevance data** — tune it against your own corpus, and
 pass `sourceNames` so a source that silently contributed nothing still shows up as absent.
 
-The demo's own five-lane corpus produces one of each category, which is the quickest way to see the
-distinction matter: the obvious match is `unanimous`, the arguable ones are `disputed`, one is on the
-page with nobody enthusiastic (`lukewarm`), and one rides on the semantic lane alone.
+The demo is the quickest way to see the distinction matter. Running its six sample queries over its
+26-document corpus, the fused page holds 9 `unanimous`, 8 `disputed`, 7 `singleSource` and
+2 `lukewarm` — the obvious matches are unanimous, the arguable ones disputed, the lukewarm ones are
+on the page through the merger with nobody enthusiastic, and some ride on a single lane. `None`
+does not appear, and cannot: it classifies a document no source returned, so by definition it never
+shows up on a result page.
 
 ### Explainable scoring and BM25 tuning
 
