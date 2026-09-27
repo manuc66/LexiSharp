@@ -100,6 +100,29 @@ public sealed record BenchmarkConfig
             new RankedTextSearchEngine(index, new Bm25FScorer(fieldWeights: fieldWeights), tokenizer));
 
     /// <summary>
+    /// BM25 followed by <see cref="ProximityReranker"/>: the same first stage, with candidates
+    /// re-ordered by how tightly the query terms cluster in each document.
+    /// </summary>
+    /// <remarks>
+    /// A first-stage/second-stage pair, so the difference from the stock BM25 configuration is
+    /// attributable to proximity alone. <paramref name="strength"/> is <c>0</c> for a no-op and
+    /// <c>1</c> for the full <c>1 - n/W</c> decay; the effect is corpus-dependent by nature, since
+    /// documents that repeat their terms far apart are exactly the ones this demotes.
+    /// </remarks>
+    public static BenchmarkConfig Bm25Proximity(
+        double strength = 1.0,
+        ProximityMode mode = ProximityMode.Damp,
+        int maxCandidates = 100) =>
+        new(name: $"BM25 + proximity ({Describe(mode)}, s={strength})", build: (index, tokenizer, _, _) =>
+            new RerankedTextSearchEngine(
+                new RankedTextSearchEngine(index, new Bm25Scorer(), tokenizer),
+                new ProximityReranker(index, tokenizer, strength, mode),
+                maxCandidates));
+
+    private static string Describe(ProximityMode mode) =>
+        mode == ProximityMode.Boost ? "boost" : "damp";
+
+    /// <summary>
     /// <see cref="Bm25FScorer"/> with <c>(k1, b)</c> and the weights of <paramref name="weightedFields"/>
     /// fitted on the labeled queries by <see cref="Bm25FParameterTuner"/>.
     /// </summary>
