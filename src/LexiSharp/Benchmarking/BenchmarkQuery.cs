@@ -87,7 +87,14 @@ public sealed record BenchmarkQuery
     /// True when at least one judgment carries a level other than <c>1</c>. Purely informational:
     /// it tells a report whether its nDCG is graded or binary, since the two are not comparable.
     /// </summary>
-    public bool IsGraded => GradedRelevance.Values.Any(gain => gain != 1.0);
+    // Exact, and deliberately so: this is a classification of the judgments as supplied, not a
+    // comparison of two computed quantities. The gains come from a qrels file and are whole numbers
+    // in practice, so 1.0 is exactly representable and the "binary or graded" question has an exact
+    // answer. An epsilon here would make the answer depend on an arbitrary tolerance -- a gain of
+    // 1.0000001 read from a file would be reported as binary, and the report would then call two
+    // graded nDCG figures comparable when they are not. See BenchmarkQueryResult.TiesWithNeighbour
+    // for the case where tolerance really is the wrong answer.
+    public bool IsGraded => GradedRelevance.Values.Any(gain => gain != 1.0); // NOSONAR:S1244
 
     private static IReadOnlyDictionary<string, double> ToUnitGains(IReadOnlyCollection<string> relevantDocumentIds)
     {
