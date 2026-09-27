@@ -299,7 +299,7 @@ onto a shared stem — the case where over-stemming has the most to lose and the
 
 What this does **not** establish: the indexing and querying cost of stemming is not measured
 here — the harness reports wall-clock time per config, but single runs are not timing evidence
-(see [BENCHMARKS.md](../../BENCHMARKS.md)). Nor is anything measured on non-English text, on
+(see [docs/benchmarks.md](../../docs/benchmarks.md)). Nor is anything measured on non-English text, on
 precision-oriented workloads, on the dense and cross-encoder lanes (they tokenize independently
 of the lexical index), or on the reason ArguAna regresses. The [core README](../../README.md)
 repeats the scope: Porter's own status text calls the algorithm "slightly inferior to the Snowball

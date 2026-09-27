@@ -1,4 +1,9 @@
-# Using SPLADE with LexiSharp — consumer-side guide
+---
+title: SPLADE guide
+nav_order: 14
+---
+
+# SPLADE guide
 
 LexiSharp never runs an ML model. For learned-sparse retrieval, the library only consumes
 the output of your model through one interface:

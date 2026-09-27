@@ -1,0 +1,230 @@
+---
+title: Pipelines
+nav_order: 6
+---
+
+# Pipelines
+
+Every engine here implements the same `ITextSearchEngine` contract, and they compose by
+wrapping rather than by configuring: a first stage retrieves for recall, a second stage
+re-orders a shortlist for precision, and a merger or a router decides where a query goes.
+
+- **Retrieve, then rerank** — `RerankedTextSearchEngine` over-fetches, re-ranks, and
+  applies `MinimumScore`/`Limit` to the final scores. Shipped rerankers: a
+  diversity-preserving **MMR**, a **cascade** that chains any number of stages, a
+  **cross-encoder** over a consumer-provided `ICrossEncoderScorer`, **ColBERT MaxSim** over
+  `ITokenEmbeddingProvider`, and [proximity](ranking.md#proximity).
+- **Federate** — `HybridTextSearchEngine` queries several engines, de-duplicates the
+  candidates by document id and merges them with one of five strategies, from a
+  re-scoring merger to reciprocal-rank fusion for scores that are not comparable.
+- **Route** — `RoutedSearchEngine` forwards each query to the cheapest engine;
+  `RoutingSearchEngine` asks a decision you supply which pre-composed route to run, with a
+  confidence threshold and a fallback.
+
+The models stay in your application: `IEmbeddingProvider`, `ISparseEmbeddingProvider`,
+`ITokenEmbeddingProvider` and `ICrossEncoderScorer` are seams, and LexiSharp never runs
+one. The [`HashingEmbeddingProvider`](embeddings.md#in-memory-dense-retrieval-inmemoryvectorsearchengine-hashingembeddingprovider)
+makes the whole stack testable offline, with no model at all.
+
+## Reranking (`IReranker`, MMR, cascade)
+
+Retrieve with recall, then re-rank a shortlist with precision. The core seam is `IReranker`;
+`RerankedTextSearchEngine` decorates any engine (over-fetches, re-ranks, applies
+`MinimumScore`/`Limit` on the final scores):
+
+```csharp
+using LexiSharp.Core;
+
+IReranker reranker = ...;                                    // yours, or the MMR one below
+ITextSearchEngine engine = new RerankedTextSearchEngine(baseEngine, reranker, maxCandidates: 100);
+```
+
+`LexiSharp` ships two built-in rerankers. **MMR** (Maximal Marginal Relevance)
+re-orders candidates so each next pick is relevant *and* different from the picks before it —
+near-duplicate results are pushed back; candidates without a vector are never penalized:
+
+```csharp
+using LexiSharp.Hybrid;
+
+var vectors = new Dictionary<string, ReadOnlyMemory<float>>
+{
+    ["doc-1"] = embedding1, // pre-computed with your IEmbeddingProvider
+    ["doc-2"] = embedding2,
+};
+
+IReranker mmr = new MaximalMarginalRelevanceReranker(vectors, lambda: 0.7, limit: 5);
+```
+
+**Cascade** chains any number of stages, trimming between stages so only the strongest
+candidates reach the expensive final ones; it is itself an `IReranker`, so cascades nest:
+
+```csharp
+var pipeline = new CascadeRerankPipeline(
+    new IReranker[] { lexicalReranker, mmr },
+    new CascadeRerankOptions(StageLimit: 20, FinalLimit: 5, MinimumScore: 0.01));
+```
+
+**Cross-encoder** re-scores the shortlist with a pairwise model — a precision stage for cases
+where whole-corpus scoring would be too expensive (ColBERT-style late interaction, an LLM
+judge, ...). The model itself is a consumer-provided seam (`ICrossEncoderScorer`, same
+contract as `IEmbeddingProvider`: LexiSharp never runs the model):
+
+```csharp
+IReranker cross = new CrossEncoderReranker(myOnnxCrossEncoder, limit: 5);
+```
+
+`CrossEncoderReranker` replaces each candidate's score with the model's, drops `0`/NaN/infinity
+scores, and applies an optional `MinimumScore` and `Limit`.
+
+**MaxSim** (ColBERT-style late interaction) re-scores the shortlist token-by-token instead of
+as a single embedding: every token of the query is embedded, each scores against the whole
+candidate's token embeddings (`max similarity per query token`, summed), so a query token never
+has to "average itself away" across the document:
+
+```csharp
+using LexiSharp.Core;
+using LexiSharp.Hybrid;
+
+var tokenVectors = new Dictionary<string, IReadOnlyList<ReadOnlyMemory<float>>>
+{
+    ["doc-1"] = doc1TokenEmbeddings, // token embeddings pre-computed at index time
+    ["doc-2"] = doc2TokenEmbeddings,
+};
+
+IReranker maxsim = new MaxSimReranker(
+    myTokenEmbedder,                 // ITokenEmbeddingProvider (core seam, consumer-provided)
+    tokenVectors,                    // doc-side token embeddings, pre-computed with the Passage role
+    limit: 5,
+    minimumScore: 0.0);
+```
+
+`MaxSimReranker` scores each candidate as `Σₜ max_tok cosine(q_t, d_tok)` — for each query token,
+the best cosine against any of the candidate's token embeddings (the query side is re-embedded
+with the `Query` role per search) — drops `0`/NaN/infinity scores
+and ranks by total. It is the middle ground between whole-document cosine and the full
+pairwise pass of a cross-encoder.
+
+## Hybrid engine
+
+Federate a **hot** in-memory index and a **cold** persistent backend, and produce one
+consistent global ranking:
+
+```csharp
+using LexiSharp.Core;
+using LexiSharp.Hybrid;
+using LexiSharp.Indexing;
+using LexiSharp.Ranking;
+
+ITextSearchEngine hybrid = new HybridTextSearchEngine(new ITextSearchEngine[]
+{
+    new RankedTextSearchEngine(new InMemoryTextIndex(), new Bm25Scorer()), // hot subset
+    postgresEngine,                                                       // cold backend
+});
+
+IReadOnlyList<SearchResult> results = hybrid.Search("textual search");
+```
+
+`HybridTextSearchEngine` queries every engine, de-duplicates the candidates by document id,
+then re-ranks the whole union with a single scorer (`RerankingResultMerger`, default BM25).
+Writes fan out to every engine. Three merge strategies are available:
+
+| Merger | Behavior | Best for |
+| --- | --- | --- |
+| `RerankingResultMerger` (default) | re-scores the union with one `ITextScorer` | comparable stats, identical score scale wanted |
+| `ReciprocalRankFusionMerger` | `Σ 1/(k + rank)` (k=60), rank-only | engines with **incomparable scales** — lexical + vector, ts_rank_cd vs BM25 (Postgres vs ParadeDB vs in-memory) |
+| `WeightedScoreResultMerger` | normalized per-engine score blend | native scores trusted, per-engine weights wanted |
+| `CombSumResultMerger` | sum of normalized per-engine scores | scores (not just ranks) are meaningful and should add up |
+| `CombMNZResultMerger` | CombSUM × number of engines that returned the doc | reward cross-engine **agreement** |
+
+Reciprocal Rank Fusion never looks at scores, so it bridges engines whose scores are not
+comparable — the sparse and dense embedding backends land in the same formula without
+calibration.
+
+For score breakdowns, `SearchWithDetails()` returns `DetailedSearchResult`s where each
+document also carries its raw per-source score (`Contributions`), keyed by the labels passed
+as `sourceNames` to the constructor (`"lexical"`, `"semantic"`, ... — default `"engine-N"`).
+A source that did not return the document is simply absent from that dictionary; the merged
+ordering from `Search()` is unchanged.
+
+**Embeddings are an agreed seam, not a feature here**: `IEmbeddingProvider` (core) describes how a
+consumer project (ONNX model, model server, ...) would produce vectors — LexiSharp never
+computes embeddings — and `VectorSimilarity` provides pure cosine math. `PostgresVectorSearchEngine`
+is the reference consumer: it turns any provider into an ANN backend that the same
+`HybridTextSearchEngine` merges exactly like a lexical engine.
+
+## Cost-based routing (`RoutedSearchEngine`)
+
+When the same corpus is reachable through several engines — say a stock in-memory engine and a
+SQL backend — route each query to the one that will do the least work:
+
+```csharp
+using LexiSharp.Core;
+
+var router = new RoutedSearchEngine(new[]
+{
+    new RoutedEngine("memory", memoryEngine),   // implements IQueryCostProbe
+    new RoutedEngine("postgres", pgEngine),     // no probe: last resort
+});
+
+IReadOnlyList<SearchResult> hits = router.Search("machine learning");
+```
+
+The router owns no index — it never writes, and its `Index`/`Add`/`Remove`/`Clear` throw
+`NotSupportedException`; populate the engines yourself. Each query runs on exactly one engine,
+so the scores are that engine's own (the router never mixes or renormalizes them across
+engines). The default `CheapestByCandidateCountEstimator` asks every engine implementing
+`IQueryCostProbe` for `EstimateCandidateCount` and picks the smallest — ties keep the earliest
+engine — while engines without the probe are only used when no costed engine exists. The stock
+engine's estimate is the sum of the literal query terms' document frequencies; pass a custom
+`IQueryCostEstimator` to route on engine priority, latency history or query shape instead.
+
+The router is capability-preserving: `SearchWithFacets`, `SearchWithDetails` and `Explain` run
+on the engine the estimator selects for that query, and the router's own
+`EstimateCandidateCount` reports the smallest estimate across its engines (so a routed engine can
+itself be a candidate inside another router). Because the selection is per query, a capability
+the selected engine lacks throws `NotSupportedException` rather than silently re-routing.
+`BoostedTextSearchEngine`/`RerankedTextSearchEngine` also forward `IQueryCostProbe` to their
+inner engine (they do not change how many candidates a query touches); their score-mutating
+wrapper does not currently surface facets/detailed/explain, whose contracts it cannot
+preserve.
+
+## Intent-based routing (`RoutingSearchEngine`)
+
+Cost routing picks the cheapest engine; intent routing picks the *right* one. Route each query to
+a pre-composed target — an engine plus optional metadata filters — chosen by a decision you
+supply (a rule, a small classifier, or a model behind `IQueryRouter`):
+
+```csharp
+using LexiSharp.Core;
+
+var router = new RoutingSearchEngine(
+    new KeywordVsQuestionRouter(),                 // your IQueryRouter
+    new[]
+    {
+        new SearchRoute("keywords", memoryEngine),
+        new SearchRoute("questions", pgEngine, new[]
+        {
+            new MetadataFilter("kind", MetadataFilterOperator.Equal, "faq"),
+        }),
+    },
+    fallbackId: "keywords",
+    minimumConfidence: 0.6);
+
+IReadOnlyList<SearchResult> hits = router.Search("how do I reset my password?");
+```
+
+The router only chooses among the ids it is given (`RouteAsync(query, candidateIds)`); it never
+builds filters or touches indexes. The selected route's filters are AND-ed onto the caller's
+`SearchOptions.Filters`. A `null` decision, an unknown id, a confidence below the threshold or a
+thrown exception all run the fallback route — a broken router never breaks a search. The seam is
+async (`ValueTask<QueryRoute?>`) because a model-backed router is naturally async, but the
+synchronous `Search` blocks on it, like the PostgreSQL engines block on `IEmbeddingProvider`.
+LexiSharp never runs a model itself: you provide the rule, classifier or model.
+
+## Putting the stages together
+
+The reranking stage composes with all of it: wrap the hybrid in a
+`RerankedTextSearchEngine` (core decorator) and pass a `CascadeRerankPipeline`, a
+`MaximalMarginalRelevanceReranker`, a `CrossEncoderReranker` or a `MaxSimReranker` to add a
+precision or diversity pass on top of the fused ranking — the same two-stage
+retrieve-then-rerank shape, one line of composition.
