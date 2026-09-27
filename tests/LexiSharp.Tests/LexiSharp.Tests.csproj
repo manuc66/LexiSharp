@@ -22,7 +22,7 @@
     </PackageReference>
     <PackageReference Include="FsCheck" Version="3.4.0" />
     <PackageReference Include="FsCheck.Xunit" Version="3.4.0" />
-    <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="10.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="10.0.12" />
   </ItemGroup>
 
   <ItemGroup>
