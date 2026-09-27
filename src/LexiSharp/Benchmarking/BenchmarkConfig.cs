@@ -84,6 +84,21 @@ public sealed record BenchmarkConfig
         new(name: "TF-IDF", build: (index, tokenizer, _, _) =>
             new RankedTextSearchEngine(index, new TfIdfScorer(), tokenizer));
 
+    /// <summary>
+    /// <see cref="Bm25FScorer"/> over a field weighting, which is the configuration this scorer
+    /// exists for. <paramref name="fieldWeights"/> names the fields to weight, e.g.
+    /// <c>["title"] = 2.0</c>.
+    /// </summary>
+    /// <remarks>
+    /// Only meaningful on a corpus whose documents declare those <paramref name="fieldWeights"/>
+    /// keys as <see cref="SearchDocument.TextFields"/>; a weight on a field the corpus does not
+    /// have is inert, and every unmentioned field keeps a neutral weight. On a single-field corpus
+    /// this is a length-normalized BM25 variant, not BM25 — measure before drawing a conclusion.
+    /// </remarks>
+    public static BenchmarkConfig Bm25F(IReadOnlyDictionary<string, double>? fieldWeights = null) =>
+        new(name: fieldWeights is null or { Count: 0 } ? "BM25F" : "BM25F (weighted)", build: (index, tokenizer, _, _) =>
+            new RankedTextSearchEngine(index, new Bm25FScorer(fieldWeights: fieldWeights), tokenizer));
+
     /// <summary>Stock <see cref="QueryLikelihoodScorer"/> ranking.</summary>
     public static BenchmarkConfig QueryLikelihood(double lambda = 0.2) =>
         new(name: "QueryLikelihood", build: (index, tokenizer, _, _) =>
