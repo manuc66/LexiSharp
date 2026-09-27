@@ -14,6 +14,26 @@ public sealed record MarkdownLoadOptions
 
     /// <summary>Whether the first <c># Heading</c> fills the <c>title</c> field when the front matter has none. Default: <c>true</c>.</summary>
     public bool FirstHeadingAsTitle { get; init; } = true;
+
+    /// <summary>
+    /// Front-matter keys to expose additionally as <see cref="Core.SearchDocument.TextFields"/>,
+    /// so a field-weighted scorer (<c>Bm25FScorer</c>) can weigh them. Matched against the resolved
+    /// front matter, so <c>title</c> also picks up a heading-synthesized title. Default: none.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Defaulting to none is deliberate. Front matter is mostly metadata — a date, a status, an
+    /// author id — and promoting all of it to indexed text would make those values match queries,
+    /// which is rarely what anyone wants. Name the keys that are genuinely part of the document's
+    /// prose, typically <c>["title"]</c>.
+    /// </para>
+    /// <para>
+    /// A promoted key is <b>in addition to</b> the document field it already was: the title stays
+    /// filterable and facetable as a field, and additionally becomes searchable text. Its tokens
+    /// also join the flat view, so a plain BM25 query finds a term that only appears in the title.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyCollection<string> TextFieldNames { get; init; } = Array.Empty<string>();
 }
 
 /// <summary>
@@ -36,10 +56,19 @@ public static class MarkdownLoader
     /// Parses a markdown string with no file context; the returned document id is
     /// <c>"document"</c>.
     /// </summary>
-    public static LoadedDocument Parse(string markdown)
+    public static LoadedDocument Parse(string markdown) => Parse(markdown, new MarkdownLoadOptions());
+
+    /// <summary>
+    /// Parses a markdown string with no file context, honouring
+    /// <paramref name="options"/> (notably <see cref="MarkdownLoadOptions.TextFieldNames"/>); the
+    /// returned document id is <c>"document"</c>.
+    /// </summary>
+    public static LoadedDocument Parse(string markdown, MarkdownLoadOptions options)
     {
         ArgumentNullException.ThrowIfNull(markdown);
-        return ParseCore(markdown, NoFileId, new MarkdownLoadOptions());
+        ArgumentNullException.ThrowIfNull(options);
+
+        return ParseCore(markdown, NoFileId, options);
     }
 
     /// <summary>Reads and parses one markdown file; the document id is the file's full path.</summary>
@@ -90,7 +119,33 @@ public static class MarkdownLoader
 
         fields["source"] = id;
 
-        return new LoadedDocument(id, body, fields, category);
+        return new LoadedDocument(id, body, fields, category, PromoteTextFields(fields, options));
+    }
+
+    /// <summary>
+    /// Picks the requested keys out of the resolved front matter, skipping the ones this document
+    /// does not carry and the ones that hold nothing. Returns null rather than an empty map so a
+    /// document with no promoted field is indistinguishable from one that was never asked for.
+    /// </summary>
+    private static Dictionary<string, string>? PromoteTextFields(
+        IReadOnlyDictionary<string, string> fields,
+        MarkdownLoadOptions options)
+    {
+        if (options.TextFieldNames.Count == 0)
+            return null;
+
+        Dictionary<string, string>? promoted = null;
+
+        foreach (string name in options.TextFieldNames)
+        {
+            if (!fields.TryGetValue(name, out string? value) || string.IsNullOrWhiteSpace(value))
+                continue;
+
+            promoted ??= new Dictionary<string, string>(StringComparer.Ordinal);
+            promoted[name] = value;
+        }
+
+        return promoted;
     }
 
     private static (IReadOnlyDictionary<string, string> Fields, string? Category, string Body) ParseFrontMatter(

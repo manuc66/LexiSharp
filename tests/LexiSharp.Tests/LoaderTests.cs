@@ -63,6 +63,69 @@ public class LoaderTests
     }
 
     [Fact]
+    public void MarkdownLoader_Parse_NoTextFieldsByDefault()
+    {
+        // Front matter is metadata for filtering by default. Promoting all of it to indexed text
+        // would make a date or an author id match queries, so nothing is promoted unless named.
+        var document = MarkdownLoader.Parse(FrontMatter);
+
+        Assert.Null(document.TextFields);
+    }
+
+    [Fact]
+    public void MarkdownLoader_Parse_PromotesTheNamedKeysToTextFields()
+    {
+        var document = MarkdownLoader.Parse(
+            FrontMatter, new MarkdownLoadOptions { TextFieldNames = ["title", "summary"] });
+
+        // Only the keys this document actually carries, and 'summary' is not in this front matter.
+        Assert.NotNull(document.TextFields);
+        Assert.Equal("My Title", document.TextFields!["title"]);
+        Assert.DoesNotContain("summary", document.TextFields.Keys);
+    }
+
+    [Fact]
+    public void MarkdownLoader_APromotedKeyStaysAFieldToo()
+    {
+        var document = MarkdownLoader.Parse(
+            FrontMatter, new MarkdownLoadOptions { TextFieldNames = ["title"] });
+
+        // Promotion is in addition to, not instead of: the title remains filterable and facetable
+        // as metadata while also becoming searchable text.
+        Assert.Equal("My Title", document.Fields!["title"]);
+        Assert.Equal("My Title", document.TextFields!["title"]);
+
+        var searchDocument = document.ToSearchDocument();
+
+        Assert.Equal("My Title", searchDocument.Fields!["title"]);
+        Assert.Equal("My Title", searchDocument.TextFields!["title"]);
+    }
+
+    [Fact]
+    public void MarkdownLoader_PromotionSeesTheHeadingSynthesizedTitle()
+    {
+        const string markdown = "# Architecture notes\n\nGuidelines for the distributed system.";
+
+        var document = MarkdownLoader.Parse(
+            markdown, new MarkdownLoadOptions { TextFieldNames = ["title"] });
+
+        // The title did not come from front matter, but it is the document's title all the same.
+        Assert.Equal("Architecture notes", document.TextFields!["title"]);
+    }
+
+    [Fact]
+    public void MarkdownLoader_PromotionSkipsBlankValues()
+    {
+        var document = MarkdownLoader.Parse(
+            "---\ntitle: \ncategory: docs\n---\n\nbody text",
+            new MarkdownLoadOptions { TextFieldNames = ["title"] });
+
+        // A declared-but-empty key is not a text field; promoting it would add a field no document
+        // fills, and drag that field's average length around.
+        Assert.Null(document.TextFields);
+    }
+
+    [Fact]
     public void MarkdownLoader_Parse_NoFrontMatter_KeepsWholeTextAsBody()
     {
         var document = MarkdownLoader.Parse("just a plain note");
