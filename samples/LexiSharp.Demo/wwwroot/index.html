@@ -275,26 +275,27 @@ function chainExplanation(data) {
 }
 
 function agreementExplanation(data) {
-  if (!data.agreement) return "";
+  const agreement = data.agreement;
+  if (!agreement) return "";
   const label = {
     singleSource: "one source only",
-    disputed: "sources disagree",
     lukewarm: "nobody is convinced",
+    disputed: "sources disagree",
     unanimous: "every source agrees",
     none: "no source returned it",
-  }[data.agreement] || data.agreement;
+  }[agreement.agreement] || agreement.agreement;
 
-  const bars = Object.entries(data.strengths || {}).map(([source, value]) => {
+  const bars = Object.entries(agreement.strengths || {}).map(([source, value]) => {
     const width = Math.max(2, value * 100);
-    const strong = (data.strongSources || []).includes(source);
+    const strong = (agreement.strongSources || []).includes(source);
     return `<div class="term">
       <div class="term-top"><span class="term-name">${esc(source)}${strong ? "" : " (weak)"}</span><span class="term-val">${fmt(value, 2)}</span></div>
       <div class="track"><div class="fill" style="width:${width}%"></div></div>
     </div>`;
   }).join("");
 
-  const absent = (data.absentSources || []).length
-    ? `<div class="stage-sub">not returned by ${data.absentSources.map(esc).join(", ")}</div>`
+  const absent = (agreement.absentSources || []).length
+    ? `<div class="stage-sub">not returned by ${agreement.absentSources.map(esc).join(", ")}</div>`
     : "";
 
   return `<div class="chain">

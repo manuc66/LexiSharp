@@ -27,7 +27,7 @@ public class RetrievalAgreementTests
     }
 
     [Fact]
-    public void SeveralSourcesThatAllFindItConvincingIsBroad()
+    public void SeveralSourcesThatAllFindItConvincingIsUnanimous()
     {
         var page = new[]
         {
@@ -41,7 +41,7 @@ public class RetrievalAgreementTests
     }
 
     [Fact]
-    public void SourcesThatDisagreeAreDivergentNotBroad()
+    public void SourcesThatDisagreeAreDisputedNotUnanimous()
     {
         // d1 is the dense lane's favourite and only a middling lexical hit; d2 is the reverse.
         // Both are in the page, but neither is found convincing by everyone.
@@ -78,7 +78,7 @@ public class RetrievalAgreementTests
         Assert.Equal(0.1, report.Strengths["bm25"], 10);
         Assert.Equal(1.0, report.Strengths["cosine"], 10);
 
-        // One source is enthusiastic, the other is not: that is Divergent, not Broad, and it is the
+        // One source is enthusiastic, the other is not: that is Disputed, not Unanimous, and it is the
         // distinction a raw-score comparison would have collapsed.
         Assert.Equal(RetrievalAgreement.Disputed, report.Agreement);
         Assert.Equal(["cosine"], report.StrongSources);
@@ -154,7 +154,7 @@ public class RetrievalAgreementTests
     {
         var report = Assert.Single(RetrievalAgreementAnalyzer.Analyze([Result("d1", 0.5, ("lexical", 1.0))]));
 
-        // One source present, so SingleSource - not Broad, even though its only source is strong.
+        // One source present, so SingleSource - not Unanimous, even though its only source is strong.
         Assert.Equal(RetrievalAgreement.SingleSource, report.Agreement);
     }
 
