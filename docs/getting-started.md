@@ -1,5 +1,6 @@
 ---
 title: Getting started
+permalink: pretty
 nav_order: 2
 ---
 

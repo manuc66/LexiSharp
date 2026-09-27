@@ -1,5 +1,6 @@
 ---
 title: Embeddings and expansion
+permalink: pretty
 nav_order: 7
 ---
 

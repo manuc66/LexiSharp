@@ -1,5 +1,6 @@
 ---
 title: Indexing
+permalink: pretty
 nav_order: 3
 ---
 

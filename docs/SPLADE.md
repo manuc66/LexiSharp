@@ -1,5 +1,6 @@
 ---
 title: SPLADE guide
+permalink: pretty
 nav_order: 14
 ---
 

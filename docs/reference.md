@@ -1,5 +1,6 @@
 ---
 title: Reference
+permalink: pretty
 nav_order: 13
 ---
 

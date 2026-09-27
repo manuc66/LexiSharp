@@ -1,5 +1,6 @@
 ---
 title: Evaluation
+permalink: pretty
 nav_order: 11
 ---
 
