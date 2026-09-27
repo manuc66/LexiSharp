@@ -322,17 +322,23 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     private static bool IsRankedAscending(
         (double Score, SearchDocument Document, long Ordinal) lower,
         (double Score, SearchDocument Document, long Ordinal) higher)
-        // Equal scores are a tie-break against the document id, not a float-equality check on a
-        // computed value; an epsilon comparison here would silently reorder identical-ranked
-        // documents. The id is what makes the order total. Tie-breaking on Ordinal -- i.e. on
-        // enumeration order -- did not, because that order came from Directory.EnumerateFiles and is
-        // therefore a property of the filesystem: the same checkout ranked differently on a
-        // developer machine and on a CI runner, which is what made the golden master gate
-        // environment-dependent. Document ids are unique, so Ordinal is now unreachable as a
-        // tie-break and is retained only because callers still count scored documents with it.
+        // The id is what makes the order total. Tie-breaking on Ordinal -- i.e. on enumeration order
+        // -- did not, because that order came from Directory.EnumerateFiles and is therefore a
+        // property of the filesystem: the same checkout ranked differently on a developer machine and
+        // on a CI runner, which is what made the golden master gate environment-dependent. Document
+        // ids are unique, so Ordinal is now unreachable as a tie-break and is retained only because
+        // callers still count scored documents with it.
         => lower.Score < higher.Score
-           || (lower.Score == higher.Score
-               && string.CompareOrdinal(lower.Document.Id, higher.Document.Id) > 0); // NOSONAR:S1244
+           || (ScoresAreTied(lower.Score, higher.Score)
+               && string.CompareOrdinal(lower.Document.Id, higher.Document.Id) > 0);
+
+    /// <summary>
+    /// Whether two scores are the same value. Bitwise equality on purpose, so this cannot be
+    /// "fixed" into a tolerance comparison: an epsilon here would treat two documents whose scores
+    /// differ in the last bits as interchangeable and then order them by id, quietly overriding the
+    /// ranking the scores actually expressed.
+    /// </summary>
+    private static bool ScoresAreTied(double left, double right) => left == right; // NOSONAR:S1244
 
     /// <summary>
     /// Whether every phrase appears at consecutive document positions; phrases are AND-ed

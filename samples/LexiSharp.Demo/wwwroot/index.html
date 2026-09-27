@@ -74,6 +74,12 @@
   .sources { margin-top: 7px; display: flex; gap: 6px; flex-wrap: wrap; }
   .source { font-size: 11px; color: var(--muted); background: #0f141c; border: 1px solid var(--border); border-radius: 6px; padding: 1px 7px; }
   .empty { color: var(--muted); padding: 16px 6px; font-size: 12.5px; }
+  /* Visible to a screen reader, not to the eye: the search field is labelled by its placeholder
+     for sighted users, which is not an accessible name. */
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
   .panel {
     position: fixed; right: 0; top: 0; bottom: 0; width: min(460px, 94vw);
     background: var(--panel); border-left: 1px solid var(--border); box-shadow: -20px 0 40px rgba(0,0,0,.4);
@@ -118,6 +124,7 @@
 </header>
 
 <div class="bar">
+  <label class="sr-only" for="q">Search query</label>
   <input id="q" type="search" placeholder="e.g. refresh token, ranking quality, vector database…" autocomplete="off" />
   <button id="go">Search</button>
   <button id="clear" class="ghost">Clear</button>

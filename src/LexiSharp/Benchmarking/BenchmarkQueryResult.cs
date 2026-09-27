@@ -44,9 +44,20 @@ public sealed record BenchmarkQueryResult(
         if (RetrievedScores is null || index < 0 || index >= RetrievedScores.Count)
             return false;
 
-        if (index > 0 && RetrievedScores[index - 1] == RetrievedScores[index])
+        // Bitwise equality, not a tolerance -- and this is load-bearing, so it must not be "fixed".
+        //
+        // A caller uses this to decide whether a document that moved was allowed to move: a swap
+        // between two equal scores is a tie and carries no information, while a swap between scores
+        // that merely differ in the last bits is a real change in the ranking. An epsilon would
+        // classify the second as the first, and the golden master would excuse re-orderings caused
+        // by a genuine defect. That is not hypothetical: the unstable PMI sort fixed in e81c02c
+        // perturbed the last bits of a score and produced exactly such a re-ordering, which the
+        // harness correctly refused to excuse ("re-ordered X and Y without a tie"). An epsilon here
+        // would have silently swallowed that bug.
+        if (index > 0 && RetrievedScores[index - 1] == RetrievedScores[index]) // NOSONAR:S1244
             return true;
 
-        return index < RetrievedScores.Count - 1 && RetrievedScores[index] == RetrievedScores[index + 1];
+        return index < RetrievedScores.Count - 1
+            && RetrievedScores[index] == RetrievedScores[index + 1]; // NOSONAR:S1244
     }
 }
