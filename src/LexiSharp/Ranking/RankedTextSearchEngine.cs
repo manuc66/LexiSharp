@@ -53,6 +53,12 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// </summary>
     public const int MaxExpansionsPerAtom = 64;
 
+    /// <summary>
+    /// Name this engine reports to <see cref="RetrievalTelemetry"/> and its metrics sinks, so a
+    /// dashboard can attribute a measurement to a specific engine.
+    /// </summary>
+    public const string EngineName = "RankedTextSearchEngine";
+
     /// <inheritdoc />
     public QueryFeature SupportedQueryFeatures => QueryFeature.Phrases | QueryFeature.Expansions;
 
@@ -60,6 +66,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     private readonly ITextScorer _scorer;
     private readonly ITokenizer _tokenizer;
     private readonly Dictionary<string, string[]>? _synonyms;
+    private readonly RetrievalTelemetry _telemetry;
 
     /// <param name="index">The corpus index backing the engine.</param>
     /// <param name="scorer">The ranking strategy (TF-IDF, BM25, ...).</param>
@@ -71,6 +78,10 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// Optional synonym edges applied to free query terms. Tokenized with
     /// <paramref name="tokenizer"/> at construction; every entry must yield exactly one term.
     /// </param>
+    /// <param name="telemetry">
+    /// Optional observability sink reporting search latency, candidate counts and index size.
+    /// Defaults to <see cref="RetrievalTelemetry.None"/>, which records nothing and costs nothing.
+    /// </param>
     /// <exception cref="ArgumentException">
     /// A <paramref name="synonyms"/> entry tokenizes to zero or more than one term.
     /// </exception>
@@ -78,7 +89,8 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         ITextIndex index,
         ITextScorer scorer,
         ITokenizer? tokenizer = null,
-        SynonymMap? synonyms = null)
+        SynonymMap? synonyms = null,
+        RetrievalTelemetry? telemetry = null)
     {
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(scorer);
@@ -87,6 +99,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         _scorer = scorer;
         _tokenizer = tokenizer ?? Tokenizer.Default;
         _synonyms = ResolveSynonyms(synonyms);
+        _telemetry = telemetry ?? RetrievalTelemetry.None;
     }
 
     /// <inheritdoc />
@@ -94,6 +107,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     {
         ArgumentNullException.ThrowIfNull(documents);
         _index.Index(documents);
+        _telemetry.IndexChanged(EngineName, _index);
     }
 
     /// <inheritdoc />
@@ -101,13 +115,22 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     {
         ArgumentNullException.ThrowIfNull(document);
         _index.Add(document);
+        _telemetry.IndexChanged(EngineName, _index);
     }
 
     /// <inheritdoc />
-    public void Remove(string documentId) => _index.Remove(documentId);
+    public void Remove(string documentId)
+    {
+        _index.Remove(documentId);
+        _telemetry.IndexChanged(EngineName, _index);
+    }
 
     /// <inheritdoc />
-    public void Clear() => _index.Clear();
+    public void Clear()
+    {
+        _index.Clear();
+        _telemetry.IndexChanged(EngineName, _index);
+    }
 
     /// <inheritdoc />
     public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
@@ -151,16 +174,31 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// </summary>
     private IReadOnlyList<SearchResult> RunQuery(ReadOnlySpan<char> query, SearchOptions options, FacetCollector? facets)
     {
+        // One clock read per search, and only when a sink is attached: an un-instrumented engine
+        // never reads the timer at all.
+        bool instrumented = _telemetry.IsEnabled;
+        long started = instrumented ? RetrievalTelemetry.StartTimer() : 0;
+
         if (options.IsEmpty)
             return Array.Empty<SearchResult>();
 
         if (_index.Count == 0)
+        {
+            if (instrumented)
+                _telemetry.Warning(EngineName, "query served an empty index: no documents indexed");
+
             return Array.Empty<SearchResult>();
+        }
 
         var (parsed, queryTerms) = BuildQuery(query, options.FuzzyOnlyOutOfVocabulary);
 
         if (queryTerms.Count == 0)
+        {
+            if (instrumented)
+                _telemetry.Warning(EngineName, "query produced no searchable term: nothing to match against the vocabulary");
+
             return Array.Empty<SearchResult>();
+        }
 
         var distinctQueryTerms = DistinctTermList.Wrap(TermDeduplicator.Distinct(queryTerms));
 
@@ -183,7 +221,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
                 : _index.Documents;
 
         // Bounded top-Window accumulation, worst-first, reproducing the exact semantics of
-        // OrderByDescending(Score).Skip(offset).Take(limit): ties keep their enumeration order.
+        // OrderByDescending(Score).Skip(offset).Take(limit) with equal scores ordered by document id.
         // SearchResult objects are materialized only for the kept entries.
         int window = options.Window;
         var top = new List<(double Score, SearchDocument Document, long Ordinal)>(Math.Min(window, 1024));
@@ -230,13 +268,21 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         // already in hand, so a trace costs O(limit) after the fact and nothing per candidate.
         options.Trace?.RecordScoreStage(_scorer.Name, results);
 
+        if (instrumented)
+        {
+            // ordinal counts every document that passed the filters and phrase gates, which is the
+            // number relevance math was actually paid for -- not the corpus, not the page.
+            _telemetry.SearchCompleted(
+                EngineName, started, results.Length, (int)Math.Min(ordinal, (long)int.MaxValue));
+        }
+
         return results;
     }
 
     /// <summary>
     /// Inserts an entry into the worst-first top-L list, dropping the current worst when full.
-    /// An entry ranks above another when its score is higher, or its score is equal and it was
-    /// enumerated earlier — byte-for-byte the behavior of the stable descending sort.
+    /// An entry ranks above another when its score is higher, or its score is equal and its document
+    /// id sorts lower — byte-for-byte the behavior of a descending sort that then orders ties by id.
     /// </summary>
     private static void InsertRanked(
         List<(double Score, SearchDocument Document, long Ordinal)> top,
@@ -276,9 +322,17 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     private static bool IsRankedAscending(
         (double Score, SearchDocument Document, long Ordinal) lower,
         (double Score, SearchDocument Document, long Ordinal) higher)
-        // Equal scores are a tie-break against Ordinal, not a float-equality check on a computed
-        // value; an epsilon comparison here would silently reorder identical-ranked documents.
-        => lower.Score < higher.Score || (lower.Score == higher.Score && lower.Ordinal > higher.Ordinal); // NOSONAR:S1244
+        // Equal scores are a tie-break against the document id, not a float-equality check on a
+        // computed value; an epsilon comparison here would silently reorder identical-ranked
+        // documents. The id is what makes the order total. Tie-breaking on Ordinal -- i.e. on
+        // enumeration order -- did not, because that order came from Directory.EnumerateFiles and is
+        // therefore a property of the filesystem: the same checkout ranked differently on a
+        // developer machine and on a CI runner, which is what made the golden master gate
+        // environment-dependent. Document ids are unique, so Ordinal is now unreachable as a
+        // tie-break and is retained only because callers still count scored documents with it.
+        => lower.Score < higher.Score
+           || (lower.Score == higher.Score
+               && string.CompareOrdinal(lower.Document.Id, higher.Document.Id) > 0); // NOSONAR:S1244
 
     /// <summary>
     /// Whether every phrase appears at consecutive document positions; phrases are AND-ed

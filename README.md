@@ -996,6 +996,76 @@ delta under that spread is not measurable there, so quoting one would be fiction
 
 Full details, machine configuration and the reproduce command: [BENCHMARKS.md](BENCHMARKS.md#ranking-trace-searchtrace--allocation-only-no-timing).
 
+### Observability (`RetrievalTelemetry`)
+
+`SearchTrace` explains **one search**. `RetrievalTelemetry` answers the operational question —
+over time, in production, across all searches: how long they take, how many candidates they touch,
+how big the index is, and which stage is responsible when a query is slow.
+
+It is opt-in and dependency-free. Attach a telemetry to an engine and it reports to a
+`RetrievalLog` sink, an `IRetrievalMetrics` collector, or both:
+
+```csharp
+using LexiSharp.Core;
+
+var metrics = new InMemoryRetrievalMetrics();
+
+var engine = new RankedTextSearchEngine(
+    index, new Bm25Scorer(),
+    telemetry: new RetrievalTelemetry(metrics: metrics));
+
+engine.Search("refresh token");
+
+foreach (var e in metrics.Snapshot().Engines)
+    Console.WriteLine($"{e.Engine}: {e.SearchCount} searches, {e.MinElapsedMs:0.###}–{e.MaxElapsedMs:0.###} ms");
+```
+
+With `LexiSharp.AspNetCore`, an `ILogger` sink is one call away:
+
+```csharp
+using LexiSharp.AspNetCore;
+
+var telemetry = RetrievalLogger.Telemetry(
+    loggerFactory.CreateLogger("search"), RetrievalLogLevel.Information);
+```
+
+Events carry the engine name, a stable event id (`search` / `stage` / `index`), a
+self-contained message and structured `ElapsedMs` / `Count` fields, so a log aggregator can build
+dashboards without parsing prose. Per-stage events are `Debug`, so the default `Information`
+threshold keeps one line per query and drops the per-stage detail.
+
+**Instruments by pipeline stage.** `HybridTextSearchEngine` reports one `source` stage per delegate
+(labelled by your `sourceNames`, so a slow lane is named the way your application named it) and one
+`merge` stage. `RerankedTextSearchEngine` reports `retrieve` and `rerank:<name>` — the cross-encoder
+call is usually where the latency lives, and it warns above 100 ms. `BoostedTextSearchEngine`
+reports `retrieve` and `boost`. A query against an empty index, or one whose terms match nothing in
+the vocabulary, is a `Warning` rather than a silent zero-result page.
+
+**Cost when unused.** `RetrievalTelemetry.None` reports `IsEnabled == false`, and every instrumented
+engine reads that once per search before touching a timer, so an un-instrumented engine takes no
+timestamp, allocates nothing and calls nothing. A `RetrievalTelemetry` is immutable and holds no
+per-query state, so concurrent searches share one safely as long as the sinks are. Note this is a
+statement about the code, not a measurement: no timing figure is quoted here for the same reason
+the trace section above quotes none.
+
+**What is *not* covered.** `IRetrievalMetrics` is the only number surface: there is no built-in
+OpenTelemetry or Prometheus exporter, and no percentile histogram — `InMemoryRetrievalMetrics` keeps
+a count, a total, a min and a max per engine and stage, which is enough to assert on in tests and to
+back a diagnostics endpoint, and is deliberately not a substitute for a real metrics pipeline.
+Implement `IRetrievalMetrics` over your own backend for that. `SearchTrace.StageCounts()` reports how
+many steps each stage recorded; per-stage *timings* come from the metrics collector, not the trace.
+
+A `LexiSharpIndexHealthCheck` reports readiness for the same reason: an index holding nothing
+answers every query with zero results, which is a silent failure rather than an obvious one.
+
+```csharp
+services.AddLexiSharpRetrievalMetrics();
+services.AddLexiSharpSearchHealthCheck(
+    _ => index,
+    o => o.Tags = ["ready"],
+           o.Probe = ct => connection.OpenAsync(ct));  // optional: backing-store reachability
+```
+
 **Bounds.** A trace stops recording past `Capacity` (default 256) and counts the overflow in
 `Dropped`; check `IsTruncated` rather than assuming `Steps` is the whole story. Stage recording is
 bounded by the page or the candidate shortlist, never by the corpus, so a trace cannot grow with

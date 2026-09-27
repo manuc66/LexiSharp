@@ -29,6 +29,12 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
     private readonly IReadOnlyList<string> _sourceNames;
     private readonly IResultMerger _merger;
     private readonly int _minCandidatesPerEngine;
+    private readonly RetrievalTelemetry _telemetry;
+
+    /// <summary>
+    /// Name this engine reports to <see cref="RetrievalTelemetry"/> and its metrics sinks.
+    /// </summary>
+    public const string EngineName = "HybridTextSearchEngine";
 
     /// <param name="engines">Source engines, queried in order. At least one is required.</param>
     /// <param name="merger">Merger strategy (default: <see cref="RerankingResultMerger"/>).</param>
@@ -41,11 +47,17 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
     /// <see cref="SearchWithDetails"/> (e.g. <c>["lexical", "semantic"]</c>). Must match
     /// <paramref name="engines"/> in count and be unique; defaults to <c>"engine-0"</c>, <c>"engine-1"</c>, ...
     /// </param>
+    /// <param name="telemetry">
+    /// Optional observability sink. Reports the search itself plus one <c>source</c> stage per
+    /// delegate engine and one <c>merge</c> stage, so a slow fusion is attributable to a source.
+    /// Defaults to <see cref="RetrievalTelemetry.None"/>.
+    /// </param>
     public HybridTextSearchEngine(
         IEnumerable<ITextSearchEngine> engines,
         IResultMerger? merger = null,
         int minCandidatesPerEngine = 50,
-        IReadOnlyList<string>? sourceNames = null)
+        IReadOnlyList<string>? sourceNames = null,
+        RetrievalTelemetry? telemetry = null)
     {
         ArgumentNullException.ThrowIfNull(engines);
 
@@ -79,6 +91,7 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
 
         _merger = merger ?? new RerankingResultMerger();
         _minCandidatesPerEngine = Math.Max(1, minCandidatesPerEngine);
+        _telemetry = telemetry ?? RetrievalTelemetry.None;
     }
 
     /// <inheritdoc />
@@ -137,6 +150,9 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
 
         options ??= SearchOptions.Default;
 
+        bool instrumented = _telemetry.IsEnabled;
+        long started = instrumented ? RetrievalTelemetry.StartTimer() : 0;
+
         if (options.IsEmpty)
             return Array.Empty<DetailedSearchResult>();
 
@@ -149,9 +165,19 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
 
         var perEngine = new List<IReadOnlyList<SearchResult>>(_engines.Count);
 
-        foreach (var engine in _engines)
+        for (int i = 0; i < _engines.Count; i++)
         {
-            perEngine.Add(engine.Search(query, options with { Offset = 0, Limit = candidateLimit }));
+            long sourceStarted = instrumented ? RetrievalTelemetry.StartTimer() : 0;
+            var results = _engines[i].Search(query, options with { Offset = 0, Limit = candidateLimit });
+
+            if (instrumented)
+            {
+                // Labelled by the caller's sourceNames, so a slow lane is named the way the
+                // application named it rather than by a position in the list.
+                _telemetry.StageCompleted(EngineName, _sourceNames[i], results.Count, sourceStarted);
+            }
+
+            perEngine.Add(results);
         }
 
         var contributionsByDocument = new Dictionary<string, Dictionary<string, double>>(StringComparer.Ordinal);
@@ -172,6 +198,7 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
             }
         }
 
+        long mergeStarted = instrumented ? RetrievalTelemetry.StartTimer() : 0;
         var merged = _merger.Merge(perEngine, query);
 
         var page = merged
@@ -189,6 +216,18 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
             .ToList();
 
         RecordMergeStage(options.Trace, page);
+
+        if (instrumented)
+        {
+            // The merge consumes every source's pool, so its input size is the candidates that
+            // came back from the lanes, not the size of the final page.
+            int mergedInput = 0;
+            for (int i = 0; i < perEngine.Count; i++)
+                mergedInput += perEngine[i].Count;
+
+            _telemetry.StageCompleted(EngineName, "merge", mergedInput, mergeStarted);
+            _telemetry.SearchCompleted(EngineName, started, page.Count);
+        }
 
         return page;
     }

@@ -83,10 +83,12 @@ public sealed class LexiSharpIndex<TDocument>
         _index = options.TermExpander is null
             ? new InMemoryTextIndex(tokenizer)
             : new ExpansionTextIndex(options.TermExpander, tokenizer);
-        _baseEngine = new RankedTextSearchEngine(_index, options.Scorer, tokenizer, options.Synonyms);
+        _baseEngine = new RankedTextSearchEngine(
+            _index, options.Scorer, tokenizer, options.Synonyms, options.Telemetry);
         _engine = options.Reranker is null
             ? _baseEngine
-            : new RerankedTextSearchEngine(_baseEngine, options.Reranker, options.RerankerMaxCandidates);
+            : new RerankedTextSearchEngine(
+                _baseEngine, options.Reranker, options.RerankerMaxCandidates, options.Telemetry);
     }
 
     /// <summary>Number of indexed documents.</summary>
