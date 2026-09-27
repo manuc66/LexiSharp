@@ -144,12 +144,27 @@ Default tokenizer, **no stemming** — see [Stemming](#stemming) for the same ru
 | QueryLikelihood (λ=0.2)            |   0.288 |  0.205 |  0.485 | 0.132 |
 | Hybrid BM25+QL (weighted)          |   0.308 |  0.222 |  0.516 | 0.146 |
 | Hybrid BM25+QL (RRF)               |   0.300 |  0.214 |  0.500 | 0.141 |
+| BM25F (unweighted)                 |   0.296 |  0.211 |  0.484 | 0.141 |
+| BM25F (title 2.0)                  |   0.296 |  0.210 |  0.484 | 0.140 |
+| BM25F (title 4.0)                  |   0.296 |  0.211 |  0.492 | 0.139 |
 | Dense multilingual-e5-small        |   0.304 |  0.216 |  0.502 | 0.144 |
 | Hybrid BM25+Dense (weighted)       |   0.323 |  0.230 |  0.534 | 0.156 |
 | Hybrid BM25+Dense (RRF)            |   0.333 |  0.239 |  0.550 | 0.160 |
 | BM25 (top100)+CrossRerank          |   0.337 |  0.246 |  0.558 | 0.153 |
 | QL (top100)+CrossRerank            |   0.335 |  0.243 |  0.557 | 0.151 |
 | Hybrid RRF (top100)+CrossRerank    |   0.346 |  0.250 |  0.573 | 0.158 |
+
+**The corpus is indexed with a real `title` text field**, not as a concatenated string, so the
+BM25F rows have a field to weigh. This leaves every non-field-aware row bit-identical — the flat
+view is the union of the fields, so BM25 sees the same tokens at the same frequencies and lengths,
+and only their order changes, which it does not read. `FieldSplitInvarianceTests` pins that
+property, so a future change that broke it would fail the suite rather than quietly rewrite these
+tables.
+
+**The BM25F rows are a negative result, stated as one.** On this corpus BM25F sits *below* BM25
+(0.296 vs 0.308) and the title weight moves nothing at all. ArguAna tells the opposite story about
+the length term (0.344 vs 0.289) while still showing no gain from the weight. The weight is the
+part that does not pay; the per-field length normalization is the part that sometimes does.
 
 The dense retriever lands at BM25 level on its own (0.304 vs 0.308), and fusing it with BM25
 **beats both the dense-only and the lexical-only engines** (0.323–0.333), above the 0.325 BM25
@@ -170,11 +185,18 @@ Default tokenizer, **no stemming** — see [Stemming](#stemming) for the same ru
 | TF-IDF                             |   0.345 |  0.288 |  0.295 | 0.511 |
 | QueryLikelihood (λ=0.2)            |   0.622 |  0.582 |  0.593 | 0.727 |
 | Hybrid BM25+QL (RRF)               |   0.644 |  0.601 |  0.612 | 0.759 |
+| BM25F (unweighted)                 |   0.662 |  0.616 |  0.626 | 0.791 |
+| BM25F (title 2.0)                  |   0.665 |  0.623 |  0.634 | 0.780 |
+| BM25F (title 4.0)                  |   0.664 |  0.621 |  0.632 | 0.783 |
 | BM25 tuned (k1=1.5, b=1)           |   0.664 |  0.619 |  0.630 | 0.789 |
 
 BM25 at 0.662 vs the 0.665 BEIR reference — within 0.5 % on a dataset whose claims use exact
 terminology, so the stemming gap (large on NFCorpus, see [Stemming](#stemming)) nearly disappears
 here; the tuned k1=1.5/b=1 operating point reproduces the reference at 0.664.
+
+SciFact is the friendliest case for a title weight in this whole harness — BM25F at title 2.0
+reaches 0.665, level with the published BM25. It is still +0.003 over BM25's 0.662 on 300 queries,
+which is not a result; treat it as "weighting did not hurt here", not as "weighting helps".
 
 ## Results (ArguAna, k=10, 1406 test queries)
 
@@ -189,6 +211,22 @@ Default tokenizer, **no stemming** — see [Stemming](#stemming) for the same ru
 | QueryLikelihood (λ=0.2)            |   0.227 |  0.147 |  0.147 | 0.483 |
 | Hybrid BM25+QL (weighted)          |   0.289 |  0.187 |  0.187 | 0.611 |
 | Hybrid BM25+QL (RRF)               |   0.257 |  0.167 |  0.167 | 0.545 |
+| BM25F (unweighted)                 |   0.344 |  0.231 |  0.231 | 0.695 |
+| BM25F (title 2.0)                  |   0.344 |  0.231 |  0.231 | 0.698 |
+| BM25F (title 4.0)                  |   0.340 |  0.227 |  0.227 | 0.696 |
+
+**The largest BM25F margin anywhere in this harness, and not because of the weighting.** 0.344
+against BM25's 0.289 on 1406 queries, and above the 0.315 published reference. But the three rows
+say the useful part: unweighted, title 2.0 and title 4.0 are within 0.004 of each other, and the
+heaviest weight is the worst of the three. The gain comes from BM25F's per-field length term, not
+from the weight.
+
+ArguAna is also the corpus least like ordinary search — counter-argument retrieval, very long
+queries, a `title` that is a topic phrase rather than a headline. One more caveat on reading that
+0.344: **each ArguAna test query has exactly one relevant document** (the counter-argument), so
+Recall is quantized and nDCG is far easier to move than on a corpus with a dozen relevant documents
+per query. A scorer that gets the one right document higher gains a lot; one that reshuffles the
+bottom gains nothing. Do not generalize from it; measure on your own corpus.
 
 BM25 over the full 1406-query test split lands at **0.289 against the 0.315 BEIR reference**, so
 ArguAna sits **8 % below** it — the largest gap of the three corpora, and the opposite of what
