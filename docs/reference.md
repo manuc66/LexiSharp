@@ -42,6 +42,14 @@ was designed from:
 
 - A score of exactly `0` means *not a match* and the document is excluded from results
   (all built-in scorers honor this).
+- **One scorer departs from its published formula to keep that convention.** Read literally,
+  BM25+ assigns `idf(t)·δ` to every query term, including terms the document does not contain, so
+  the paper's model scores non-matching documents *above* zero. Reference implementations subtract
+  a non-occurrence term to compensate. This implementation instead sums only over terms the document
+  actually has, which keeps it an `ITermOverlapScorer` and is the reason its scorer-level agreement
+  with the paper is conditional. BM25L needs no such accommodation — its term weight is already `0`
+  at `tf = 0`. The arithmetic and the departure are in
+  [BM25 variants](ranking.md#bm25-variants).
 - Every sub-system is culture-agnostic; text is normalized to lowercase without accents
   so that `"Résumé"` and `"resume"` match.
 - Scores are **not comparable across engines** unless you merge them by rank. A PostgreSQL
@@ -58,6 +66,26 @@ was designed from:
   is a small, dependency-free .NET implementation of them, not new research.
 - **Performance numbers are indicative.** They live in [Benchmarks](benchmarks.md) and were
   measured on one machine — always measure on your own corpus.
+- **Every "tuned" figure in this documentation is an in-sample upper bound.** All four tuners
+  fit and score on the same queries, so the more configurations were tried the more of the reported
+  gain is fitting noise — 125 points fit more than 25. Score a winner on a held-out set before
+  trusting its margin, and check that the objective is not flat: a tuner pointed at a flat metric
+  has no signal to fit, and two figures in this repository's history were wrong for exactly that
+  reason. See [Tuning](evaluation.md#tuning-bm25-bm25f-bm25-and-bm25l).
+- **No scorer here has a measured win over a tuned BM25.** The three that could plausibly have one
+  came back negative or null, and publishing that is the point:
+  - *BM25+ and BM25L*, tuned on their own `δ`, **tie** a tuned BM25 on the reference corpus and
+    NFCorpus, and edge it by 0.002–0.004 on SciFact — an in-sample margin, so an upper bound rather
+    than a result. On ArguAna, at a fixed `δ`, they **lose** 0.040–0.046, and no `δ`-tuned ArguAna
+    row exists, so whether tuning closes that gap is **unmeasured**. See
+    [BM25 variants](ranking.md#bm25-variants).
+  - *BM25F*'s tuner reports `WeightingHelped = false` on every corpus tried, and on the reference
+    corpus — re-fitted on the metric being reported — BM25F tuned trails BM25 tuned by 0.011. See
+    [BM25F](ranking.md#bm25f-field-weighted-bm25).
+  - *Proximity* is neutral at quarter strength and negative at full strength. See
+    [Proximity](ranking.md#proximity).
+- **Corpus-derived expansion is a measured loss** where it has been measured (0.8469 against BM25's
+  0.8751 on the reference corpus) and is not a default for that reason.
 - **Combinatorial coverage is partial.** Engines, scorers, rerankers and mergers are tested
   individually *and* in the combinations described here, but not every pairing is exercised.
   Treat an unusual combination as supported but unproven until you test it on your data.
