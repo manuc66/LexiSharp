@@ -13,9 +13,9 @@ namespace LexiSharp.Benchmarking;
 /// the inconsistency unrepresentable.
 /// </para>
 /// <para>
-/// A binary query is simply a graded one whose gains are all <c>1</c>, which is what
-/// <see cref="NdcgIsUnchangedByThisRepresentation"/> pins: the two agree because
-/// <c>2^1 - 1 = 1</c>, so the graded formula degenerates to the binary one.
+/// A binary query is simply a graded one whose gains are all <c>1</c>. The two agree because
+/// <c>2^1 - 1 = 1</c>, so the graded formula degenerates to the binary one and no previously
+/// reported binary nDCG moves.
 /// </para>
 /// </remarks>
 public sealed record BenchmarkQuery

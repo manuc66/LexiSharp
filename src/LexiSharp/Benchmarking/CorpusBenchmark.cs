@@ -88,6 +88,7 @@ public static class CorpusBenchmark
         double ndcg = 0, map = 0, mrr = 0, recall = 0, precision = 0, f1 = 0;
         long elapsedTicks = 0;
         int judged = 0;
+        var perQuery = new List<BenchmarkQueryResult>();
 
         var stopwatch = new Stopwatch();
 
@@ -106,13 +107,27 @@ public static class CorpusBenchmark
             stopwatch.Stop();
             elapsedTicks += stopwatch.ElapsedTicks;
 
-            ndcg += RetrievalMetrics.NdcgAtK(retrievedIds, query.GradedRelevance, topK);
-            map += RetrievalMetrics.AveragePrecisionAtK(retrievedIds, query.RelevantDocumentIds, topK);
-            mrr += RetrievalMetrics.ReciprocalRankAtK(retrievedIds, query.RelevantDocumentIds, topK);
-            recall += RetrievalMetrics.RecallAtK(retrievedIds, query.RelevantDocumentIds, topK);
-            precision += RetrievalMetrics.PrecisionAtK(retrievedIds, query.RelevantDocumentIds, topK);
-            f1 += RetrievalMetrics.F1AtK(retrievedIds, query.RelevantDocumentIds, topK);
+            double queryNdcg = RetrievalMetrics.NdcgAtK(retrievedIds, query.GradedRelevance, topK);
+            double queryMap = RetrievalMetrics.AveragePrecisionAtK(retrievedIds, query.RelevantDocumentIds, topK);
+            double queryMrr = RetrievalMetrics.ReciprocalRankAtK(retrievedIds, query.RelevantDocumentIds, topK);
+            double queryRecall = RetrievalMetrics.RecallAtK(retrievedIds, query.RelevantDocumentIds, topK);
+            double queryPrecision = RetrievalMetrics.PrecisionAtK(retrievedIds, query.RelevantDocumentIds, topK);
+            double queryF1 = RetrievalMetrics.F1AtK(retrievedIds, query.RelevantDocumentIds, topK);
+
+            ndcg += queryNdcg;
+            map += queryMap;
+            mrr += queryMrr;
+            recall += queryRecall;
+            precision += queryPrecision;
+            f1 += queryF1;
             judged++;
+
+            perQuery.Add(new BenchmarkQueryResult(
+                query.Id,
+                query.Text,
+                new BenchmarkMetrics(queryNdcg, queryMap, queryMrr, queryRecall, queryPrecision, queryF1),
+                retrievedIds,
+                FirstRelevantRank(retrievedIds, query.RelevantDocumentIds)));
         }
 
         double totalMilliseconds = elapsedTicks / (double)TimeSpan.TicksPerMillisecond;
@@ -128,6 +143,27 @@ public static class CorpusBenchmark
                 F1AtK: judged == 0 ? 0 : f1 / judged),
             totalMilliseconds,
             judged == 0 ? 0 : totalMilliseconds / judged,
-            judged);
+            judged)
+        { PerQuery = perQuery };
+    }
+
+    /// <summary>
+    /// 1-based position of the best-ranked judged document in <paramref name="retrievedIds"/>, or
+    /// <c>null</c> when none of them was retrieved. The judgments are graded, so "best ranked"
+    /// means the one that appears first, not the one with the highest gain.
+    /// </summary>
+    private static int? FirstRelevantRank(
+        IReadOnlyList<string> retrievedIds,
+        IReadOnlyCollection<string> relevantIds)
+    {
+        var relevant = new HashSet<string>(relevantIds, StringComparer.Ordinal);
+
+        for (int i = 0; i < retrievedIds.Count; i++)
+        {
+            if (relevant.Contains(retrievedIds[i]))
+                return i + 1;
+        }
+
+        return null;
     }
 }

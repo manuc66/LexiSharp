@@ -108,6 +108,26 @@ A downloaded corpus cannot serve the other two jobs:
 
 Hence: hand-built, small, and owned by this project.
 
+## Reading a comparison, query by query
+
+A mean hides which queries moved. To see them:
+
+```bash
+dotnet run --project bench/LexiSharp.Cli -c Release -- diff corpus \
+    --queries queries.json --qrels qrels.tsv \
+    --baseline bm25 --candidate bm25-semantic --top-k 5
+```
+
+On the skeleton as committed, that reports `1 improved, 2 degraded, 19 unchanged (net -1)` — a mean
+of −0.015 that decomposes into one query that gained 0.29 and **one that lost its only judged
+document entirely** (`long-document-02`, "the judged document at rank 3 is gone"). The mean alone
+showed neither.
+
+That degradation is the `long-document` family doing its job: a several-hundred-word document is
+the adversarial input for a corpus-learned term expander, because the associations it contributes
+are mostly noise. The manifest predicted it, which is the first evidence that the family is testing
+what it claims to.
+
 ## Adding to it
 
 - Documents: markdown with `title` / `category` front matter; any other key becomes a field.
