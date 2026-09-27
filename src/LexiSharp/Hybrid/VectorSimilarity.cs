@@ -47,32 +47,6 @@ public static class VectorSimilarity
         return dot / (normA * normB);
     }
 
-    /// <summary>
-    /// Cosine similarity given the two vectors' squared norms, so a caller holding cached norms
-    /// does not recompute them. Equivalent to <see cref="CosineSimilarity"/>, including its
-    /// zero-vector rule: a zero squared norm on either side yields <c>0</c>.
-    /// </summary>
-    public static float CosineSimilarityFromSquaredNorms(
-        ReadOnlySpan<float> a,
-        ReadOnlySpan<float> b,
-        float squaredNormA,
-        float squaredNormB)
-    {
-        if (a.Length != b.Length)
-            throw new ArgumentException($"Vectors must have the same length (got {a.Length} and {b.Length}).");
-
-        if (a.Length == 0)
-            return 0;
-
-        float normA = MathF.Sqrt(squaredNormA);
-        float normB = MathF.Sqrt(squaredNormB);
-
-        if (normA == 0 || normB == 0)
-            return 0;
-
-        return DotProduct(a, b) / (normA * normB);
-    }
-
     /// <summary>The dot product of two equal-length vectors.</summary>
     public static float DotProduct(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
     {
