@@ -1,6 +1,5 @@
 ---
 title: Querying
-permalink: pretty
 nav_order: 4
 ---
 

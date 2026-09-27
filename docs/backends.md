@@ -1,6 +1,5 @@
 ---
 title: Backends
-permalink: pretty
 nav_order: 9
 ---
 

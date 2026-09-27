@@ -16,6 +16,11 @@ remote_theme: just-the-docs/just-the-docs@v0.12.0
 url: https://manuc66.github.io
 baseurl: /LexiSharp
 
+# Page URLs without the .html suffix, so /ranking/ resolves as well as /ranking.html.
+# This is a global setting in Jekyll: a `permalink` key in a page's front matter is
+# ignored for pages, only documents (posts) read it.
+permalink: pretty
+
 color_scheme: light
 
 search_enabled: true
