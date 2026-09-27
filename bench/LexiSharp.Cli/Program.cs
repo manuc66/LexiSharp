@@ -15,7 +15,7 @@ public static class Program
         + "  --qrels <file>       Relevance judgments: TSV 'qid\\tdocid[\\tgrade]', one per line ('#' comments)\n"
         + "  --top-k <n>          Retrieval depth for every metric (default: 10)\n"
         + "  --limit <n>          Cap the number of queries evaluated (default: all)\n"
-        + "  --configs <list>     Comma-separated: bm25, bm25-tuned, tfidf, ql, hybrid, bm25-semantic, bm25f, bm25f-title, bm25f-tuned, bm25-proximity, bm25-proximity-full, bm25-proximity-boost (default: bm25,tfidf,ql,hybrid,bm25-tuned)\n"
+        + "  --configs <list>     Comma-separated: bm25, bm25-tuned, tfidf, ql, hybrid, bm25-semantic, bm25f, bm25f-title, bm25f-tuned, bm25-proximity, bm25-proximity-full, bm25-proximity-boost, bm25+, bm25l (default: bm25,tfidf,ql,hybrid,bm25-tuned)\n"
         + "  --json <path>        Write the results as JSON to this file\n"
         + "  --help, -h           Show this help\n"
         + "\n"
@@ -588,7 +588,9 @@ public static class Program
                 "bm25-proximity" => BenchmarkConfig.Bm25Proximity(0.25),
                 "bm25-proximity-full" => BenchmarkConfig.Bm25Proximity(1.0),
                 "bm25-proximity-boost" => BenchmarkConfig.Bm25Proximity(1.0, ProximityMode.Boost),
-                _ => throw new ArgumentException($"Unknown configuration '{name}'. Valid: bm25, bm25-tuned, tfidf, ql, hybrid, bm25-semantic, bm25f, bm25f-title, bm25f-tuned, bm25-proximity, bm25-proximity-full, bm25-proximity-boost.", nameof(names)),
+                "bm25+" => BenchmarkConfig.Bm25Plus(),
+                "bm25l" => BenchmarkConfig.Bm25L(),
+                _ => throw new ArgumentException($"Unknown configuration '{name}'. Valid: bm25, bm25-tuned, tfidf, ql, hybrid, bm25-semantic, bm25f, bm25f-title, bm25f-tuned, bm25-proximity, bm25-proximity-full, bm25-proximity-boost, bm25+, bm25l.", nameof(names)),
             });
         }
 

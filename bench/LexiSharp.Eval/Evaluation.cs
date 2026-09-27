@@ -78,6 +78,16 @@ internal static class Evaluation
                 .ToArray();
         }
 
+        // Single-field BM25 variants, measured against the tuned BM25 row rather than the default
+        // one: a default-versus-default comparison mostly measures which default fits the corpus.
+        builders = builders
+            .Concat(new (string, Func<ITextSearchEngine>)[]
+            {
+                ("BM25+ (delta=1.0)", () => Ranked(documents, new Bm25PlusScorer(1.5, 0.75, 1.0), tokenizer)),
+                ("BM25L (delta=0.5)", () => Ranked(documents, new Bm25LScorer(1.5, 0.75, 0.5), tokenizer)),
+            })
+            .ToArray();
+
         // Proximity is corpus-dependent by nature, and the two shapes are not interchangeable, so
         // both are measured. The first stage is identical to the BM25 row, so the difference is
         // proximity alone and nothing else.

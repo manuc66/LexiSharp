@@ -79,6 +79,22 @@ public sealed record BenchmarkConfig
             return new RankedTextSearchEngine(index, new Bm25Scorer(tuned.Parameters), tokenizer);
         });
 
+    /// <summary>
+    /// Stock <see cref="Bm25PlusScorer"/> (Lv &amp; Zhai 2011), a single-field variant of BM25 with
+    /// a lower bound on the term frequency.
+    /// </summary>
+    public static BenchmarkConfig Bm25Plus(double k1 = 1.5, double b = 0.75, double delta = 1.0) =>
+        new(name: "BM25+", build: (index, tokenizer, _, _) =>
+            new RankedTextSearchEngine(index, new Bm25PlusScorer(k1, b, delta), tokenizer));
+
+    /// <summary>
+    /// Stock <see cref="Bm25LScorer"/> (Lv et al. 2006), a single-field variant using a compressed
+    /// term frequency in the numerator.
+    /// </summary>
+    public static BenchmarkConfig Bm25L(double k1 = 1.5, double b = 0.75, double delta = 0.5) =>
+        new(name: "BM25L", build: (index, tokenizer, _, _) =>
+            new RankedTextSearchEngine(index, new Bm25LScorer(k1, b, delta), tokenizer));
+
     /// <summary>Stock <see cref="TfIdfScorer"/> ranking.</summary>
     public static BenchmarkConfig TfIdf() =>
         new(name: "TF-IDF", build: (index, tokenizer, _, _) =>
