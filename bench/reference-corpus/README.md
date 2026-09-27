@@ -108,6 +108,65 @@ A downloaded corpus cannot serve the other two jobs:
 
 Hence: hand-built, small, and owned by this project.
 
+## The golden master
+
+`golden/bm25.txt` records what `bm25` and `bm25-semantic` return for every query, at top-k 5, over
+the corpus as committed. It is the artifact that makes a change to the scoring or merging path
+visible as a reviewable diff instead of a surprise in production.
+
+```bash
+# check (exit 1 on drift, so it can gate a build)
+dotnet run --project bench/LexiSharp.Cli -c Release -- verify corpus \
+    --queries queries.json --qrels qrels.tsv --configs bm25,bm25-semantic --top-k 5 \
+    --against golden/bm25.txt
+
+# re-record - a separate command on purpose
+dotnet run --project bench/LexiSharp.Cli -c Release -- baseline corpus \
+    --queries queries.json --qrels qrels.tsv --configs bm25,bm25-semantic --top-k 5 \
+    --out golden/bm25.txt
+```
+
+`baseline` and `verify` are **separate subcommands**, not flags on one command, on purpose. A
+`--update` flag would make re-recording a keystroke, and a baseline nobody re-reads stops catching
+anything — it becomes a mirror of whatever the code currently does. Re-record deliberately, then
+read the diff.
+
+### What it stores, and what it deliberately does not
+
+One line per query: the document ids in rank order and the six metrics to four decimals. No score
+vectors, no per-term breakdowns, no timings. A 22-query corpus produces a 54-line file. That is
+the point: a baseline nobody reads is not a baseline, and raw scores for every query would be
+unreadable while still looking like evidence.
+
+Metrics are stored because they are what a change moves *quietly*. Re-ordering two documents that
+tie leaves every rank intact and still shifts nDCG.
+
+Timings are not stored on purpose: they are machine-dependent, so pinning them would produce
+constant false failures.
+
+### It distinguishes a tie from a real change
+
+Two documents with equal scores are ordered by corpus order, so swapping them is not a behaviour
+change. The verifier checks whether a moved document ties with a neighbour, and reports:
+
+| | meaning | exit |
+|---|---|---|
+| `Match` | identical ranking and metrics | 0 |
+| `TieReordered` | same documents and metrics, swapped among equal scores | 0, reported as a tie |
+| `Changed` | different membership, different order without a tie, or moved metrics | 1 |
+| desync | a query in the run but not the baseline, or the reverse | 1 |
+
+An unknown score is **not** treated as evidence of a tie — the absence of data is not evidence, and
+guessing "probably a tie" is precisely what hides a regression.
+
+### Build path is pinned
+
+The baseline is only meaningful for a corpus built the same way. `CorpusBenchmark` indexes
+everything in one `Index()` call, and the header records the document count; `verify` refuses to
+compare a run over a different number of documents or at a different `top-k`, because every metric
+depends on the depth. Renaming a document changes the ids and will show up as a change, which is
+correct — the ids are the join key between corpus, qrels and baseline.
+
 ## Reading a comparison, query by query
 
 A mean hides which queries moved. To see them:

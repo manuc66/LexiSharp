@@ -100,12 +100,18 @@ public static class CorpusBenchmark
                 continue;
 
             stopwatch.Restart();
-            var retrievedIds = engine
-                .Search(query.Text, searchOptions)
-                .Select(result => result.DocumentId)
-                .ToList();
+            var retrieved = engine.Search(query.Text, searchOptions).ToList();
             stopwatch.Stop();
             elapsedTicks += stopwatch.ElapsedTicks;
+
+            var retrievedIds = new List<string>(retrieved.Count);
+            var retrievedScores = new List<double>(retrieved.Count);
+
+            foreach (var result in retrieved)
+            {
+                retrievedIds.Add(result.DocumentId);
+                retrievedScores.Add(result.Score);
+            }
 
             double queryNdcg = RetrievalMetrics.NdcgAtK(retrievedIds, query.GradedRelevance, topK);
             double queryMap = RetrievalMetrics.AveragePrecisionAtK(retrievedIds, query.RelevantDocumentIds, topK);
@@ -127,7 +133,8 @@ public static class CorpusBenchmark
                 query.Text,
                 new BenchmarkMetrics(queryNdcg, queryMap, queryMrr, queryRecall, queryPrecision, queryF1),
                 retrievedIds,
-                FirstRelevantRank(retrievedIds, query.RelevantDocumentIds)));
+                FirstRelevantRank(retrievedIds, query.RelevantDocumentIds),
+                retrievedScores));
         }
 
         double totalMilliseconds = elapsedTicks / (double)TimeSpan.TicksPerMillisecond;

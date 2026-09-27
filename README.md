@@ -107,7 +107,9 @@ ArguAna against BEIR's published BM25 numbers in
 - **Benchmark CLI** (`LexiSharp.Cli` + `LexiSharp.Benchmarking`): an in-core runner compares
   stock scorers, tuned BM25 and RRF hybrids on your own corpus with labeled queries, reporting
   the standard retrieval metrics and latency; a console front-end drives it from the command
-  line.
+  line. It also compares two configurations **query by query** (`diff`), and records or replays a
+  **golden master** (`baseline` / `verify`) so a change to the scoring or merging path shows up as
+  a reviewable diff — see the [reference corpus](bench/reference-corpus/README.md).
 - **ASP.NET Core endpoint** (`LexiSharp.AspNetCore`): a minimal-API extension that maps any
   `LexiSharpIndex<T>` to a `GET /search` endpoint with pagination, minimum score and text
   highlighting over HTTP.

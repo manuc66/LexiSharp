@@ -26,15 +26,30 @@ public static class Program
         + "  --candidate <cfg>    The configuration being evaluated\n"
         + "  --epsilon <n>        Score difference ignored when calling a query moved (default: 1e-9)\n"
         + "  Other options: --queries, --qrels, --top-k, --limit\n"
+        + "\n"
+        + "Usage: lexisharp baseline <corpus-dir> --queries <file> --qrels <file> --out <file>\n"
+        + "  Records what every configuration returns, per query, as a reviewable diff. Writing the\n"
+        + "  baseline is a separate command on purpose: re-recording it must be a deliberate, visible\n"
+        + "  act and review, not a flag that quietly accepts whatever the code now does.\n"
+        + "  --out <file>         Where to write the baseline\n"
+        + "  Other options: --queries, --qrels, --top-k, --limit, --configs\n"
+        + "\n"
+        + "Usage: lexisharp verify <corpus-dir> --queries <file> --qrels <file> --against <file>\n"
+        + "  Replays the run and checks it against a recorded baseline. Exits 1 on any real change or\n"
+        + "  on a desync, so it can gate a build. Documents that merely swapped places among equal\n"
+        + "  scores are reported as ties, not failures.\n"
+        + "  --against <file>     The baseline to check against\n"
+        + "  Other options: --queries, --qrels, --top-k, --limit, --configs\n"
         + "  --help, -h           Show this help";
 
     public static int Main(string[] args)
     {
-        // Two subcommands, same corpus/query plumbing. 'diff' is the one that answers "what did
-        // this change actually do", so it is a first-class command rather than a benchmark flag.
+        // Four subcommands over the same corpus/query plumbing. 'baseline' and 'verify' are separate
+        // commands rather than flags on purpose: re-recording a baseline has to be a deliberate act
+        // someone reviews, never a button that accepts whatever the code now does.
         string command = "benchmark";
 
-        if (args.Length > 0 && args[0] is "benchmark" or "diff")
+        if (args.Length > 0 && args[0] is "benchmark" or "diff" or "baseline" or "verify")
         {
             command = args[0];
             args = args[1..];
@@ -46,6 +61,8 @@ public static class Program
         string? jsonPath = null;
         string? baselineName = null;
         string? candidateName = null;
+        string? outPath = null;
+        string? againstPath = null;
         double epsilon = 1e-9;
         int topK = 10;
         int? limit = null;
@@ -82,6 +99,12 @@ public static class Program
                 case "--epsilon" when i + 1 < args.Length:
                     epsilon = double.Parse(args[++i], CultureInfo.InvariantCulture);
                     break;
+                case "--out" when i + 1 < args.Length:
+                    outPath = args[++i];
+                    break;
+                case "--against" when i + 1 < args.Length:
+                    againstPath = args[++i];
+                    break;
                 case "--help":
                 case "-h":
                     Console.WriteLine(Usage);
@@ -113,6 +136,20 @@ public static class Program
             return 2;
         }
 
+        if (command == "baseline" && outPath is null)
+        {
+            Console.Error.WriteLine("baseline requires --out.");
+            Console.Error.WriteLine(Usage);
+            return 2;
+        }
+
+        if (command == "verify" && againstPath is null)
+        {
+            Console.Error.WriteLine("verify requires --against.");
+            Console.Error.WriteLine(Usage);
+            return 2;
+        }
+
         try
         {
             if (command == "diff")
@@ -122,6 +159,16 @@ public static class Program
                     baselineName!, candidateName!, epsilon);
             }
 
+            if (command == "baseline")
+            {
+                return RunBaseline(corpusDir, queriesPath, qrelsPath, topK, limit, configNames, outPath!);
+            }
+
+            if (command == "verify")
+            {
+                return RunVerify(corpusDir, queriesPath, qrelsPath, topK, limit, configNames, againstPath!);
+            }
+
             return Run(corpusDir, queriesPath, qrelsPath, topK, limit, configNames, jsonPath);
         }
         catch (OperationCanceledException)
@@ -129,7 +176,16 @@ public static class Program
             Console.Error.WriteLine("Cancelled.");
             return 130;
         }
-        catch (Exception exception) when (exception is IOException or ArgumentException or UnauthorizedAccessException or JsonException)
+        // FormatException matters here: a malformed or wrong-version baseline used to escape this
+        // filter and crash the process, which is the worst possible outcome for a build gate -
+        // the caller sees a stack trace instead of a diagnosis, and a wrapper script may read a
+        // crashed run as anything but a failure.
+        catch (Exception exception) when (
+            exception is IOException
+                or ArgumentException
+                or UnauthorizedAccessException
+                or JsonException
+                or FormatException)
         {
             Console.Error.WriteLine($"Error: {exception.Message}");
             return 1;
@@ -212,6 +268,133 @@ public static class Program
 
     private static string Truncate(string text, int max) =>
         text.Length <= max ? text : text[..max].TrimEnd() + "…";
+
+    private static int RunBaseline(
+        string corpusDir,
+        string queriesPath,
+        string qrelsPath,
+        int topK,
+        int? limit,
+        string[] configNames,
+        string outPath)
+    {
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+
+        var configs = ResolveConfigs(configNames);
+        var documents = LoadCorpus(corpusDir);
+        var queries = LoadQueries(queriesPath, qrelsPath, limit);
+
+        Console.WriteLine($"Recording baseline from {corpusDir} ({documents.Count} documents, {queries.Count} queries, top-k {topK}).");
+
+        var results = CorpusBenchmark.Run(documents, queries, configs, new BenchmarkOptions { TopK = topK }, cts.Token);
+
+        var entries = new List<GoldenBaseline.Entry>();
+
+        foreach (var result in results)
+        {
+            foreach (var query in result.PerQuery)
+            {
+                entries.Add(new GoldenBaseline.Entry(
+                    result.Name, query.QueryId, query.RetrievedIds, query.Metrics));
+            }
+        }
+
+        var baseline = new GoldenBaseline
+        {
+            TopK = topK,
+            CorpusDocuments = documents.Count,
+            Entries = entries,
+        };
+
+        string? directory = Path.GetDirectoryName(Path.GetFullPath(outPath));
+
+        if (!string.IsNullOrEmpty(directory))
+            Directory.CreateDirectory(directory);
+
+        File.WriteAllText(outPath, baseline.ToText());
+
+        Console.WriteLine($"Wrote {entries.Count} entries to {outPath}.");
+        Console.WriteLine("Review the diff of that file before committing it: re-recording is how a baseline stops catching anything.");
+
+        return 0;
+    }
+
+    private static int RunVerify(
+        string corpusDir,
+        string queriesPath,
+        string qrelsPath,
+        int topK,
+        int? limit,
+        string[] configNames,
+        string againstPath)
+    {
+        if (!File.Exists(againstPath))
+        {
+            Console.Error.WriteLine($"No baseline at {againstPath}. Record one with: lexisharp baseline ... --out {againstPath}");
+            return 2;
+        }
+
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+
+        var recorded = GoldenBaseline.Parse(File.ReadAllText(againstPath), againstPath);
+
+        if (recorded.TopK != topK)
+        {
+            Console.Error.WriteLine(
+                $"The baseline was recorded at top-k {recorded.TopK}, this run uses {topK}. " +
+                "Every metric depends on the depth, so the comparison would be meaningless.");
+            return 2;
+        }
+
+        var configs = ResolveConfigs(configNames);
+        var documents = LoadCorpus(corpusDir);
+        var queries = LoadQueries(queriesPath, qrelsPath, limit);
+
+        if (recorded.CorpusDocuments != documents.Count)
+        {
+            Console.Error.WriteLine(
+                $"The baseline was recorded over {recorded.CorpusDocuments} documents, this run has {documents.Count}. " +
+                "Re-record the baseline rather than comparing different corpora.");
+            return 2;
+        }
+
+        var results = CorpusBenchmark.Run(documents, queries, configs, new BenchmarkOptions { TopK = topK }, cts.Token);
+        var comparison = recorded.Compare(results);
+
+        Console.WriteLine($"Verifying against {againstPath}");
+        Console.WriteLine($"Corpus:       {corpusDir} ({documents.Count} documents, {queries.Count} queries)");
+        Console.WriteLine($"Top-k:        {topK}");
+        Console.WriteLine();
+
+        foreach (var verdict in comparison.Report)
+        {
+            string label = verdict.Verdict == GoldenVerdict.TieReordered ? "tie" : "CHANGE";
+
+            Console.WriteLine($"{label}  {verdict.Configuration} / {verdict.QueryId}  {verdict.Detail}");
+
+            if (verdict.Verdict != GoldenVerdict.TieReordered && (verdict.Expected.Count > 0 || verdict.Actual.Count > 0))
+            {
+                Console.WriteLine($"  expected {string.Join(" ", verdict.Expected)}");
+                Console.WriteLine($"  actual   {string.Join(" ", verdict.Actual)}");
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"{comparison.Matches.Count} unchanged, {comparison.TieReorders.Count} tie reorderings, "
+            + $"{comparison.Changes.Count} changed, {comparison.Missing.Count} not in the baseline, "
+            + $"{comparison.Extra.Count} not in this run");
+
+        if (comparison.IsClean)
+        {
+            Console.WriteLine("OK: the run matches the baseline.");
+            return 0;
+        }
+
+        Console.WriteLine("FAILED: the run no longer matches the baseline. If the change was intended, re-record it and review the diff.");
+        return 1;
+    }
 
     private static int Run(
         string corpusDir,

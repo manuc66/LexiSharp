@@ -1,0 +1,54 @@
+# LexiSharp golden master - do not edit by hand.
+# Regenerate with: lexisharp baseline <corpus> --queries <file> --qrels <file> --out <this file>
+# version: 1
+# topK: 5
+# corpusDocuments: 42
+# entries: 44
+
+[BM25]
+identifier-01 | hard/identifier/mz-77e2t0.md hard/identifier/mz-77e2t1.md hard/identifier/mz-77e2t9.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
+identifier-02 | hard/identifier/mz-77e2t1.md hard/identifier/mz-77e2t0.md hard/identifier/mz-77e2t9.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
+synonym-01 | hard/synonym/automobile-fleet-log.md ordinary/index-rebuild.md | ndcg 0.7872 map 0.5000 mrr 1.0000 r 0.5000 p 0.2000 f1 0.2857
+synonym-02 | hard/synonym/car-servicing.md hard/identifier/mz-77e2t0.md hard/identifier/mz-77e2t9.md hard/ambiguous/dashboard-flicker.md | ndcg 0.9173 map 0.5000 mrr 1.0000 r 0.5000 p 0.2000 f1 0.2857
+paraphrase-01 | ordinary/bm25-length-normalization.md hard/long-document/session-renewal.md | ndcg 0.0000 map 0.0000 mrr 0.0000 r 0.0000 p 0.0000 f1 0.0000
+paraphrase-02 | ordinary/token-introspection.md hard/paraphrase/access-token-lifetime.md ordinary/bm25-length-normalization.md hard/long-document/session-renewal.md ordinary/oauth-authorization-code.md | ndcg 0.5788 map 0.2500 mrr 0.5000 r 0.5000 p 0.2000 f1 0.2857
+rare-term-01 | hard/rare-term/fahlinterop.md | ndcg 0.9173 map 0.5000 mrr 1.0000 r 0.5000 p 0.2000 f1 0.2857
+rare-term-02 | hard/rare-term/fahlinterop.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
+multilingual-01 | hard/multilingual/zertifikatrotation.md hard/multilingual/certificat-de-rotation.md hard/paraphrase/credential-rotation.md hard/long-document/session-renewal.md | ndcg 0.7098 map 1.0000 mrr 1.0000 r 1.0000 p 0.4000 f1 0.5714
+multilingual-02 | hard/multilingual/certificat-de-rotation.md hard/multilingual/zertifikatrotation.md hard/paraphrase/credential-rotation.md hard/long-document/session-renewal.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.4000 f1 0.5714
+long-document-01 | hard/long-document/session-renewal.md ordinary/session-storage.md hard/paraphrase/access-token-lifetime.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
+long-document-02 | ordinary/oauth-authorization-code.md hard/ambiguous/known-issues.md hard/long-document/session-renewal.md ordinary/bm25-length-normalization.md ordinary/document-loading.md | ndcg 0.5000 map 0.3333 mrr 0.3333 r 1.0000 p 0.2000 f1 0.3333
+ambiguous-01 | hard/ambiguous/known-issues.md hard/ambiguous/dashboard-flicker.md hard/ambiguous/widget-render-loop.md | ndcg 0.7364 map 1.0000 mrr 1.0000 r 1.0000 p 0.6000 f1 0.7500
+ambiguous-02 | hard/ambiguous/known-issues.md hard/ambiguous/dashboard-flicker.md hard/long-document/session-renewal.md ordinary/snippet-extraction.md hard/paraphrase/credential-rotation.md | ndcg 0.6131 map 0.5000 mrr 1.0000 r 0.5000 p 0.2000 f1 0.2857
+metadata-conflict-01 | hard/metadata-conflict/triage-notes.md hard/metadata-conflict/category-taxonomy.md ordinary/rate-limiting.md ordinary/time-decay.md hard/ambiguous/widget-render-loop.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.4000 f1 0.5714
+metadata-conflict-02 | hard/metadata-conflict/triage-notes.md ordinary/facet-counting.md ordinary/document-loading.md ordinary/query-parsing.md hard/metadata-conflict/category-taxonomy.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
+ordinary-01 | ordinary/connection-pooling.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
+ordinary-02 | ordinary/snippet-extraction.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
+ordinary-03 | ordinary/facet-counting.md hard/metadata-conflict/category-taxonomy.md ordinary/snippet-extraction.md ordinary/pagination-window.md hard/ambiguous/widget-render-loop.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
+ordinary-04 | ordinary/document-loading.md ordinary/ranking-stability.md ordinary/pagination-window.md ordinary/prefix-search.md | ndcg 0.6309 map 0.5000 mrr 0.5000 r 1.0000 p 0.2000 f1 0.3333
+ordinary-05 | ordinary/rate-limiting.md hard/ambiguous/dashboard-flicker.md ordinary/index-rebuild.md ordinary/unicode-normalization.md ordinary/query-parsing.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
+ordinary-06 | ordinary/index-rebuild.md ordinary/schema-migration.md ordinary/unicode-normalization.md ordinary/fuzzy-typos.md ordinary/snippet-extraction.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
+
+[BM25 + semantic]
+identifier-01 | hard/identifier/mz-77e2t0.md hard/identifier/mz-77e2t1.md hard/identifier/mz-77e2t9.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
+identifier-02 | hard/identifier/mz-77e2t1.md hard/identifier/mz-77e2t0.md hard/identifier/mz-77e2t9.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
+synonym-01 | hard/synonym/automobile-fleet-log.md ordinary/index-rebuild.md | ndcg 0.7872 map 0.5000 mrr 1.0000 r 0.5000 p 0.2000 f1 0.2857
+synonym-02 | hard/synonym/car-servicing.md hard/ambiguous/dashboard-flicker.md hard/identifier/mz-77e2t0.md hard/identifier/mz-77e2t9.md hard/identifier/mz-77e2t1.md | ndcg 0.9173 map 0.5000 mrr 1.0000 r 0.5000 p 0.2000 f1 0.2857
+paraphrase-01 | ordinary/bm25-length-normalization.md hard/long-document/session-renewal.md | ndcg 0.0000 map 0.0000 mrr 0.0000 r 0.0000 p 0.0000 f1 0.0000
+paraphrase-02 | ordinary/token-introspection.md ordinary/bm25-length-normalization.md hard/paraphrase/access-token-lifetime.md ordinary/oauth-authorization-code.md hard/long-document/session-renewal.md | ndcg 0.4587 map 0.1667 mrr 0.3333 r 0.5000 p 0.2000 f1 0.2857
+rare-term-01 | hard/rare-term/fahlinterop.md hard/multilingual/zertifikatrotation.md | ndcg 0.9173 map 0.5000 mrr 1.0000 r 0.5000 p 0.2000 f1 0.2857
+rare-term-02 | hard/rare-term/fahlinterop.md hard/multilingual/zertifikatrotation.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
+multilingual-01 | hard/multilingual/certificat-de-rotation.md hard/multilingual/zertifikatrotation.md hard/paraphrase/credential-rotation.md ordinary/pagination-window.md hard/long-document/session-renewal.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.4000 f1 0.5714
+multilingual-02 | hard/multilingual/certificat-de-rotation.md hard/multilingual/zertifikatrotation.md hard/paraphrase/credential-rotation.md ordinary/pagination-window.md hard/long-document/session-renewal.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.4000 f1 0.5714
+long-document-01 | hard/long-document/session-renewal.md ordinary/session-storage.md ordinary/unicode-normalization.md ordinary/document-loading.md hard/paraphrase/access-token-lifetime.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
+long-document-02 | ordinary/document-loading.md hard/ambiguous/known-issues.md ordinary/snippet-extraction.md ordinary/bm25-length-normalization.md ordinary/oauth-authorization-code.md | ndcg 0.0000 map 0.0000 mrr 0.0000 r 0.0000 p 0.0000 f1 0.0000
+ambiguous-01 | hard/ambiguous/known-issues.md hard/ambiguous/dashboard-flicker.md hard/ambiguous/widget-render-loop.md | ndcg 0.7364 map 1.0000 mrr 1.0000 r 1.0000 p 0.6000 f1 0.7500
+ambiguous-02 | hard/ambiguous/known-issues.md hard/ambiguous/dashboard-flicker.md hard/long-document/session-renewal.md ordinary/snippet-extraction.md hard/paraphrase/credential-rotation.md | ndcg 0.6131 map 0.5000 mrr 1.0000 r 0.5000 p 0.2000 f1 0.2857
+metadata-conflict-01 | hard/metadata-conflict/triage-notes.md hard/metadata-conflict/category-taxonomy.md ordinary/multi-tenancy.md ordinary/rate-limiting.md ordinary/time-decay.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.4000 f1 0.5714
+metadata-conflict-02 | hard/metadata-conflict/triage-notes.md ordinary/ranking-fusion.md ordinary/multi-tenancy.md hard/identifier/mz-77e2t9.md ordinary/facet-counting.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
+ordinary-01 | ordinary/connection-pooling.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
+ordinary-02 | ordinary/snippet-extraction.md ordinary/bm25-length-normalization.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
+ordinary-03 | ordinary/facet-counting.md hard/metadata-conflict/category-taxonomy.md ordinary/snippet-extraction.md ordinary/pagination-window.md hard/ambiguous/widget-render-loop.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
+ordinary-04 | ordinary/document-loading.md ordinary/ranking-stability.md ordinary/pagination-window.md ordinary/prefix-search.md | ndcg 0.6309 map 0.5000 mrr 0.5000 r 1.0000 p 0.2000 f1 0.3333
+ordinary-05 | ordinary/rate-limiting.md hard/ambiguous/dashboard-flicker.md ordinary/unicode-normalization.md ordinary/query-parsing.md ordinary/ranking-stability.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
+ordinary-06 | ordinary/index-rebuild.md ordinary/schema-migration.md ordinary/unicode-normalization.md ordinary/fuzzy-typos.md ordinary/highlighting-offsets.md | ndcg 1.0000 map 1.0000 mrr 1.0000 r 1.0000 p 0.2000 f1 0.3333
