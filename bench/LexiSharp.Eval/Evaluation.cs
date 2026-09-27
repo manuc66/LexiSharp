@@ -78,6 +78,18 @@ internal static class Evaluation
                 .ToArray();
         }
 
+        // Proximity is corpus-dependent by nature, and the two shapes are not interchangeable, so
+        // both are measured. The first stage is identical to the BM25 row, so the difference is
+        // proximity alone and nothing else.
+        builders = builders
+            .Concat(new (string, Func<ITextSearchEngine>)[]
+            {
+                ("BM25 + proximity (damp, s=0.25)", () => Proximity(documents, 0.25, ProximityMode.Damp, tokenizer)),
+                ("BM25 + proximity (damp, s=1)", () => Proximity(documents, 1.0, ProximityMode.Damp, tokenizer)),
+                ("BM25 + proximity (boost, s=1)", () => Proximity(documents, 1.0, ProximityMode.Boost, tokenizer)),
+            })
+            .ToArray();
+
         var buildersList = builders.ToList();
 
         if (dense is not null)
@@ -185,6 +197,22 @@ internal static class Evaluation
         return $"k1={tuned.Parameters.K1.ToString("0.####", CultureInfo.InvariantCulture)}, "
              + $"b={tuned.Parameters.B.ToString("0.####", CultureInfo.InvariantCulture)}, "
              + $"nDCG@10={result.NdcgAt10.ToString("0.###", CultureInfo.InvariantCulture)}";
+    }
+
+    /// <summary>BM25 over an index, re-ranked by proximity. The first stage matches the BM25 row.</summary>
+    private static ITextSearchEngine Proximity(
+        IReadOnlyList<SearchDocument> documents,
+        double strength,
+        ProximityMode mode,
+        ITokenizer tokenizer)
+    {
+        var index = new InMemoryTextIndex(tokenizer);
+        index.Index(documents);
+
+        return new RerankedTextSearchEngine(
+            new RankedTextSearchEngine(index, new Bm25Scorer(1.5, 0.75), tokenizer),
+            new ProximityReranker(index, tokenizer, strength, mode),
+            maxCandidates: 100);
     }
 
     /// <summary>BM25F weighting the corpus's <c>title</c> field, everything else neutral.</summary>

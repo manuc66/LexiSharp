@@ -149,7 +149,10 @@ ArguAna against BEIR's published BM25 numbers in
   reranking stages with per-stage trimming, a **cross-encoder** reranker driven by a
   consumer-provided pairwise scoring model (`ICrossEncoderScorer`), and a **ColBERT MaxSim**
   reranker that re-scores a shortlist token-by-token with late interaction
-  (`ITokenEmbeddingProvider`).
+  (`ITokenEmbeddingProvider`), and a **proximity** reranker (`ProximityReranker`) that reads the
+  index's term positions to re-order by how tightly the query terms cluster, in either a **damp**
+  or a **boost** shape. **Measured: proximity does not improve retrieval on any corpus tried
+  here** — see *Proximity*.
 - **Sparse learned embeddings**: `SparseTextSearchEngine` and its `ISparseEmbeddingProvider`
   seam bring SPLADE/uniCOIL-style retrieval (.NET-core only, weights learned, inverted-index
   scoring kept) without pulling ONNX into the library — the model lives in the consumer.
@@ -1246,6 +1249,59 @@ What *is* verified about the scorer, rather than inferred: the arithmetic, the t
 contract, the plan parity, the explanation summing back to the score, and a test that a long body
 the term never appears in does *not* change the score under BM25F while it does under
 `Bm25Scorer`.
+
+### Proximity
+
+BM25 scores a document by *how often* the query terms occur and is blind to *where*. `quick fox` in
+« the quick brown fox jumps over the lazy dog » scores exactly what it scores when the two words sit
+in the same sentence. `ProximityReranker` is the second stage that notices the difference, using the
+term positions the index already stores.
+
+It is a **reranker**, not a scorer, on purpose: it refines a shortlist the first stage already deemed
+relevant, and never promotes a document the first stage rejected. The first stage does the recall
+work; this only reorders.
+
+The measure is the **minimum window**. With `n` distinct query terms, `W` is the smallest number of
+consecutive positions containing an occurrence of each, and `tightness = n / W` — `1.0` when the
+terms are contiguous, smaller as they spread. Two shapes turn that into a score, and they are **not**
+interchangeable:
+
+```csharp
+// Damp: multiply. Can only lower a score.
+new ProximityReranker(index, tokenizer, strength: 1.0, mode: ProximityMode.Damp)
+
+// Boost: add strength × Σ idf(t) × tightness. The proximity term lives on its own scale,
+// so it can only raise a score and never demotes on distance alone.
+new ProximityReranker(index, tokenizer, strength: 1.0, mode: ProximityMode.Boost)
+```
+
+`strength = 0` is a no-op in both. A single-term query is always a no-op, and a candidate missing
+one of the query terms is **left untouched** — whether it should match every query term is the
+first-stage scorer's judgement, not this one's. Field boundaries count as distance, since separate
+field runs are separated by a position gap.
+
+**And the measurement, which is negative.** Across the reference corpus, NFCorpus and SciFact, three
+shapes each:
+
+| Config | reference (nDCG@5) | NFCorpus (nDCG@10) | SciFact (nDCG@10) |
+|---|---|---|---|
+| BM25 | **0.8751** | **0.308** | **0.662** |
+| proximity, damp s=0.25 | 0.8751 | 0.308 | 0.660 |
+| proximity, damp s=1 | 0.7227 | 0.298 | 0.652 |
+| proximity, boost s=1 | 0.8751 | 0.308 | 0.662 |
+
+**Damp actively hurts, and gets worse the harder you pull.** Boost is neutral everywhere — it moves
+scores but not the ranking, and on NFCorpus it is a hair better on MRR (0.519 vs 0.516) at identical
+nDCG. The likely reason is that nDCG@10 here is decided by whether the right document makes the top
+ten at all, and BM25's term-frequency signal already orders that set well; proximity only reshuffles
+documents whose scores are already close, which is where it adds noise. The gains proximity is
+credited with in the literature come from exact-phrase tasks and from a tuned phrase *clause* as a
+separate scoring term, not from one global strength applied after the fact.
+
+So the honest reading: **do not assume proximity helps.** It is here because the arithmetic is
+well-defined, tested, and cheap to evaluate on your own corpus —
+`--configs bm25,bm25-proximity,bm25-proximity-boost`. It is the right tool when a spread-out match
+really is a weaker match, which is a property of your data, not of the technique.
 
 ### Tuning BM25F
 
