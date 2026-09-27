@@ -15,7 +15,8 @@ public static class Program
         + "  --qrels <file>       Relevance judgments: TSV 'qid\\tdocid[\\tgrade]', one per line ('#' comments)\n"
         + "  --top-k <n>          Retrieval depth for every metric (default: 10)\n"
         + "  --limit <n>          Cap the number of queries evaluated (default: all)\n"
-        + "  --configs <list>     Comma-separated: bm25, bm25-tuned, tfidf, ql, hybrid, bm25-semantic, bm25f, bm25f-title, bm25f-tuned, bm25-proximity, bm25-proximity-full, bm25-proximity-boost, bm25+, bm25l (default: bm25,tfidf,ql,hybrid,bm25-tuned)\n"
+        + "  --configs <list>     Comma-separated: bm25, bm25-tuned, tfidf, ql, hybrid, bm25-semantic, bm25f, bm25f-title, bm25f-tuned, bm25-proximity, bm25-proximity-full, bm25-proximity-boost, bm25+, bm25+-tuned, bm25l, bm25l-tuned (default: bm25,tfidf,ql,hybrid,bm25-tuned)\n"
+        + "  --metric <name>      Objective the *-tuned configs maximize: precision, recall, f1, ndcg (default: f1)\n"
         + "  --json <path>        Write the results as JSON to this file\n"
         + "  --help, -h           Show this help\n"
         + "\n"
@@ -66,6 +67,11 @@ public static class Program
         double epsilon = 1e-9;
         int topK = 10;
         int? limit = null;
+        // What the *-tuned configurations maximize. Explicit rather than buried in a default,
+        // because a tuned row is only as meaningful as its objective: on a corpus where the
+        // default (F1) is flat across the grid, the tuner has nothing to discriminate on and its
+        // "winner" is just the first grid point the tie-break reached.
+        TuningMetric tuningMetric = TuningMetric.F1;
         string[] configNames = ["bm25", "tfidf", "ql", "hybrid", "bm25-tuned"];
 
         for (int i = 0; i < args.Length; i++)
@@ -86,6 +92,9 @@ public static class Program
                     break;
                 case "--configs" when i + 1 < args.Length:
                     configNames = args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    break;
+                case "--metric" when i + 1 < args.Length:
+                    tuningMetric = ParseMetric(args[++i]);
                     break;
                 case "--json" when i + 1 < args.Length:
                     jsonPath = args[++i];
@@ -156,20 +165,20 @@ public static class Program
             {
                 return RunDiff(
                     corpusDir, queriesPath, qrelsPath, topK, limit,
-                    baselineName!, candidateName!, epsilon);
+                    baselineName!, candidateName!, epsilon, tuningMetric);
             }
 
             if (command == "baseline")
             {
-                return RunBaseline(corpusDir, queriesPath, qrelsPath, topK, limit, configNames, outPath!);
+                return RunBaseline(corpusDir, queriesPath, qrelsPath, topK, limit, configNames, outPath!, tuningMetric);
             }
 
             if (command == "verify")
             {
-                return RunVerify(corpusDir, queriesPath, qrelsPath, topK, limit, configNames, againstPath!);
+                return RunVerify(corpusDir, queriesPath, qrelsPath, topK, limit, configNames, againstPath!, tuningMetric);
             }
 
-            return Run(corpusDir, queriesPath, qrelsPath, topK, limit, configNames, jsonPath);
+            return Run(corpusDir, queriesPath, qrelsPath, topK, limit, configNames, jsonPath, tuningMetric);
         }
         catch (OperationCanceledException)
         {
@@ -200,7 +209,8 @@ public static class Program
         int? limit,
         string baselineName,
         string candidateName,
-        double epsilon)
+        double epsilon,
+        TuningMetric tuningMetric)
     {
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, eventArgs) =>
@@ -276,12 +286,13 @@ public static class Program
         int topK,
         int? limit,
         string[] configNames,
-        string outPath)
+        string outPath,
+        TuningMetric tuningMetric)
     {
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
-        var configs = ResolveConfigs(configNames);
+        var configs = ResolveConfigs(configNames, tuningMetric);
         var documents = LoadCorpus(corpusDir);
         var queries = LoadQueries(queriesPath, qrelsPath, limit);
 
@@ -327,7 +338,8 @@ public static class Program
         int topK,
         int? limit,
         string[] configNames,
-        string againstPath)
+        string againstPath,
+        TuningMetric tuningMetric)
     {
         if (!File.Exists(againstPath))
         {
@@ -348,7 +360,7 @@ public static class Program
             return 2;
         }
 
-        var configs = ResolveConfigs(configNames);
+        var configs = ResolveConfigs(configNames, tuningMetric);
         var documents = LoadCorpus(corpusDir);
         var queries = LoadQueries(queriesPath, qrelsPath, limit);
 
@@ -403,7 +415,8 @@ public static class Program
         int topK,
         int? limit,
         string[] configNames,
-        string? jsonPath)
+        string? jsonPath,
+        TuningMetric tuningMetric)
     {
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, eventArgs) =>
@@ -412,7 +425,7 @@ public static class Program
             cts.Cancel();
         };
 
-        var configs = ResolveConfigs(configNames);
+        var configs = ResolveConfigs(configNames, tuningMetric);
 
         var documents = LoadCorpus(corpusDir);
         var queries = LoadQueries(queriesPath, qrelsPath, limit);
@@ -422,6 +435,10 @@ public static class Program
         Console.WriteLine($"Documents:    {documents.Count}");
         Console.WriteLine($"Queries:      {queries.Count} ({queries.Count(q => q.RelevantDocumentIds.Count > 0)} judged)");
         Console.WriteLine($"Top-k:        {topK}");
+        if (configNames.Any(name => name.EndsWith("-tuned", StringComparison.Ordinal)))
+        {
+            Console.WriteLine($"Tuned on:     {tuningMetric} (in-sample, over the same queries — an upper bound)");
+        }
         Console.WriteLine();
 
         var results = CorpusBenchmark.Run(documents, queries, configs, new BenchmarkOptions { TopK = topK }, cts.Token);
@@ -562,7 +579,7 @@ public static class Program
             StringComparer.Ordinal);
     }
 
-    private static IReadOnlyList<BenchmarkConfig> ResolveConfigs(string[] names)
+    private static IReadOnlyList<BenchmarkConfig> ResolveConfigs(string[] names, TuningMetric metric = TuningMetric.F1)
     {
         var configs = new List<BenchmarkConfig>(names.Length);
 
@@ -571,7 +588,7 @@ public static class Program
             configs.Add(name switch
             {
                 "bm25" => BenchmarkConfig.Bm25(),
-                "bm25-tuned" => BenchmarkConfig.Bm25Tuned(),
+                "bm25-tuned" => BenchmarkConfig.Bm25Tuned(metric: metric),
                 "tfidf" => BenchmarkConfig.TfIdf(),
                 "ql" => BenchmarkConfig.QueryLikelihood(),
                 "hybrid" => BenchmarkConfig.HybridRrf(new Bm25Scorer(), new TfIdfScorer()),
@@ -582,7 +599,7 @@ public static class Program
                 "bm25f-title" => BenchmarkConfig.Bm25F(new Dictionary<string, double> { ["title"] = 2.0 }),
                 // Grid-searches k1, b and the title weight on the labeled queries. Fitted in-sample,
                 // so it is an upper bound, not a fair baseline.
-                "bm25f-tuned" => BenchmarkConfig.Bm25FTuned(),
+                "bm25f-tuned" => BenchmarkConfig.Bm25FTuned(metric: metric),
                 // First stage unchanged, so the difference from bm25 is attributable to proximity
                 // alone. Both shapes, because they are not interchangeable.
                 "bm25-proximity" => BenchmarkConfig.Bm25Proximity(0.25),
@@ -590,7 +607,12 @@ public static class Program
                 "bm25-proximity-boost" => BenchmarkConfig.Bm25Proximity(1.0, ProximityMode.Boost),
                 "bm25+" => BenchmarkConfig.Bm25Plus(),
                 "bm25l" => BenchmarkConfig.Bm25L(),
-                _ => throw new ArgumentException($"Unknown configuration '{name}'. Valid: bm25, bm25-tuned, tfidf, ql, hybrid, bm25-semantic, bm25f, bm25f-title, bm25f-tuned, bm25-proximity, bm25-proximity-full, bm25-proximity-boost, bm25+, bm25l.", nameof(names)),
+                // Grid-searches delta on top of k1 and b, so the variant row and the bm25-tuned row
+                // are fitted the same way. In-sample on both sides, which is what makes them
+                // comparable — neither is a held-out number.
+                "bm25+-tuned" => BenchmarkConfig.Bm25PlusTuned(metric: metric),
+                "bm25l-tuned" => BenchmarkConfig.Bm25LTuned(metric: metric),
+                _ => throw new ArgumentException($"Unknown configuration '{name}'. Valid: bm25, bm25-tuned, tfidf, ql, hybrid, bm25-semantic, bm25f, bm25f-title, bm25f-tuned, bm25-proximity, bm25-proximity-full, bm25-proximity-boost, bm25+, bm25+-tuned, bm25l, bm25l-tuned.", nameof(names)),
             });
         }
 
@@ -660,6 +682,15 @@ public static class Program
 
         File.WriteAllText(jsonPath, json);
     }
+
+    private static TuningMetric ParseMetric(string value) => value.ToLowerInvariant() switch
+    {
+        "precision" => TuningMetric.Precision,
+        "recall" => TuningMetric.Recall,
+        "f1" => TuningMetric.F1,
+        "ndcg" => TuningMetric.Ndcg,
+        _ => throw new ArgumentException($"--metric expects precision, recall, f1 or ndcg, got '{value}'."),
+    };
 
     private static int ParsePositive(string value, string argument)
     {

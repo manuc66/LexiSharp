@@ -95,6 +95,50 @@ public sealed record BenchmarkConfig
         new(name: "BM25L", build: (index, tokenizer, _, _) =>
             new RankedTextSearchEngine(index, new Bm25LScorer(k1, b, delta), tokenizer));
 
+    /// <summary>
+    /// <see cref="Bm25PlusScorer"/> with <c>(k1, b, delta)</c> fitted on the labeled queries by
+    /// <see cref="Bm25PlusParameterTuner"/>, the configuration that makes the variant comparable
+    /// with a tuned <see cref="BenchmarkConfig.Bm25Tuned"/> rather than with a default.
+    /// </summary>
+    /// <remarks>
+    /// Fitted in-sample, so it is an optimistic upper bound, for the same reason
+    /// <see cref="Bm25Tuned"/> is: the best of 125 configurations is scored on the same queries that
+    /// chose it. Both sides of the comparison are fitted the same way, which is what makes the pair
+    /// readable — and neither is a held-out number.
+    /// </remarks>
+    public static BenchmarkConfig Bm25PlusTuned(int topK = 10, TuningMetric metric = TuningMetric.F1) =>
+        new(name: "BM25+ (tuned)", build: (index, tokenizer, queries, k) =>
+        {
+            var tuningQueries = queries
+                .Select(query => new Bm25ValidationQuery(query.Text, query.RelevantDocumentIds))
+                .ToList();
+            var tuned = new Bm25PlusParameterTuner(index, tuningQueries, tokenizer)
+                .Tune(topK: k, metric: metric);
+            return new RankedTextSearchEngine(
+                index, new Bm25PlusScorer(tuned.K1, tuned.B, tuned.Delta), tokenizer);
+        });
+
+    /// <summary>
+    /// <see cref="Bm25LScorer"/> with <c>(k1, b, delta)</c> fitted on the labeled queries by
+    /// <see cref="Bm25LParameterTuner"/>.
+    /// </summary>
+    /// <remarks>
+    /// Fitted in-sample, for the same reason as <see cref="Bm25PlusTuned"/>. Its <c>delta = 0</c>
+    /// baseline is BM25 exactly, like BM25+'s, so this row's grid subsumes a plain
+    /// <see cref="Bm25Tuned"/> run — see <see cref="Bm25LTuningResult.UnflooredMetricScore"/>.
+    /// </remarks>
+    public static BenchmarkConfig Bm25LTuned(int topK = 10, TuningMetric metric = TuningMetric.F1) =>
+        new(name: "BM25L (tuned)", build: (index, tokenizer, queries, k) =>
+        {
+            var tuningQueries = queries
+                .Select(query => new Bm25ValidationQuery(query.Text, query.RelevantDocumentIds))
+                .ToList();
+            var tuned = new Bm25LParameterTuner(index, tuningQueries, tokenizer)
+                .Tune(topK: k, metric: metric);
+            return new RankedTextSearchEngine(
+                index, new Bm25LScorer(tuned.K1, tuned.B, tuned.Delta), tokenizer);
+        });
+
     /// <summary>Stock <see cref="TfIdfScorer"/> ranking.</summary>
     public static BenchmarkConfig TfIdf() =>
         new(name: "TF-IDF", build: (index, tokenizer, _, _) =>

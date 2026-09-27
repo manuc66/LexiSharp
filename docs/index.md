@@ -112,7 +112,7 @@ twice. Every figure below is reproducible with a command on the
 | [Getting started](getting-started.md) | the engine in three lines, the typed `LexiSharpIndex<T>` facade, document loaders, an ASP.NET Core endpoint, the demo app |
 | [Indexing](indexing.md) | the inverted index and its statistics, named text fields, the tokenizer and stemming, binary persistence |
 | [Querying](querying.md) | metadata filters, pagination, phrase queries, highlighting, prefix & fuzzy terms, synonyms, facets, the span-first API |
-| [Ranking](ranking.md) | four scorers, BM25+ / BM25L, BM25F, score boosting, proximity, per-term explanations — each with the measurement behind it |
+| [Ranking](ranking.md) | four scorers, BM25+ / BM25L and their δ tuners, BM25F, score boosting, proximity, per-term explanations — each with the measurement behind it |
 | [Pipelines](pipelines.md) | rerankers (MMR, cascade, cross-encoder, MaxSim), hybrid federation, cost-based and intent-based routing |
 | [Embeddings and expansion](embeddings.md) | dense, learned-sparse and corpus-derived expansion, all behind consumer-supplied seams |
 | [Text analysis](text-analysis.md) | lexical similarity, keyword extraction, Naive Bayes classification |

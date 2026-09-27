@@ -75,8 +75,7 @@ external service.
   ([indexing](docs/indexing.md)).
 - **Four scorers and their variants** — BM25, TF-IDF, query likelihood, a boolean filter,
   plus BM25+, BM25L and field-weighted BM25F, each with a per-term `IScoreExplainer`
-  breakdown ([ranking](docs/ranking.md)).
-- **The usual query operators** — metadata filters, phrases, prefix and fuzzy terms,
+  breakdown ([ranking](docs/ranking.md)).- **The usual query operators** — metadata filters, phrases, prefix and fuzzy terms,
   synonyms, facets, highlighting, pagination ([querying](docs/querying.md)).
 - **Composable pipelines** — rerankers (MMR, cascade, cross-encoder, MaxSim), hybrid
   federation with five merge strategies, cost-based and intent-based routing
@@ -92,9 +91,10 @@ external service.
   `RetrievalTelemetry` measures every search in production; `RetrievalAgreementAnalyzer`
   says whether a fused page was agreed on or insisted upon
   ([observability](docs/observability.md)).
-- **The instruments to distrust your own ranking** — IR metrics, BM25/BM25F parameter
-  tuners, a benchmark CLI over your corpus, and a per-query diff that names which queries a
-  change rescued and which it lost ([evaluation](docs/evaluation.md)).
+- **The instruments to distrust your own ranking** — IR metrics, four parameter tuners
+  (BM25, BM25F, BM25+, BM25L) that report whether the extra knob earned its place, a benchmark
+  CLI over your corpus, and a per-query diff that names which queries a change rescued and which
+  it lost ([evaluation](docs/evaluation.md)).
 
 ## What is measured, and what is not
 
@@ -120,10 +120,11 @@ is reproducible with a command on the [evaluation page](docs/evaluation.md).
   runs). The SQL backends' *retrieval quality* is unmeasured — the BEIR harness runs the
   in-memory engines. The learned-sparse lane has no model wired into that harness, and
   corpus-derived expansion is a measured **loss** where it has been measured (0.8469 against
-  BM25's 0.8751 on the reference corpus). BM25F has **no** measured win over a tuned BM25,
-  and proximity hurts at full strength. Not every combination of engine, scorer, reranker
-  and merger is exercised by a test.
-- **Version 0.4.0, one maintainer.** The public API may still change between minor
+  BM25's 0.8751 on the reference corpus). BM25F has **no** measured win over a tuned BM25, and
+  proximity hurts at full strength. **BM25+ and BM25L, tuned on their own δ, tie a tuned BM25 on the
+  reference corpus and NFCorpus and edge it by 0.002–0.004 on SciFact** — an in-sample margin on
+  the queries that chose it, so an upper bound rather than a result. Not every combination of
+  engine, scorer, reranker and merger is exercised by a test.- **Version 0.4.0, one maintainer.** The public API may still change between minor
   versions — pin a version.
 
 Full scope and limits: [docs/reference.md](docs/reference.md#scope-and-limits).
@@ -137,7 +138,7 @@ Hosted at **<https://manuc66.github.io/LexiSharp/>** (published from `docs/`).
 | [Getting started](docs/getting-started.md) | the engine in three lines, the typed facade, document loaders, an HTTP endpoint, the demo |
 | [Indexing](docs/indexing.md) | the index and its statistics, named fields, the tokenizer and stemming, persistence |
 | [Querying](docs/querying.md) | filters, pagination, phrases, highlighting, prefix & fuzzy, synonyms, facets |
-| [Ranking](docs/ranking.md) | the scorers, BM25+/BM25L, BM25F, boosting, proximity, explanations — with their measurements |
+| [Ranking](docs/ranking.md) | the scorers, BM25+/BM25L and their δ tuners, BM25F, boosting, proximity, explanations — with their measurements |
 | [Pipelines](docs/pipelines.md) | rerankers, hybrid fusion, routing |
 | [Embeddings and expansion](docs/embeddings.md) | dense, learned-sparse, corpus-derived expansion |
 | [Text analysis](docs/text-analysis.md) | similarity, keyword extraction, classification |

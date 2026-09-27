@@ -40,7 +40,9 @@ namespace LexiSharp.Ranking;
 /// <b>No claim that this retrieves better.</b> BM25L is a single-field variant, so it competes only
 /// with <see cref="Bm25Scorer"/>. Measure it on your corpus against a <i>tuned</i> BM25
 /// (<see cref="Bm25ParameterTuner"/>) — a default-versus-default comparison mostly measures which
-/// default fits the corpus, which is a lesson this repository learned the hard way.
+/// default fits the corpus, which is a lesson this repository learned the hard way. And tune this
+/// scorer's own <c>&#948;</c> with <see cref="Bm25LParameterTuner"/> before concluding anything: a row
+/// that fixes the bound at the paper's value is not a tuned row.
 /// </para>
 /// </remarks>
 public sealed class Bm25LScorer : IScoreExplainer, ITermOverlapScorer, IQueryPlannableScorer
