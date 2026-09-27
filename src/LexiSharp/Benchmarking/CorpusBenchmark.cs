@@ -16,6 +16,13 @@ namespace LexiSharp.Benchmarking;
 /// Queries with an empty relevant set are not averaged (there is nothing to score), mirroring
 /// <see cref="Bm25ParameterTuner"/>. The engine is warm when the stopwatch starts: only the
 /// search itself is timed.
+/// <para>
+/// nDCG uses <see cref="BenchmarkQuery.GradedRelevance"/>, with exponential gains; a binary query
+/// is one whose gains are all <c>1</c>, which degenerates to the binary formula. The other five
+/// metrics use the derived <see cref="BenchmarkQuery.RelevantDocumentIds"/>, so a graded run and a
+/// binary run of the same corpus stay comparable on recall, MAP, MRR, precision and F1 — while
+/// nDCG values from the two kinds of qrels are not comparable to each other.
+/// </para>
 /// </remarks>
 public static class CorpusBenchmark
 {
@@ -99,7 +106,7 @@ public static class CorpusBenchmark
             stopwatch.Stop();
             elapsedTicks += stopwatch.ElapsedTicks;
 
-            ndcg += RetrievalMetrics.NdcgAtK(retrievedIds, query.RelevantDocumentIds, topK);
+            ndcg += RetrievalMetrics.NdcgAtK(retrievedIds, query.GradedRelevance, topK);
             map += RetrievalMetrics.AveragePrecisionAtK(retrievedIds, query.RelevantDocumentIds, topK);
             mrr += RetrievalMetrics.ReciprocalRankAtK(retrievedIds, query.RelevantDocumentIds, topK);
             recall += RetrievalMetrics.RecallAtK(retrievedIds, query.RelevantDocumentIds, topK);

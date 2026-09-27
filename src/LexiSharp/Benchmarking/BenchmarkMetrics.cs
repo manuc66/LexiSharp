@@ -5,7 +5,11 @@ namespace LexiSharp.Benchmarking;
 /// configured <c>topK</c>. Every value lives in <c>[0, 1]</c>; all numerators and denominators
 /// are the ones <see cref="LexiSharp.Ranking.RetrievalMetrics"/> documents.
 /// </summary>
-/// <param name="NdcgAtK">Mean nDCG@k (binary relevance).</param>
+/// <param name="NdcgAtK">
+/// Mean nDCG@k. Graded (exponential gains) when the queries carry
+/// <see cref="BenchmarkQuery.GradedRelevance"/>, binary otherwise — so nDCG is the one metric
+/// whose scale depends on the kind of qrels a run used, and the two are not comparable.
+/// </param>
 /// <param name="MapAtK">Mean average precision at k (MAP@k).</param>
 /// <param name="MrrAtK">Mean reciprocal rank at k (MRR@k).</param>
 /// <param name="RecallAtK">Mean recall@k.</param>
