@@ -49,9 +49,14 @@ public class BenchmarkComparisonTests
 
         var result = Run(queries, [BenchmarkConfig.Bm25()]);
 
-        Assert.Equal(2, result.PerQuery.Count);
-        Assert.Equal("q1", result.PerQuery[0].QueryId);
-        Assert.Equal("refresh token", result.PerQuery[0].QueryText);
+        Assert.Collection(
+            result.PerQuery,
+            first =>
+            {
+                Assert.Equal("q1", first.QueryId);
+                Assert.Equal("refresh token", first.QueryText);
+            },
+            second => Assert.Equal("q2", second.QueryId));
     }
 
     [Fact]
