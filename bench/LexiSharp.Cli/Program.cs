@@ -163,7 +163,11 @@ public static class Program
         var qrels = ReadQrels(qrelsPath);
 
         var queries = rawQueries
-            .Select(item => new BenchmarkQuery(item.Id, item.Text, qrels.GetValueOrDefault(item.Id) ?? Array.Empty<string>()))
+            .Select(item => qrels.TryGetValue(item.Id, out var judged)
+                // A judged query is graded whenever any judgment carries a level, so the CLI and
+                // the BEIR harness agree on what a qrels file means.
+                ? new BenchmarkQuery(item.Id, item.Text, judged)
+                : new BenchmarkQuery(item.Id, item.Text, Array.Empty<string>()))
             .ToList();
 
         if (queries.Count == 0)
@@ -210,9 +214,9 @@ public static class Program
         return queries;
     }
 
-    private static Dictionary<string, IReadOnlyList<string>> ReadQrels(string path)
+    private static Dictionary<string, IReadOnlyDictionary<string, double>> ReadQrels(string path)
     {
-        var qrels = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+        var qrels = new Dictionary<string, Dictionary<string, double>>(StringComparer.Ordinal);
 
         foreach (string line in File.ReadLines(path))
         {
@@ -224,16 +228,31 @@ public static class Program
             if (columns.Length < 2 || columns[0].Length == 0 || columns[1].Length == 0)
                 throw new FormatException($"Expected 'qid\\tdocid[\\tgrade]' but got: {line}");
 
-            if (!qrels.TryGetValue(columns[0], out var relevant))
+            // The grade column is optional: absent or unparsable means "relevant", the binary
+            // convention every qrels file starts from. A parsed grade is clamped to the binary
+            // projection, so a qrels file mixing levels and bare judgments is still coherent.
+            double grade = 1;
+
+            if (columns.Length >= 3
+                && double.TryParse(columns[2], NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
+                && parsed > 0)
             {
-                relevant = new List<string>();
-                qrels[columns[0]] = relevant;
+                grade = parsed;
             }
 
-            ((List<string>)relevant).Add(columns[1]);
+            if (!qrels.TryGetValue(columns[0], out var byDocument))
+            {
+                byDocument = new Dictionary<string, double>(StringComparer.Ordinal);
+                qrels[columns[0]] = byDocument;
+            }
+
+            byDocument[columns[1]] = Math.Max(byDocument.GetValueOrDefault(columns[1]), grade);
         }
 
-        return qrels;
+        return qrels.ToDictionary(
+            pair => pair.Key,
+            pair => (IReadOnlyDictionary<string, double>)pair.Value,
+            StringComparer.Ordinal);
     }
 
     private static IReadOnlyList<BenchmarkConfig> ResolveConfigs(string[] names)
