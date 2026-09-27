@@ -12,8 +12,9 @@ public sealed record TokenizerOptions
     public bool RemoveStopWords { get; init; }
 
     /// <summary>
-    /// Optional stemming applied to each term. When null, terms are left unstemmed.
-    /// No stemmer ships with the library; provide an <see cref="IStemmer"/> implementation.
+    /// Optional stemming applied to each term. When null, terms are left unstemmed, which is the
+    /// default. <see cref="PorterStemmer"/> (English) ships with the library; for another
+    /// language or algorithm, provide your own <see cref="IStemmer"/>.
     /// </summary>
     public IStemmer? Stemmer { get; init; }
 

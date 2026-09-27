@@ -35,6 +35,20 @@ public class TextHighlighterTests
     }
 
     [Fact]
+    public void MatchRanges_StemsTheQueryAndTheDocumentWithTheSameTokenizer()
+    {
+        // Highlighting only works if both sides are tokenized identically: a stemmed query term
+        // has to meet a stemmed document term, and the range still has to land on the original
+        // inflection in the source text.
+        var tokenizer = new Tokenizer(new TokenizerOptions { Stemmer = new PorterStemmer() });
+        const string text = "The engine indexes documents and indexes queries";
+
+        var ranges = TextHighlighter.MatchRanges(text, tokenizer.Tokenize("indexing"), tokenizer);
+
+        Assert.Equal(new Range[] { new(11, 18), new(33, 40) }, ranges);
+    }
+
+    [Fact]
     public void MatchRanges_MergesOverlappingNgramSpans()
     {
         var tokenizer = new Tokenizer(new TokenizerOptions { NGramMax = 2 });

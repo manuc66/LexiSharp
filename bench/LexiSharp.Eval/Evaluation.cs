@@ -21,11 +21,9 @@ internal sealed record EvaluatedQuery(BeirQuery Query, IReadOnlyDictionary<strin
 
 internal static class Evaluation
 {
-    private static readonly Tokenizer Tokenizer = Tokenizer.Default;
-
     public static (IReadOnlyList<ConfigResult> Results, string TunedDescription) Run(
-        BeirCorpus corpus, int topK, int? limit, DenseVectors? dense = null, bool tuned = true,
-        IReranker? reranker = null, int rerankCandidates = 100)
+        BeirCorpus corpus, int topK, int? limit, ITokenizer tokenizer, DenseVectors? dense = null,
+        bool tuned = true, IReranker? reranker = null, int rerankCandidates = 100)
     {
         var queries = corpus.Queries
             .Where(query => corpus.TestRelevance.ContainsKey(query.Id))
@@ -40,14 +38,14 @@ internal static class Evaluation
 
         var builders = new (string Name, Func<ITextSearchEngine> Factory)[]
         {
-            ("BM25 (k1=1.5, b=0.75)", () => Ranked(documents, new Bm25Scorer(1.5, 0.75))),
-            ("BM25 (k1=1.2, b=0.75)", () => Ranked(documents, new Bm25Scorer(1.2, 0.75))),
-            ("TF-IDF", () => Ranked(documents, new TfIdfScorer())),
-            ("QueryLikelihood (lambda=0.2)", () => Ranked(documents, new QueryLikelihoodScorer(0.2))),
+            ("BM25 (k1=1.5, b=0.75)", () => Ranked(documents, new Bm25Scorer(1.5, 0.75), tokenizer)),
+            ("BM25 (k1=1.2, b=0.75)", () => Ranked(documents, new Bm25Scorer(1.2, 0.75), tokenizer)),
+            ("TF-IDF", () => Ranked(documents, new TfIdfScorer(), tokenizer)),
+            ("QueryLikelihood (lambda=0.2)", () => Ranked(documents, new QueryLikelihoodScorer(0.2), tokenizer)),
             ("Hybrid BM25+QL weighted", () => Hybrid(documents,
-                new WeightedScoreResultMerger(1.0, 1.0))),
+                new WeightedScoreResultMerger(1.0, 1.0), tokenizer)),
             ("Hybrid BM25+QL RRF", () => Hybrid(documents,
-                new ReciprocalRankFusionMerger())),
+                new ReciprocalRankFusionMerger(), tokenizer)),
         };
 
         var buildersList = builders.ToList();
@@ -55,7 +53,7 @@ internal static class Evaluation
         if (dense is not null)
         {
             var denseEngine = new DenseTextSearchEngine(corpus, dense);
-            var bm25 = Ranked(documents, new Bm25Scorer(1.5, 0.75));
+            var bm25 = Ranked(documents, new Bm25Scorer(1.5, 0.75), tokenizer);
 
             buildersList.Add(("Dense multilingual-e5-small", () => denseEngine));
             buildersList.Add(("Hybrid BM25+Dense weighted", () => new HybridTextSearchEngine(
@@ -66,8 +64,8 @@ internal static class Evaluation
 
         if (reranker is not null)
         {
-            var bm25 = Ranked(documents, new Bm25Scorer(1.5, 0.75));
-            var languageModel = Ranked(documents, new QueryLikelihoodScorer(0.2));
+            var bm25 = Ranked(documents, new Bm25Scorer(1.5, 0.75), tokenizer);
+            var languageModel = Ranked(documents, new QueryLikelihoodScorer(0.2), tokenizer);
 
             buildersList.Add(($"BM25 (top{rerankCandidates})+CrossRerank", () =>
                 RerankEngines.Reranked(bm25, rerankCandidates, reranker)));
@@ -90,7 +88,7 @@ internal static class Evaluation
         foreach (var (name, factory) in buildersList)
             results.Add(RunConfig(name, factory(), queries, topK));
 
-        string tunedDescription = tuned ? RunTuned(documents, corpus, queries, topK, results) : "skipped (--no-tuned)";
+        string tunedDescription = tuned ? RunTuned(documents, corpus, queries, topK, tokenizer, results) : "skipped (--no-tuned)";
 
         return (results, tunedDescription);
     }
@@ -131,6 +129,7 @@ internal static class Evaluation
         BeirCorpus corpus,
         IReadOnlyList<EvaluatedQuery> queries,
         int topK,
+        ITokenizer tokenizer,
         List<ConfigResult> results)
     {
         var validation = queries
@@ -139,15 +138,15 @@ internal static class Evaluation
                 evaluated.Graded.Keys.ToArray()))
             .ToList();
 
-        var index = new InMemoryTextIndex(Tokenizer);
+        var index = new InMemoryTextIndex(tokenizer);
         index.Index(documents);
 
-        var tuner = new Bm25ParameterTuner(index, validation, Tokenizer);
+        var tuner = new Bm25ParameterTuner(index, validation, tokenizer);
         var tuned = tuner.Tune(topK: topK, metric: TuningMetric.Ndcg);
 
         var result = RunConfig(
             $"BM25 tuned (k1={tuned.Parameters.K1:0.##}, b={tuned.Parameters.B:0.##})",
-            new RankedTextSearchEngine(index, new Bm25Scorer(tuned.Parameters), Tokenizer),
+            new RankedTextSearchEngine(index, new Bm25Scorer(tuned.Parameters), tokenizer),
             queries,
             topK);
 
@@ -158,21 +157,21 @@ internal static class Evaluation
              + $"nDCG@10={result.NdcgAt10.ToString("0.###", CultureInfo.InvariantCulture)}";
     }
 
-    private static ITextSearchEngine Ranked(IReadOnlyList<SearchDocument> documents, ITextScorer scorer)
+    private static ITextSearchEngine Ranked(IReadOnlyList<SearchDocument> documents, ITextScorer scorer, ITokenizer tokenizer)
     {
-        var index = new InMemoryTextIndex(Tokenizer);
+        var index = new InMemoryTextIndex(tokenizer);
         index.Index(documents);
 
-        return new RankedTextSearchEngine(index, scorer, Tokenizer);
+        return new RankedTextSearchEngine(index, scorer, tokenizer);
     }
 
-    private static ITextSearchEngine Hybrid(IReadOnlyList<SearchDocument> documents, IResultMerger merger)
+    private static ITextSearchEngine Hybrid(IReadOnlyList<SearchDocument> documents, IResultMerger merger, ITokenizer tokenizer)
     {
-        var index = new InMemoryTextIndex(Tokenizer);
+        var index = new InMemoryTextIndex(tokenizer);
         index.Index(documents);
 
-        var lexical = new RankedTextSearchEngine(index, new Bm25Scorer(1.5, 0.75), Tokenizer);
-        var languageModel = new RankedTextSearchEngine(index, new QueryLikelihoodScorer(0.2), Tokenizer);
+        var lexical = new RankedTextSearchEngine(index, new Bm25Scorer(1.5, 0.75), tokenizer);
+        var languageModel = new RankedTextSearchEngine(index, new QueryLikelihoodScorer(0.2), tokenizer);
 
         return new HybridTextSearchEngine(new ITextSearchEngine[] { lexical, languageModel }, merger);
     }

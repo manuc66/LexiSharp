@@ -58,10 +58,10 @@ ArguAna against BEIR's published BM25 numbers in
 - **Measured against published baselines.** `bench/LexiSharp.Eval` runs the engines over three
   public BEIR corpora (NFCorpus, SciFact, ArguAna), md5-verified on download, and reports
   nDCG@10/MAP@10/MRR@10/R@10 next to the published BM25 numbers: BM25 lands within 0.5 % of
-  the reference on SciFact and slightly above it on ArguAna, and the best stack — BM25 + dense,
+  the reference on SciFact and 8 % below it on ArguAna, and the best stack — BM25 + dense,
   RRF-fused, cross-encoder reranked — reaches **0.346** on NFCorpus against BEIR's **0.325**.
   Reproduce it with `dotnet run --project bench/LexiSharp.Eval`; full tables, per-dataset
-  numbers and the known gap (no stemming) are in
+  numbers and the effect of the opt-in `--stem porter` are in
   [its README](bench/LexiSharp.Eval/README.md).
 - **Zero runtime dependencies in the core.** The `LexiSharp` package references no NuGet
   package at all — inverted index, BM25, every scorer and every decorator are BCL only.
@@ -214,7 +214,7 @@ ArguAna against BEIR's published BM25 numbers in
   Laplace smoothing, exposing a dedicated `ITextClassifier` interface.
 - **Configurable tokenizer**: Unicode NFKD normalization and diacritics removal,
   lowercasing, optional stop-word removal, optional n-grams, and a pluggable
-  `IStemmer` seam (no stemmer ships with the library — bring your own, e.g. Snowball).
+  `IStemmer` seam — with `PorterStemmer` (English, no dependency, opt-in) shipped in the core.
   Tokenization is SIMD-accelerated (`SearchValues` + `IndexOfAnyExcept`, with a
   `System.Text.Ascii` fast path in normalization) — measured at ~5× faster on ASCII-only
   input than on input requiring accent removal ([BENCHMARKS.md](BENCHMARKS.md)).
@@ -470,9 +470,31 @@ var tokenizer = new Tokenizer(new TokenizerOptions
 {
     RemoveStopWords = true,       // English list, or provide StopWords.Create(...)
     NGramMax = 2,                 // produce unigrams + bigrams
-    Stemmer = new MyStemmer(),    // implement IStemmer (French, Snowball, ...)
+    Stemmer = new PorterStemmer(), // English stemming, shipped; null (default) = no stemming
 });
 ```
+
+`PorterStemmer` implements the frozen Porter algorithm (Porter, 1980) in the core package, with
+no dependency: it stems only English, and only the ASCII lowercase terms the tokenizer produces.
+It is **opt-in** — `Stemmer` stays `null` by default — because it is English-only (a default
+would change terms for every other language) and because a stemmed index can only be reloaded
+with the same stemmer. Conformance is pinned against the algorithm author's own reference
+vocabulary (23,531 words). Porter describes the algorithm as "slightly inferior to the Snowball
+English or Porter2 stemmer", and it over-stems by design (`relate` and `relational` both become
+`relat`, `engine` becomes `engin`), so measure it on your own data before turning it on:
+
+| BM25 nDCG@10, `LexiSharp.Eval` | no stemming | `--stem porter` | BEIR BM25 |
+|---|---|---|---|
+| NFCorpus (323 queries)              | 0.308 | **0.322** | 0.325 |
+| SciFact (300 queries)               | 0.662 | **0.687** | 0.665 |
+| ArguAna (1406 queries)              | 0.289 | 0.279 | 0.315 |
+
+It helps on two corpora and **hurts on the third**, so it stays opt-in: ArguAna's whole-argument
+queries are nearly all content words, the case where over-stemming has most to lose. Full tables
+for every config are in
+[the eval harness README](bench/LexiSharp.Eval/README.md); reproduce with
+`dotnet run --project bench/LexiSharp.Eval -- --stem porter`. For another language, implement
+`IStemmer` (or take Snowball) and pass it the same way.
 
 ### Score boosting (`BoostedTextSearchEngine`)
 
