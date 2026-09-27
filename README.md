@@ -81,8 +81,9 @@ ArguAna against BEIR's published BM25 numbers in
 - **Tracing cost is only partly measured.** `SearchTrace`'s allocation is pinned by
   BenchmarkDotNet and is stable across runs (a saturated trace adds 0 bytes per search; a fresh
   trace per search +0.47 KB). Its **time** cost is **unmeasured**: on the machine used for the run
-  the baseline benchmark itself varied 2.3× between identical runs, so no timing is quoted. Read it
-  as unknown, not as free.
+  the baseline benchmark itself varied 2.3× between identical runs and the traced variant once came
+  out faster than the baseline, so no timing is quoted. Read it as unknown, not as free. Details and
+  machine configuration in [BENCHMARKS.md](BENCHMARKS.md#ranking-trace-searchtrace--allocation-only-no-timing).
 
 ### Scope and limits
 
@@ -961,22 +962,18 @@ foreach (var step in trace.Steps)
 or formats anything. Pass one and each stage appends to it as it runs, so a decorated pipeline
 accumulates its whole chain.
 
-**Cost — what is measured and what is not.** On `SearchBenchmarks` (10 000 documents, `Limit: 10`,
-2-term query), BenchmarkDotNet's `MemoryDiagnoser` gives a stable, reproducible number across
-repeated runs:
+**Cost — what is measured and what is not.** Measured with BenchmarkDotNet's `MemoryDiagnoser` and
+stable across repeated runs: a saturated trace allocates **0 additional bytes** per search
+(1.34 KB either way), and a trace created per search costs **~0.47 KB** (the object plus its
+backing array).
 
-| variant | allocated per search |
-|---|---:|
-| `Trace: null` (default) | 1.34 KB |
-| saturated trace | 1.34 KB (**+0 bytes**) |
-| fresh trace per search | 1.81 KB (**+0.47 KB**) |
+A **time** figure is deliberately **not** given, and the reason is itself a measurement. On the
+machine used for the run the *baseline* benchmark varied between 1.52 ms and 3.57 ms (2.3×) across
+identical runs, BenchmarkDotNet reported bimodal distributions on the pre-existing search benchmarks
+too, and the traced variant came out faster than the baseline in one run — which is impossible. A
+delta under that spread is not measurable there, so quoting one would be fiction.
 
-A **time** figure is deliberately **not** given. On the machine used for the run, the *baseline*
-benchmark itself varied between 1.52 ms and 3.57 ms (2.3×) across identical runs, and
-BenchmarkDotNet reported bimodal/multimodal distributions on the pre-existing search benchmarks as
-well. A delta smaller than that spread is not measurable there, so quoting one would be fiction.
-The allocation column above is the trustworthy part; re-run `SearchBenchmarks` on a quiet,
-multi-core machine to get a timing.
+Full details, machine configuration and the reproduce command: [BENCHMARKS.md](BENCHMARKS.md#ranking-trace-searchtrace--allocation-only-no-timing).
 
 **Bounds.** A trace stops recording past `Capacity` (default 256) and counts the overflow in
 `Dropped`; check `IsTruncated` rather than assuming `Steps` is the whole story. Stage recording is
