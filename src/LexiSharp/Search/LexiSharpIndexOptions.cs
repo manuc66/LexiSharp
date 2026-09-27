@@ -43,6 +43,20 @@ public sealed class LexiSharpIndexOptions<TDocument>
     /// </summary>
     public Func<TDocument, string?>? Category { get; set; }
 
+    /// <summary>
+    /// Extracts the document's named text fields, so an index built through the typed facade can
+    /// answer per-field statistics (<see cref="ITextIndex.Fields"/>) and feed a field-weighted
+    /// scorer. When <typeparamref name="TDocument"/> is <see cref="SearchDocument"/>, defaults to
+    /// its <see cref="SearchDocument.TextFields"/>.
+    /// </summary>
+    /// <remarks>
+    /// A field's tokens are also part of the flat view, so <see cref="Text"/> and these fields are
+    /// both searchable by a plain BM25 query; what the fields add is per-field weighting, not
+    /// visibility. An empty or null result means the document declares no text field, which is
+    /// not an error.
+    /// </remarks>
+    public Func<TDocument, IReadOnlyDictionary<string, string>?>? TextFields { get; set; }
+
     /// <summary>The ranking strategy. Defaults to Okapi BM25 (<see cref="Bm25Scorer"/>).</summary>
     public ITextScorer Scorer { get; set; } = new Bm25Scorer();
 

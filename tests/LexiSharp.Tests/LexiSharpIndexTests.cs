@@ -39,6 +39,49 @@ public class LexiSharpIndexTests
     }
 
     [Fact]
+    public void TextFieldsSelector_ReachesTheIndexAndStaysSearchable()
+    {
+        var index = new LexiSharpIndex<SampleDoc>(o =>
+        {
+            o.Id = d => d.Id;
+            o.Text = d => d.Body;
+            o.TextFields = d => new Dictionary<string, string> { ["title"] = d.Category };
+        });
+
+        index.AddRange(
+        [
+            new SampleDoc("1", "the article body discusses indexing", "search ranking"),
+            new SampleDoc("2", "another body about cooking", "italian cuisine"),
+        ]);
+
+        // Per-field statistics are available through the facade's own index...
+        Assert.Equal([TextFields.Default, "title"], index.TextIndex.Fields);
+        Assert.Equal(1, index.TextIndex.FieldTermFrequency("1", "title", "ranking"));
+        Assert.Equal(2, index.TextIndex.FieldLength("1", "title"));
+
+        // ...and a field-only term is still findable by a plain query, because the flat view is
+        // the union of the fields.
+        Assert.Equal("1", RequireSingle(index.Search("ranking")).Document.Id);
+    }
+
+    [Fact]
+    public void TextFields_DefaultToTheDocumentOnesWhenTheTypeIsSearchDocument()
+    {
+        var index = new LexiSharpIndex<SearchDocument>(o =>
+        {
+            o.Id = d => d.Id;
+            o.Text = d => d.Text;
+        });
+
+        index.Add(new SearchDocument(
+            "1",
+            "the article body",
+            TextFields: new Dictionary<string, string> { ["title"] = "search ranking" }));
+
+        Assert.Equal(1, index.TextIndex.FieldTermFrequency("1", "title", "ranking"));
+    }
+
+    [Fact]
     public void Search_ReturnsTypedHitsBestFirst()
     {
         var index = CreateIndex(null,

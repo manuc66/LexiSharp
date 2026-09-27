@@ -164,6 +164,26 @@ public sealed class ExpansionTextIndex : ITextIndex, ICandidateIndex, IVocabular
     }
 
     /// <inheritdoc />
+    public IReadOnlyCollection<string> Fields => _inner.Fields;
+
+    /// <inheritdoc />
+    public bool HasFieldStatistics => _inner.HasFieldStatistics;
+
+    /// <inheritdoc />
+    public int FieldTermFrequency(string documentId, string field, string term) =>
+        _inner.FieldTermFrequency(documentId, field, term);
+
+    /// <inheritdoc />
+    public int FieldLength(string documentId, string field) => _inner.FieldLength(documentId, field);
+
+    /// <inheritdoc />
+    public double AverageFieldLength(string field) => _inner.AverageFieldLength(field);
+
+    /// <inheritdoc />
+    public int FieldDocumentFrequency(string field, string term) =>
+        _inner.FieldDocumentFrequency(field, term);
+
+    /// <inheritdoc />
     public IEnumerable<SearchDocument> GetCandidateDocuments(IReadOnlyList<string> terms)
     {
         ArgumentNullException.ThrowIfNull(terms);
