@@ -75,10 +75,15 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --dense               # 
 dotnet run --project bench/LexiSharp.Eval -c Release -- --rerank              # add cross-encoder reranking (MiniLM)
 dotnet run --project bench/LexiSharp.Eval -c Release -- --rerank-top 50       # rerank depth (default 100)
 dotnet run --project bench/LexiSharp.Eval -c Release -- --limit 5            # smoke run
+dotnet run --project bench/LexiSharp.Eval -c Release -- --stem porter       # English stemming
 dotnet run --project bench/LexiSharp.Eval -c Release -- --data /path/to/dir  # custom data dir
 ```
 
 - Datasets live under `bench/LexiSharp.Eval/data/<name>/` (gitignored).
+- Stemming is **off by default**, so every table below is the unstemmed baseline and stays
+  comparable with the numbers already published here. `--stem porter` swaps the shared tokenizer
+  for one carrying `LexiSharp.Linguistics.PorterStemmer`; the harness prints which tokenization
+  a run used, and the effect is measured in [Stemming](#stemming).
 - Evaluation uses the **test** split only (`qrels/test.tsv`), one metric set per dataset
   (nDCG uses the graded qrel scores where present, MAP/MRR/R use binary relevance).
 - Metrics are computed with `LexiSharp.Ranking.RetrievalMetrics`.
@@ -128,6 +133,9 @@ Runtime, no Python:
 
 ## Results (NFCorpus, k=10, 323 test queries)
 
+Default tokenizer, **no stemming** — see [Stemming](#stemming) for the same run with
+`--stem porter`.
+
 | Config                             | nDCG@10 | MAP@10 | MRR@10 |  R@10 |
 |------------------------------------|--------:|-------:|-------:|------:|
 | BM25 (k1=1.5, b=0.75)              |   0.308 |  0.222 |  0.516 | 0.146 |
@@ -153,6 +161,9 @@ roughly +2.1 points over BEIR's published BM25 baseline and +1.3 over the best n
 
 ## Results (SciFact, k=10, 300 test queries)
 
+Default tokenizer, **no stemming** — see [Stemming](#stemming) for the same run with
+`--stem porter`.
+
 | Config                             | nDCG@10 | MAP@10 | MRR@10 |  R@10 |
 |------------------------------------|--------:|-------:|-------:|------:|
 | BM25 (k1=1.5, b=0.75)              |   0.662 |  0.619 |  0.629 | 0.781 |
@@ -162,36 +173,95 @@ roughly +2.1 points over BEIR's published BM25 baseline and +1.3 over the best n
 | BM25 tuned (k1=1.5, b=1)           |   0.664 |  0.619 |  0.630 | 0.789 |
 
 BM25 at 0.662 vs the 0.665 BEIR reference — within 0.5 % on a dataset whose claims use exact
-terminology, so the no-stemming gap (visible on NFCorpus) nearly disappears here; the tuned
-k1=1.5/b=1 operating point reproduces the reference at 0.664.
+terminology, so the stemming gap (large on NFCorpus, see [Stemming](#stemming)) nearly disappears
+here; the tuned k1=1.5/b=1 operating point reproduces the reference at 0.664.
 
 ## Results (ArguAna, k=10, 1406 test queries)
 
+Default tokenizer, **no stemming** — see [Stemming](#stemming) for the same run with
+`--stem porter`.
+
 | Config                             | nDCG@10 | MAP@10 | MRR@10 |  R@10 |
 |------------------------------------|--------:|-------:|-------:|------:|
-| BM25 (k1=1.5, b=0.75)              |   0.320 |  0.207 |  0.207 | 0.679 |
+| BM25 (k1=1.5, b=0.75)              |   0.289 |  0.187 |  0.187 | 0.611 |
+| BM25 (k1=1.2, b=0.75)              |   0.283 |  0.184 |  0.184 | 0.597 |
+| TF-IDF                             |   0.008 |  0.005 |  0.005 | 0.016 |
+| QueryLikelihood (λ=0.2)            |   0.227 |  0.147 |  0.147 | 0.483 |
+| Hybrid BM25+QL (weighted)          |   0.289 |  0.187 |  0.187 | 0.611 |
+| Hybrid BM25+QL (RRF)               |   0.257 |  0.167 |  0.167 | 0.545 |
 
-BM25 over the full 1406-query test split lands at **0.320 vs the 0.315 BEIR reference** —
-slightly *above* it. Together with NFCorpus (−5 %) and SciFact (−0.5 %), this shows the
-cross-dataset gap is (k1, b)-choice and tokenization variance, not a systematic engine deficit.
+BM25 over the full 1406-query test split lands at **0.289 against the 0.315 BEIR reference**, so
+ArguAna sits **8 % below** it — the largest gap of the three corpora, and the opposite of what
+this section used to claim. Correction: the row here used to read 0.320 and was described as
+"slightly above" the reference. That number is not reproducible on the current code — `HEAD`
+without any of the changes on this branch produces the same 0.289 over the full split — while
+`--limit 50`, which evaluates only the first 50 test queries, produces 0.321. The published row
+therefore looks like a subset run labelled as a full-split one. The table above is the full
+6-config, full-split run the section describes; reproduce it with
+`dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset arguana --no-tuned`.
+
+The earlier reading of the cross-dataset pattern — that the gaps were (k1, b)-choice and
+tokenization variance rather than a systematic engine deficit — does not survive this, and the
+[stemming measurement](#stemming) narrows it further: turning the stemmer on puts NFCorpus and
+SciFact on or above their references while ArguAna stays 8 % below, so the analyzer is not what
+ArguAna is missing. These runs locate the gap, they do not explain it. Nothing here sweeps the
+configurations that were not run — stop words, n-grams, or a k1/b grid beyond the two rows
+above — and no claim is made about why ArguAna behaves differently.
 
 ArguAna queries are whole argument texts (~200+ tokens), which makes every query score a large
-share of the 8674 single-claim documents: ~190 ms/query on this machine vs ~2 ms/query on
-NFCorpus/SciFact — the oracle tuning grid adds about two hours there, which is why `--no-tuned`
-is the practical default. The single row above is a full-corpus, full test-split run; the
-multi-config table is left to `--no-tuned --limit` smoke runs or a calmer machine.
+share of the 8674 single-claim documents. In the run above BM25 takes 117 s for 1406 queries
+(~83 ms/query) against under 2 ms/query on NFCorpus — so the oracle tuning grid adds hours there,
+which is why `--no-tuned` is the practical default and why the table above is a single
+full-split run rather than a sweep. Treat that 83 ms as one machine's wall clock, not a
+benchmark.
+
+## Stemming
+
+The core ships `LexiSharp.Linguistics.PorterStemmer` (Porter, 1980 — English only, no
+dependency, opt-in). `--stem porter` hands the shared tokenizer to it; stemming is off by
+default, so every table above is the unstemmed baseline. Same corpora, same queries, same
+`--no-tuned` flags, nDCG@10:
+
+| Config                    | NFCorpus | +stem | SciFact | +stem | ArguAna | +stem |
+|---------------------------|---------:|------:|--------:|------:|--------:|------:|
+| BM25 (k1=1.5, b=0.75)     |    0.308 | **0.322** |   0.662 | **0.687** |   0.289 | 0.279 |
+| BM25 (k1=1.2, b=0.75)     |    0.306 | **0.321** |   0.660 | **0.687** |   0.283 | 0.272 |
+| TF-IDF                    |    0.248 | **0.257** |   0.345 | **0.362** |   0.008 | 0.007 |
+| QueryLikelihood (λ=0.2)   |    0.288 | **0.298** |   0.622 | **0.648** |   0.227 | 0.212 |
+| Hybrid BM25+QL (weighted)  |    0.308 | **0.322** |   0.662 | **0.687** |   0.289 | 0.279 |
+| Hybrid BM25+QL (RRF)       |    0.300 | **0.310** |   0.644 | **0.669** |   0.257 | 0.244 |
+| BEIR BM25 reference       |    0.325 |    —    |   0.665 |    —    |   0.315 |   —   |
+
+**Stemming helps on two corpora and hurts on the third.** On NFCorpus every config improves and
+BM25 goes 0.308 → 0.322, taking the gap to BEIR's 0.325 from −5.2 % to −0.9 %; on SciFact
+0.662 → 0.687 puts it *above* the 0.665 reference (R@10 0.781 → 0.818). On ArguAna every config
+*loses* ground — BM25 0.289 → 0.279, QL 0.227 → 0.212 — so stemming does not explain that
+corpus's gap, it widens it. MAP@10, MRR@10 and R@10 move with nDCG@10 in all three columns.
+
+That three-way split is the argument for keeping stemming **opt-in** rather than defaulting it:
+the right choice is corpus-dependent, and this harness cannot say which regime your data is in.
+ArguAna's queries are whole arguments, so nearly every term is a content word that gets folded
+onto a shared stem — the case where over-stemming has the most to lose and the least to gain.
+
+What this does **not** establish: the indexing and querying cost of stemming is not measured
+here — the harness reports wall-clock time per config, but single runs are not timing evidence
+(see [BENCHMARKS.md](../../BENCHMARKS.md)). Nor is anything measured on non-English text, on
+precision-oriented workloads, on the dense and cross-encoder lanes (they tokenize independently
+of the lexical index), or on the reason ArguAna regresses. The [core README](../../README.md)
+repeats the scope: Porter's own status text calls the algorithm "slightly inferior to the Snowball
+English or Porter2 stemmer", and it over-stems by design (`relate` and `relational` both become
+`relat`).
 
 ## Reference
 
 - **BEIR paper** — Thakur et al. 2021, *BEIR: A Heterogeneous Benchmark for Zero-shot
   Evaluation of Information Retrieval Models*: BM25 nDCG@10 = **0.325** (NFCorpus), **0.665**
   (SciFact), **0.315** (ArguAna) in Table 2. <https://arxiv.org/abs/2104.08663>
-- LexiSharp's default tokenizer lowercases, folds diacritics and splits on
-  non-alphanumerics, **but does not stem** — the dominant cause of the small, systematic,
-  dataset-scaled gap to the published baselines. It costs ~5 % on NFCorpus (inflected
-  medical vocabulary) and ~0.5 % on SciFact (exact terminology), while ArguAna lands
-  slightly *above* the reference. The *relative* ordering of the configs is the meaningful
-  signal.
+- The default tokenizer lowercases, folds diacritics and splits on non-alphanumerics but
+  **does not stem**, and that is the whole of the NFCorpus gap: `--stem porter` takes it from
+  0.308 to 0.322 against a 0.325 reference, and from 0.662 to 0.687 on SciFact. It is not the
+  whole story everywhere — on ArguAna stemming costs a point — so it stays opt-in, the tables
+  above stay unstemmed, and the *relative* ordering of the configs is the meaningful signal.
 - `BM25 tuned` (shown at run time) tunes k1/b **in-sample** on the very queries being scored —
   an oracle, not a fair baseline; it is reported only to exercise
   `Bm25ParameterTuner` end to end.
