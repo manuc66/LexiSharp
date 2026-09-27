@@ -202,6 +202,34 @@ public class MessagePackPersistenceTests
     }
 
     [Fact]
+    public void Roundtrip_WithShippedStemmer_RestoresAQueryableIndex()
+    {
+        // The happy path behind the guard above, with the stemmer the core actually ships: the
+        // index is rebuilt from stemmed terms, so loading it with a different pipeline would
+        // silently answer the wrong queries.
+        var tokenizer = new Tokenizer(new TokenizerOptions { Stemmer = new PorterStemmer() });
+
+        var original = new InMemoryTextIndex(tokenizer);
+        original.Index(new[]
+        {
+            new SearchDocument("1", "indexing the documents"),
+            new SearchDocument("2", "italian cuisine pasta"),
+        });
+
+        using var stream = new MemoryStream();
+        MessagePackTextIndexPersistence.Save(original, stream);
+        stream.Position = 0;
+
+        var restored = MessagePackTextIndexPersistence.Load(stream, tokenizer);
+
+        Assert.Equal(["index", "the", "document"], restored.GetTerms("1"));
+
+        var engine = new RankedTextSearchEngine(restored, new Bm25Scorer(), tokenizer);
+
+        Assert.Equal(["1"], engine.Search("indexes").Select(result => result.DocumentId).ToArray());
+    }
+
+    [Fact]
     public void Load_RejectsCorruptPayloads()
     {
         using var stream = new MemoryStream([1, 2, 3, 4, 5, 6, 7, 8]);

@@ -1,4 +1,5 @@
 using System.Globalization;
+using LexiSharp.Linguistics;
 
 namespace LexiSharp.Eval;
 
@@ -15,6 +16,7 @@ public static class Program
         bool tuned = true;
         bool rerank = false;
         int rerankCandidates = 100;
+        bool stem = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -47,6 +49,9 @@ public static class Program
                 case "--rerank-top" when i + 1 < args.Length:
                     rerankCandidates = ParsePositive(args[++i], "--rerank-top");
                     break;
+                case "--stem" when i + 1 < args.Length:
+                    stem = ParseStem(args[++i]);
+                    break;
                 case "--help":
                 case "-h":
                     PrintHelp();
@@ -59,6 +64,11 @@ public static class Program
         }
 
         dataBaseDir = Path.GetFullPath(dataBaseDir);
+
+        // The one tokenizer every config shares, so the table is comparable within a run.
+        ITokenizer tokenizer = stem
+            ? new Tokenizer(new TokenizerOptions { Stemmer = new PorterStemmer() })
+            : Tokenizer.Default;
 
         IReadOnlyList<BeirDataset> datasets = datasetArg == "all"
             ? BeirDataset.All
@@ -88,11 +98,14 @@ public static class Program
 
         Console.WriteLine("LexiSharp evaluation harness — BEIR corpora");
         Console.WriteLine($"Data directory: {dataBaseDir}");
+        Console.WriteLine(stem
+            ? "Tokenization: lowercase, diacritics stripped, Porter stemming (LexiSharp.Linguistics.PorterStemmer)."
+            : "Tokenization: lowercase, diacritics stripped, no stemming (Tokenizer.Default).");
         Console.WriteLine();
 
         foreach (BeirDataset dataset in datasets)
         {
-            await RunDatasetAsync(dataset, dataBaseDir, topK, limit, dense, denseSeq, tuned, reranker, rerankCandidates);
+            await RunDatasetAsync(dataset, dataBaseDir, topK, limit, tokenizer, dense, denseSeq, tuned, reranker, rerankCandidates);
             Console.WriteLine();
         }
 
@@ -100,8 +113,8 @@ public static class Program
     }
 
     private static async Task RunDatasetAsync(
-        BeirDataset dataset, string dataBaseDir, int topK, int? limit, bool dense, int denseSeq, bool tuned,
-        IReranker? reranker, int rerankCandidates)
+        BeirDataset dataset, string dataBaseDir, int topK, int? limit, ITokenizer tokenizer, bool dense,
+        int denseSeq, bool tuned, IReranker? reranker, int rerankCandidates)
     {
         Console.WriteLine($"== {dataset.Name} ==");
 
@@ -126,13 +139,13 @@ public static class Program
             Console.WriteLine("Dense configs disabled — re-run with --dense to add multilingual-e5-small (CPU, first run downloads the model and encodes the corpus). Re-run with --rerank to add a cross-encoder second stage.");
         }
 
-        var (results, tunedDescription) = Evaluation.Run(corpus, topK, limit, denseVectors, tuned, reranker, rerankCandidates);
+        var (results, tunedDescription) = Evaluation.Run(corpus, topK, limit, tokenizer, denseVectors, tuned, reranker, rerankCandidates);
 
         PrintTable(results, topK);
         PrintReference(dataset);
 
         Console.WriteLine($"BM25 tuned in-sample on the same queries (oracle, not a fair baseline): {tunedDescription}");
-        Console.WriteLine("Note: LexiSharp's default tokenizer lowercases, strips diacritics and splits on non-alphanumerics, but does not stem — so absolute scores differ from BEIR's published baselines, while the relative ordering of configs is meaningful.");
+        Console.WriteLine("Note: the tokenizer lowercases, strips diacritics and splits on non-alphanumerics; stemming is off unless --stem is passed. Absolute scores therefore depend on that choice, while the relative ordering of configs is meaningful.");
     }
 
     private static void PrintTable(IReadOnlyList<ConfigResult> results, int topK)
@@ -173,6 +186,13 @@ public static class Program
             : "  Relevance is binary (0/1) in the qrels.");
     }
 
+    private static bool ParseStem(string value) => value switch
+    {
+        "porter" => true,
+        "none" => false,
+        _ => throw new ArgumentException($"--stem must be 'porter' or 'none', got '{value}'."),
+    };
+
     private static int ParsePositive(string value, string option)
     {
         if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) || parsed <= 0)
@@ -185,7 +205,7 @@ public static class Program
     {
         Console.WriteLine("""
             Usage: LexiSharp.Eval [--data <dir>] [--dataset <name|all>] [--top-k <n>] [--limit <n>]
-                     [--no-tuned] [--dense] [--dense-seq <n>] [--rerank] [--rerank-top <n>]
+                     [--no-tuned] [--stem porter] [--dense] [--dense-seq <n>] [--rerank] [--rerank-top <n>]
 
               --data <dir>      Base directory for datasets (default: <project>/data).
                                 Downloaded and checksum-verified on first run.
@@ -196,6 +216,8 @@ public static class Program
               --no-tuned        Skip the in-sample k1/b oracle tuning (fast on heavy datasets
                                 like arguana, where the 5×5 grid over long queries is the
                                 dominant cost).
+              --stem porter     Stem every term with LexiSharp.Linguistics.PorterStemmer (English,
+                                opt-in; off by default, so the tables stay comparable).
               --dense           Add dense retrieval configs using multilingual-e5-small (ONNX Runtime).
                                 First run downloads the model and encodes corpus+queries on CPU
                                 (threads capped at 4); embeddings are cached for later runs.

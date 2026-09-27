@@ -26,6 +26,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="TestData/**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../../src/LexiSharp/LexiSharp.csproj" />
     <ProjectReference Include="../../src/LexiSharp.AspNetCore/LexiSharp.AspNetCore.csproj" />
     <ProjectReference Include="../../src/LexiSharp.MessagePack/LexiSharp.MessagePack.csproj" />
