@@ -33,6 +33,8 @@ The demo is the fastest way to *see* what the composable pieces buy you: the who
 Clicking a hit also shows the **`SearchTrace` chain** for that document — the stages it passed
 through and the score going in and out of each:
 
+![The explain panel of the demo, with the ranking chain of one document in the rerank lane: two BM25 scores from the lexical and semantic lanes, the dense score, the RRF merge with its per-source scores, and the cross-encoder verdict, each with the score going in and coming out](docs/images/demo-explain.png)
+
 ```
 score   4.6925 -> 4.6925  BM25
 score   3.1642 -> 3.1642  BM25
