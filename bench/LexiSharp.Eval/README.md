@@ -161,6 +161,12 @@ and only their order changes, which it does not read. `FieldSplitInvarianceTests
 property, so a future change that broke it would fail the suite rather than quietly rewrite these
 tables.
 
+**Proximity rows** (`BM25 + proximity`, three shapes, identical first stage so the difference is
+proximity alone): damp at full strength 0.302, damp at quarter 0.308, boost 0.308, against BM25's
+0.308. Neutral to slightly negative. An earlier version of `ProximityReranker` reported 0.298 here
+because its decay was unbounded — that number was the bug, not the technique; see the floor note in
+the main README.
+
 **The BM25F rows are a negative result, and a correction.** On this corpus BM25F sits *below* BM25
 (0.296 vs 0.308) and the title weight moves nothing at all.
 

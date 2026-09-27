@@ -264,6 +264,64 @@ public class ProximityRerankerTests
     }
 
     [Fact]
+    public void TheDampPenaltyIsBoundedRegardlessOfDocumentLength()
+    {
+        // The defect this pins: the natural decay 1 - strength*(1 - n/W) is unbounded, so a long
+        // document with its query terms far apart was multiplied by a factor approaching zero. A
+        // 100-token document and a 10 000-token one were punished by ~97% and ~99.98% for the same
+        // relative layout -- punishing a document for being long, when "are these near each other?"
+        // is a relative question. The floor makes the penalty a preference rather than a veto.
+        foreach (int length in new[] { 100, 1_000, 10_000 })
+        {
+            var words = Enumerable.Repeat("filler", length).ToList();
+            words[length / 10] = "alpha";
+            words[length - 10] = "beta";
+
+            var index = new InMemoryTextIndex();
+            index.Index([new SearchDocument("long", string.Join(' ', words))]);
+
+            Assert.Equal(length, index.DocumentLength("long"));
+
+            var before = Candidates(index, "alpha beta", "long");
+            var after = new ProximityReranker(index, strength: 1.0).Rerank("alpha beta", before);
+
+            // Never below the default floor of 0.5, and never above 1.
+            Assert.InRange(after[0].Score / before[0].Score, 0.5, 1.0);
+        }
+    }
+
+    [Fact]
+    public void TheFloorIsHonouredExactly()
+    {
+        var words = Enumerable.Repeat("filler", 500).ToList();
+        words[5] = "alpha";
+        words[495] = "beta";
+
+        var index = new InMemoryTextIndex();
+        index.Index([new SearchDocument("long", string.Join(' ', words))]);
+
+        var before = Candidates(index, "alpha beta", "long");
+
+        // A window far wider than the term count, so the raw factor is ~0.02 and the floor decides.
+        var after = new ProximityReranker(index, strength: 1.0, floor: 0.25)
+            .Rerank("alpha beta", before);
+
+        Assert.Equal(before[0].Score * 0.25, after[0].Score, 12);
+    }
+
+    [Fact]
+    public void AFloorOfOneIsANoOp()
+    {
+        var index = AdjacentVersusSpread();
+        var before = Candidates(index, "refresh token", "adjacent", "spread");
+
+        var after = new ProximityReranker(index, strength: 1.0, floor: 1.0)
+            .Rerank("refresh token", before);
+
+        Assert.Equal(before.Select(r => r.Score), after.Select(r => r.Score));
+    }
+
+    [Fact]
     public void ArgumentValidation()
     {
         var index = AdjacentVersusSpread();
@@ -275,6 +333,9 @@ public class ProximityRerankerTests
             () => new ProximityReranker(index, strength: double.NaN));
         Assert.Throws<ArgumentOutOfRangeException>(
             () => new ProximityReranker(index, mode: (ProximityMode)42));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ProximityReranker(index, floor: 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ProximityReranker(index, floor: 1.5));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ProximityReranker(index, floor: double.NaN));
 
         var reranker = new ProximityReranker(index);
         var candidates = Candidates(index, "refresh token", "adjacent", "spread");

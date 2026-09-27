@@ -1270,41 +1270,51 @@ terms are contiguous, smaller as they spread. Two shapes turn that into a score,
 interchangeable:
 
 ```csharp
-// Damp: multiply. Can only lower a score.
-new ProximityReranker(index, tokenizer, strength: 1.0, mode: ProximityMode.Damp)
+// Damp: multiply. Can only lower a score, down to the floor at worst.
+new ProximityReranker(index, tokenizer, strength: 1.0, mode: ProximityMode.Damp, floor: 0.5)
 
 // Boost: add strength × Σ idf(t) × tightness. The proximity term lives on its own scale,
 // so it can only raise a score and never demotes on distance alone.
 new ProximityReranker(index, tokenizer, strength: 1.0, mode: ProximityMode.Boost)
 ```
 
-`strength = 0` is a no-op in both. A single-term query is always a no-op, and a candidate missing
-one of the query terms is **left untouched** — whether it should match every query term is the
-first-stage scorer's judgement, not this one's. Field boundaries count as distance, since separate
-field runs are separated by a position gap.
+`strength = 0` is a no-op in both, and so is a `floor` of 1. A single-term query is always a no-op,
+and a candidate missing one of the query terms is **left untouched** — whether it should match every
+query term is the first-stage scorer's judgement, not this one's. Field boundaries count as distance,
+since separate field runs are separated by a position gap.
 
-**And the measurement, which is negative.** Across the reference corpus, NFCorpus and SciFact, three
-shapes each:
+**The floor is not a knob, it is a bug fix.** The obvious decay `1 - strength × (1 - n/W)` is
+unbounded: two terms 81 positions apart in a 100-token document give `n/W ≈ 0.025`, a 97.5 % penalty,
+and at opposite ends of a 10 000-token document `n/W ≈ 0.0002`. That punishes a document for being
+*long*, when « are these terms near each other? » is a relative question. The first version had no
+floor and cost 0.15 nDCG@5 on the reference corpus. The unit tests did not catch it, because they
+asserted that an adjacent match outranks a spread one — which holds just as happily under a 2 %
+penalty as under a 97 % one.
+`TheDampPenaltyIsBoundedRegardlessOfDocumentLength` now pins it.
+
+**And the measurement:**
 
 | Config | reference (nDCG@5) | NFCorpus (nDCG@10) | SciFact (nDCG@10) |
 |---|---|---|---|
 | BM25 | **0.8751** | **0.308** | **0.662** |
+| BM25 (tuned) | 0.8812 | 0.311 | 0.664 |
 | proximity, damp s=0.25 | 0.8751 | 0.308 | 0.660 |
-| proximity, damp s=1 | 0.7227 | 0.298 | 0.652 |
+| proximity, damp s=1 | 0.8583 | 0.302 | 0.653 |
 | proximity, boost s=1 | 0.8751 | 0.308 | 0.662 |
 
-**Damp actively hurts, and gets worse the harder you pull.** Boost is neutral everywhere — it moves
-scores but not the ranking, and on NFCorpus it is a hair better on MRR (0.519 vs 0.516) at identical
-nDCG. The likely reason is that nDCG@10 here is decided by whether the right document makes the top
-ten at all, and BM25's term-frequency signal already orders that set well; proximity only reshuffles
-documents whose scores are already close, which is where it adds noise. The gains proximity is
-credited with in the literature come from exact-phrase tasks and from a tuned phrase *clause* as a
-separate scoring term, not from one global strength applied after the fact.
+**Damp still loses, but by 0.017 rather than the 0.152 the unbounded version cost** — most of what
+that earlier number reported was the bug, not the idea. Boost stays neutral: it moves scores without
+moving the ranking, and on NFCorpus it is a hair better on MRR (0.519 vs 0.516) at identical nDCG.
 
-So the honest reading: **do not assume proximity helps.** It is here because the arithmetic is
-well-defined, tested, and cheap to evaluate on your own corpus —
-`--configs bm25,bm25-proximity,bm25-proximity-boost`. It is the right tool when a spread-out match
-really is a weaker match, which is a property of your data, not of the technique.
+The likely reason neither helps: nDCG@10 here is decided by whether the right document makes the top
+ten at all, and BM25's term-frequency signal already orders that set well, so proximity only
+reshuffles documents whose scores are already close. The gains it is credited with in the literature
+come from exact-phrase tasks and from a tuned phrase *clause* as a separate scoring term, not from
+one global strength applied after the fact.
+
+So: **do not assume proximity helps.** It ships because the arithmetic is specified, tested, and
+cheap to evaluate on your own corpus — `--configs bm25,bm25-proximity,bm25-proximity-boost`. It is
+the right tool when a spread-out match really is a weaker match, which is a property of your data.
 
 ### BM25 variants
 
@@ -1351,9 +1361,12 @@ is noise. BM25L is clearly worse, and badly so on the two BEIR corpora — 0.257
 NFCorpus, 0.575 against 0.664 on SciFact.
 
 **The obvious objection, stated before you make it:** the variants were measured at a *default* `δ`
-while BM25 got tuned, so this is not a fair fight. `Bm25ParameterTuner` only tunes `(k1, b)`, and
-there is no tuner for `δ` yet — that is the honest caveat, and it is also the fix. But BM25L is
-13–17 % behind, which is a lot for a missing knob to close.
+while BM25 got tuned, so this is not a fair fight. Checked directly, and the verdict survives — against
+**untuned** BM25 the same run reads 0.8751 / 0.8644 / 0.8073, and on NFCorpus 0.308 / 0.300 / 0.257.
+So the variants lose on the merit of the formula, not only because the baseline got a tuning
+advantage. What remains genuinely untested is whether a *tuned* `δ` would change that:
+`Bm25ParameterTuner` only searches `(k1, b)` and there is no `δ` tuner, which is the honest caveat
+and the obvious next step. BM25L is 13–17 % behind, though, which is a lot for a missing knob.
 
 They ship because the formulas are well-defined, cheap, correctly transcribed, and measured — and
 because a negative result with a number attached is worth more than an omission. Re-measure with
