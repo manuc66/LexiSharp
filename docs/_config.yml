@@ -30,6 +30,8 @@ search:
   preview_word_count: 20
 
 aux_links:
+  "All projects":
+    - "https://manuc66.github.io/"
   "Source on GitHub":
     - "https://github.com/manuc66/LexiSharp"
   "NuGet":
