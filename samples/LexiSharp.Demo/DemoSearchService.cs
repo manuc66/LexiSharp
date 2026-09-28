@@ -9,6 +9,18 @@ using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
 
+// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
+// below. The interface is the published return type: a List<T> or an array in its place
+// would hand callers a mutable collection through a contract that says they cannot have
+// one, and what it saves is a single interface dispatch per call, which no measurement in
+// docs/benchmarks.md attributes time to.
+
+// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
+// the lines below. Its premise is a call repeated with the same literal, allocating each
+// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
+// it -- hoisting it into a field saves nothing that is measured, and moves the data away
+// from the test that fails on it.
+
 namespace LexiSharp.Demo;
 
 /// <summary>
@@ -59,7 +71,7 @@ public sealed class DemoSearchService
         _hybrid = new HybridTextSearchEngine(
             new ITextSearchEngine[] { _lexical.Engine, _semantic.Engine, _dense },
             new ReciprocalRankFusionMerger(),
-            sourceNames: new[] { "lexical", "semantic", "dense" });
+            sourceNames: new[] { "lexical", "semantic", "dense" }); // NOSONAR:CA1861
 
         _rerank = new RerankedTextSearchEngine(
             _hybrid,
@@ -255,7 +267,7 @@ public sealed class DemoSearchService
         return 0;
     }
 
-    private IReadOnlyList<HitResult> LexicalHits(string query, int limit)
+    private IReadOnlyList<HitResult> LexicalHits(string query, int limit) // NOSONAR:CA1859
     {
         var hits = _lexical.Search(query, new LexiSharpQueryOptions(Limit: limit, Highlight: true));
         var results = new HitResult[hits.Count];
@@ -269,7 +281,7 @@ public sealed class DemoSearchService
         return results;
     }
 
-    private IReadOnlyList<HitResult> SemanticHits(string query, int limit)
+    private IReadOnlyList<HitResult> SemanticHits(string query, int limit) // NOSONAR:CA1859
     {
         var hits = _semantic.Search(query, new LexiSharpQueryOptions(Limit: limit, Highlight: true));
         var results = new HitResult[hits.Count];
@@ -283,7 +295,7 @@ public sealed class DemoSearchService
         return results;
     }
 
-    private IReadOnlyList<HitResult> DenseHits(string query, int limit)
+    private IReadOnlyList<HitResult> DenseHits(string query, int limit) // NOSONAR:CA1859
     {
         var hits = _dense.Search(query, new SearchOptions(Limit: limit));
         var results = new HitResult[hits.Count];
@@ -297,7 +309,7 @@ public sealed class DemoSearchService
         return results;
     }
 
-    private IReadOnlyList<HitResult> HybridHits(string query, int limit)
+    private IReadOnlyList<HitResult> HybridHits(string query, int limit) // NOSONAR:CA1859
     {
         var details = _hybrid.SearchWithDetails(query, new SearchOptions(Limit: limit));
         var results = new HitResult[details.Count];
@@ -311,7 +323,7 @@ public sealed class DemoSearchService
         return results;
     }
 
-    private IReadOnlyList<HitResult> RerankHits(string query, int limit)
+    private IReadOnlyList<HitResult> RerankHits(string query, int limit) // NOSONAR:CA1859
     {
         var hits = _rerank.Search(query, new SearchOptions(Limit: limit));
         var results = new HitResult[hits.Count];

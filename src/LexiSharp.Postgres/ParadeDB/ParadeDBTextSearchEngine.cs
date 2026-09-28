@@ -3,6 +3,12 @@ using LexiSharp.Postgres;
 using Npgsql;
 using NpgsqlTypes;
 
+// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
+// below. The interface is the published return type: a List<T> or an array in its place
+// would hand callers a mutable collection through a contract that says they cannot have
+// one, and what it saves is a single interface dispatch per call, which no measurement in
+// docs/benchmarks.md attributes time to.
+
 namespace LexiSharp.ParadeDB;
 
 /// <summary>
@@ -332,7 +338,7 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, I
         return new SearchDocument(id, content, fields, category);
     }
 
-    private static IReadOnlyDictionary<string, string>? DeserializeFields(string? json)
+    private static IReadOnlyDictionary<string, string>? DeserializeFields(string? json) // NOSONAR:CA1859
     {
         if (string.IsNullOrEmpty(json))
             return null;

@@ -3,6 +3,12 @@ using LexiSharp.Postgres;
 using Npgsql;
 using Xunit;
 
+// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
+// the lines below. Its premise is a call repeated with the same literal, allocating each
+// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
+// it -- hoisting it into a field saves nothing that is measured, and moves the data away
+// from the test that fails on it.
+
 namespace LexiSharp.Tests;
 
 /// <summary>
@@ -265,20 +271,20 @@ public class PostgresTextSearchEngineTests
 
             static SearchOptions With(MetadataFilter filter) => new(Limit: 10, Filters: new[] { filter });
 
-            Assert.Equal(new[] { "a" }, Ids(engine.Search("quick fox",
+            Assert.Equal(new[] { "a" }, Ids(engine.Search("quick fox", // NOSONAR:CA1861
                 With(new MetadataFilter("kind", MetadataFilterOperator.Equal, "article")))));
 
             // NotEqual also admits the document that carries no field at all (absent passes).
-            Assert.Equal(new[] { "b", "c", "d" }, Ids(engine.Search("quick fox",
+            Assert.Equal(new[] { "b", "c", "d" }, Ids(engine.Search("quick fox", // NOSONAR:CA1861
                 With(new MetadataFilter("kind", MetadataFilterOperator.NotEqual, "article")))));
 
-            Assert.Equal(new[] { "a", "c" }, Ids(engine.Search("quick fox",
+            Assert.Equal(new[] { "a", "c" }, Ids(engine.Search("quick fox", // NOSONAR:CA1861
                 With(new MetadataFilter("kind", MetadataFilterOperator.Contains, "article")))));
 
-            Assert.Equal(new[] { "b", "c" }, Ids(engine.Search("quick fox",
+            Assert.Equal(new[] { "b", "c" }, Ids(engine.Search("quick fox", // NOSONAR:CA1861
                 With(new MetadataFilter("year", MetadataFilterOperator.GreaterThan, "2022")))));
 
-            Assert.Equal(new[] { "a" }, Ids(engine.Search("quick fox",
+            Assert.Equal(new[] { "a" }, Ids(engine.Search("quick fox", // NOSONAR:CA1861
                 With(new MetadataFilter("year", MetadataFilterOperator.LessThan, "2023")))));
 
             Assert.Empty(engine.Search("quick fox",

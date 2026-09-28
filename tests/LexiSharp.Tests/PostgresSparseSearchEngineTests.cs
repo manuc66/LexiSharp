@@ -2,6 +2,12 @@ using LexiSharp.Core;
 using LexiSharp.Postgres;
 using Xunit;
 
+// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
+// the lines below. Its premise is a call repeated with the same literal, allocating each
+// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
+// it -- hoisting it into a field saves nothing that is measured, and moves the data away
+// from the test that fails on it.
+
 namespace LexiSharp.Tests;
 
 public class PostgresSparseSearchEngineTests
@@ -247,8 +253,8 @@ public class PostgresSparseSearchEngineTests
             var page1 = engine.Search("apple", new SearchOptions(Limit: 2, Offset: 0));
             var page2 = engine.Search("apple", new SearchOptions(Limit: 2, Offset: 2));
 
-            Assert.Equal(new[] { "e2", "e1" }, page1.Select(r => r.DocumentId).ToArray());
-            Assert.Equal(new[] { "e3" }, page2.Select(r => r.DocumentId).ToArray());
+            Assert.Equal(new[] { "e2", "e1" }, page1.Select(r => r.DocumentId).ToArray()); // NOSONAR:CA1861
+            Assert.Equal(new[] { "e3" }, page2.Select(r => r.DocumentId).ToArray()); // NOSONAR:CA1861
 
             Assert.Empty(engine.Search("apple", new SearchOptions(Limit: 2, Offset: 3)));
             Assert.Empty(engine.Search("apple", new SearchOptions(Limit: 2, Offset: -1)));
@@ -285,7 +291,7 @@ public class PostgresSparseSearchEngineTests
             var filtered = engine.Search("red apple", new SearchOptions(Limit: 10,
                 Filters: new[] { new MetadataFilter("kind", MetadataFilterOperator.Equal, "fruit") }));
 
-            Assert.Equal(new[] { "red" }, filtered.Select(r => r.DocumentId).ToArray());
+            Assert.Equal(new[] { "red" }, filtered.Select(r => r.DocumentId).ToArray()); // NOSONAR:CA1861
 
             Assert.Empty(engine.Search("red apple", new SearchOptions(Limit: 10,
                 Filters: new[] { new MetadataFilter("kind", MetadataFilterOperator.Equal, "nope") })));

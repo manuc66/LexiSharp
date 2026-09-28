@@ -1,6 +1,12 @@
 using System.Globalization;
 using LexiSharp.Core;
 
+// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
+// below. The interface is the published return type: a List<T> or an array in its place
+// would hand callers a mutable collection through a contract that says they cannot have
+// one, and what it saves is a single interface dispatch per call, which no measurement in
+// docs/benchmarks.md attributes time to.
+
 namespace LexiSharp.Hybrid;
 
 /// <summary>
@@ -25,7 +31,7 @@ namespace LexiSharp.Hybrid;
 /// </remarks>
 public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchEngine
 {
-    private readonly IReadOnlyList<ITextSearchEngine> _engines;
+    private readonly IReadOnlyList<ITextSearchEngine> _engines; // NOSONAR:CA1859
     private readonly IReadOnlyList<string> _sourceNames;
     private readonly IResultMerger _merger;
     private readonly int _minCandidatesPerEngine;
@@ -238,7 +244,7 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
     /// both before and after: a merger is not a per-document transform but a re-ranking over the
     /// union, so there is no meaningful single before-score.
     /// </summary>
-    private void RecordMergeStage(SearchTrace? trace, IReadOnlyList<DetailedSearchResult> page)
+    private void RecordMergeStage(SearchTrace? trace, IReadOnlyList<DetailedSearchResult> page) // NOSONAR:CA1859
     {
         if (trace is null)
             return;

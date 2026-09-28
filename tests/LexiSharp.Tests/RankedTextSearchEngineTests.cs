@@ -6,6 +6,12 @@ using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
 using Xunit;
 
+// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
+// the lines below. Its premise is a call repeated with the same literal, allocating each
+// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
+// it -- hoisting it into a field saves nothing that is measured, and moves the data away
+// from the test that fails on it.
+
 namespace LexiSharp.Tests;
 
 public class RankedTextSearchEngineTests
@@ -364,7 +370,7 @@ public class RankedTextSearchEngineTests
 
         // Default budget 1: "cars" (0 edit), "car" and "care" (1 edit) all expand in.
         var fuzzy = engine.Search("cars~", new SearchOptions(Limit: 10));
-        Assert.Equal(new[] { "1", "2", "3" }, fuzzy.Select(r => r.DocumentId).OrderBy(x => x));
+        Assert.Equal(new[] { "1", "2", "3" }, fuzzy.Select(r => r.DocumentId).OrderBy(x => x)); // NOSONAR:CA1861
 
         // Budget 0 pins the expansion to the exact term.
         var exact = engine.Search("cars~0", new SearchOptions(Limit: 10));
@@ -406,7 +412,7 @@ public class RankedTextSearchEngineTests
 
         // Default behavior expands the known term to its close variants too.
         var expanded = engine.Search("keycloak~", new SearchOptions(Limit: 10));
-        Assert.Equal(new[] { "1", "2" }, expanded.Select(r => r.DocumentId).OrderBy(x => x));
+        Assert.Equal(new[] { "1", "2" }, expanded.Select(r => r.DocumentId).OrderBy(x => x)); // NOSONAR:CA1861
 
         // With the flag, an in-vocabulary base term matches exactly: doc 2 ("keycloaks") falls out.
         var exactOnly = engine.Search("keycloak~", new SearchOptions(Limit: 10, FuzzyOnlyOutOfVocabulary: true));
@@ -419,7 +425,7 @@ public class RankedTextSearchEngineTests
 
         // Prefix atoms are never affected by the flag.
         var prefix = engine.Search("keyclo*", new SearchOptions(Limit: 10, FuzzyOnlyOutOfVocabulary: true));
-        Assert.Equal(new[] { "1", "2" }, prefix.Select(r => r.DocumentId).OrderBy(x => x));
+        Assert.Equal(new[] { "1", "2" }, prefix.Select(r => r.DocumentId).OrderBy(x => x)); // NOSONAR:CA1861
     }
 
     [Fact]
@@ -538,7 +544,7 @@ public class RankedTextSearchEngineTests
                 .Search(query, new SearchOptions(Limit: 10));
 
             Assert.Equal(
-                new[] { "1", "2", "3" },
+                new[] { "1", "2", "3" }, // NOSONAR:CA1861
                 results.Select(r => r.DocumentId).OrderBy(x => x, StringComparer.Ordinal));
         }
     }

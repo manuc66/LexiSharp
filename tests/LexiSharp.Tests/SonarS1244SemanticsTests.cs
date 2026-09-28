@@ -4,6 +4,12 @@ using LexiSharp.Indexing;
 using LexiSharp.Ranking;
 using Xunit;
 
+// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
+// the lines below. Its premise is a call repeated with the same literal, allocating each
+// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
+// it -- hoisting it into a field saves nothing that is measured, and moves the data away
+// from the test that fails on it.
+
 namespace LexiSharp.Tests;
 
 /// <summary>
@@ -62,9 +68,9 @@ public class SonarS1244SemanticsTests
             "q1",
             "query",
             Metrics(0.5),
-            new[] { "a", "b" },
+            new[] { "a", "b" }, // NOSONAR:CA1861
             null,
-            new[] { 1.0000000000000002, 1.0 });
+            new[] { 1.0000000000000002, 1.0 }); // NOSONAR:CA1861
 
         Assert.False(almostTied.TiesWithNeighbour(0));
         Assert.False(almostTied.TiesWithNeighbour(1));
@@ -74,15 +80,15 @@ public class SonarS1244SemanticsTests
             "q2",
             "query",
             Metrics(1.0),
-            new[] { "a", "b" },
+            new[] { "a", "b" }, // NOSONAR:CA1861
             null,
-            new[] { 2.5, 2.5 });
+            new[] { 2.5, 2.5 }); // NOSONAR:CA1861
 
         Assert.True(tied.TiesWithNeighbour(0));
         Assert.True(tied.TiesWithNeighbour(1));
 
         // An unknown score is not evidence of a tie.
-        var unknown = new BenchmarkQueryResult("q3", "query", Metrics(1.0), new[] { "a" }, null);
+        var unknown = new BenchmarkQueryResult("q3", "query", Metrics(1.0), new[] { "a" }, null); // NOSONAR:CA1861
 
         Assert.False(unknown.TiesWithNeighbour(0));
     }

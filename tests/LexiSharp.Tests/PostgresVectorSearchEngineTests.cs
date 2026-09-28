@@ -2,6 +2,18 @@ using LexiSharp.Core;
 using LexiSharp.Postgres;
 using Xunit;
 
+// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
+// below. The interface is the published return type: a List<T> or an array in its place
+// would hand callers a mutable collection through a contract that says they cannot have
+// one, and what it saves is a single interface dispatch per call, which no measurement in
+// docs/benchmarks.md attributes time to.
+
+// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
+// the lines below. Its premise is a call repeated with the same literal, allocating each
+// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
+// it -- hoisting it into a field saves nothing that is measured, and moves the data away
+// from the test that fails on it.
+
 namespace LexiSharp.Tests;
 
 public class PostgresVectorSearchEngineTests
@@ -349,15 +361,15 @@ public class PostgresVectorSearchEngineTests
 
             var all = engine.Search("q", new SearchOptions(Limit: 10));
             Assert.Equal(5, all.Count);
-            Assert.Equal(new[] { "a", "b", "c", "d", "e" }, all.Select(r => r.DocumentId).ToArray());
+            Assert.Equal(new[] { "a", "b", "c", "d", "e" }, all.Select(r => r.DocumentId).ToArray()); // NOSONAR:CA1861
 
             var page1 = engine.Search("q", new SearchOptions(Limit: 2, Offset: 0));
             var page2 = engine.Search("q", new SearchOptions(Limit: 2, Offset: 2));
             var page3 = engine.Search("q", new SearchOptions(Limit: 2, Offset: 4));
 
-            Assert.Equal(new[] { "a", "b" }, page1.Select(r => r.DocumentId).ToArray());
-            Assert.Equal(new[] { "c", "d" }, page2.Select(r => r.DocumentId).ToArray());
-            Assert.Equal(new[] { "e" }, page3.Select(r => r.DocumentId).ToArray());
+            Assert.Equal(new[] { "a", "b" }, page1.Select(r => r.DocumentId).ToArray()); // NOSONAR:CA1861
+            Assert.Equal(new[] { "c", "d" }, page2.Select(r => r.DocumentId).ToArray()); // NOSONAR:CA1861
+            Assert.Equal(new[] { "e" }, page3.Select(r => r.DocumentId).ToArray()); // NOSONAR:CA1861
 
             Assert.Empty(engine.Search("q", new SearchOptions(Limit: 2, Offset: 5)));
             Assert.Empty(engine.Search("q", new SearchOptions(Limit: 2, Offset: -1)));
@@ -582,7 +594,7 @@ public class PostgresVectorSearchEngineTests
         };
 
     // d1: title "alpha one", description "bravo two"; d2 is the mirror.
-    private static IEnumerable<SearchDocument> ColumnAwareDocuments() => new[]
+    private static IEnumerable<SearchDocument> ColumnAwareDocuments() => new[] // NOSONAR:CA1859
     {
         new SearchDocument("d1", "unrelated body",
             TextFields: new Dictionary<string, string> { ["title"] = "alpha one", ["description"] = "bravo two" }),
@@ -705,7 +717,7 @@ public class PostgresVectorSearchEngineTests
             var filtered = engine.Search("red or green", new SearchOptions(Limit: 10,
                 Filters: new[] { new MetadataFilter("kind", MetadataFilterOperator.Equal, "fruit") }));
 
-            Assert.Equal(new[] { "red" }, filtered.Select(r => r.DocumentId).ToArray());
+            Assert.Equal(new[] { "red" }, filtered.Select(r => r.DocumentId).ToArray()); // NOSONAR:CA1861
 
             Assert.Empty(engine.Search("red or green", new SearchOptions(Limit: 10,
                 Filters: new[] { new MetadataFilter("kind", MetadataFilterOperator.Equal, "nope") })));

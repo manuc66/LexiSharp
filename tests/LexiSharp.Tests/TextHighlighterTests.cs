@@ -2,6 +2,12 @@ using LexiSharp.Highlighting;
 using LexiSharp.Linguistics;
 using Xunit;
 
+// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
+// the lines below. Its premise is a call repeated with the same literal, allocating each
+// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
+// it -- hoisting it into a field saves nothing that is measured, and moves the data away
+// from the test that fails on it.
+
 namespace LexiSharp.Tests;
 
 public class TextHighlighterTests
@@ -13,7 +19,7 @@ public class TextHighlighterTests
     [Fact]
     public void MatchRanges_FindsEachOccurrenceInReadingOrder()
     {
-        var ranges = TextHighlighter.MatchRanges(Text, new[] { "quick", "lazy" }, Tokenizer.Default);
+        var ranges = TextHighlighter.MatchRanges(Text, new[] { "quick", "lazy" }, Tokenizer.Default); // NOSONAR:CA1861
 
         Assert.Equal(new Range[] { new(4, 9), new(35, 39) }, ranges);
     }
@@ -22,7 +28,7 @@ public class TextHighlighterTests
     public void MatchRanges_IsCaseAndAccentInsensitive()
     {
         var ranges = TextHighlighter.MatchRanges(
-            "Le Café est déjà ouvert", new[] { "cafe" }, Tokenizer.Default);
+            "Le Café est déjà ouvert", new[] { "cafe" }, Tokenizer.Default); // NOSONAR:CA1861
 
         Assert.Equal(new Range[] { new(3, 7) }, ranges);
     }
@@ -31,7 +37,7 @@ public class TextHighlighterTests
     public void MatchRanges_NoTermsOrNoMatch_ReturnsEmpty()
     {
         Assert.Empty(TextHighlighter.MatchRanges(Text, Array.Empty<string>(), Tokenizer.Default));
-        Assert.Empty(TextHighlighter.MatchRanges(Text, new[] { "zebra" }, Tokenizer.Default));
+        Assert.Empty(TextHighlighter.MatchRanges(Text, new[] { "zebra" }, Tokenizer.Default)); // NOSONAR:CA1861
     }
 
     [Fact]
@@ -55,7 +61,7 @@ public class TextHighlighterTests
 
         var ranges = TextHighlighter.MatchRanges(
             "machine learning rocks",
-            new[] { "machine", "machine learning" },
+            new[] { "machine", "machine learning" }, // NOSONAR:CA1861
             tokenizer);
 
         // Unigram [0,7) and bigram [0,16) collapse into the bigram's region.
@@ -65,7 +71,7 @@ public class TextHighlighterTests
     [Fact]
     public void HighlightFull_WrapsEachMatch()
     {
-        var result = TextHighlighter.HighlightFull(Text, new[] { "quick", "dog" }, Tokenizer.Default);
+        var result = TextHighlighter.HighlightFull(Text, new[] { "quick", "dog" }, Tokenizer.Default); // NOSONAR:CA1861
 
         Assert.Equal("The <em>quick</em> brown fox jumps over the lazy <em>dog</em>", result);
     }
@@ -74,7 +80,7 @@ public class TextHighlighterTests
     public void HighlightFull_KeepsTheSourceCharactersOfAccentedMatches()
     {
         var result = TextHighlighter.HighlightFull(
-            "Le Café est déjà ouvert", new[] { "cafe" }, Tokenizer.Default);
+            "Le Café est déjà ouvert", new[] { "cafe" }, Tokenizer.Default); // NOSONAR:CA1861
 
         Assert.Equal("Le <em>Café</em> est déjà ouvert", result);
     }
@@ -84,7 +90,7 @@ public class TextHighlighterTests
     {
         var result = TextHighlighter.HighlightFull(
             Text,
-            new[] { "fox" },
+            new[] { "fox" }, // NOSONAR:CA1861
             Tokenizer.Default,
             new HighlightOptions { PreTag = "[[", PostTag = "]]" });
 
@@ -94,7 +100,7 @@ public class TextHighlighterTests
     [Fact]
     public void HighlightFull_NoMatch_ReturnsTextUnchanged()
     {
-        var result = TextHighlighter.HighlightFull(Text, new[] { "zebra" }, Tokenizer.Default);
+        var result = TextHighlighter.HighlightFull(Text, new[] { "zebra" }, Tokenizer.Default); // NOSONAR:CA1861
 
         Assert.Equal(Text, result);
     }
@@ -104,7 +110,7 @@ public class TextHighlighterTests
     {
         var snippets = TextHighlighter.Highlight(
             PaddedText,
-            new[] { "one", "three", "ten" },
+            new[] { "one", "three", "ten" }, // NOSONAR:CA1861
             Tokenizer.Default,
             new HighlightOptions { Padding = 6, MaxSnippets = 3 });
 
@@ -128,7 +134,7 @@ public class TextHighlighterTests
     {
         var snippets = TextHighlighter.Highlight(
             PaddedText,
-            new[] { "one", "three", "ten" },
+            new[] { "one", "three", "ten" }, // NOSONAR:CA1861
             Tokenizer.Default,
             new HighlightOptions { Padding = 6, MaxSnippets = 1 });
 
@@ -141,23 +147,23 @@ public class TextHighlighterTests
     public void Highlight_MaxSnippetsZeroOrNoMatch_ReturnsNothing()
     {
         Assert.Empty(TextHighlighter.Highlight(
-            Text, new[] { "quick" }, Tokenizer.Default, new HighlightOptions { MaxSnippets = 0 }));
+            Text, new[] { "quick" }, Tokenizer.Default, new HighlightOptions { MaxSnippets = 0 })); // NOSONAR:CA1861
 
-        Assert.Empty(TextHighlighter.Highlight(Text, new[] { "zebra" }, Tokenizer.Default));
+        Assert.Empty(TextHighlighter.Highlight(Text, new[] { "zebra" }, Tokenizer.Default)); // NOSONAR:CA1861
     }
 
     [Fact]
     public void Highlight_NullArguments_Throw()
     {
         Assert.Throws<ArgumentNullException>(() =>
-            TextHighlighter.MatchRanges(null!, new[] { "a" }, Tokenizer.Default));
+            TextHighlighter.MatchRanges(null!, new[] { "a" }, Tokenizer.Default)); // NOSONAR:CA1861
         Assert.Throws<ArgumentNullException>(() =>
             TextHighlighter.MatchRanges(Text, null!, Tokenizer.Default));
         Assert.Throws<ArgumentNullException>(() =>
-            TextHighlighter.MatchRanges(Text, new[] { "a" }, null!));
+            TextHighlighter.MatchRanges(Text, new[] { "a" }, null!)); // NOSONAR:CA1861
         Assert.Throws<ArgumentNullException>(() =>
-            TextHighlighter.HighlightFull(null!, new[] { "a" }, Tokenizer.Default));
+            TextHighlighter.HighlightFull(null!, new[] { "a" }, Tokenizer.Default)); // NOSONAR:CA1861
         Assert.Throws<ArgumentNullException>(() =>
-            TextHighlighter.Highlight(null!, new[] { "a" }, Tokenizer.Default));
+            TextHighlighter.Highlight(null!, new[] { "a" }, Tokenizer.Default)); // NOSONAR:CA1861
     }
 }

@@ -2,6 +2,12 @@ using LexiSharp.Core;
 using LexiSharp.Linguistics;
 using Xunit;
 
+// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
+// the lines below. Its premise is a call repeated with the same literal, allocating each
+// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
+// it -- hoisting it into a field saves nothing that is measured, and moves the data away
+// from the test that fails on it.
+
 namespace LexiSharp.Tests;
 
 public class QueryParserTests
@@ -24,10 +30,10 @@ public class QueryParserTests
     {
         var parsed = QueryParser.Parse("neural \"machine learning\"", Tokenizer.Default);
 
-        Assert.Equal(new[] { "neural" }, parsed.FreeTerms);
+        Assert.Equal(new[] { "neural" }, parsed.FreeTerms); // NOSONAR:CA1861
         var phrase = Assert.Single(parsed.Phrases);
-        Assert.Equal(new[] { "machine", "learning" }, phrase);
-        Assert.Equal(new[] { "neural", "machine", "learning" }, parsed.AllTerms);
+        Assert.Equal(new[] { "machine", "learning" }, phrase); // NOSONAR:CA1861
+        Assert.Equal(new[] { "neural", "machine", "learning" }, parsed.AllTerms); // NOSONAR:CA1861
         Assert.True(parsed.HasPhrases);
     }
 
@@ -38,8 +44,8 @@ public class QueryParserTests
 
         Assert.Empty(parsed.FreeTerms);
         var phrase = Assert.Single(parsed.Phrases);
-        Assert.Equal(new[] { "machine", "learning" }, phrase);
-        Assert.Equal(new[] { "machine", "learning" }, parsed.AllTerms);
+        Assert.Equal(new[] { "machine", "learning" }, phrase); // NOSONAR:CA1861
+        Assert.Equal(new[] { "machine", "learning" }, parsed.AllTerms); // NOSONAR:CA1861
     }
 
     [Fact]
@@ -47,10 +53,10 @@ public class QueryParserTests
     {
         var parsed = QueryParser.Parse("\"machine learning\" vs \"deep learning\"", Tokenizer.Default);
 
-        Assert.Equal(new[] { "vs" }, parsed.FreeTerms);
+        Assert.Equal(new[] { "vs" }, parsed.FreeTerms); // NOSONAR:CA1861
         Assert.Equal(2, parsed.Phrases.Count);
-        Assert.Equal(new[] { "machine", "learning" }, parsed.Phrases[0]);
-        Assert.Equal(new[] { "deep", "learning" }, parsed.Phrases[1]);
+        Assert.Equal(new[] { "machine", "learning" }, parsed.Phrases[0]); // NOSONAR:CA1861
+        Assert.Equal(new[] { "deep", "learning" }, parsed.Phrases[1]); // NOSONAR:CA1861
     }
 
     [Fact]
@@ -58,9 +64,9 @@ public class QueryParserTests
     {
         var parsed = QueryParser.Parse("find \"machine learning", Tokenizer.Default);
 
-        Assert.Equal(new[] { "find" }, parsed.FreeTerms);
+        Assert.Equal(new[] { "find" }, parsed.FreeTerms); // NOSONAR:CA1861
         var phrase = Assert.Single(parsed.Phrases);
-        Assert.Equal(new[] { "machine", "learning" }, phrase);
+        Assert.Equal(new[] { "machine", "learning" }, phrase); // NOSONAR:CA1861
     }
 
     [Fact]
@@ -69,7 +75,7 @@ public class QueryParserTests
         var emptyQuotes = QueryParser.Parse("\"\" neural", Tokenizer.Default);
         Assert.Empty(emptyQuotes.Phrases);
         Assert.False(emptyQuotes.HasPhrases);
-        Assert.Equal(new[] { "neural" }, emptyQuotes.AllTerms);
+        Assert.Equal(new[] { "neural" }, emptyQuotes.AllTerms); // NOSONAR:CA1861
 
         var punctuation = QueryParser.Parse("\"!!!\"", Tokenizer.Default);
         Assert.Empty(punctuation.Phrases);
@@ -102,7 +108,7 @@ public class QueryParserTests
         var segments = QueryParser.SplitRaw("neural \"Machine Learning!\"");
 
         Assert.Equal("neural", segments.FreeText);
-        Assert.Equal(new[] { "Machine Learning!" }, segments.Phrases);
+        Assert.Equal(new[] { "Machine Learning!" }, segments.Phrases); // NOSONAR:CA1861
     }
 
     [Fact]
@@ -110,7 +116,7 @@ public class QueryParserTests
     {
         var segments = QueryParser.SplitRaw("\"\" \"   \" \"!!!\" \"real phrase\"");
 
-        Assert.Equal(new[] { "real phrase" }, segments.Phrases);
+        Assert.Equal(new[] { "real phrase" }, segments.Phrases); // NOSONAR:CA1861
     }
 
     [Fact]
@@ -120,7 +126,7 @@ public class QueryParserTests
 
         Assert.Equal("neural vs", segments.FreeText);
         Assert.Equal(
-            new[] { "machine learning", "deep learning" },
+            new[] { "machine learning", "deep learning" }, // NOSONAR:CA1861
             segments.Phrases);
     }
 
@@ -147,10 +153,10 @@ public class QueryParserTests
     {
         var parsed = QueryParser.Parse("learn neural* \"machine learning\"", Tokenizer.Default);
 
-        Assert.Equal(new[] { "learn" }, parsed.FreeTerms);
-        Assert.Equal(new[] { "learn", "machine", "learning" }, parsed.AllTerms); // free + phrase, expansions later
+        Assert.Equal(new[] { "learn" }, parsed.FreeTerms); // NOSONAR:CA1861
+        Assert.Equal(new[] { "learn", "machine", "learning" }, parsed.AllTerms); // free + phrase, expansions later // NOSONAR:CA1861
         var phrase = Assert.Single(parsed.Phrases);
-        Assert.Equal(new[] { "machine", "learning" }, phrase);
+        Assert.Equal(new[] { "machine", "learning" }, phrase); // NOSONAR:CA1861
         var expansion = Assert.Single(parsed.Expansions);
         Assert.Equal("neural", expansion.BaseTerm);
         Assert.Equal(QueryExpansionKind.Prefix, expansion.Kind);
@@ -175,7 +181,7 @@ public class QueryParserTests
         Assert.Empty(parsed.Expansions);
         // Byte-for-byte the plain tokenization: the dropped single char leaves nothing.
         Assert.Equal(Tokenizer.Default.Tokenize("a* bb"), parsed.FreeTerms);
-        Assert.Equal(new[] { "bb" }, parsed.FreeTerms);
+        Assert.Equal(new[] { "bb" }, parsed.FreeTerms); // NOSONAR:CA1861
     }
 
     [Fact]
@@ -184,7 +190,7 @@ public class QueryParserTests
         var parsed = QueryParser.Parse("foo ~bar", Tokenizer.Default);
 
         Assert.Empty(parsed.Expansions);
-        Assert.Equal(new[] { "foo", "bar" }, parsed.FreeTerms);
+        Assert.Equal(new[] { "foo", "bar" }, parsed.FreeTerms); // NOSONAR:CA1861
     }
 
     [Fact]
@@ -194,7 +200,7 @@ public class QueryParserTests
 
         Assert.Empty(parsed.Expansions);
         var phrase = Assert.Single(parsed.Phrases);
-        Assert.Equal(new[] { "neural" }, phrase);
+        Assert.Equal(new[] { "neural" }, phrase); // NOSONAR:CA1861
     }
 
     [Fact]
@@ -204,7 +210,7 @@ public class QueryParserTests
 
         Assert.Empty(parsed.FreeTerms);
         var phrase = Assert.Single(parsed.Phrases);
-        Assert.Equal(new[] { "machine", "learning" }, phrase);
+        Assert.Equal(new[] { "machine", "learning" }, phrase); // NOSONAR:CA1861
         var expansion = Assert.Single(parsed.Expansions);
         Assert.Equal("net", expansion.BaseTerm);
         Assert.Equal(QueryExpansionKind.Prefix, expansion.Kind);

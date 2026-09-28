@@ -1,3 +1,10 @@
+
+// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
+// below. The interface is the published return type: a List<T> or an array in its place
+// would hand callers a mutable collection through a contract that says they cannot have
+// one, and what it saves is a single interface dispatch per call, which no measurement in
+// docs/benchmarks.md attributes time to.
+
 namespace LexiSharp.Core;
 
 /// <summary>
@@ -170,7 +177,7 @@ public sealed class RerankedTextSearchEngine : ITextSearchEngine, IQueryCostProb
     private void RecordRerankStage(
         SearchTrace? trace,
         IReadOnlyList<SearchResult> candidates,
-        IReadOnlyList<SearchResult> page)
+        IReadOnlyList<SearchResult> page) // NOSONAR:CA1859
     {
         if (trace is null)
             return;
