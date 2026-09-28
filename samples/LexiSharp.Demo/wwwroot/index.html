@@ -172,7 +172,10 @@ async function loadMeta() {
       $("q").value = chip.textContent;
       runSearch();
     }));
-  } catch (error) {
+  } catch {
+    // The example queries are a convenience, not the page: if /api/meta is unreachable the demo is
+    // still usable by typing. The error is deliberately neither shown nor rethrown, so it is not
+    // bound to a name.
     $("meta").textContent = "";
   }
 }
@@ -322,7 +325,9 @@ async function explain(lane, id) {
     const data = await getJson("/api/explain?q=" + encodeURIComponent(query) + "&lane=" + encodeURIComponent(lane) + "&id=" + encodeURIComponent(id));
     const detail = data.mode === "terms" ? termExplanation(data) : sourceExplanation(data);
     $("panel-body").innerHTML = chainExplanation(data) + agreementExplanation(data) + detail;
-  } catch (error) {
+  } catch {
+    // Handled, not swallowed: the panel says the breakdown is unavailable, which is all the user
+    // can act on. The error is not rethrown, so it is not bound to a name.
     $("panel-body").innerHTML = '<div class="empty">no breakdown available for this lane.</div>';
   }
 }

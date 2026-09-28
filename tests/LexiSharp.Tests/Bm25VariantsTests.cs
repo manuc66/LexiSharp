@@ -166,9 +166,14 @@ public class Bm25VariantsTests
         {
             double idfSum = 0;
 
+            // Read once into a local: the compiler cannot assume a property keeps its value across
+            // the `is not null` test below, so at the join `document.Id` becomes maybe-null and the
+            // calls below warn. A local is stable, which is the whole fix -- no suppression needed.
+            string documentId = document.Id;
+
             foreach (string term in terms)
             {
-                if (document.Id is not null && index.TermFrequency(document.Id, term) > 0)
+                if (index.TermFrequency(documentId, term) > 0)
                 {
                     int df = index.DocumentFrequency(term);
                     idfSum += Math.Log(1.0 + (index.Count - df + 0.5) / (df + 0.5));
@@ -176,8 +181,8 @@ public class Bm25VariantsTests
             }
 
             Assert.Equal(
-                bm25.Score(document.Id, terms, index) + idfSum * delta,
-                plus.Score(document.Id, terms, index),
+                bm25.Score(documentId, terms, index) + idfSum * delta,
+                plus.Score(documentId, terms, index),
                 12);
         }
     }

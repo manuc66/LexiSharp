@@ -86,19 +86,21 @@ public sealed class PmiTermExpander : ITermExpander
                 }
 
                 foreach (var a in seen)
-                foreach (var b in seen)
                 {
-                    if (string.CompareOrdinal(a, b) >= 0)
-                        continue;
-
-                    if (!pairCounts.TryGetValue(a, out var withB))
+                    foreach (var b in seen)
                     {
-                        withB = new Dictionary<string, int>(StringComparer.Ordinal);
-                        pairCounts[a] = withB;
-                    }
+                        if (string.CompareOrdinal(a, b) >= 0)
+                            continue;
 
-                    withB.TryGetValue(b, out int pairCount);
-                    withB[b] = pairCount + 1;
+                        if (!pairCounts.TryGetValue(a, out var withB))
+                        {
+                            withB = new Dictionary<string, int>(StringComparer.Ordinal);
+                            pairCounts[a] = withB;
+                        }
+
+                        withB.TryGetValue(b, out int pairCount);
+                        withB[b] = pairCount + 1;
+                    }
                 }
             }
         }

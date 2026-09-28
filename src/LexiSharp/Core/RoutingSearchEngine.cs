@@ -99,8 +99,7 @@ public sealed class RoutingSearchEngine : ITextSearchEngine
             ids[i] = route.Id;
         }
 
-        if (fallbackId is null)
-            throw new ArgumentNullException(nameof(fallbackId));
+        ArgumentNullException.ThrowIfNull(fallbackId);
 
         if (!byId.TryGetValue(fallbackId, out var fallback))
             throw new ArgumentException($"Fallback id '{fallbackId}' does not match any route.", nameof(fallbackId));

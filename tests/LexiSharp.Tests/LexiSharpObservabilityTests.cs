@@ -269,9 +269,21 @@ public class LexiSharpObservabilityTests
         Assert.Equal(1, metrics.SearchCount);
     }
 
+    // A real registration rather than Registration = default, which is a null in a non-nullable
+    // field (CS8625) and hands a check a context that cannot occur under a real host. Wrapping the
+    // check under test is the coherent choice: nothing here reads Registration, but a context that
+    // describes the check being run is the one a host would have passed.
     private static HealthCheckResult Check(IHealthCheck check) =>
         CheckAsync(check).GetAwaiter().GetResult();
 
     private static Task<HealthCheckResult> CheckAsync(IHealthCheck check) =>
-        check.CheckHealthAsync(new HealthCheckContext { Registration = default });
+        check.CheckHealthAsync(new HealthCheckContext
+        {
+            Registration = new HealthCheckRegistration(
+                "lexisharp-test",
+                check,
+                failureStatus: null,
+                tags: null,
+                timeout: null),
+        });
 }
