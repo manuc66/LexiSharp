@@ -3,12 +3,6 @@ using LexiSharp.Postgres;
 using Npgsql;
 using Xunit;
 
-// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
-// the lines below. Its premise is a call repeated with the same literal, allocating each
-// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
-// it -- hoisting it into a field saves nothing that is measured, and moves the data away
-// from the test that fails on it.
-
 namespace LexiSharp.Tests;
 
 public class PostgresFuzzySearchEngineTests
@@ -292,7 +286,7 @@ public class PostgresFuzzySearchEngineTests
             var filtered = engine.Search("apple", new SearchOptions(Limit: 10,
                 Filters: new[] { new MetadataFilter("kind", MetadataFilterOperator.Equal, "fruit") }));
 
-            Assert.Equal(new[] { "red" }, filtered.Select(r => r.DocumentId).ToArray()); // NOSONAR:CA1861
+            Assert.Equal(new[] { "red" }, filtered.Select(r => r.DocumentId).ToArray());
 
             Assert.Empty(engine.Search("apple", new SearchOptions(Limit: 10,
                 Filters: new[] { new MetadataFilter("kind", MetadataFilterOperator.Equal, "nope") })));

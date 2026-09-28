@@ -6,12 +6,6 @@ using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
 
-// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
-// below. The interface is the published return type: a List<T> or an array in its place
-// would hand callers a mutable collection through a contract that says they cannot have
-// one, and what it saves is a single interface dispatch per call, which no measurement in
-// docs/benchmarks.md attributes time to.
-
 namespace LexiSharp.Eval;
 
 internal sealed record ConfigResult(
@@ -301,7 +295,7 @@ internal static class Evaluation
     }
 
     /// <summary>BM25 over an index, re-ranked by proximity. The first stage matches the BM25 row.</summary>
-    private static ITextSearchEngine Proximity( // NOSONAR:CA1859
+    private static ITextSearchEngine Proximity(
         IReadOnlyList<SearchDocument> documents,
         double strength,
         ProximityMode mode,
@@ -320,7 +314,7 @@ internal static class Evaluation
     private static Bm25FScorer TitleWeighted(double weight) =>
         new(fieldWeights: new Dictionary<string, double> { ["title"] = weight });
 
-    private static ITextSearchEngine Ranked(IReadOnlyList<SearchDocument> documents, ITextScorer scorer, ITokenizer tokenizer) // NOSONAR:CA1859
+    private static ITextSearchEngine Ranked(IReadOnlyList<SearchDocument> documents, ITextScorer scorer, ITokenizer tokenizer)
     {
         var index = new InMemoryTextIndex(tokenizer);
         index.Index(documents);
@@ -328,7 +322,7 @@ internal static class Evaluation
         return new RankedTextSearchEngine(index, scorer, tokenizer);
     }
 
-    private static ITextSearchEngine Hybrid(IReadOnlyList<SearchDocument> documents, IResultMerger merger, ITokenizer tokenizer) // NOSONAR:CA1859
+    private static ITextSearchEngine Hybrid(IReadOnlyList<SearchDocument> documents, IResultMerger merger, ITokenizer tokenizer)
     {
         var index = new InMemoryTextIndex(tokenizer);
         index.Index(documents);

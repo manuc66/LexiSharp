@@ -4,12 +4,6 @@ using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
 using Xunit;
 
-// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
-// the lines below. Its premise is a call repeated with the same literal, allocating each
-// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
-// it -- hoisting it into a field saves nothing that is measured, and moves the data away
-// from the test that fails on it.
-
 namespace LexiSharp.Tests;
 
 /// <summary>
@@ -178,12 +172,12 @@ public class SpanFirstApiTests
     {
         // A tokenizer that only implements the string overload must still answer the span call.
         ITokenizer tokenizer = new StringOnlyTokenizer();
-        Assert.Equal(new[] { "hello", "world" }, tokenizer.Tokenize("hello world".AsSpan())); // NOSONAR:CA1861
+        Assert.Equal(new[] { "hello", "world" }, tokenizer.Tokenize("hello world".AsSpan()));
 
         // Same for the search engine surface.
         ITextSearchEngine engine = new StringOnlyEngine();
         Assert.Equal(
-            new[] { "1" }, // NOSONAR:CA1861
+            new[] { "1" },
             engine.Search("q".AsSpan()).Select(r => r.DocumentId));
 
         IFacetedSearchEngine faceted = new StringOnlyEngine();

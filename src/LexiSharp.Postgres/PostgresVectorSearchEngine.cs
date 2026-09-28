@@ -2,12 +2,6 @@ using System.Runtime.CompilerServices;
 using LexiSharp.Core;
 using Npgsql;
 
-// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
-// below. The interface is the published return type: a List<T> or an array in its place
-// would hand callers a mutable collection through a contract that says they cannot have
-// one, and what it saves is a single interface dispatch per call, which no measurement in
-// docs/benchmarks.md attributes time to.
-
 namespace LexiSharp.Postgres;
 
 /// <summary>
@@ -543,7 +537,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
             : new[] { (Label: LegacyEmbeddingColumn, Column: LegacyEmbeddingColumn) };
 
     /// <summary>Validates column labels against the configured schema and maps them to SQL column names.</summary>
-    private IReadOnlyList<(string Label, string Column)> ResolveColumns(IReadOnlyList<string> labels) // NOSONAR:CA1859
+    private IReadOnlyList<(string Label, string Column)> ResolveColumns(IReadOnlyList<string> labels)
     {
         if (labels.Count == 0)
             throw new ArgumentException("At least one embedding column must be selected.", nameof(labels));
@@ -722,7 +716,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         return new SearchDocument(id, content, fields, category, textFields);
     }
 
-    private static IReadOnlyDictionary<string, string>? DeserializeFields(string? json) // NOSONAR:CA1859
+    private static IReadOnlyDictionary<string, string>? DeserializeFields(string? json)
     {
         if (string.IsNullOrEmpty(json))
             return null;

@@ -2,12 +2,6 @@ using LexiSharp.Benchmarking;
 using LexiSharp.Core;
 using Xunit;
 
-// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
-// the lines below. Its premise is a call repeated with the same literal, allocating each
-// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
-// it -- hoisting it into a field saves nothing that is measured, and moves the data away
-// from the test that fails on it.
-
 namespace LexiSharp.Tests;
 
 /// <summary>
@@ -49,8 +43,8 @@ public class BenchmarkComparisonTests
     {
         var queries = new[]
         {
-            new BenchmarkQuery("q1", "refresh token", new[] { "alpha" }), // NOSONAR:CA1861
-            new BenchmarkQuery("q2", "container image", new[] { "beta" }), // NOSONAR:CA1861
+            new BenchmarkQuery("q1", "refresh token", new[] { "alpha" }),
+            new BenchmarkQuery("q2", "container image", new[] { "beta" }),
         };
 
         var result = Run(queries, [BenchmarkConfig.Bm25()]);
@@ -72,7 +66,7 @@ public class BenchmarkComparisonTests
         // the detail with metrics that never reached the average.
         var queries = new[]
         {
-            new BenchmarkQuery("q1", "refresh token", new[] { "alpha" }), // NOSONAR:CA1861
+            new BenchmarkQuery("q1", "refresh token", new[] { "alpha" }),
             new BenchmarkQuery("q-unjudged", "nothing", Array.Empty<string>()),
         };
 
@@ -87,8 +81,8 @@ public class BenchmarkComparisonTests
     {
         var queries = new[]
         {
-            new BenchmarkQuery("q1", "refresh token", new[] { "alpha" }), // NOSONAR:CA1861
-            new BenchmarkQuery("q2", "cookie lifetime logout", new[] { "gamma" }), // NOSONAR:CA1861
+            new BenchmarkQuery("q1", "refresh token", new[] { "alpha" }),
+            new BenchmarkQuery("q2", "cookie lifetime logout", new[] { "gamma" }),
         };
 
         var result = Run(queries, [BenchmarkConfig.Bm25()]);
@@ -104,7 +98,7 @@ public class BenchmarkComparisonTests
     {
         // No corpus term appears in the query, so nothing judged can be retrieved and the rank
         // must be null rather than a fabricated 0 or 4.
-        var result = Run([new BenchmarkQuery("q1", "kubernetes ingress zzzz", new[] { "beta" })], // NOSONAR:CA1861
+        var result = Run([new BenchmarkQuery("q1", "kubernetes ingress zzzz", new[] { "beta" })],
             [BenchmarkConfig.Bm25()]);
 
         Assert.Null(result.PerQuery[0].FirstRelevantRank);

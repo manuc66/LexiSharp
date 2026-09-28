@@ -6,12 +6,6 @@ using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
 
-// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
-// below. The interface is the published return type: a List<T> or an array in its place
-// would hand callers a mutable collection through a contract that says they cannot have
-// one, and what it saves is a single interface dispatch per call, which no measurement in
-// docs/benchmarks.md attributes time to.
-
 namespace LexiSharp;
 
 /// <summary>
@@ -277,7 +271,7 @@ public sealed class LexiSharpIndex<TDocument>
             _textFields(document));
 
     /// <summary>Wraps engine results into typed hits, optionally highlighting each hit's text.</summary>
-    private IReadOnlyList<LexiSharpHit<TDocument>> MapHits( // NOSONAR:CA1859
+    private IReadOnlyList<LexiSharpHit<TDocument>> MapHits(
         IReadOnlyList<SearchResult> results,
         IReadOnlyList<string>? queryTerms)
     {
@@ -300,7 +294,7 @@ public sealed class LexiSharpIndex<TDocument>
         return hits;
     }
 
-    private static ITokenizer BuildDefaultTokenizer(LexiSharpIndexOptions<TDocument> options) // NOSONAR:CA1859
+    private static ITokenizer BuildDefaultTokenizer(LexiSharpIndexOptions<TDocument> options)
     {
         if (!options.RemoveStopWords && options.Stemmer is null && options.NGramMax <= 1)
             return Tokenizer.Default;

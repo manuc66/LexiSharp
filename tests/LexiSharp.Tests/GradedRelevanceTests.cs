@@ -4,12 +4,6 @@ using LexiSharp.Indexing;
 using LexiSharp.Ranking;
 using Xunit;
 
-// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
-// the lines below. Its premise is a call repeated with the same literal, allocating each
-// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
-// it -- hoisting it into a field saves nothing that is measured, and moves the data away
-// from the test that fails on it.
-
 namespace LexiSharp.Tests;
 
 /// <summary>
@@ -48,9 +42,9 @@ public class GradedRelevanceTests
     [Fact]
     public void ABinaryQueryJudgesEveryDocumentAsRelevant()
     {
-        var query = new BenchmarkQuery("q1", "refresh token", new[] { "full", "partial" }); // NOSONAR:CA1861
+        var query = new BenchmarkQuery("q1", "refresh token", new[] { "full", "partial" });
 
-        Assert.Equal(new[] { "full", "partial" }, query.RelevantDocumentIds); // NOSONAR:CA1861
+        Assert.Equal(new[] { "full", "partial" }, query.RelevantDocumentIds);
     }
 
     [Theory]
@@ -73,7 +67,7 @@ public class GradedRelevanceTests
         // exactly - this is what keeps every previously reported binary nDCG valid.
         var retrieved = new[] { "partial", "offtopic", "full", "mention" };
 
-        var binary = RetrievalMetrics.NdcgAtK(retrieved, new[] { "full", "partial", "mention" }, 10); // NOSONAR:CA1861
+        var binary = RetrievalMetrics.NdcgAtK(retrieved, new[] { "full", "partial", "mention" }, 10);
         var viaUnitGains = RetrievalMetrics.NdcgAtK(
             retrieved,
             new Dictionary<string, double> { ["full"] = 1, ["partial"] = 1, ["mention"] = 1 },
@@ -85,7 +79,7 @@ public class GradedRelevanceTests
     [Fact]
     public void AQueryBuiltFromIdsIsNotReportedAsGraded()
     {
-        var query = new BenchmarkQuery("q1", "refresh token", new[] { "full", "partial" }); // NOSONAR:CA1861
+        var query = new BenchmarkQuery("q1", "refresh token", new[] { "full", "partial" });
 
         Assert.False(query.IsGraded);
         Assert.Equal(2, query.GradedRelevance.Count);
@@ -109,7 +103,7 @@ public class GradedRelevanceTests
     {
         // Silently collapsing it would change the judged count and every average derived from it.
         Assert.Throws<ArgumentException>(() =>
-            new BenchmarkQuery("q1", "refresh token", new[] { "full", "full" })); // NOSONAR:CA1861
+            new BenchmarkQuery("q1", "refresh token", new[] { "full", "full" }));
     }
 
     [Fact]
@@ -126,7 +120,7 @@ public class GradedRelevanceTests
             ["mention"] = 1,
         });
 
-        var binary = new BenchmarkQuery("q1", "refresh token", new[] { "full", "partial", "mention" }); // NOSONAR:CA1861
+        var binary = new BenchmarkQuery("q1", "refresh token", new[] { "full", "partial", "mention" });
 
         var withGrades = CorpusBenchmark.Run(Corpus, [graded], configs, options)[0];
         var withoutGrades = CorpusBenchmark.Run(Corpus, [binary], configs, options)[0];

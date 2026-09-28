@@ -3,12 +3,6 @@ using System.Diagnostics.CodeAnalysis;
 using LexiSharp.Core;
 using LexiSharp.Linguistics;
 
-// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
-// below. The interface is the published return type: a List<T> or an array in its place
-// would hand callers a mutable collection through a contract that says they cannot have
-// one, and what it saves is a single interface dispatch per call, which no measurement in
-// docs/benchmarks.md attributes time to.
-
 namespace LexiSharp.Indexing;
 
 /// <summary>
@@ -211,7 +205,7 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
     /// had for that field. The document is expected to have been removed already. The terms are the
     /// shared instances <see cref="Post"/> returned, so the field maps share the corpus vocabulary.
     /// </summary>
-    private void RecordField(string field, string documentId, IReadOnlyList<string> terms) // NOSONAR:CA1859
+    private void RecordField(string field, string documentId, IReadOnlyList<string> terms)
     {
         if (!_fieldFrequencies.TryGetValue(field, out var byTerm))
         {

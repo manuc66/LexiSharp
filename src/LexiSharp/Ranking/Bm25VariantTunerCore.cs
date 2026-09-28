@@ -1,12 +1,6 @@
 using LexiSharp.Core;
 using LexiSharp.Linguistics;
 
-// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
-// below. The interface is the published return type: a List<T> or an array in its place
-// would hand callers a mutable collection through a contract that says they cannot have
-// one, and what it saves is a single interface dispatch per call, which no measurement in
-// docs/benchmarks.md attributes time to.
-
 namespace LexiSharp.Ranking;
 
 /// <summary>One evaluated <c>(k1, b, delta)</c> combination and the quality it achieved.</summary>
@@ -190,7 +184,7 @@ internal static class Bm25VariantTunerCore
     }
 
     private static double Evaluate(
-        ITextSearchEngine engine, // NOSONAR:CA1859
+        ITextSearchEngine engine,
         IReadOnlyList<Bm25ValidationQuery> validationQueries,
         int topK,
         TuningMetric metric)

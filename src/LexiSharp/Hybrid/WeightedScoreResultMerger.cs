@@ -1,11 +1,5 @@
 using LexiSharp.Core;
 
-// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
-// below. The interface is the published return type: a List<T> or an array in its place
-// would hand callers a mutable collection through a contract that says they cannot have
-// one, and what it saves is a single interface dispatch per call, which no measurement in
-// docs/benchmarks.md attributes time to.
-
 namespace LexiSharp.Hybrid;
 
 /// <summary>
@@ -117,7 +111,7 @@ public sealed class WeightedScoreResultMerger : IResultMerger
         }
     }
 
-    private static IReadOnlyList<SearchResult> Rank( // NOSONAR:CA1859
+    private static IReadOnlyList<SearchResult> Rank(
         Dictionary<string, (SearchDocument Document, double Score)> merged) =>
         merged
             .Where(x => x.Value.Score > 0)

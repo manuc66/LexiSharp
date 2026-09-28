@@ -1,12 +1,6 @@
 using LexiSharp.Linguistics;
 using Xunit;
 
-// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
-// the lines below. Its premise is a call repeated with the same literal, allocating each
-// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
-// it -- hoisting it into a field saves nothing that is measured, and moves the data away
-// from the test that fails on it.
-
 namespace LexiSharp.Tests;
 
 public class SpanTokenizerTests
@@ -92,7 +86,7 @@ public class SpanTokenizerTests
         const string text = "jumping cats jumped dogs";
 
         var spans = tokenizer.TokenizeWithSpans(text);
-        Assert.Equal(new[] { "jump", "cat", "jump", "dog" }, spans.Select(s => s.Term)); // NOSONAR:CA1861
+        Assert.Equal(new[] { "jump", "cat", "jump", "dog" }, spans.Select(s => s.Term));
 
         foreach (var span in spans)
         {
@@ -109,7 +103,7 @@ public class SpanTokenizerTests
 
         var spans = tokenizer.TokenizeWithSpans("the quick brown fox");
 
-        Assert.Equal(new[] { "quick", "brown", "fox" }, spans.Select(s => s.Term)); // NOSONAR:CA1861
+        Assert.Equal(new[] { "quick", "brown", "fox" }, spans.Select(s => s.Term));
         Assert.Equal(4, spans[0].Start); // "the" (0..3) left no hole in the offsets
         Assert.Equal(5, spans[0].Length);
     }

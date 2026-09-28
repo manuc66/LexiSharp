@@ -1,11 +1,5 @@
 using System.Collections.Frozen;
 
-// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
-// below. The interface is the published return type: a List<T> or an array in its place
-// would hand callers a mutable collection through a contract that says they cannot have
-// one, and what it saves is a single interface dispatch per call, which no measurement in
-// docs/benchmarks.md attributes time to.
-
 namespace LexiSharp.Linguistics;
 
 /// <summary>
@@ -41,6 +35,6 @@ public static class StopWords
     public static IReadOnlySet<string> Create(params string[] words) =>
         words.ToFrozenSet(StringComparer.Ordinal);
 
-    private static IReadOnlySet<string> CreateEnglish() => // NOSONAR:CA1859
+    private static IReadOnlySet<string> CreateEnglish() =>
         _english.ToFrozenSet(StringComparer.Ordinal);
 }

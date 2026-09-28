@@ -2,18 +2,6 @@ using LexiSharp.Core;
 using LexiSharp.Hybrid;
 using Xunit;
 
-// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
-// below. The interface is the published return type: a List<T> or an array in its place
-// would hand callers a mutable collection through a contract that says they cannot have
-// one, and what it saves is a single interface dispatch per call, which no measurement in
-// docs/benchmarks.md attributes time to.
-
-// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
-// the lines below. Its premise is a call repeated with the same literal, allocating each
-// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
-// it -- hoisting it into a field saves nothing that is measured, and moves the data away
-// from the test that fails on it.
-
 namespace LexiSharp.Tests;
 
 public class CombinationResultMergerTests
@@ -24,7 +12,7 @@ public class CombinationResultMergerTests
 
     private static SearchResult R(SearchDocument document, double score) => new(document.Id, score, document);
 
-    private static IReadOnlyList<SearchResult> List(params SearchResult[] results) => results; // NOSONAR:CA1859
+    private static IReadOnlyList<SearchResult> List(params SearchResult[] results) => results;
 
     // ---------- CombSUM ----------
 
@@ -52,7 +40,7 @@ public class CombinationResultMergerTests
         }, "q");
 
         // engine 1 normalized by 10 → d1=1, d2=0.5 ; engine 2 by 2 → d1=1, d3=1
-        Assert.Equal(new[] { "1", "3", "2" }, merged.Select(r => r.DocumentId).ToArray()); // NOSONAR:CA1861
+        Assert.Equal(new[] { "1", "3", "2" }, merged.Select(r => r.DocumentId).ToArray());
         Assert.Equal(2.0, merged[0].Score, 6);
         Assert.Equal(1.0, merged[1].Score, 6);
         Assert.Equal(0.5, merged[2].Score, 6);
@@ -113,7 +101,7 @@ public class CombinationResultMergerTests
         }, "q");
 
         // CombSUM: d1 = 1 + 1 = 2, d2 = 1. Agreement: d1 seen by 2 engines → 2 × 2 = 4.
-        Assert.Equal(new[] { "1", "2" }, merged.Select(r => r.DocumentId).ToArray()); // NOSONAR:CA1861
+        Assert.Equal(new[] { "1", "2" }, merged.Select(r => r.DocumentId).ToArray());
         Assert.Equal(4.0, merged[0].Score, 6);
         Assert.Equal(1.0, merged[1].Score, 6);
     }
