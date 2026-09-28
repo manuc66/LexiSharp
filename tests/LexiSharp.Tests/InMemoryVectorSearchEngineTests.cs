@@ -45,6 +45,26 @@ public class InMemoryVectorSearchEngineTests
     }
 
     [Fact]
+    public void Dimension_ReportsTheProviderContract_AndNotTheBufferStride()
+    {
+        // The engine keeps a private row stride for its contiguous vector block, and it is 0 until a
+        // vector is stored. Dimension is the provider's declared dimension, which is answerable at
+        // any time -- so a getter returning the stride would report 0 here and break every caller
+        // that sizes a buffer or validates a vector before indexing.
+        var engine = new InMemoryVectorSearchEngine(new FixedProvider(dimension: 4, length: _ => 4));
+
+        Assert.Equal(4, engine.Dimension); // nothing indexed yet
+
+        engine.Index(Corpus);
+
+        Assert.Equal(4, engine.Dimension); // a vector is stored, the stride has caught up
+
+        engine.Clear();
+
+        Assert.Equal(4, engine.Dimension); // and keeps the contract once the corpus is dropped
+    }
+
+    [Fact]
     public void Index_ReplacesPreviousContent()
     {
         var engine = NewEngine(out _);
