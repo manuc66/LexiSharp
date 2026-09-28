@@ -1,3 +1,10 @@
+
+// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
+// below. The interface is the published return type: a List<T> or an array in its place
+// would hand callers a mutable collection through a contract that says they cannot have
+// one, and what it saves is a single interface dispatch per call, which no measurement in
+// docs/benchmarks.md attributes time to.
+
 namespace LexiSharp.Benchmarking;
 
 /// <summary>
@@ -96,7 +103,7 @@ public sealed record BenchmarkQuery
     // for the case where tolerance really is the wrong answer.
     public bool IsGraded => GradedRelevance.Values.Any(gain => gain != 1.0); // NOSONAR:S1244
 
-    private static IReadOnlyDictionary<string, double> ToUnitGains(IReadOnlyCollection<string> relevantDocumentIds)
+    private static IReadOnlyDictionary<string, double> ToUnitGains(IReadOnlyCollection<string> relevantDocumentIds) // NOSONAR:CA1859
     {
         ArgumentNullException.ThrowIfNull(relevantDocumentIds);
 

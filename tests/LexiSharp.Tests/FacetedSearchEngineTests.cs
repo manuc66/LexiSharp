@@ -3,6 +3,12 @@ using LexiSharp.Indexing;
 using LexiSharp.Ranking;
 using Xunit;
 
+// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
+// the lines below. Its premise is a call repeated with the same literal, allocating each
+// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
+// it -- hoisting it into a field saves nothing that is measured, and moves the data away
+// from the test that fails on it.
+
 namespace LexiSharp.Tests;
 
 public class FacetedSearchEngineTests
@@ -42,7 +48,7 @@ public class FacetedSearchEngineTests
             faceted.Results.Select(r => r.DocumentId));
         Assert.Equal(5, faceted.Results.Count);
 
-        Assert.Equal(new[] { "kind", "lang" }, faceted.Buckets.Select(b => b.Field));
+        Assert.Equal(new[] { "kind", "lang" }, faceted.Buckets.Select(b => b.Field)); // NOSONAR:CA1861
 
         // kind: review ×2, then the tied singles in ordinal order (essay < notes).
         // Document 4 carries no kind, so only 4 of the 5 matches count here.

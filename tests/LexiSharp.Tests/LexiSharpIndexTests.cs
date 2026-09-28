@@ -1,6 +1,12 @@
 using LexiSharp.Core;
 using Xunit;
 
+// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
+// the lines below. Its premise is a call repeated with the same literal, allocating each
+// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
+// it -- hoisting it into a field saves nothing that is measured, and moves the data away
+// from the test that fails on it.
+
 namespace LexiSharp.Tests;
 
 public class LexiSharpIndexTests
@@ -102,7 +108,7 @@ public class LexiSharpIndexTests
     public void Search_DefaultMappingOnStrings()
     {
         var index = new LexiSharpIndex<string>();
-        index.AddRange(new[] { "quick brown fox", "lazy dog" });
+        index.AddRange(new[] { "quick brown fox", "lazy dog" }); // NOSONAR:CA1861
 
         var hits = index.Search("brown");
 
@@ -149,7 +155,7 @@ public class LexiSharpIndexTests
         var index = new LexiSharpIndex<string>();
         index.Add("old corpus");
 
-        index.Index(new[] { "fresh corpus", "another fresh note" });
+        index.Index(new[] { "fresh corpus", "another fresh note" }); // NOSONAR:CA1861
 
         Assert.Empty(index.Search("old"));
         Assert.Equal(2, index.Count);
@@ -159,7 +165,7 @@ public class LexiSharpIndexTests
     public void Remove_And_Clear()
     {
         var index = new LexiSharpIndex<string>();
-        index.AddRange(new[] { "first", "second" });
+        index.AddRange(new[] { "first", "second" }); // NOSONAR:CA1861
 
         index.Remove("first");
         Assert.Empty(index.Search("first"));
@@ -174,7 +180,7 @@ public class LexiSharpIndexTests
     public void Search_HonorsLimitAndOffset()
     {
         var index = new LexiSharpIndex<string>();
-        index.AddRange(new[] { "alpha AA", "alpha BB", "alpha CC" });
+        index.AddRange(new[] { "alpha AA", "alpha BB", "alpha CC" }); // NOSONAR:CA1861
 
         var page = index.Search("alpha", new LexiSharpQueryOptions(Limit: 2, Offset: 1));
 
@@ -191,7 +197,7 @@ public class LexiSharpIndexTests
             With("2", "recipe steak", "cooking", "steak"),
             With("3", "recipe salad", "health", "salad"));
 
-        var result = index.SearchWithFacets("recipe", facetFields: new[] { "category" });
+        var result = index.SearchWithFacets("recipe", facetFields: new[] { "category" }); // NOSONAR:CA1861
 
         Assert.Equal(3, result.Results.Count);
         Assert.Single(result.Buckets);
@@ -277,8 +283,8 @@ public class LexiSharpIndexTests
         var plain = CreateIndex(o => o.EnableFuzzy = true, docs);
 
         // "login" is in the vocabulary: with the flag it stays exact, "logins" no longer leaks in.
-        Assert.Equal(new[] { "1" }, strict.Search("login").Select(h => h.DocumentId));
-        Assert.Equal(new[] { "1", "2" }, plain.Search("login").Select(h => h.DocumentId).OrderBy(x => x));
+        Assert.Equal(new[] { "1" }, strict.Search("login").Select(h => h.DocumentId)); // NOSONAR:CA1861
+        Assert.Equal(new[] { "1", "2" }, plain.Search("login").Select(h => h.DocumentId).OrderBy(x => x)); // NOSONAR:CA1861
 
         // "keycloack" is out of vocabulary: the typo is still corrected to "keycloak".
         Assert.Equal("1", RequireSingle(strict.Search("keycloack")).DocumentId);
@@ -311,7 +317,7 @@ public class LexiSharpIndexTests
 
         Assert.Equal(2, index.Count);
         Assert.Equal(5, index.Statistics.TokenCount);
-        Assert.Equal(new[] { "1", "2" }, index.DocumentIds);
+        Assert.Equal(new[] { "1", "2" }, index.DocumentIds); // NOSONAR:CA1861
     }
 
     private sealed class ReverseReranker : IReranker

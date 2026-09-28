@@ -1,6 +1,12 @@
 using LexiSharp.Core;
 using Npgsql;
 
+// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
+// below. The interface is the published return type: a List<T> or an array in its place
+// would hand callers a mutable collection through a contract that says they cannot have
+// one, and what it saves is a single interface dispatch per call, which no measurement in
+// docs/benchmarks.md attributes time to.
+
 namespace LexiSharp.Postgres;
 
 /// <summary>
@@ -350,7 +356,7 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
         return new SearchDocument(id, content, fields, category);
     }
 
-    private static IReadOnlyDictionary<string, string>? DeserializeFields(string? json)
+    private static IReadOnlyDictionary<string, string>? DeserializeFields(string? json) // NOSONAR:CA1859
     {
         if (string.IsNullOrEmpty(json))
             return null;

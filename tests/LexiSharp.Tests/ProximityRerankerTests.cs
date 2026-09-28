@@ -3,6 +3,12 @@ using LexiSharp.Indexing;
 using LexiSharp.Ranking;
 using Xunit;
 
+// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
+// below. The interface is the published return type: a List<T> or an array in its place
+// would hand callers a mutable collection through a contract that says they cannot have
+// one, and what it saves is a single interface dispatch per call, which no measurement in
+// docs/benchmarks.md attributes time to.
+
 namespace LexiSharp.Tests;
 
 /// <summary>
@@ -29,7 +35,7 @@ public class ProximityRerankerTests
         return index;
     }
 
-    private static IReadOnlyList<SearchResult> Candidates(ITextIndex index, string query, params string[] order)
+    private static IReadOnlyList<SearchResult> Candidates(ITextIndex index, string query, params string[] order) // NOSONAR:CA1859
     {
         var engine = new RankedTextSearchEngine(index, new Bm25Scorer());
         var results = engine.Search(query).ToDictionary(result => result.DocumentId, result => result);

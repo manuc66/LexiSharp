@@ -8,6 +8,12 @@ using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
 using Xunit;
 
+// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
+// the lines below. Its premise is a call repeated with the same literal, allocating each
+// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
+// it -- hoisting it into a field saves nothing that is measured, and moves the data away
+// from the test that fails on it.
+
 namespace LexiSharp.Tests;
 
 public class SemanticLexicalIndexTests
@@ -66,7 +72,7 @@ public class SemanticLexicalIndexTests
 
         var expansion = expander.Expand(["token", "refresh", "expiry"]).ToList();
 
-        Assert.All(expansion, term => Assert.DoesNotContain(term.Term, new[] { "token", "refresh", "expiry" }));
+        Assert.All(expansion, term => Assert.DoesNotContain(term.Term, new[] { "token", "refresh", "expiry" })); // NOSONAR:CA1861
         Assert.InRange(expansion.Count, 1, 4);
         Assert.Equal(expansion.Count, expansion.Select(term => term.Term).Distinct().Count());
     }

@@ -6,6 +6,12 @@ using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
 using Xunit;
 
+// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
+// the lines below. Its premise is a call repeated with the same literal, allocating each
+// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
+// it -- hoisting it into a field saves nothing that is measured, and moves the data away
+// from the test that fails on it.
+
 namespace LexiSharp.Tests;
 
 public class InMemoryVectorSearchEngineTests
@@ -330,7 +336,7 @@ public class InMemoryVectorSearchEngineTests
         var hybrid = new HybridTextSearchEngine(
             new ITextSearchEngine[] { lexical, vector },
             new ReciprocalRankFusionMerger(),
-            sourceNames: new[] { "lexical", "vector" });
+            sourceNames: new[] { "lexical", "vector" }); // NOSONAR:CA1861
 
         var results = hybrid.Search("oauth token refresh", new SearchOptions(Limit: 3));
 
