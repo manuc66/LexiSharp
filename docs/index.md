@@ -125,7 +125,7 @@ twice. Every figure below is reproducible with a command on the
 
 ## Scope
 
-Version 0.5.0, one maintainer, and the public API may still change between minor versions —
+Version 0.6.0, one maintainer, and the public API may still change between minor versions —
 pin a version and read the release notes. The techniques implemented (BM25 and its variants,
 RRF, SPLADE-style sparse retrieval, MaxSim) follow published information-retrieval
 literature; what is here is a small, dependency-free .NET implementation of them, not new
