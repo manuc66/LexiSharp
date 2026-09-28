@@ -19,7 +19,7 @@ better.
 - **Classification** (`LexiSharp.Classification`) — multinomial Naive Bayes with Laplace
   smoothing, or Complement Naive Bayes for imbalanced labels, behind a dedicated
   `ITextClassifier` interface, with incremental `Learn`/`Unlearn` for labelled documents that
-  arrive over time and signed-weight reinforcement for per-search feedback.
+  arrive over time.
 
 ## Lexical similarity and keyword extraction
 
@@ -110,52 +110,34 @@ The incremental pass is *cheaper* than the batch it replaces, which is the point
 build a vocabulary set alongside the counts the way `Train` does, it derives the vocabulary size
 from the counts already there. One `Learn` is ~75 000x cheaper than one retrain on this corpus,
 which is the entire argument for having it.
+## What the incremental and reinforced members cost
 
-### Reinforcement
+Measured on 12 logical processors, 10 000 documents of 30 tokens each over 5 categories, medians of
+7 rounds.
 
-`NaiveBayesClassifier` is also an `IReinforceableTextClassifier` (`classifier is
-IReinforceableTextClassifier`), for feedback that arrives one search at a time and must not
-cost a retrain:
+| Operation | Cost |
+|---|---|
+| `Train` 10 000 documents from cold | 67.9 ms |
+| `Learn` the same 10 000 onto a warm model, 1st pass | 49.6 ms (0.730x) |
+| `Learn` the same 10 000 onto a warm model, 2nd pass | 48.5 ms (0.713x) |
+| one `Learn` | 0.90 µs |
 
-```csharp
-// A user says this search result is a Support request, and the model agrees on the next call.
-classifier.Reinforce("i cannot connect to the internet", "Support", weight: 1.0);
+The incremental pass is *cheaper* than the batch it replaces, which is the point: `Learn` does not
+build a vocabulary set alongside the counts the way `Train` does, it derives the vocabulary size
+from the counts already there. One `Learn` is ~75 000x cheaper than one retrain on this corpus,
+which is the entire argument for having it.
 
-// A user says it is *not* Billing. A negative weight pushes the category away, which is what
-// "this is not that" means — and it needs no idea of what the category is instead.
-classifier.Reinforce("monthly invoice", "Billing", weight: -1.0);
+Concurrency, 2 s windows with 8 readers and 2 writers (one on the reinforcement ledger, one calling
+`Learn`/`Unlearn`):
 
-// Changed their mind, or the feedback was wrong: this subtracts exactly what Reinforce added.
-classifier.Unreinforce("i cannot connect to the internet", "Support", weight: 1.0);
+| | Reads | Failures |
+|---|---|---|
+| unwrapped, run 1 | 5 188 591 | 8 (0.00 %) |
+| unwrapped, run 2 | 6 826 690 | 6 659 (0.10 %) |
+| unwrapped, run 3 | 6 657 330 | 667 (0.01 %) |
+| wrapped, 3 runs | ~2.6 M | 0 |
 
-// Or drop every piece of feedback at once, back to the state Train left the model in.
-classifier.ForgetReinforcement();
-```
-
-The weight is signed, so one method covers reinforcement, penalization and cancellation. Three
-properties are contractual, and each has a test: the effect is proportional to the weight, it
-accumulates over repeated calls, and each distinct term counts once however often the text
-repeats it. `Train` never writes the ledger, so feedback survives a rebuild of the corpus model —
-reinforcing a category the current corpus does not contain does nothing for as long as that is
-true. `ForgetReinforcement` is how you say the evidence should not come back.
-
-Two boundaries worth knowing, because both follow from the label set being the corpus's:
-reinforcing a category that was never trained is a no-op (use `Train` to introduce a category),
-and `Unreinforce` is not a check that the text was ever reinforced — the ledger is additive, so
-it is the same operation as reinforcing by `-weight`, and unreinforcing something that was never
-reinforced simply pushes the category further away.
-
-The two capabilities are independent: learning a document leaves reinforcement alone, and
-forgetting reinforcement leaves the corpus counts alone. `Learn` is corpus state, `Reinforce` is a
-position laid over it.
-
-`NaiveBayesOptions` tunes the scoring: a softmax `Temperature` (sharpening/flattening), an
-`IdfMode` (`None` / `DocumentCount` = `log(1 + N/df)` / `ClassCount` = `max(0, log(C/df))`),
-an `Alpha` smoothing coefficient (optionally applied to the priors through `SmoothPriors`) and
-`SkipOutOfVocabularyTokens` (ignore unknown query terms instead of a Laplace penalty). Setting
-`Complement` switches to **Complement Naive Bayes** (Rennie et al. 2003, matching scikit-learn's
-`ComplementNB`): each class is learned from the complement of its documents and a query is
-attributed to the class whose exclusion explains it least — a cheap robustness win when the
-training labels are heavily imbalanced. `Train` must not overlap any `Predict`; concurrent
-`Predict` calls are safe. None of `Learn`, `Unlearn`, `Reinforce`, `Unreinforce` or
-`ForgetReinforcement` is safe alongside a `Predict`.
+The bare failure counts are erratic because a race only sometimes lands, and they will not
+reproduce on other hardware; the qualitative result will. Read-path cost of the lock came out at
+0.986x / 1.051x / 1.057x / 0.975x / 1.043x across five runs — straddling 1.0, so the uncontended
+read lock is not measurably expensive here, though it is not free either.

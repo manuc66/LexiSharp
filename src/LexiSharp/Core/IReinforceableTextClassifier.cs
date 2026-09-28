@@ -26,6 +26,8 @@ namespace LexiSharp.Core;
 /// <para>
 /// Thread-safety: the same contract as <see cref="ITextClassifier"/> — the mutating members and
 /// <see cref="ITextClassifier.Predict(string, int, IReadOnlySet{string})"/> must not overlap.
+/// <see cref="Classification.SynchronizedTextClassifier"/> in the <c>LexiSharp.Classification</c>
+/// namespace wraps a classifier to provide that synchronization.
 /// </para>
 /// </remarks>
 public interface IReinforceableTextClassifier : ITextClassifier
