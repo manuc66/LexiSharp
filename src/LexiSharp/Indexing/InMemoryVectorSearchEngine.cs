@@ -51,12 +51,12 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
 
     /// <summary>
     /// Document id → dense slot. The vectors themselves live in one contiguous
-    /// <see cref="_vectorData"/> block of <see cref="_dimension"/>-strided rows, so a scan walks
+    /// <see cref="_vectorData"/> block of <see cref="_stride"/>-strided rows, so a scan walks
     /// memory linearly instead of chasing a dictionary entry and a separate array per document.
     /// </summary>
     private SearchDocument?[] _slotDocument = Array.Empty<SearchDocument?>();
 
-    /// <summary>The scan buffer, <c>slot * _dimension</c> being a document's vector start.</summary>
+    /// <summary>The scan buffer, <c>slot * _stride</c> being a document's vector start.</summary>
     private float[] _vectorData = Array.Empty<float>();
 
     /// <summary>
@@ -70,7 +70,16 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
     private readonly List<int> _freeSlots = [];
 
     private int _slotCount;
-    private int _dimension;
+
+    /// <summary>
+    /// Row stride of <see cref="_vectorData"/>, in floats: where slot <c>n</c>'s vector starts.
+    /// Not the same thing as <see cref="Dimension"/>, and deliberately not named like it. The
+    /// stride is a property of the buffer, so it is 0 until a vector is stored; the dimension is
+    /// the provider's declared contract, which is answerable on an engine that holds nothing.
+    /// Once a vector has been stored the two are equal, because <see cref="AddVector"/> refuses
+    /// any vector the provider's dimension does not match.
+    /// </summary>
+    private int _stride;
 
     /// <param name="embeddings">External embedding producer; never implemented inside LexiSharp.</param>
     /// <exception cref="ArgumentNullException"><paramref name="embeddings"/> is null.</exception>
@@ -86,7 +95,15 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
     /// <summary>Number of indexed documents.</summary>
     public int Count => _documents.Count;
 
-    /// <summary>Length of the vectors this engine stores, as declared by the provider.</summary>
+    /// <summary>
+    /// Length of the vectors this engine stores, as declared by the provider.
+    /// </summary>
+    /// <remarks>
+    /// The provider, not <see cref="_stride"/>. A caller sizing a buffer or validating a vector it
+    /// produced asks this before the engine has indexed anything, and the buffer stride is 0 until
+    /// the first <see cref="Add"/> — the two are equal afterwards, since <see cref="AddVector"/>
+    /// rejects a vector whose length is not the declared dimension.
+    /// </remarks>
     public int Dimension => _embeddings.Dimension;
 
     /// <inheritdoc />
@@ -239,7 +256,7 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
         // Bounded window rather than materializing and sorting every document that scores above
         // zero: a dense scan routinely matches most of the corpus, and the page is `Window` rows.
         var top = new TopRankedWindow(options.Window);
-        int dimension = _dimension;
+        int stride = _stride;
         var data = _vectorData;
         var norms = _squaredNorms;
 
@@ -261,7 +278,7 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
                 continue; // zero vector: never a match
 
             // Cosine ∈ [−1, 1]; clamp negatives/orthogonal to 0 = "no match" (LexiSharp convention).
-            double score = VectorSimilarity.DotProduct(querySpan, ReadVectorAt(data, slot, dimension))
+            double score = VectorSimilarity.DotProduct(querySpan, ReadVectorAt(data, slot, stride))
                            / (queryNorm * documentNorm);
 
             if (!(score > 0) || score < options.MinimumScore)
@@ -304,7 +321,9 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
         if (_documents.ContainsKey(document.Id))
             Remove(document.Id);
 
-        _dimension = vector.Length;
+        // Validated above, so the stride cannot change under the buffer: a vector of another
+        // length never reaches the copy.
+        _stride = vector.Length;
         int slot = AllocateSlot();
 
         _documents[document.Id] = document;
@@ -312,7 +331,7 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
         _slotDocument[slot] = document;
 
         var source = vector.Span;
-        source.CopyTo(_vectorData.AsSpan(slot * _dimension, _dimension));
+        source.CopyTo(_vectorData.AsSpan(slot * _stride, _stride));
         _squaredNorms[slot] = VectorSimilarity.NormSquared(source);
     }
 
@@ -343,15 +362,15 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
 
         // The vector block is sized in floats, so it grows with the slot capacity times the
         // dimension rather than doubling on its own.
-        Array.Resize(ref _vectorData, capacity * _dimension);
+        Array.Resize(ref _vectorData, capacity * _stride);
         Array.Resize(ref _squaredNorms, capacity);
     }
 
     /// <summary>One stored vector, as a span over the shared block.</summary>
     private ReadOnlySpan<float> ReadVector(int slot) =>
-        _vectorData.AsSpan(slot * _dimension, _dimension);
+        _vectorData.AsSpan(slot * _stride, _stride);
 
     /// <summary>One stored vector from an already-captured block, so the scan avoids re-reading fields.</summary>
-    private static ReadOnlySpan<float> ReadVectorAt(float[] data, int slot, int dimension) =>
-        data.AsSpan(slot * dimension, dimension);
+    private static ReadOnlySpan<float> ReadVectorAt(float[] data, int slot, int stride) =>
+        data.AsSpan(slot * stride, stride);
 }
