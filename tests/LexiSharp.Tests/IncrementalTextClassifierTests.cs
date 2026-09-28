@@ -339,6 +339,48 @@ public class IncrementalTextClassifierTests
         Assert.DoesNotContain(classifier.Predict("alpha", limit: 10), r => r.Category == "Support");
     }
 
+    // Learn/Unlearn and the reinforcement ledger are two different things and must not interfere:
+    // one is corpus state, the other is user feedback laid over it.
+    [Fact]
+    public void Learn_DoesNotDisturbReinforcement()
+    {
+        var classifier = new NaiveBayesClassifier();
+        classifier.Train(Corpus);
+        classifier.Reinforce("invoice", "Support", weight: 4.0);
+
+        classifier.Learn(new SearchDocument("9", "package delivery tracking", Category: "Shipping"));
+
+        Assert.Equal("Support", classifier.PredictBest("invoice"));
+    }
+
+    [Fact]
+    public void Unlearn_DoesNotDisturbReinforcement()
+    {
+        var classifier = new NaiveBayesClassifier();
+        classifier.Train(Corpus);
+        classifier.Reinforce("invoice", "Support", weight: 4.0);
+
+        classifier.Unlearn(Corpus[3]);   // a Billing document, learned and then retracted
+
+        Assert.Equal("Support", classifier.PredictBest("invoice"));
+    }
+
+    [Fact]
+    public void ForgetReinforcement_DoesNotUndoLearning()
+    {
+        var classifier = new NaiveBayesClassifier();
+        classifier.Train(Corpus);
+        classifier.Learn(new SearchDocument("9", "package delivery tracking", Category: "Shipping"));
+        classifier.Reinforce("invoice", "Support", weight: 4.0);
+
+        classifier.ForgetReinforcement();
+
+        var trained = new NaiveBayesClassifier();
+        trained.Train(Corpus.Append(new SearchDocument("9", "package delivery tracking", Category: "Shipping")));
+
+        AssertSameModel(trained, classifier);
+    }
+
     [Fact]
     public void Learn_RejectsNullDocument()
     {
