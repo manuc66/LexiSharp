@@ -131,4 +131,5 @@ RRF, SPLADE-style sparse retrieval, MaxSim) follow published information-retriev
 literature; what is here is a small, dependency-free .NET implementation of them, not new
 research. [Full scope and limits](reference.md#scope-and-limits).
 
+[All projects](https://manuc66.github.io/) ·
 [Source on GitHub](https://github.com/manuc66/LexiSharp) · [NuGet](https://www.nuget.org/packages/LexiSharp/) · MIT
