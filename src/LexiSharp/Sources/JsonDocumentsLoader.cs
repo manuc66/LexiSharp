@@ -53,14 +53,14 @@ public static class JsonDocumentsLoader
             if (element.ValueKind != JsonValueKind.Object)
                 throw new ArgumentException($"JSON array entry {index} is not an object.", nameof(json));
 
-            string id = ReadScalar(element, loaderOptions.IdProperty, index, "id", json);
-            string text = ReadScalar(element, loaderOptions.TextProperty, index, "text", json);
+            string id = ReadScalar(element, loaderOptions.IdProperty, index, "id", nameof(json));
+            string text = ReadScalar(element, loaderOptions.TextProperty, index, "text", nameof(json));
             string? category = null;
 
             if (loaderOptions.CategoryProperty is not null)
                 TryReadScalar(element, loaderOptions.CategoryProperty, out category);
 
-            var fields = CollectFields(element, loaderOptions, index, json);
+            var fields = CollectFields(element, loaderOptions);
 
             documents.Add(new LoadedDocument(id, text, fields, category));
             index++;
@@ -79,9 +79,7 @@ public static class JsonDocumentsLoader
 
     private static Dictionary<string, string> CollectFields(
         JsonElement element,
-        JsonDocumentLoadOptions options,
-        int index,
-        string json)
+        JsonDocumentLoadOptions options)
     {
         var fields = new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -107,13 +105,22 @@ public static class JsonDocumentsLoader
         return fields;
     }
 
-    private static string ReadScalar(JsonElement element, string propertyName, int index, string role, string json)
+    /// <summary>
+    /// Reads one required scalar, or throws naming <paramref name="paramName"/> -- the public
+    /// argument the caller actually passed (<c>json</c>), which is the only name they can act on.
+    /// </summary>
+    private static string ReadScalar(
+        JsonElement element,
+        string propertyName,
+        int index,
+        string role,
+        string paramName)
     {
         if (TryReadScalar(element, propertyName, out string value))
             return value;
 
         throw new ArgumentException(
-            $"JSON array entry {index} is missing the '{propertyName}' {role} property.", nameof(json));
+            $"JSON array entry {index} is missing the '{propertyName}' {role} property.", paramName);
     }
 
     /// <summary>
