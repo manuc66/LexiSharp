@@ -32,6 +32,7 @@ BM25F has **no** measured case of beating a tuned BM25, and its tuner reports
 `WeightingHelped = false` on every corpus it has been run on; proximity is neutral at quarter
 strength and negative at full strength. On these corpora, fitting parameters is worth more than
 adding a scorer — see [Evaluation](evaluation.md).
+
 ## BM25 variants
 
 Two published single-field variants of BM25, both behind the same `ITextSearchEngine` contract, both
