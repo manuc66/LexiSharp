@@ -29,7 +29,7 @@ namespace LexiSharp.Indexing;
 /// real token stream for the purposes of length statistics and candidate generation.
 /// </para>
 /// </remarks>
-public sealed class ExpansionTextIndex : ITextIndex, ICandidateIndex, IVocabularyIndex
+public sealed class ExpansionTextIndex : ITextIndex, ICandidateIndex, IUnorderedCandidateIndex, IVocabularyIndex
 {
     private readonly InMemoryTextIndex _inner;
     private readonly ITermExpander _expander;
@@ -188,6 +188,18 @@ public sealed class ExpansionTextIndex : ITextIndex, ICandidateIndex, IVocabular
     {
         ArgumentNullException.ThrowIfNull(terms);
         return _inner.GetCandidateDocuments(terms);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Forwarded rather than reimplemented, so the semantic lexical path gets the same cheap
+    /// candidate set the inner index offers. The union is computed in the inner posting lists
+    /// either way — that is where expansion terms are posted.
+    /// </remarks>
+    IEnumerable<SearchDocument> IUnorderedCandidateIndex.GetCandidatesUnordered(IReadOnlyList<string> terms)
+    {
+        ArgumentNullException.ThrowIfNull(terms);
+        return ((IUnorderedCandidateIndex)_inner).GetCandidatesUnordered(terms);
     }
 
     private void Expand(string documentId, IReadOnlyList<string> terms)
