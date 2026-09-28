@@ -26,13 +26,21 @@ namespace LexiSharp.Classification;
 /// <see cref="Predict(string, int, IReadOnlySet{string})"/> is deterministic for a given model.
 /// </remarks>
 /// <remarks>
-/// A model fed documents one at a time through <see cref="Learn"/> is indistinguishable from one
-/// handed the whole corpus to <see cref="Train"/> at once, under every options setting, because
-/// both write through the same accumulator. <see cref="Unlearn"/> is its exact inverse. See
-/// <see cref="IIncrementalTextClassifier"/> for the contract.
+/// Two optional capabilities sit on top of retraining, and they are deliberately different things.
+/// <see cref="Learn"/> and <see cref="Unlearn"/> move the corpus itself: a model fed one document at
+/// a time is indistinguishable from one trained on the whole corpus at once, under every options
+/// setting, because <c>Train</c> and <c>Learn</c> write through the same code path. See
+/// <see cref="IIncrementalTextClassifier"/>.
+/// <para/>
+/// <see cref="Reinforce"/> and <see cref="Unreinforce"/> instead record user feedback in a ledger
+/// beside those counts, never in them, weighted and signed so that a user can say "this is that
+/// category", "this is not", or change their mind, with no retrain. Keeping the two apart is what
+/// makes cancelling feedback exact and keeps the corpus model reachable only through
+/// <see cref="Train"/>, <see cref="Learn"/> and <see cref="Unlearn"/>. See
+/// <see cref="IReinforceableTextClassifier"/> for the contract.
 /// </remarks>
 public sealed class NaiveBayesClassifier
-    : ITextClassifier, IWeightedPredictor, IIncrementalTextClassifier
+    : ITextClassifier, IWeightedPredictor, IIncrementalTextClassifier, IReinforceableTextClassifier
 {
     private readonly ITokenizer _tokenizer;
     private readonly NaiveBayesOptions _options;
@@ -42,6 +50,11 @@ public sealed class NaiveBayesClassifier
     private readonly Dictionary<string, Dictionary<string, int>> _termCountsByClass = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _globalTermCounts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _termDocumentFrequencies = new(StringComparer.Ordinal);
+
+    // Category -> term -> signed mass. Deliberately kept apart from the counts above: Train is the
+    // only writer of the corpus model, which is what makes Unreinforce an exact inverse and
+    // ForgetReinforcement a clean reset rather than a reconstruction.
+    private readonly Dictionary<string, Dictionary<string, double>> _reinforcementByClass = new(StringComparer.Ordinal);
 
     private int _documentCount;
     private int _totalTokenCount;
@@ -233,6 +246,77 @@ public sealed class NaiveBayesClassifier
     }
 
     /// <inheritdoc />
+    public void Reinforce(string text, string category, double weight = 1.0) =>
+        AdjustReinforcement(text, category, weight, add: true);
+
+    /// <inheritdoc />
+    public void Unreinforce(string text, string category, double weight = 1.0) =>
+        AdjustReinforcement(text, category, weight, add: false);
+
+    /// <inheritdoc />
+    public void ForgetReinforcement() => _reinforcementByClass.Clear();
+
+    /// <summary>
+    /// Moves <paramref name="weight"/> units of evidence for every distinct term of
+    /// <paramref name="text"/> in or out of the ledger entry for <paramref name="category"/>.
+    /// </summary>
+    /// <param name="add">
+    /// True to reinforce, false to unreinforce — which is the same as reinforcing by
+    /// <c>-weight</c>, because the ledger is additive and keeps no history.
+    /// </param>
+    /// <param name="text">The text the feedback is about.</param>
+    /// <param name="category">The category whose ledger entry is adjusted.</param>
+    /// <param name="weight">Signed strength; validated here so the reported parameter name matches the public one.</param>
+    private void AdjustReinforcement(string text, string category, double weight, bool add)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        if (double.IsNaN(weight) || double.IsInfinity(weight))
+            throw new ArgumentOutOfRangeException(
+                nameof(weight), weight, "Reinforcement weight must be a finite number.");
+
+        double massChange = add ? weight : -weight;
+
+        if (massChange == 0 || string.IsNullOrEmpty(category))
+            return;
+
+        // The label set is the corpus's. A category that was never trained has neither a prior nor
+        // a class-conditional distribution, so there is nothing here for evidence to adjust.
+        if (!_termCountsByClass.ContainsKey(category))
+            return;
+
+        if (!_reinforcementByClass.TryGetValue(category, out var ledger))
+        {
+            ledger = new Dictionary<string, double>(StringComparer.Ordinal);
+            _reinforcementByClass[category] = ledger;
+        }
+
+        // Distinct terms only: a user repeating a word in a search box is not asserting it twice,
+        // and letting repetition scale the correction would make the weight parameter redundant.
+        var counted = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (string term in _tokenizer.Tokenize(text))
+        {
+            if (!counted.Add(term))
+                continue;
+
+            ledger.TryGetValue(term, out double mass);
+            mass += massChange;
+
+            // Pruning at zero is what makes a cancelled reinforcement indistinguishable from one
+            // that never happened, right down to the scoring path, which pays for the ledger only
+            // while the ledger holds something.
+            if (mass == 0)
+                ledger.Remove(term);
+            else
+                ledger[term] = mass;
+        }
+
+        if (ledger.Count == 0)
+            _reinforcementByClass.Remove(category);
+    }
+
+    /// <inheritdoc />
     public IReadOnlyList<ClassificationResult> Predict(
         string text,
         int limit = 3,
@@ -309,8 +393,9 @@ public sealed class NaiveBayesClassifier
     /// resolved because it is a function of the term alone and would otherwise be recomputed once
     /// per class; the corpus count, the vocabulary flag and the reinforcement weights are resolved
     /// only when <see cref="NaiveBayesOptions.Complement"/>,
-    /// <see cref="NaiveBayesOptions.SkipOutOfVocabularyTokens"/> calls for them, so a default model
-    /// pays for one array per prediction. Vocabulary membership itself is always looked up (see the loop below) because the
+    /// <see cref="NaiveBayesOptions.SkipOutOfVocabularyTokens"/> or a non-empty reinforcement
+    /// ledger calls for them, so a default model on a default classifier pays for one array per
+    /// prediction. Vocabulary membership itself is always looked up (see the loop below) because the
     /// idf weight needs it whatever the options say.
     /// </remarks>
     private QueryTerms ResolveQueryTerms(List<WeightedToken> tokens)
@@ -318,12 +403,16 @@ public sealed class NaiveBayesClassifier
         bool needsGlobalCounts = _options.Complement;
         bool needsVocabulary = _options.SkipOutOfVocabularyTokens;
 
-        var query = new QueryTerms(tokens, needsGlobalCounts, needsVocabulary);
+        // The ledger is usually empty, and the caller reads one array per active feature per
+        // prediction, so it is only asked for when there is something in it to weight.
+        var query = new QueryTerms(
+            tokens, needsGlobalCounts, needsVocabulary, _reinforcementByClass.Count > 0);
 
         // Local, non-nullable handles: the arrays only exist when the matching option is on, and
         // holding them here keeps the loop free of null checks.
         var globalCounts = query.GlobalCounts;
         var inVocabularyFlags = query.InVocabulary;
+        var reinforcementWeights = query.ReinforcementWeights;
 
         for (int i = 0; i < tokens.Count; i++)
         {
@@ -345,6 +434,17 @@ public sealed class NaiveBayesClassifier
             // A function of the term alone, so it is identical for every class: resolved once here
             // rather than inside the class loop.
             query.IdfWeights[i] = _options.IdfMode == IdfMode.None ? 1.0 : IdfWeight(term, inVocabulary);
+
+            if (reinforcementWeights is not null)
+            {
+                // A term the corpus never saw has no document frequency to be discounted by, and a
+                // user asserting "this text means that category" outranks whatever the corpus
+                // happened to contain. So such a term counts at full strength for reinforcement,
+                // even under ClassCount, where the likelihood path zeroes it. Deliberate, and
+                // pinned by a test: a correction made entirely of unfamiliar words still has to
+                // say something.
+                reinforcementWeights[i] = inVocabulary ? query.IdfWeights[i] : 1.0;
+            }
         }
 
         return query;
@@ -358,9 +458,43 @@ public sealed class NaiveBayesClassifier
         _classTokenCounts.TryGetValue(category, out int classTokenCount);
         _classDocumentCounts.TryGetValue(category, out int classDocumentCount);
 
+        // Parenthesized deliberately: `?:` binds looser than `+`, so without them the reinforcement
+        // would only ever be added on the classic path.
         return _options.Complement
             ? ComplementLogProbability(classTerms, classTokenCount, query)
-            : ClassicLogProbability(classTerms, classTokenCount, classDocumentCount, query);
+              + ReinforcedEvidence(category, query)
+            : ClassicLogProbability(classTerms, classTokenCount, classDocumentCount, query)
+              + ReinforcedEvidence(category, query);
+    }
+
+    /// <summary>
+    /// The reinforcement ledger's contribution to one category's log score: the sum over the query's
+    /// terms of the query weight, the term's reinforcement weight, and the mass recorded for this
+    /// category. Added identically under both scoring variants, so what a user asserted does not
+    /// depend on which variant they configured.
+    /// </summary>
+    /// <remarks>
+    /// Guarded by the per-category lookup, so a classifier nobody has reinforced pays one failed
+    /// dictionary probe per category and nothing else — and when the ledger is empty the caller
+    /// never reaches the token loop at all.
+    /// </remarks>
+    private double ReinforcedEvidence(string category, QueryTerms query)
+    {
+        var weights = query.ReinforcementWeights;
+
+        if (weights is null || !_reinforcementByClass.TryGetValue(category, out var ledger))
+            return 0.0;
+
+        var tokens = query.Tokens;
+        double total = 0.0;
+
+        for (int i = 0; i < query.Count; i++)
+        {
+            if (ledger.TryGetValue(tokens[i].Token, out double mass))
+                total += tokens[i].Weight * weights[i] * mass;
+        }
+
+        return total;
     }
 
     private double ComplementLogProbability(
@@ -436,12 +570,17 @@ public sealed class NaiveBayesClassifier
     /// </summary>
     private sealed class QueryTerms
     {
-        public QueryTerms(List<WeightedToken> tokens, bool needsGlobalCounts, bool needsVocabulary)
+        public QueryTerms(
+            List<WeightedToken> tokens,
+            bool needsGlobalCounts,
+            bool needsVocabulary,
+            bool hasReinforcement)
         {
             Tokens = tokens;
             IdfWeights = new double[tokens.Count];
             GlobalCounts = needsGlobalCounts ? new int[tokens.Count] : null;
             InVocabulary = needsVocabulary ? new bool[tokens.Count] : null;
+            ReinforcementWeights = hasReinforcement ? new double[tokens.Count] : null;
         }
 
         /// <summary>The caller's tokens, in query order.</summary>
@@ -458,6 +597,12 @@ public sealed class NaiveBayesClassifier
 
         /// <summary>Vocabulary membership, for the out-of-vocabulary skip; null when unused.</summary>
         public bool[]? InVocabulary { get; }
+
+        /// <summary>
+        /// Per-token weight applied to the reinforcement ledger, identical across classes; null when
+        /// the ledger is empty, which is how the whole feature stays off the hot path by default.
+        /// </summary>
+        public double[]? ReinforcementWeights { get; }
     }
 
     /// <summary>
