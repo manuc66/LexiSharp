@@ -3,7 +3,7 @@
 [![CI](https://github.com/manuc66/lexisharp/actions/workflows/ci.yml/badge.svg)](https://github.com/manuc66/lexisharp/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/manuc66/lexisharp/actions/workflows/codeql.yml/badge.svg)](https://github.com/manuc66/lexisharp/actions/workflows/codeql.yml)
 [![codecov](https://codecov.io/gh/manuc66/lexisharp/graph/badge.svg)](https://codecov.io/gh/manuc66/lexisharp)
-[![SonarCloud](https://sonarcloud.io/api/project_badges/quality_gate?project=manuc66_lexisharp)](https://sonarcloud.io/summary/new_code?id=manuc66_lexisharp)
+[![SonarCloud quality gate](https://img.shields.io/sonar/quality_gate/manuc66_lexisharp?server=https://sonarcloud.io)](https://sonarcloud.io/summary/new_code?id=manuc66_lexisharp)
 [![NuGet](https://img.shields.io/nuget/v/LexiSharp.svg)](https://www.nuget.org/packages/LexiSharp/)
 [![Docs](https://img.shields.io/badge/docs-manuc66.github.io/LexiSharp-blue)](https://manuc66.github.io/LexiSharp/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
