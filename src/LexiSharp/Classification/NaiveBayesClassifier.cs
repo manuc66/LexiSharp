@@ -37,7 +37,9 @@ namespace LexiSharp.Classification;
 /// category", "this is not", or change their mind, with no retrain. Keeping the two apart is what
 /// makes cancelling feedback exact and keeps the corpus model reachable only through
 /// <see cref="Train"/>, <see cref="Learn"/> and <see cref="Unlearn"/>. See
-/// <see cref="IReinforceableTextClassifier"/> for the contract.
+/// <see cref="IReinforceableTextClassifier"/> for the contract, and
+/// <see cref="SynchronizedTextClassifier"/> for the opt-in synchronization to use when mutation and
+/// prediction genuinely overlap.
 /// </remarks>
 public sealed class NaiveBayesClassifier
     : ITextClassifier, IWeightedPredictor, IIncrementalTextClassifier, IReinforceableTextClassifier

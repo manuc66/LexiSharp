@@ -32,6 +32,7 @@ namespace LexiSharp.Core;
 /// Thread-safety: the same contract as <see cref="ITextClassifier"/> — these must not run
 /// concurrently with each other or with
 /// <see cref="ITextClassifier.Predict(string, int, IReadOnlySet{string})"/>.
+/// <see cref="Classification.SynchronizedTextClassifier"/> wraps a classifier to provide that.
 /// </para>
 /// </remarks>
 public interface IIncrementalTextClassifier : ITextClassifier
