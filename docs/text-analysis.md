@@ -18,7 +18,8 @@ better.
   co-occurrence graph + PageRank), both deterministic and tokenizer-configurable.
 - **Classification** (`LexiSharp.Classification`) — multinomial Naive Bayes with Laplace
   smoothing, or Complement Naive Bayes for imbalanced labels, behind a dedicated
-  `ITextClassifier` interface.
+  `ITextClassifier` interface, with incremental `Learn`/`Unlearn` for labelled documents that
+  arrive over time.
 
 ## Lexical similarity and keyword extraction
 
@@ -62,12 +63,50 @@ The classifier is a `IWeightedPredictor` too (`classifier is IWeightedPredictor`
 spell-corrected token can carry less evidence than an exact match by passing
 `WeightedToken`s directly. `Predict`/`PredictBest` accept a set of `excludedCategories` to
 hide hot categories at runtime without retraining (probabilities renormalize over the rest).
-`NaiveBayesOptions` tunes the scoring: a softmax `Temperature` (sharpening/flattening), an
-`IdfMode` (`None` / `DocumentCount` = `log(1 + N/df)` / `ClassCount` = `max(0, log(C/df))`),
-an `Alpha` smoothing coefficient (optionally applied to the priors through `SmoothPriors`) and
-`SkipOutOfVocabularyTokens` (ignore unknown query terms instead of a Laplace penalty). Setting
-`Complement` switches to **Complement Naive Bayes** (Rennie et al. 2003, matching scikit-learn's
-`ComplementNB`): each class is learned from the complement of its documents and a query is
-attributed to the class whose exclusion explains it least — a cheap robustness win when the
-training labels are heavily imbalanced. `Train` must not overlap any `Predict`; concurrent
-`Predict` calls are safe.
+
+### Incremental learning
+
+`NaiveBayesClassifier` is also an `IIncrementalTextClassifier` (`classifier is
+IIncrementalTextClassifier`), for labelled documents that arrive over time:
+
+```csharp
+// Adding one document. A model built this way is indistinguishable from one handed the whole
+// corpus: same vocabulary, same per-class term counts, same document frequencies, same priors.
+classifier.Learn(new SearchDocument("9", "package never arrived", Category: "Shipping"));
+
+// Retracting one. Exactly undoes a Learn of the same document, and retires the category once its
+// last document is gone — so a model can be built up and taken back down without ever retraining.
+classifier.Unlearn(document);
+```
+
+Parity with `Train` is the contract, and it is tested under all twelve `NaiveBayesOptions`
+combinations rather than only the defaults, because parity that holds only on the defaults is not
+parity. Learning the same document twice weighs twice as much, matching two copies in the corpus.
+
+`Unlearn` is arithmetic, not bookkeeping: it removes one document from the category and subtracts
+that text's contribution, and it does not check that the text was ever learned. Tracking which
+documents went in would cost memory proportional to the corpus, where the model itself is
+proportional to the vocabulary. So unlearning something never seen is well-defined rather than an
+error — the class loses a document of prior and nothing else, because there is nothing else to
+subtract. Callers who mean "retract exactly what I added" should track it themselves; callers who
+mean "this category has one document fewer" can just call it.
+
+`Train` must not overlap any `Predict`; concurrent `Predict` calls are safe. `Learn` and `Unlearn`
+are mutations and are not safe alongside either.
+
+### What incremental learning costs
+
+Measured on 12 logical processors, 10 000 documents of 30 tokens each over 5 categories, medians
+of 7 rounds.
+
+| Operation | Cost |
+|---|---|
+| `Train` 10 000 documents from cold | 67.9 ms |
+| `Learn` the same 10 000 onto a warm model, 1st pass | 49.6 ms (0.730x) |
+| `Learn` the same 10 000 onto a warm model, 2nd pass | 48.5 ms (0.713x) |
+| one `Learn` | 0.90 µs |
+
+The incremental pass is *cheaper* than the batch it replaces, which is the point: `Learn` does not
+build a vocabulary set alongside the counts the way `Train` does, it derives the vocabulary size
+from the counts already there. One `Learn` is ~75 000x cheaper than one retrain on this corpus,
+which is the entire argument for having it.

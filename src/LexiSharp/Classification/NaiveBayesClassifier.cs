@@ -25,7 +25,14 @@ namespace LexiSharp.Classification;
 /// Categories with equal probability are ordered by category name, so the output of
 /// <see cref="Predict(string, int, IReadOnlySet{string})"/> is deterministic for a given model.
 /// </remarks>
-public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
+/// <remarks>
+/// A model fed documents one at a time through <see cref="Learn"/> is indistinguishable from one
+/// handed the whole corpus to <see cref="Train"/> at once, under every options setting, because
+/// both write through the same accumulator. <see cref="Unlearn"/> is its exact inverse. See
+/// <see cref="IIncrementalTextClassifier"/> for the contract.
+/// </remarks>
+public sealed class NaiveBayesClassifier
+    : ITextClassifier, IWeightedPredictor, IIncrementalTextClassifier
 {
     private readonly ITokenizer _tokenizer;
     private readonly NaiveBayesOptions _options;
@@ -57,6 +64,39 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
     {
         ArgumentNullException.ThrowIfNull(documents);
 
+        ResetModel();
+
+        foreach (var document in documents)
+            Accumulate(document);
+    }
+
+    /// <inheritdoc />
+    public void Learn(SearchDocument document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        Accumulate(document);
+    }
+
+    /// <inheritdoc />
+    public void Unlearn(SearchDocument document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        if (string.IsNullOrEmpty(document.Category))
+            return;
+
+        // Same guard as Train: a category the model does not hold has no counts to subtract from,
+        // and inventing one here is how a stray call would leave a phantom label behind.
+        if (!_termCountsByClass.TryGetValue(document.Category, out var classTerms))
+            return;
+
+        // document.Category is non-empty here, checked above.
+        Decumulate(document.Category, document.Text, classTerms);
+    }
+
+    private void ResetModel()
+    {
         _classDocumentCounts.Clear();
         _classTokenCounts.Clear();
         _termCountsByClass.Clear();
@@ -66,51 +106,130 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
         _totalTokenCount = 0;
         _classCount = 0;
         _vocabularySize = 0;
+    }
 
-        var vocabulary = new HashSet<string>(StringComparer.Ordinal);
+    /// <summary>
+    /// Adds one document to the corpus counts. This is the only place the per-class term counts,
+    /// the corpus-wide counts, the document frequencies and the priors are written, and
+    /// <see cref="Train"/> and <see cref="Learn"/> both go through it — which is what makes learning
+    /// one document at a time identical to training on the whole corpus, rather than merely close.
+    /// </summary>
+    private void Accumulate(SearchDocument document)
+    {
+        if (string.IsNullOrEmpty(document.Category))
+            return;
 
-        foreach (var document in documents)
+        string category = document.Category;
+
+        if (!_termCountsByClass.TryGetValue(category, out var classTerms))
         {
-            if (string.IsNullOrEmpty(document.Category))
-                continue;
+            classTerms = new Dictionary<string, int>(StringComparer.Ordinal);
+            _termCountsByClass[category] = classTerms;
+            _classCount++;
+        }
 
-            string category = document.Category;
+        _classDocumentCounts.TryGetValue(category, out int documentCount);
+        _classDocumentCounts[category] = documentCount + 1;
+        _documentCount++;
 
-            if (!_termCountsByClass.TryGetValue(category, out var classTerms))
+        var documentTerms = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var term in _tokenizer.Tokenize(document.Text))
+        {
+            classTerms.TryGetValue(term, out int termCount);
+            classTerms[term] = termCount + 1;
+
+            _globalTermCounts.TryGetValue(term, out int globalTermCount);
+            _globalTermCounts[term] = globalTermCount + 1;
+            _totalTokenCount++;
+
+            _classTokenCounts.TryGetValue(category, out int classTokenCount);
+            _classTokenCounts[category] = classTokenCount + 1;
+
+            if (documentTerms.Add(term))
             {
-                classTerms = new Dictionary<string, int>(StringComparer.Ordinal);
-                _termCountsByClass[category] = classTerms;
-                _classCount++;
-            }
-
-            _classDocumentCounts.TryGetValue(category, out int documentCount);
-            _classDocumentCounts[category] = documentCount + 1;
-            _documentCount++;
-
-            var documentTerms = new HashSet<string>(StringComparer.Ordinal);
-
-            foreach (var term in _tokenizer.Tokenize(document.Text))
-            {
-                classTerms.TryGetValue(term, out int termCount);
-                classTerms[term] = termCount + 1;
-                vocabulary.Add(term);
-
-                _globalTermCounts.TryGetValue(term, out int globalTermCount);
-                _globalTermCounts[term] = globalTermCount + 1;
-                _totalTokenCount++;
-
-                _classTokenCounts.TryGetValue(category, out int classTokenCount);
-                _classTokenCounts[category] = classTokenCount + 1;
-
-                if (documentTerms.Add(term))
-                {
-                    _termDocumentFrequencies.TryGetValue(term, out int docFrequency);
-                    _termDocumentFrequencies[term] = docFrequency + 1;
-                }
+                _termDocumentFrequencies.TryGetValue(term, out int docFrequency);
+                _termDocumentFrequencies[term] = docFrequency + 1;
             }
         }
 
-        _vocabularySize = vocabulary.Count;
+        // Derived from the counts rather than tracked separately, so it cannot drift out of step the
+        // way an independent counter would.
+        _vocabularySize = _globalTermCounts.Count;
+    }
+
+    /// <summary>
+    /// The exact inverse of <see cref="Accumulate"/> for one document, on a category already known
+    /// to exist.
+    /// </summary>
+    /// <remarks>
+    /// Two invariants are restored unconditionally rather than conditionally, because they describe
+    /// the document count and not its content: the class loses a document, and the corpus loses one.
+    /// A text whose terms are absent from the class therefore still costs the class a document of
+    /// prior. That is the documented arithmetic contract, and it is what makes this the exact inverse
+    /// of <see cref="Learn"/> for the case that matters — a document that really was learned.
+    /// </remarks>
+    private void Decumulate(string category, string text, Dictionary<string, int> classTerms)
+    {
+        var documentTerms = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var term in _tokenizer.Tokenize(text))
+        {
+            // A term this class never counted is not this class's to subtract: it may well belong to
+            // another class, where its corpus-wide count is still owed.
+            if (!classTerms.TryGetValue(term, out int termCount) || termCount <= 0)
+                continue;
+
+            if (termCount <= 1)
+                classTerms.Remove(term);
+            else
+                classTerms[term] = termCount - 1;
+
+            _totalTokenCount--;
+
+            _classTokenCounts.TryGetValue(category, out int classTokenCount);
+            _classTokenCounts[category] = classTokenCount - 1;
+
+            if (_globalTermCounts.TryGetValue(term, out int globalTermCount))
+            {
+                if (globalTermCount <= 1)
+                    _globalTermCounts.Remove(term);
+                else
+                    _globalTermCounts[term] = globalTermCount - 1;
+            }
+
+            // Once per distinct term, mirroring how Accumulate raised it.
+            if (documentTerms.Add(term) &&
+                _termDocumentFrequencies.TryGetValue(term, out int documentFrequency))
+            {
+                if (documentFrequency <= 1)
+                    _termDocumentFrequencies.Remove(term);
+                else
+                    _termDocumentFrequencies[term] = documentFrequency - 1;
+            }
+        }
+
+        if (_classDocumentCounts.TryGetValue(category, out int documents))
+        {
+            if (documents <= 1)
+            {
+                // The last document of this class: retire it entirely, rather than leave behind the
+                // zero-count entries a fresh Train over the remaining corpus would never produce.
+                _classDocumentCounts.Remove(category);
+                _classTokenCounts.Remove(category);
+                _termCountsByClass.Remove(category);
+                _classCount--;
+            }
+            else
+            {
+                _classDocumentCounts[category] = documents - 1;
+            }
+        }
+
+        if (_documentCount > 0)
+            _documentCount--;
+
+        _vocabularySize = _globalTermCounts.Count;
     }
 
     /// <inheritdoc />
@@ -188,11 +307,11 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
     /// <remarks>
     /// Only the lookups the active options actually use are materialized. The idf weight is always
     /// resolved because it is a function of the term alone and would otherwise be recomputed once
-    /// per class; the corpus count and the vocabulary flag are resolved only when
-    /// <see cref="NaiveBayesOptions.Complement"/> or
-    /// <see cref="NaiveBayesOptions.SkipOutOfVocabularyTokens"/> is on, so a default model pays for
-    /// one array per prediction rather than five. Vocabulary membership itself is always looked up
-    /// (see the loop below) because the idf weight needs it whatever the options say.
+    /// per class; the corpus count, the vocabulary flag and the reinforcement weights are resolved
+    /// only when <see cref="NaiveBayesOptions.Complement"/>,
+    /// <see cref="NaiveBayesOptions.SkipOutOfVocabularyTokens"/> calls for them, so a default model
+    /// pays for one array per prediction. Vocabulary membership itself is always looked up (see the loop below) because the
+    /// idf weight needs it whatever the options say.
     /// </remarks>
     private QueryTerms ResolveQueryTerms(List<WeightedToken> tokens)
     {
