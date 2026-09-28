@@ -31,9 +31,15 @@ public class QuerySyntaxTests
     [Fact]
     public void EnsureSupported_AcceptsAnythingWhenFullySupported()
     {
-        QuerySyntax.EnsureSupported("learn*", QueryFeature.Phrases | QueryFeature.Expansions, "FakeEngine");
-        QuerySyntax.EnsureSupported("plain words", QueryFeature.None, "FakeEngine");
-        QuerySyntax.EnsureSupported("\"a phrase\"", QueryFeature.Phrases, "FakeEngine");
+        // Nothing is returned and nothing is recorded, so "did not throw" *is* the property under
+        // test. Asserted rather than left implicit, because three bare calls read as a test that
+        // cannot fail -- and would still pass if EnsureSupported had an empty body.
+        static void Accepts(string query, QueryFeature supported) =>
+            Assert.Null(Record.Exception(() => QuerySyntax.EnsureSupported(query, supported, "FakeEngine")));
+
+        Accepts("learn*", QueryFeature.Phrases | QueryFeature.Expansions);
+        Accepts("plain words", QueryFeature.None);
+        Accepts("\"a phrase\"", QueryFeature.Phrases);
     }
 
     [Fact]

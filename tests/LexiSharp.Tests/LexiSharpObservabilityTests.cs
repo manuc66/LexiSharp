@@ -95,9 +95,13 @@ public class LexiSharpObservabilityTests
     [Fact]
     public void LoggerAdapterAcceptsALoggerFactory()
     {
-        var sink = RetrievalLogger.For(NullLoggerFactory.Instance);
+        RetrievalLog sink = RetrievalLogger.For(NullLoggerFactory.Instance);
 
-        sink(new RetrievalLogEvent(RetrievalLogLevel.Information, "e", "search", "m", 1, 1));
+        // NullLogger discards everything, so no event is observable afterwards and the property
+        // under test is that adapting a factory is accepted and its sink is safe to call. Asserted,
+        // because a bare sink(...) call is a test that passes even with an empty adapter.
+        Assert.Null(Record.Exception(() =>
+            sink(new RetrievalLogEvent(RetrievalLogLevel.Information, "e", "search", "m", 1, 1))));
     }
 
     [Fact]

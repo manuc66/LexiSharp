@@ -460,9 +460,12 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
         if (terms.Count != 1)
         {
+            // nameof, not a literal: ParamName is meant to name a parameter of *this* method, and a
+            // caller reading "synonyms" off the exception has no way to find the argument it is
+            // about — the parameter is `entry`, and only nameof keeps the two from drifting.
             throw new ArgumentException(
                 $"Synonym entries must tokenize to exactly one term, but '{entry}' produced {terms.Count}.",
-                "synonyms");
+                nameof(entry));
         }
 
         return terms[0];
