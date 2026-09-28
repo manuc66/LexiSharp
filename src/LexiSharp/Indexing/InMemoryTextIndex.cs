@@ -14,7 +14,7 @@ namespace LexiSharp.Indexing;
 /// single thread (or synchronize externally). Read-only queries hold no shared mutable state and
 /// may run concurrently with one another.
 /// </remarks>
-public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
+public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateIndex, IVocabularyIndex
 {
     private readonly ITokenizer _tokenizer;
 
@@ -458,6 +458,26 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
             : EnumerateMultiTerm(terms);
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// The candidate set is identical to <see cref="GetCandidateDocuments"/>; only the order
+    /// differs, and the search engine does not depend on it. See
+    /// <see cref="IUnorderedCandidateIndex"/> for what the ordering pass costs.
+    /// </remarks>
+    IEnumerable<SearchDocument> IUnorderedCandidateIndex.GetCandidatesUnordered(IReadOnlyList<string> terms)
+    {
+        ArgumentNullException.ThrowIfNull(terms);
+
+        if (terms.Count == 0 || _postings.Count == 0)
+            return Array.Empty<SearchDocument>();
+
+        // A single term comes out of its posting list in insertion order, which already is the
+        // corpus order, so the two paths coincide for it and there is nothing to save.
+        return terms.Count == 1
+            ? EnumerateSingleTerm(terms[0])
+            : EnumerateUnorderedMultiTerm(terms);
+    }
+
     // A single term enumerates its posting list in document-insertion order, which is exactly
     // the corpus order — no candidate set needed, indistinguishable from a full scan.
     private IEnumerable<SearchDocument> EnumerateSingleTerm(string term)
@@ -474,11 +494,39 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
 
     private IEnumerable<SearchDocument> EnumerateMultiTerm(IReadOnlyList<string> terms)
     {
-        // Mark the candidates in a set local to this call. This used to be a shared,
-        // epoch-stamped dictionary reused across queries, but that is a read-vs-read race:
-        // two concurrent searches mutate the same map, so one can overwrite the other's
-        // marks and drop (or leak) candidates. The marking state must never outlive the
-        // call, which also keeps it correct across interleaved enumerations.
+        var candidates = UnionCandidates(terms);
+
+        if (candidates.Count == 0)
+            yield break;
+
+        // Re-enumerate the corpus so ties keep the corpus order, performing plain identity
+        // lookups (no string hashing) against the local candidate set.
+        foreach (var document in _documents.Values)
+        {
+            if (candidates.Contains(document))
+                yield return document;
+        }
+    }
+
+    private IEnumerable<SearchDocument> EnumerateUnorderedMultiTerm(IReadOnlyList<string> terms)
+    {
+        // The union is already deduplicated and complete; the order it comes out in is the
+        // posting lists' own, which is what the caller asked for by calling this.
+        foreach (var document in UnionCandidates(terms))
+            yield return document;
+    }
+
+    /// <summary>
+    /// Union of the terms' posting lists, each document once, into a set local to this call.
+    /// </summary>
+    /// <remarks>
+    /// The set used to be a shared, epoch-stamped dictionary reused across queries, but that is
+    /// a read-vs-read race: two concurrent searches mutate the same map, so one can overwrite
+    /// the other's marks and drop (or leak) candidates. The marking state must never outlive
+    /// the call, which also keeps it correct across interleaved enumerations.
+    /// </remarks>
+    private HashSet<SearchDocument> UnionCandidates(IReadOnlyList<string> terms)
+    {
         var candidates = new HashSet<SearchDocument>(ReferenceEqualityComparer.Instance);
 
         // Per-query hot path: LINQ Where on these loops would allocate per candidate. // NOSONAR:S3267
@@ -491,16 +539,7 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IVocabularyIndex
             }
         }
 
-        if (candidates.Count == 0)
-            yield break;
-
-        // Re-enumerate the corpus so ties keep the corpus order, performing plain identity
-        // lookups (no string hashing) against the local candidate set.
-        foreach (var document in _documents.Values)
-        {
-            if (candidates.Contains(document))
-                yield return document;
-        }
+        return candidates;
     }
 
     /// <inheritdoc />
