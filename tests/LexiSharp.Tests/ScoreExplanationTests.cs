@@ -3,12 +3,6 @@ using LexiSharp.Indexing;
 using LexiSharp.Ranking;
 using Xunit;
 
-// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
-// the lines below. Its premise is a call repeated with the same literal, allocating each
-// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
-// it -- hoisting it into a field saves nothing that is measured, and moves the data away
-// from the test that fails on it.
-
 namespace LexiSharp.Tests;
 
 public class ScoreExplanationTests
@@ -214,13 +208,13 @@ public class ScoreExplanationTests
         var (index, doc1, _) = CreateFixture();
         var scorer = new BooleanScorer(BooleanMatch.AllTerms);
 
-        var explanation = scorer.Explain(doc1.Id, new[] { "alpha", "beta" }, index); // NOSONAR:CA1861
+        var explanation = scorer.Explain(doc1.Id, new[] { "alpha", "beta" }, index);
 
         Assert.Equal("Boolean (AND)", explanation.Algorithm);
         Assert.Equal(1.0, explanation.TotalScore, 12);
         Assert.Equal(1.0, explanation.Parameters["allTerms"]);
         Assert.Equal(1.0, explanation.Terms.Sum(t => t.Score), 12);
-        Assert.Equal(new[] { "alpha", "beta" }, explanation.Terms.Select(t => t.Term).ToArray()); // NOSONAR:CA1861
+        Assert.Equal(new[] { "alpha", "beta" }, explanation.Terms.Select(t => t.Term).ToArray());
         Assert.All(explanation.Terms, term => Assert.Equal(0.5, term.Score, 12));
         Assert.All(explanation.Terms, term => Assert.Equal(0, term.InverseDocumentFrequency));
     }
@@ -232,7 +226,7 @@ public class ScoreExplanationTests
         var scorer = new BooleanScorer(BooleanMatch.AllTerms);
 
         // doc1 has no "gamma" → AND fails, the boolean score is 0.
-        var explanation = scorer.Explain(doc1.Id, new[] { "alpha", "gamma" }, index); // NOSONAR:CA1861
+        var explanation = scorer.Explain(doc1.Id, new[] { "alpha", "gamma" }, index);
 
         Assert.Equal(0.0, explanation.TotalScore, 12);
         Assert.Empty(explanation.Terms);
@@ -244,7 +238,7 @@ public class ScoreExplanationTests
         var (index, doc1, _) = CreateFixture();
         var scorer = new BooleanScorer(BooleanMatch.AnyTerm);
 
-        var explanation = scorer.Explain(doc1.Id, new[] { "alpha", "gamma" }, index); // NOSONAR:CA1861
+        var explanation = scorer.Explain(doc1.Id, new[] { "alpha", "gamma" }, index);
 
         Assert.Equal(1.0, explanation.TotalScore, 12);
         Assert.Equal(0.0, explanation.Parameters["allTerms"]);
@@ -270,7 +264,7 @@ public class ScoreExplanationTests
         var index = new InMemoryTextIndex();
         var scorer = new BooleanScorer(BooleanMatch.AnyTerm);
 
-        var explanation = scorer.Explain("1", new[] { "alpha" }, index); // NOSONAR:CA1861
+        var explanation = scorer.Explain("1", new[] { "alpha" }, index);
 
         Assert.Equal(0.0, explanation.TotalScore, 12);
         Assert.Equal(0.0, explanation.LengthRatio, 12);
@@ -284,7 +278,7 @@ public class ScoreExplanationTests
         index.Index(new[] { new SearchDocument("1", "alpha"), new SearchDocument("2", "") });
         var scorer = new BooleanScorer(BooleanMatch.AllTerms);
 
-        var explanation = scorer.Explain("2", new[] { "alpha" }, index); // NOSONAR:CA1861
+        var explanation = scorer.Explain("2", new[] { "alpha" }, index);
 
         Assert.Equal(0.0, explanation.TotalScore, 12);
         Assert.Empty(explanation.Terms);
@@ -300,7 +294,7 @@ public class ScoreExplanationTests
 
         Assert.NotNull(explanation);
         Assert.Equal(1.0, explanation!.TotalScore, 12);
-        Assert.Equal(new[] { "alpha", "beta" }, explanation.Terms.Select(t => t.Term).ToArray()); // NOSONAR:CA1861
+        Assert.Equal(new[] { "alpha", "beta" }, explanation.Terms.Select(t => t.Term).ToArray());
     }
 
     [Fact]
@@ -310,7 +304,7 @@ public class ScoreExplanationTests
         var scorer = new BooleanScorer();
 
         Assert.Throws<ArgumentNullException>(() => scorer.Explain(doc1.Id, null!, index));
-        Assert.Throws<ArgumentNullException>(() => scorer.Explain(doc1.Id, new[] { "alpha" }, null!)); // NOSONAR:CA1861
+        Assert.Throws<ArgumentNullException>(() => scorer.Explain(doc1.Id, new[] { "alpha" }, null!));
     }
 
     /// <summary>A scorer with no <see cref="IScoreExplainer"/> capability.</summary>

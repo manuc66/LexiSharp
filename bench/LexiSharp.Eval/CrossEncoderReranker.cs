@@ -3,18 +3,6 @@ using System.Text;
 using LexiSharp.Core;
 using Microsoft.ML.OnnxRuntime;
 
-// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
-// below. The interface is the published return type: a List<T> or an array in its place
-// would hand callers a mutable collection through a contract that says they cannot have
-// one, and what it saves is a single interface dispatch per call, which no measurement in
-// docs/benchmarks.md attributes time to.
-
-// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
-// the lines below. Its premise is a call repeated with the same literal, allocating each
-// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
-// it -- hoisting it into a field saves nothing that is measured, and moves the data away
-// from the test that fails on it.
-
 namespace LexiSharp.Eval;
 
 internal interface IReranker
@@ -185,7 +173,7 @@ internal sealed class BertTokenizer
         return ids;
     }
 
-    private static IEnumerable<string> BasicTokenize(string text) // NOSONAR:CA1859
+    private static IEnumerable<string> BasicTokenize(string text)
     {
         List<string> tokens = [];
 
@@ -294,9 +282,9 @@ internal sealed class CrossEncoderReranker : IReranker
 
             using (var run = _session.Run(
                 runOptions,
-                new[] { "input_ids", "attention_mask", "token_type_ids" }, // NOSONAR:CA1861
+                new[] { "input_ids", "attention_mask", "token_type_ids" },
                 new OrtValue[] { idsValue, maskValue, typesValue },
-                new[] { "logits" })) // NOSONAR:CA1861
+                new[] { "logits" }))
             {
                 float[] logits = run[0].GetTensorDataAsSpan<float>().ToArray();
 

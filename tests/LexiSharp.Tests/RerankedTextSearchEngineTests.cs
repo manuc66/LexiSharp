@@ -3,12 +3,6 @@ using LexiSharp.Indexing;
 using LexiSharp.Ranking;
 using Xunit;
 
-// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
-// the lines below. Its premise is a call repeated with the same literal, allocating each
-// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
-// it -- hoisting it into a field saves nothing that is measured, and moves the data away
-// from the test that fails on it.
-
 namespace LexiSharp.Tests;
 
 public class RerankedTextSearchEngineTests
@@ -240,14 +234,14 @@ public class RerankedTextSearchEngineTests
             maxCandidates: 10);
 
         var all = engine.Search("q", new SearchOptions(Limit: 10));
-        Assert.Equal(new[] { "d", "c", "b", "a" }, all.Select(r => r.DocumentId).ToArray()); // NOSONAR:CA1861
+        Assert.Equal(new[] { "d", "c", "b", "a" }, all.Select(r => r.DocumentId).ToArray());
 
         var page = engine.Search("q", new SearchOptions(Limit: 2, Offset: 1));
 
         Assert.Equal(
             all.Skip(1).Take(2).Select(r => r.DocumentId),
             page.Select(r => r.DocumentId));
-        Assert.Equal(new[] { "c", "b" }, page.Select(r => r.DocumentId).ToArray()); // NOSONAR:CA1861
+        Assert.Equal(new[] { "c", "b" }, page.Select(r => r.DocumentId).ToArray());
 
         Assert.Empty(engine.Search("q", new SearchOptions(Limit: 2, Offset: 4)));
         Assert.Empty(engine.Search("q", new SearchOptions(Limit: 2, Offset: -1)));

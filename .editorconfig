@@ -1,0 +1,28 @@
+# Two Roslyn rules are refused for this repository, with the reasoning recorded here because this
+# file is the only thing that actually turns them off. An earlier attempt annotated 163 call sites
+# with `// NOSONAR:CA1861` and `// NOSONAR:CA1859`; it worked for nothing. These arrive in
+# SonarCloud as `external_roslyn:*` issues, imported from the analyzer output of the CI build
+# rather than found by Sonar's own C# analysis, and an imported issue never reads a source comment.
+# The evidence: the analysis of the commit carrying those tags reported 108 CA1861 issues on lines
+# that did carry one. Turning the diagnostic off in the build is the only lever that works, because
+# an analyzer that reports nothing cannot be imported.
+#
+# CA1861 -- "prefer a static readonly field over a constant array argument". 112 of the 163 sites,
+# 108 of them in tests. Its premise is a call repeated with the same literal, so the literal is
+# allocated again each time: true of a loop, not of a test method. Hoisting a fixture used once
+# into a field moves it away from the assertion that reads it, which is the line that has to change
+# when the test fails, and removes an allocation nothing measures.
+#
+# CA1859 -- "use a concrete type instead of the interface". The other 51, 9 of them in tests. Most
+# sit on returned values: RankedTextSearchEngine.RunQuery, the two mergers' Rank,
+# TermDeduplicator.Deduplicate, StopWords.CreateEnglish, the Postgres engines' ResolveColumns and
+# DeserializeFields. Taking the advice turns IReadOnlyList<T> into List<T> in the published
+# surface, so a caller who casts anyway gets a collection the contract said they could not mutate,
+# and any later change of the concrete type stops being source-compatible. What it buys is one
+# interface dispatch per call, and no measurement in docs/benchmarks.md attributes time to one.
+#
+# Nothing else is set here on purpose: a rule turned off without a reason in this file is a rule
+# nobody will turn back on.
+[*.cs]
+dotnet_diagnostic.CA1861.severity = none
+dotnet_diagnostic.CA1859.severity = none

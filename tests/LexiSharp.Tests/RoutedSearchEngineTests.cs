@@ -3,12 +3,6 @@ using LexiSharp.Indexing;
 using LexiSharp.Ranking;
 using Xunit;
 
-// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
-// below. The interface is the published return type: a List<T> or an array in its place
-// would hand callers a mutable collection through a contract that says they cannot have
-// one, and what it saves is a single interface dispatch per call, which no measurement in
-// docs/benchmarks.md attributes time to.
-
 namespace LexiSharp.Tests;
 
 public class RoutedSearchEngineTests
@@ -171,7 +165,7 @@ public class RoutedSearchEngineTests
             new SearchDocument("3", "slow car"),
         });
 
-        IQueryCostProbe probe = engine; // NOSONAR:CA1859
+        IQueryCostProbe probe = engine;
         var options = SearchOptions.Default;
 
         // "fast" (docs 1,2) + "car" (docs 1,3) = 4.
@@ -187,7 +181,7 @@ public class RoutedSearchEngineTests
     {
         var engine = new RankedTextSearchEngine(new InMemoryTextIndex(), new Bm25Scorer());
 
-        IQueryCostProbe probe = engine; // NOSONAR:CA1859
+        IQueryCostProbe probe = engine;
 
         Assert.Equal(0, probe.EstimateCandidateCount("anything".AsSpan(), SearchOptions.Default));
     }
@@ -279,13 +273,13 @@ public class RoutedSearchEngineTests
     {
         var inner = (ProbeEngine)Routed("inner", 7).Engine;
 
-        IQueryCostProbe boosted = new BoostedTextSearchEngine(inner, _ => ScoreBoost.Factor(2)); // NOSONAR:CA1859
-        IQueryCostProbe reranked = new RerankedTextSearchEngine(inner, new NoopReranker()); // NOSONAR:CA1859
+        IQueryCostProbe boosted = new BoostedTextSearchEngine(inner, _ => ScoreBoost.Factor(2));
+        IQueryCostProbe reranked = new RerankedTextSearchEngine(inner, new NoopReranker());
 
         Assert.Equal(7, boosted.EstimateCandidateCount("q".AsSpan(), SearchOptions.Default));
         Assert.Equal(7, reranked.EstimateCandidateCount("q".AsSpan(), SearchOptions.Default));
 
-        IQueryCostProbe unprobed = new BoostedTextSearchEngine(new PlainEngine("plain"), _ => ScoreBoost.Factor(2)); // NOSONAR:CA1859
+        IQueryCostProbe unprobed = new BoostedTextSearchEngine(new PlainEngine("plain"), _ => ScoreBoost.Factor(2));
         Assert.Equal(long.MaxValue, unprobed.EstimateCandidateCount("q".AsSpan(), SearchOptions.Default));
     }
 

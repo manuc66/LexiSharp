@@ -1,12 +1,6 @@
 using LexiSharp.Core;
 using Xunit;
 
-// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
-// the lines below. Its premise is a call repeated with the same literal, allocating each
-// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
-// it -- hoisting it into a field saves nothing that is measured, and moves the data away
-// from the test that fails on it.
-
 namespace LexiSharp.Tests;
 
 public class RoutingSearchEngineTests
@@ -111,7 +105,7 @@ public class RoutingSearchEngineTests
         engine.Search("hello world");
 
         Assert.Equal("hello world", router.LastQuery);
-        Assert.Equal(new[] { "a", "b", "fallback" }, router.LastCandidates); // NOSONAR:CA1861
+        Assert.Equal(new[] { "a", "b", "fallback" }, router.LastCandidates);
         Assert.Equal(1, router.Calls);
     }
 
@@ -248,7 +242,7 @@ public class RoutingSearchEngineTests
         var router = new FakeQueryRouter((_, _) => new QueryRoute("a", 1.0));
         var engine = NewRouter(router, Engines());
 
-        Assert.Equal(new[] { "a", "b", "fallback" }, engine.Routes.Select(r => r.Id)); // NOSONAR:CA1861
+        Assert.Equal(new[] { "a", "b", "fallback" }, engine.Routes.Select(r => r.Id));
     }
 
     [Fact]

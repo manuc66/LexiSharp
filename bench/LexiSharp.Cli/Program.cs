@@ -5,18 +5,6 @@ using LexiSharp.Core;
 using LexiSharp.Ranking;
 using LexiSharp.Sources;
 
-// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
-// below. The interface is the published return type: a List<T> or an array in its place
-// would hand callers a mutable collection through a contract that says they cannot have
-// one, and what it saves is a single interface dispatch per call, which no measurement in
-// docs/benchmarks.md attributes time to.
-
-// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
-// the lines below. Its premise is a call repeated with the same literal, allocating each
-// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
-// it -- hoisting it into a field saves nothing that is measured, and moves the data away
-// from the test that fails on it.
-
 namespace LexiSharp.Cli;
 
 public static class Program
@@ -467,7 +455,7 @@ public static class Program
         return 0;
     }
 
-    private static IReadOnlyList<SearchDocument> LoadCorpus(string corpusDir) // NOSONAR:CA1859
+    private static IReadOnlyList<SearchDocument> LoadCorpus(string corpusDir)
     {
         var root = Path.GetFullPath(corpusDir);
 
@@ -484,7 +472,7 @@ public static class Program
             .LoadDirectory(root, new MarkdownLoadOptions { TextFieldNames = ["title"] })
             .Select(document => document.ToSearchDocument()));
         documents.AddRange(TextFileLoader
-            .ScanDirectory(root, new TextFileLoadOptions { Extensions = new[] { ".txt" } }) // NOSONAR:CA1861
+            .ScanDirectory(root, new TextFileLoadOptions { Extensions = new[] { ".txt" } })
             .Select(document => document.ToSearchDocument()));
 
         if (documents.Count == 0)
@@ -493,7 +481,7 @@ public static class Program
         return documents;
     }
 
-    private static IReadOnlyList<BenchmarkQuery> LoadQueries(string queriesPath, string qrelsPath, int? limit) // NOSONAR:CA1859
+    private static IReadOnlyList<BenchmarkQuery> LoadQueries(string queriesPath, string qrelsPath, int? limit)
     {
         var rawQueries = ReadQueries(queriesPath);
         var qrels = ReadQrels(qrelsPath);
@@ -530,7 +518,7 @@ public static class Program
             .ToList();
     }
 
-    private static IReadOnlyList<(string Id, string Text)> ReadQueriesJson(string path) // NOSONAR:CA1859
+    private static IReadOnlyList<(string Id, string Text)> ReadQueriesJson(string path)
     {
         using var document = JsonDocument.Parse(File.ReadAllText(path));
 
@@ -591,7 +579,7 @@ public static class Program
             StringComparer.Ordinal);
     }
 
-    private static IReadOnlyList<BenchmarkConfig> ResolveConfigs(string[] names, TuningMetric metric = TuningMetric.F1) // NOSONAR:CA1859
+    private static IReadOnlyList<BenchmarkConfig> ResolveConfigs(string[] names, TuningMetric metric = TuningMetric.F1)
     {
         var configs = new List<BenchmarkConfig>(names.Length);
 

@@ -4,12 +4,6 @@ using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
 
-// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
-// below. The interface is the published return type: a List<T> or an array in its place
-// would hand callers a mutable collection through a contract that says they cannot have
-// one, and what it saves is a single interface dispatch per call, which no measurement in
-// docs/benchmarks.md attributes time to.
-
 namespace LexiSharp.Benchmarking;
 
 /// <summary>
@@ -166,7 +160,7 @@ public static class CorpusBenchmark
     /// means the one that appears first, not the one with the highest gain.
     /// </summary>
     private static int? FirstRelevantRank(
-        IReadOnlyList<string> retrievedIds, // NOSONAR:CA1859
+        IReadOnlyList<string> retrievedIds,
         IReadOnlyCollection<string> relevantIds)
     {
         var relevant = new HashSet<string>(relevantIds, StringComparer.Ordinal);

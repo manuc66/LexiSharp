@@ -2,12 +2,6 @@ using LexiSharp.Core;
 using LexiSharp.Linguistics;
 using LexiSharp.Similarity;
 
-// CA1859 ("use a concrete type instead of the interface") is suppressed on the lines
-// below. The interface is the published return type: a List<T> or an array in its place
-// would hand callers a mutable collection through a contract that says they cannot have
-// one, and what it saves is a single interface dispatch per call, which no measurement in
-// docs/benchmarks.md attributes time to.
-
 namespace LexiSharp.Ranking;
 
 /// <summary>
@@ -178,7 +172,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// every candidate, optionally count facet values for the documents that match
     /// (<paramref name="facets"/>), and cut the requested page from the bounded top window.
     /// </summary>
-    private IReadOnlyList<SearchResult> RunQuery(ReadOnlySpan<char> query, SearchOptions options, FacetCollector? facets) // NOSONAR:CA1859
+    private IReadOnlyList<SearchResult> RunQuery(ReadOnlySpan<char> query, SearchOptions options, FacetCollector? facets)
     {
         // One clock read per search, and only when a sink is attached: an un-instrumented engine
         // never reads the timer at all.
@@ -702,7 +696,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             }
         }
 
-        public IReadOnlyList<FacetBucket> Build() // NOSONAR:CA1859
+        public IReadOnlyList<FacetBucket> Build()
         {
             var buckets = new List<FacetBucket>(_fields.Length);
 

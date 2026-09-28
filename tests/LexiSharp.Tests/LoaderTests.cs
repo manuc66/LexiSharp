@@ -1,12 +1,6 @@
 using LexiSharp.Sources;
 using Xunit;
 
-// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
-// the lines below. Its premise is a call repeated with the same literal, allocating each
-// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
-// it -- hoisting it into a field saves nothing that is measured, and moves the data away
-// from the test that fails on it.
-
 namespace LexiSharp.Tests;
 
 public class LoaderTests
@@ -164,7 +158,7 @@ public class LoaderTests
 
         var documents = MarkdownLoader.LoadDirectory(dir.Path);
 
-        Assert.Equal(new[] { "a.md", "notes/b.markdown" }, documents.Select(d => d.Id).OrderBy(x => x, StringComparer.Ordinal).ToArray()); // NOSONAR:CA1861
+        Assert.Equal(new[] { "a.md", "notes/b.markdown" }, documents.Select(d => d.Id).OrderBy(x => x, StringComparer.Ordinal).ToArray());
         Assert.Equal("B", documents.Single(d => d.Id == "notes/b.markdown").Fields!["title"]);
     }
 
@@ -177,7 +171,7 @@ public class LoaderTests
 
         var documents = MarkdownLoader.LoadDirectory(dir.Path, new MarkdownLoadOptions { Recursive = false });
 
-        Assert.Equal(new[] { "a.md" }, documents.Select(d => d.Id).OrderBy(x => x, StringComparer.Ordinal).ToArray()); // NOSONAR:CA1861
+        Assert.Equal(new[] { "a.md" }, documents.Select(d => d.Id).OrderBy(x => x, StringComparer.Ordinal).ToArray());
     }
 
     [Fact]

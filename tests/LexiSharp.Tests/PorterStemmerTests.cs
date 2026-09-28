@@ -4,12 +4,6 @@ using FsCheck.Xunit;
 using LexiSharp.Linguistics;
 using Xunit;
 
-// CA1861 ("prefer a static readonly field over a constant array argument") is suppressed on
-// the lines below. Its premise is a call repeated with the same literal, allocating each
-// time. These are one-shot fixtures, and the literal belongs beside the assertion that reads
-// it -- hoisting it into a field saves nothing that is measured, and moves the data away
-// from the test that fails on it.
-
 namespace LexiSharp.Tests;
 
 /// <summary>
@@ -148,10 +142,10 @@ public class PorterStemmerTests
     {
         var tokenizer = new Tokenizer(new TokenizerOptions { Stemmer = new PorterStemmer() });
 
-        Assert.Equal(new[] { "index" }, tokenizer.Tokenize("indexes")); // NOSONAR:CA1861
-        Assert.Equal(new[] { "index" }, tokenizer.Tokenize("indexing")); // NOSONAR:CA1861
-        Assert.Equal(new[] { "index" }, tokenizer.Tokenize("Indexes")); // NOSONAR:CA1861
-        Assert.Equal(new[] { "retriev", "retriev" }, tokenizer.Tokenize("retrieval, retrieving")); // NOSONAR:CA1861
+        Assert.Equal(new[] { "index" }, tokenizer.Tokenize("indexes"));
+        Assert.Equal(new[] { "index" }, tokenizer.Tokenize("indexing"));
+        Assert.Equal(new[] { "index" }, tokenizer.Tokenize("Indexes"));
+        Assert.Equal(new[] { "retriev", "retriev" }, tokenizer.Tokenize("retrieval, retrieving"));
     }
 
     // A small alphabet keeps the generator cheap while still reaching every step; 'y' is what
