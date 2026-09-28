@@ -191,7 +191,8 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
     /// per class; the corpus count and the vocabulary flag are resolved only when
     /// <see cref="NaiveBayesOptions.Complement"/> or
     /// <see cref="NaiveBayesOptions.SkipOutOfVocabularyTokens"/> is on, so a default model pays for
-    /// one array per prediction rather than five.
+    /// one array per prediction rather than five. Vocabulary membership itself is always looked up
+    /// (see the loop below) because the idf weight needs it whatever the options say.
     /// </remarks>
     private QueryTerms ResolveQueryTerms(List<WeightedToken> tokens)
     {
@@ -212,8 +213,12 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
             if (globalCounts is not null)
                 globalCounts[i] = _globalTermCounts.TryGetValue(term, out int global) ? global : 0;
 
-            bool inVocabulary = inVocabularyFlags is null
-                                || (_termDocumentFrequencies.TryGetValue(term, out int df) && df > 0);
+            // Resolved for every query token, whatever the options are. The idf weight below is a
+            // function of the term alone and is read from the document-frequency table, so a term
+            // the corpus never saw has to be recognized as such here — gating this on
+            // SkipOutOfVocabularyTokens reported corpus-unknown terms as in-vocabulary, and the
+            // idf lookup then indexed a key that was not there.
+            bool inVocabulary = _termDocumentFrequencies.TryGetValue(term, out int df) && df > 0;
 
             if (inVocabularyFlags is not null)
                 inVocabularyFlags[i] = inVocabulary;
@@ -339,9 +344,9 @@ public sealed class NaiveBayesClassifier : ITextClassifier, IWeightedPredictor
     /// <summary>
     /// Inverse-document-frequency weight for a term, per <see cref="NaiveBayesOptions.IdfMode"/>:
     /// <c>DocumentCount</c> uses <c>log(1 + N / df)</c>, <c>ClassCount</c> uses
-    /// <c>max(0, log(C / df))</c>, <c>None</c> returns 1. Tokens never seen in the corpus are
-    /// corner cases only reachable when <see cref="NaiveBayesOptions.SkipOutOfVocabularyTokens"/>
-    /// is off; they are weighted like an unseen term (1.0 / 0.0 respectively).
+    /// <c>max(0, log(C / df))</c>, <c>None</c> returns 1. A term the corpus never saw carries no
+    /// document frequency, so it is weighted as an unseen term: 1.0 under <c>DocumentCount</c> and
+    /// under <c>None</c>, 0.0 under <c>ClassCount</c>.
     /// </summary>
     /// <param name="term">The term to weight.</param>
     /// <param name="inVocabulary">
