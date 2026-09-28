@@ -58,7 +58,7 @@ was designed from:
 
 ## Scope and limits
 
-- **Version 0.5.0, single maintainer.** The library is young and its public API may still
+- **Version 0.6.0, single maintainer.** The library is young and its public API may still
   change between minor versions — pin a version and read the release notes if you adopt it
   early. Contributions and feedback are welcome.
 - **Built on established IR.** The techniques implemented (BM25, RRF, SPLADE-style sparse
