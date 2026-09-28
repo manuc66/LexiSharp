@@ -158,9 +158,20 @@ exists to make that check falsifiable.
 
 **Naive Bayes, −24 %.** The per-token idf weight and vocabulary flag were recomputed once per
 class inside the scoring loop, i.e. a dictionary lookup per (class, token) pair. They are now
-resolved once per prediction into a single array, and the corpus count and vocabulary flag are
-materialized only when `Complement` / `SkipOutOfVocabularyTokens` are on, so a default model pays
-for one array rather than five. Costs 5 % more allocation.
+resolved once per prediction into a single array, and the corpus count is materialized only when
+`Complement` is on, so a default model pays for one array rather than five. Costs 5 % more
+allocation.
+
+**Correction, later:** the same pass had also made the *vocabulary membership lookup itself*
+conditional on `SkipOutOfVocabularyTokens`, which is wrong — `IdfWeight` reads the
+document-frequency table and needs the answer whatever the options say, so an
+out-of-vocabulary query term threw `KeyNotFoundException` on any model with a non-default
+`IdfMode`. Membership is now resolved unconditionally and the flag array is still only
+materialized when `SkipOutOfVocabularyTokens` is on. The cost is one `TryGetValue` per query
+token, and it is **not** measurable above noise on this host: 7 interleaved rounds of 40 000
+`PredictBest` calls give 2.025 / 2.034 / 2.047 µs per call with the lookup against
+1.911 / 2.046 / 2.015 µs without, i.e. overlapping. The −24 % stands; treat the per-token
+lookup as free, because that is how it measured, not because it was argued to be.
 
 Behaviour is unchanged: the full test suite passes and `lexisharp verify` reports 132 unchanged,
 0 changed against the golden master. The `VectorSimilarity` kernels change the summation order,

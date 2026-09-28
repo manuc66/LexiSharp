@@ -290,6 +290,94 @@ public class NaiveBayesClassifierTests
         Assert.Equal("A", classifier.PredictBest("zzz chat"));
     }
 
+    // Regression: the per-token vocabulary lookup used to be skipped unless
+    // SkipOutOfVocabularyTokens was on, so with the default options every query term was reported
+    // in-vocabulary — and both idf modes then indexed the document-frequency table with a term
+    // that was not in it, throwing KeyNotFoundException. Any query containing one word the corpus
+    // never saw was enough to take the classifier down.
+    [Theory]
+    [InlineData(IdfMode.None)]
+    [InlineData(IdfMode.DocumentCount)]
+    [InlineData(IdfMode.ClassCount)]
+    public void Predict_QueryHoldingATermTheCorpusNeverSaw_ReturnsAFiniteNormalizedDistribution(
+        IdfMode idfMode)
+    {
+        var classifier = new NaiveBayesClassifier(options: new NaiveBayesOptions { IdfMode = idfMode });
+        classifier.Train(new[]
+        {
+            new SearchDocument("1", "internet connection problem", Category: "Support"),
+            new SearchDocument("2", "monthly invoice", Category: "Billing"),
+        });
+
+        // "kubernetes" appears in no training document, anywhere in the query.
+        var results = classifier.Predict("internet kubernetes", limit: 2);
+
+        Assert.Equal(2, results.Count);
+        Assert.All(results, r => Assert.False(double.IsNaN(r.Probability) || double.IsInfinity(r.Probability)));
+        Assert.Equal(1.0, results.Sum(r => r.Probability), precision: 10);
+        Assert.Equal("Support", results[0].Category);
+    }
+
+    [Fact]
+    public void Predict_QueryMadeEntirelyOfCorpusUnknownTerms_StillRanksByThePriors()
+    {
+        var classifier = new NaiveBayesClassifier(options: new NaiveBayesOptions { IdfMode = IdfMode.DocumentCount });
+        classifier.Train(new[]
+        {
+            new SearchDocument("1", "chat", Category: "A"),
+            new SearchDocument("2", "chat", Category: "A"),
+            new SearchDocument("3", "mail", Category: "B"),
+        });
+
+        // Both classes have the same vocabulary size, so the Laplace penalty is identical and the
+        // 2-of-3 prior decides; what matters is that the answer is a number, not an exception.
+        var results = classifier.Predict("kubernetes terraform", limit: 2);
+
+        Assert.Equal("A", results[0].Category);
+        Assert.Equal(1.0, results.Sum(r => r.Probability), precision: 10);
+    }
+
+    // ClassCount gives a corpus-unknown term an idf of exactly 0, so the term must be inert: the
+    // answer has to be bit-identical to never typing it. This is the behaviour the crash hid.
+    [Fact]
+    public void Predict_CorpusUnknownTerm_IsInertUnderClassCountIdf()
+    {
+        var classifier = new NaiveBayesClassifier(options: new NaiveBayesOptions { IdfMode = IdfMode.ClassCount });
+        classifier.Train(new[]
+        {
+            new SearchDocument("1", "chat", Category: "A"),
+            new SearchDocument("2", "mail", Category: "B"),
+        });
+
+        var withUnknown = classifier.Predict("chat kubernetes", limit: 2);
+        var without = classifier.Predict("chat", limit: 2);
+
+        Assert.Equal(without.Select(r => (r.Category, r.Probability)),
+                     withUnknown.Select(r => (r.Category, r.Probability)));
+    }
+
+    // The two options are independent: asking to skip corpus-unknown tokens must not also switch
+    // the idf weighting off, and must not reintroduce the crash.
+    [Theory]
+    [InlineData(IdfMode.DocumentCount)]
+    [InlineData(IdfMode.ClassCount)]
+    public void Predict_SkippingCorpusUnknownTokens_ComposesWithIdfWeighting(IdfMode idfMode)
+    {
+        var options = new NaiveBayesOptions { IdfMode = idfMode, SkipOutOfVocabularyTokens = true };
+        var classifier = new NaiveBayesClassifier(options: options);
+        classifier.Train(new[]
+        {
+            new SearchDocument("1", "chat", Category: "A"),
+            new SearchDocument("2", "mail", Category: "B"),
+        });
+
+        var withUnknown = classifier.Predict("chat kubernetes", limit: 2);
+        var without = classifier.Predict("chat", limit: 2);
+
+        Assert.Equal(without.Select(r => (r.Category, r.Probability)),
+                     withUnknown.Select(r => (r.Category, r.Probability)));
+    }
+
     [Fact]
     public void SmoothPriors_CompressesThePriorSpread()
     {
