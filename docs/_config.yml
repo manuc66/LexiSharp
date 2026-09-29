@@ -16,10 +16,35 @@ remote_theme: just-the-docs/just-the-docs@v0.12.0
 url: https://manuc66.github.io
 baseurl: /LexiSharp
 
-# Page URLs without the .html suffix, so /ranking/ resolves as well as /ranking.html.
+# Page URLs without the .html suffix: /ranking/ resolves, /ranking.html does not (404).
 # This is a global setting in Jekyll: a `permalink` key in a page's front matter is
 # ignored for pages, only documents (posts) read it.
 permalink: pretty
+
+# jekyll-seo-tag needs no entry here: just-the-docs' head include calls `{% seo %}` and
+# GitHub Pages loads the plugin anyway — the rendered pages already carry canonical, og
+# and JSON-LD tags. jekyll-sitemap is not loaded by default, only allowed: it is on the
+# github-pages plugin whitelist, so this one line is what produces /sitemap.xml.
+plugins:
+  - jekyll-sitemap
+
+# The social card image. jekyll-seo-tag reads `page.image` and emits no image tag at all
+# without it, so by default every link to the site previews as a bare text card. A
+# `defaults` block puts it on every page in one place instead of in 14 front matters.
+# UNVERIFIED: whether a `path: ""` default actually reaches the plugin has not been
+# checked against a real build — there is no Ruby on the machine that wrote this. If
+# og:image is still missing after the next deploy, add `image:` to the page front matter,
+# or write the tags into docs/_includes/head_custom.html. The declared size is the PNG's
+# real one; a dedicated 1200x630 card would crop better in a feed.
+defaults:
+  - scope:
+      path: ""
+    values:
+      image:
+        path: images/demo.png
+        width: 2850
+        height: 1500
+        alt: The LexiSharp demo comparing five retrieval strategies over one corpus
 
 color_scheme: light
 

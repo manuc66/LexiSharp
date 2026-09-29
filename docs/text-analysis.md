@@ -1,9 +1,12 @@
 ---
-title: Text analysis
+title: Classification and text analysis
 nav_order: 8
+description: >-
+  Lexical similarity, keyword extraction and Naive Bayes classification, in the
+  same dependency-free core package.
 ---
 
-# Text analysis
+# Classification and text analysis
 
 Three things you often need next to a search box, none of which is a ranking function:
 near-duplicate detection, keyword extraction, and classification. All of them are in the

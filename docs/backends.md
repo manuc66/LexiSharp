@@ -1,9 +1,12 @@
 ---
-title: Backends
+title: PostgreSQL and ParadeDB backends
 nav_order: 9
+description: >-
+  Full-text search on tsvector, pgvector nearest-neighbour search, sparse
+  retrieval, pg_trgm fuzzy search, and true BM25 on ParadeDB pg_search.
 ---
 
-# Backends
+# PostgreSQL and ParadeDB backends
 
 The core is in-memory. Persistence and scale are separate packages, and every one of them
 implements the same `ITextSearchEngine` contract, so a backend is a substitution rather

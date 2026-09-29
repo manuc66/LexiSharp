@@ -1,9 +1,12 @@
 ---
-title: Ranking
+title: BM25 and ranking functions
 nav_order: 5
+description: >-
+  BM25 and its variants — BM25+, BM25L, BM25F — plus TF-IDF, query likelihood and
+  boolean scorers, score boosting, proximity, and per-term score explanations.
 ---
 
-# Ranking
+# BM25 and ranking functions
 
 Ranking is a strategy object: `ITextScorer` reads the index and returns a score, and the
 engine does everything else. Swap the scorer, keep the index.

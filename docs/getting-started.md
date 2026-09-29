@@ -1,6 +1,9 @@
 ---
 title: Getting started
 nav_order: 2
+description: >-
+  Install LexiSharp and run your first search — the engine in three lines, the
+  typed LexiSharpIndex<T> facade, document loaders, and an ASP.NET Core endpoint.
 ---
 
 # Getting started
