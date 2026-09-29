@@ -13,7 +13,8 @@ written in this file is an assertion; the numbers below are pointers to
 dotnet run --project bench/LexiSharp.Eval -c Release -- --verify-reference
 ```
 
-on every push that touches the library or the harness, and by the `Pinned reference` workflow.
+on every push that touches the library or the harness, and weekly by the `Pinned reference`
+workflow.
 
 ## [0.7.0]
 
@@ -37,10 +38,13 @@ on every push that touches the library or the harness, and by the `Pinned refere
   against the published index statistics, in integers, checked before any score is computed.
 - **`--verify-reference`** and `reference/pinned.json`. Eight regression pins asserted at
   ±0.002, three index fingerprints, and three parity rows kept as evidence with their source rather
-  than as assertions. Regenerate with `--verify-reference --write`; read the diff before
-  committing it.
+  than as assertions. Re-recording is by hand: run `--verify-reference` to see what moved, read why,
+  then edit `expectedNdcg` in the pinned file as a reviewed change. `--write` is accepted and
+  deliberately writes nothing.
 - **A CI workflow that replays the pins.** It exists because three documents promised this net and
-  nothing ran it.
+  nothing ran it. It runs on every push that can move a score, and weekly: the repository pins no
+  SDK, so the one drift a push cannot see is the runner's own, and until this it was not replayed
+  again until some later commit happened to touch the library.
 - **`LexiSharp.CodeShape`**, build tooling that reads the structural shape of a compiled
   assembly — per method, the length of its IL and its decoded local signature — so a codegen
   change is diffable without rebuilding two commits on one machine.
