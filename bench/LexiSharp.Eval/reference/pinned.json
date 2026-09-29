@@ -126,7 +126,7 @@
       "referenceNdcg": 0.3218,
       "referenceParameters": { "k1": 0.9, "b": 0.4 },
       "alignedParameters": false,
-      "note": "Anserini's 0.3218 is at its own defaults (k1=0.9, b=0.4); the same parameters measured 0.3215 with the reference analysis, which is the like-for-like comparison."
+      "note": "The like-for-like comparison is at the reference's own operating point: 0.3215 measured at k1=0.9, b=0.4 with the reference analysis, against 0.3218. The 0.327 above is this library's default k1/b under the reference analysis."
     },
     {
       "corpus": "scifact",
@@ -139,12 +139,12 @@
     },
     {
       "corpus": "arguana",
-      "lexisharpConfig": "arguana/english+exclude",
-      "lexisharpNdcg": 0.2864,
+      "lexisharpConfig": "arguana/english+qtf+exclude at k1=3.0, b=0.75",
+      "lexisharpNdcg": 0.4061,
       "referenceNdcg": 0.397,
       "referenceParameters": { "k1": 0.9, "b": 0.4 },
       "alignedParameters": false,
-      "note": "0.2957 at k1=2.0, b=0.75 and 0.3056 at k1=3.0, b=0.75, both with the same analysis and exclusion, against 0.3970 published at k1=0.9, b=0.4: this corpus' sensitivity to k1 runs opposite to the other two, so the parameters cannot be aligned and the comparison is cross-parameter by nature. THE EXCLUSION IS WORTH MUCH LESS THAN IT LOOKS. Measured: 0.2852 without, 0.2864 with, i.e. +0.0012. The reason is the corpus' shape, and it is worth stating because the flag looks like it should be worth far more: an ArguAna query is a whole document, so its own document is a near-duplicate and ranks first, and 1298 of 1406 test queries have a query id that is a document id. But the relevant document is ALREADY inside the top 10 in 869 of 869 cases where it is retrievable at all (median rank 3), and 537 queries have no relevant document in any page. Excluding the self-match therefore promotes the gold document by one rank in 810 queries, and the page refills from rank 11, which is almost never the gold document. A +0.095 estimate for this flag was measured on a dump that dropped the self-document from an already-cut 10-document page, leaving a hole instead of refilling it; the harness gates before the cut and the real effect is +0.0012."
+      "note": "The deficit this row used to record is measured now, and it was a scoring rule rather than a parameter. The library deduplicates query terms before scoring; the reference scores one clause per query-token occurrence, so a term repeated in the query multiplies its weight. On this corpus every test query is a whole ~200-word argument whose content words repeat, and counting them is worth +0.0705 on its own: 0.2197 -> 0.2902 at the reference's own k1=0.9, b=0.4, and 0.4061 at k1=3.0, b=0.75. On NFCorpus and SciFact, whose queries are short, the setting changes nothing to four decimals. THE 0.4061 IS NOT LIKE-FOR-LIKE: it is at a k1 the reference does not use, because this corpus' sensitivity to k1 runs opposite to the other two and the parameters cannot be aligned. A like-for-like ArguAna comparison remains unmeasured and would need the k1/b grid this corpus' 1406 long queries make expensive. THE EXCLUSION IS WORTH MUCH LESS THAN IT LOOKS: measured 0.2852 without, 0.2864 with, i.e. +0.0012. An ArguAna query is a whole document, so its own document is a near-duplicate and ranks first, and 1298 of 1406 test queries have a query id that is a document id -- but the relevant document is already inside the top 10 in all 869 cases where it is retrievable at all (median rank 3), and 537 queries have no relevant document in any page, so excluding the self-match promotes the gold document by one rank in 810 queries and the page refills from rank 11, which is almost never the gold document. A +0.095 estimate for that flag was an artifact of dropping the self-document from an already-cut 10-document page, leaving a hole instead of refilling it."
     }
   ],
   "referenceSource": {

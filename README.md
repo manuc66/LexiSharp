@@ -74,10 +74,16 @@ external service.
 Stated plainly, so nothing is implied. The full list, with the measurement behind each claim,
 is [Scope and limits](docs/reference.md#scope-and-limits).
 
-- **It does not beat a published BM25.** On three public BEIR corpora the plain BM25 scorer
-  reaches nDCG@10 **0.308** (NFCorpus), **0.662** (SciFact) and **0.289** (ArguAna) against
-  BEIR's published **0.325 / 0.665 / 0.315** — 5.2 %, 0.5 % and 8.3 % below. Corpora are
-  md5-verified on download ([evaluation](docs/evaluation.md)).
+- **It matches the published BM25 baseline where the comparison is set up like for like, and the
+  tables below are not that comparison.** On three public BEIR corpora, with the analysis, the BM25
+  parameters and the metric convention aligned to those the reference figures were produced with,
+  the plain BM25 scorer reaches nDCG@10 **0.3215** (NFCorpus) and **0.6788** (SciFact) against
+  **0.3218** and **0.6789** — equal to the fourth decimal — and **0.4061** (ArguAna) against
+  **0.3970**. The same scores read under the library defaults, which is how this repository's tables
+  were originally written, are **0.308 / 0.662 / 0.289**; that difference is the analyzer, the
+  parameters and one task convention, not the ranking. Corpora are md5-verified on download, and the
+  numbers are pinned and re-checked (`--verify-reference`), so a change that moved them fails the
+  build rather than the docs ([evaluation](docs/evaluation.md)).
 - **No scorer here has a measured win over a tuned BM25.** BM25+ and BM25L, tuned on their own
   `δ`, **tie** a tuned BM25 on the reference corpus and NFCorpus and edge it by 0.002–0.004 on
   SciFact — an in-sample margin, so an upper bound rather than a result. On ArguAna, untuned,
@@ -97,6 +103,13 @@ is [Scope and limits](docs/reference.md#scope-and-limits).
 ```bash
 dotnet build LexiSharp.slnx
 dotnet test  tests/LexiSharp.Tests   # xUnit suite; the Postgres suites need POSTGRES_TEST_CONNECTION
+```
+
+The retrieval quality gate replays every pinned configuration on the three BEIR corpora and exits
+non-zero on any drift. It downloads the corpora on first run, so it is not part of the xUnit suite:
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- --verify-reference
 ```
 
 Benchmarks, the evaluation harness and the behavioural gate:
