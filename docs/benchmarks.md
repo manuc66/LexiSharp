@@ -68,13 +68,20 @@ baseline in one run, which is physically impossible. A delta below that spread i
 here, so quoting one would be invention. Both benchmarks are in `SearchBenchmarks`; running them on
 a quiet multi-core machine is what would produce a publishable timing.
 
-The `Search allocation (advisory)` CI job re-measures this on a second host on every run, and
-uploads the raw report with the machine configuration next to it. **Read only its `Allocated`
-column.** Allocation is counted in bytes and does not depend on how fast the host is, so that number
-travels; the `Mean` column does not. These are Azure VMs shared between tenants, where host-level
-contention is a documented source of variance, and the effect being measured here is a few
-percent — a shared runner cannot resolve it, and a `Mean` copied from that artifact into this file
-would not be a measurement. The job is `continue-on-error` and gates nothing, deliberately.
+The `Search allocation` workflow (`search-allocation.yml`, `workflow_dispatch`) re-measures this on
+a second host when you dispatch it, and uploads the raw report with the machine configuration next to
+it. **Read only its `Allocated` column.** Allocation is counted in bytes and does not depend on how
+fast the host is, so that number travels; the `Mean` column does not. These are Azure VMs shared
+between tenants, where host-level contention is a documented source of variance, and the effect
+being measured here is a few percent — a shared runner cannot resolve it, and a `Mean` copied from
+that artifact into this file would not be a measurement. The workflow gates nothing, deliberately.
+
+It also runs on no schedule and on no push, because nothing reads its output on a schedule either:
+there is no committed baseline to compare against and no threshold to trip, so the reader is a person
+opening a run. Across a week on every push it reported the same `Allocated` column byte for byte on
+five consecutive runs at unchanged code, at a cost of roughly nine runner-hours. Dispatch it after a
+commit that touches the index or the scoring path. A future version that compares against a
+committed baseline could gate, and would then be worth running continuously.
 
 What *does* gate, deterministically, is `lexisharp verify` in the `core` CI job: it replays this
 corpus against the committed baseline and fails the build on any drift in ranking or metrics. No

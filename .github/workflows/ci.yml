@@ -296,53 +296,6 @@ jobs:
           dotnet run --project bench/LexiSharp.Benchmarks -c Release --
           --filter '*TokenizerBenchmarks*' --job short
 
-  search-cost:
-    # Read the Allocated columns, not the Mean ones.
-    #
-    # Allocation is counted in bytes and does not depend on how fast the host is, so it is the
-    # one benchmark output that travels: a number from a shared runner means what it means
-    # anywhere. That is what this job is for - the SearchTrace trace cost, whose allocation is
-    # pinned in docs/benchmarks.md and worth re-checking on a second host.
-    #
-    # The timing columns are NOT publishable from here. These are Azure VMs shared between
-    # tenants, and Azure documents host-level contention as a source of performance variance;
-    # the SearchTrace overhead is a few percent, so a shared runner cannot resolve it. Do not
-    # copy a Mean from this artifact into docs/benchmarks.md. It stays advisory and non-gating for the
-    # same reason - and because the behaviour this repository actually needs protected is gated
-    # deterministically by `verify` in the core job, which involves no clock at all.
-    #
-    # The filter is a single glob: BenchmarkDotNet accepts neither '|' alternation nor a repeated
-    # --filter (both were tried locally and both matched zero benchmarks), so this covers the whole
-    # search class rather than three rows.
-    name: Search allocation (advisory)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
-        with:
-          dotnet-version: '10.0.x'
-
-      - name: Record the host these numbers come from
-        run: |
-          {
-            echo "cores: $(nproc)"
-            grep -m1 'model name' /proc/cpuinfo || true
-            dotnet --info
-          } | tee search-cost-host.txt
-
-      - name: Run the search benchmarks
-        run: >
-          dotnet run --project bench/LexiSharp.Benchmarks -c Release --
-          --filter '*SearchBenchmarks*' --job medium
-
-      - name: Upload the report
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: search-allocation
-          path: |
-            bench/LexiSharp.Benchmarks/BenchmarkDotNet.Artifacts/results/
-            search-cost-host.txt
-          if-no-files-found: ignore
+  # The SearchTrace allocation re-measurement used to live here, on every push. It is now
+  # workflow_dispatch in search-allocation.yml: nothing read its artifact, so ~9 runner-hours a week
+  # restated numbers that had not moved. Dispatch it when the index or the scoring path changes.
