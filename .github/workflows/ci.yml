@@ -45,12 +45,20 @@ jobs:
       # coverlet.msbuild instruments during the build, so coverage collection
       # requires the build to happen inside the same dotnet test invocation
       # (--no-build would skip instrumentation and empty the report).
+      #
+      # LexiSharp.CodeShape is build tooling under bench/, excluded for the same reason the
+      # SonarCloud step below already excludes bench/: the 60% line gate is about the library,
+      # and a console front end is not library code. Measured rather than assumed - including it
+      # moves the total by 0.85 points (81.83% -> 80.98%), because its Program.cs has no tests
+      # while its reader does. ExcludeFromCodeCoverage on the ProjectReference is not honoured
+      # by coverlet.msbuild, which is why the filter is spelled out in the command.
       - name: Test with coverage (60% total line gate)
         run: >
           dotnet test tests/LexiSharp.Tests -c Release
           -p:CollectCoverage=true -p:CoverletOutputFormat=cobertura
           -p:CoverletOutput=../../TestResults/coverage-
           -p:Threshold=60 -p:ThresholdType=line -p:ThresholdStat=total
+          -p:Exclude="[LexiSharp.CodeShape]*"
 
       # The behavioural gate. The xUnit suite pins contracts - BM25 ranks X above Y on a
       # three-document corpus - but nothing pinned the *output* of a realistic run, so a
@@ -111,6 +119,41 @@ jobs:
               sys.exit(f"no PDB in the .snupkg for: {missing}")
           print(f"OK: {len(pdbs)} PDB(s) in {os.path.basename(snupkgs[0])}")
           PY
+
+      - name: Code shape manifests
+        # The structural shape of every shipped assembly: per method, the length of its IL and its
+        # decoded local signature, with no metadata token anywhere. Publishing it as an artifact is
+        # what makes a later "did the generated code move" answerable without rebuilding two commits
+        # on one machine: download the manifests from two runs and diff them.
+        #
+        # Advisory, and it gates nothing. Adding a method or a type legitimately changes a
+        # manifest, so failing on a difference would fail every ordinary source edit. The entries
+        # worth failing on are the ones a reader counts as a cost change - a method present in both
+        # runs with a different size or a different local signature - and those are what
+        # `cod-shape compare` reports, on two manifests, when you go looking.
+        run: |
+          mkdir -p "$RUNNER_TEMP/cod-shape"
+
+          # Built here rather than inherited from the test step: this step reads assemblies out of
+          # bin/, and depending on an earlier step having built them is how a manifest ends up
+          # describing yesterday's code without anything failing.
+          dotnet build LexiSharp.slnx -c Release
+
+          for project in LexiSharp LexiSharp.AspNetCore LexiSharp.MessagePack LexiSharp.Postgres; do
+            assembly="src/$project/bin/Release/net10.0/$project.dll"
+            test -f "$assembly" || { echo "missing $assembly"; exit 1; }
+            dotnet run --project bench/LexiSharp.CodeShape -c Release --no-build -- emit \
+              "$assembly" "$RUNNER_TEMP/cod-shape/$project.shape.txt"
+          done
+          wc -l "$RUNNER_TEMP/cod-shape/"*.txt
+
+      - name: Upload code shape manifests
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: code-shape
+          path: ${{ runner.temp }}/cod-shape/
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload coverage to Codecov
         # Auto-skipped until CODECOV_TOKEN is configured on the repository.
