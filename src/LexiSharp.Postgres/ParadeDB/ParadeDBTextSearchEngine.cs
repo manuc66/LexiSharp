@@ -272,6 +272,13 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, I
 
     private static bool PassesFilters(SearchOptions options, SearchDocument document)
     {
+        // Same two gates as SearchOptions.PassesFilters, kept separate because this engine assembles
+        // results from SQL and cannot call the internal helper.
+        var excluded = options.ExcludedDocumentIds;
+
+        if (excluded is not null && excluded.Count > 0 && excluded.Contains(document.Id))
+            return false;
+
         var filters = options.Filters;
 
         if (filters is null || filters.Count == 0)

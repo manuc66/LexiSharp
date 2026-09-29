@@ -93,7 +93,25 @@ public static class RetrievalMetrics
     /// <c>2^rel − 1</c>, and the ideal ranking is the best possible ordering of the available
     /// relevance levels. Documents missing from the map count as relevance 0.
     /// </summary>
-    public static double NdcgAtK(IReadOnlyCollection<string> retrievedIds, IReadOnlyDictionary<string, double> gradedRelevance, int k)
+    /// <remarks>
+    /// This is the exponential convention. The linear one — the convention the standard evaluation
+    /// tool uses, and therefore the one behind the published figures this repository is compared
+    /// against — is the <see cref="NdcgGain.Linear"/> overload. The two differ on graded corpora
+    /// only; see <see cref="NdcgGain"/>.
+    /// </remarks>
+    public static double NdcgAtK(IReadOnlyCollection<string> retrievedIds, IReadOnlyDictionary<string, double> gradedRelevance, int k) =>
+        NdcgAtK(retrievedIds, gradedRelevance, k, NdcgGain.Exponential);
+
+    /// <summary>
+    /// nDCG@k with graded relevance under an explicit <see cref="NdcgGain"/> convention, with the
+    /// ideal ranking taken over the best possible ordering of the available relevance levels.
+    /// Documents missing from the map count as relevance 0.
+    /// </summary>
+    public static double NdcgAtK(
+        IReadOnlyCollection<string> retrievedIds,
+        IReadOnlyDictionary<string, double> gradedRelevance,
+        int k,
+        NdcgGain gain)
     {
         ArgumentNullException.ThrowIfNull(retrievedIds);
         ArgumentNullException.ThrowIfNull(gradedRelevance);
@@ -102,7 +120,7 @@ public static class RetrievalMetrics
         if (gradedRelevance.Count == 0)
             return 0;
 
-        if (gradedRelevance.Values.Any(gain => double.IsNaN(gain) || double.IsInfinity(gain) || gain < 0))
+        if (gradedRelevance.Values.Any(level => double.IsNaN(level) || double.IsInfinity(level) || level < 0))
             throw new ArgumentOutOfRangeException(nameof(gradedRelevance), "Relevance gains must be non-negative and finite.");
 
         var graded = new Dictionary<string, double>(gradedRelevance, StringComparer.Ordinal);
@@ -118,16 +136,19 @@ public static class RetrievalMetrics
             if (!seen.Add(id))
                 continue;
 
-            if (graded.TryGetValue(id, out var gain) && gain > 0)
-                dcg += (Math.Pow(2, gain) - 1) / Math.Log2(rank + 1);
+            if (graded.TryGetValue(id, out var level) && level > 0)
+                dcg += GainOf(level, gain) / Math.Log2(rank + 1);
 
             rank++;
         }
 
-        double idcg = IdealDcg(graded.Values.OrderByDescending(gain => gain), k);
+        double idcg = IdealDcg(graded.Values.OrderByDescending(level => level), k, gain);
 
         return idcg == 0 ? 0 : dcg / idcg;
     }
+
+    private static double GainOf(double relevanceLevel, NdcgGain gain) =>
+        gain == NdcgGain.Linear ? relevanceLevel : Math.Pow(2, relevanceLevel) - 1;
 
     /// <summary>
     /// Reciprocal rank at <c>k</c>: <c>1 / rank</c> of the first relevant document within the
@@ -238,18 +259,18 @@ public static class RetrievalMetrics
         return idcg;
     }
 
-    private static double IdealDcg(IEnumerable<double> orderedGains, int k)
+    private static double IdealDcg(IEnumerable<double> orderedRelevance, int k, NdcgGain gain)
     {
         double idcg = 0;
         int rank = 1;
 
-        foreach (var gain in orderedGains)
+        foreach (var level in orderedRelevance)
         {
             if (rank > k)
                 break;
 
-            if (gain > 0)
-                idcg += (Math.Pow(2, gain) - 1) / Math.Log2(rank + 1);
+            if (level > 0)
+                idcg += GainOf(level, gain) / Math.Log2(rank + 1);
 
             rank++;
         }
