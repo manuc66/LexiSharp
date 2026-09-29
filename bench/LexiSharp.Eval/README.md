@@ -197,8 +197,9 @@ below.
 ## The regression net
 
 `--verify-reference` replays every configuration in [`reference/pinned.json`](reference/pinned.json)
-and exits 1 on any drift, so it can gate a build. The file holds two kinds of number, and they are
-not interchangeable:
+and exits 1 on any drift. It is the `Pinned reference` workflow, on a dispatch or on a push that
+touches the library or this harness, so a drift is a red check rather than a wrong README. The file
+holds two kinds of number, and they are not interchangeable:
 
 - **Regression pins** — the value this repository must keep producing, at a named configuration
   (analyzer, gain convention, BM25 parameters, query-document exclusion, query count). The
@@ -506,8 +507,12 @@ English or Porter2 stemmer", and it over-stems by design (`relate` and `relation
 
 ## Decisions worth knowing
 
-- Not part of CI: it downloads data over the network, so it lives outside the test suite and
-  out of the `ci.yml` gates. The `LexiSharp.Benchmarks` project (BenchmarkDotNet) stays a
+- Not in the `ci.yml` test suite, and that is a reason of resource and of the wrong unit: it
+  downloads data over the network, so a unit test that pulls ~100 MB of corpora is not a unit test,
+  and a build that cannot run without a download is a build that fails for reasons unrelated to the
+  commit. It runs instead as the `Pinned reference` workflow, on a dispatch and on a push that
+  touches `src/` or this harness, and it is not a *required* check - making it one is a repository
+  setting, not a file in here. The `LexiSharp.Benchmarks` project (BenchmarkDotNet) stays a
   *performance* harness; this one is a *quality* harness.
 - The dense path is opt-in (`--dense`) because the first run downloads ~470 MB and encodes on
   CPU for several minutes; it is resource-bounded (4 threads) and cached, so it never

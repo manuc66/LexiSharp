@@ -1,0 +1,85 @@
+name: Pinned reference (on demand)
+
+# Replays every pinned configuration in bench/LexiSharp.Eval/reference/pinned.json and fails if a
+# value drifted. It exists because three documents promise this net and it was not attached to
+# anything: README says "a change that moved them fails the build rather than the docs", and
+# docs/index.md says "every number here is pinned and re-checked by --verify-reference". Until this
+# workflow, no job in ci.yml ran --verify-reference at all, so the pins were re-checked when a human
+# remembered to type the command. That is not a net, and the gap had a visible cost: a public
+# constructor parameter, QueryTermWeighting, was inert on the main search path for a whole release
+# and nothing noticed, because the setting that would have moved ArguAna nDCG@10 by 0.042 had no
+# pin and no run to read it.
+#
+# On demand rather than on every push, and the difference from the CI matrix is the corpora: they
+# are not in the repository (.gitignore excludes bench/LexiSharp.Eval/data/) and are downloaded and
+# md5-verified per run, so a per-push job would pay a ~100 MB download to re-answer a question that
+# a documentation commit cannot have changed. The push trigger below is scoped to the paths that can
+# move a score, so it fires on the commits where the answer is worth having.
+#
+# What is deliberately not here: the allocation job's reasoning for staying off every push was that
+# nothing read its artifact and no baseline was compared. This one is the opposite case - it has
+# committed baselines, a tolerance, and a non-zero exit on drift. If a run is red, the numbers in the
+# README and docs/evaluation.md are wrong until someone explains why.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'src/**'
+      - 'bench/LexiSharp.Eval/**'
+      - 'Directory.Build.props'
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+
+jobs:
+  verify-reference:
+    # No continue-on-error. This was never inside CI to be advisory, and a run dispatched on purpose
+    # should be able to report a drift as a failure. The artifact is uploaded with `if: always()` so a
+    # red run still hands over the values that drifted.
+    name: Pinned reference
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Record the host these numbers come from
+        run: |
+          {
+            echo "cores: $(nproc)"
+            grep -m1 'model name' /proc/cpuinfo || true
+            dotnet --info
+          } | tee reference-host.txt
+
+      # The corpora are not in the repository. The harness downloads each one and checks its md5
+      # before use, so there is no fetch step here and nothing to keep in sync.
+      #
+      # Redirected, then printed, and deliberately not `... 2>&1 | tee file`. GitHub's default shell
+      # for run steps is `bash -e` without `pipefail`, so a pipeline reports the status of its last
+      # command: a drift would exit non-zero from dotnet, tee would return zero, and the step would
+      # go green. A gate that cannot fail is the exact thing this workflow exists to stop being.
+      - name: Replay every pinned configuration
+        run: |
+          dotnet run --project bench/LexiSharp.Eval -c Release -- \
+            --verify-reference bench/LexiSharp.Eval/reference/pinned.json \
+            > reference-verify.txt 2>&1
+          status=$?
+          cat reference-verify.txt
+          exit $status
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pinned-reference
+          path: |
+            reference-verify.txt
+            reference-host.txt
+          if-no-files-found: ignore
