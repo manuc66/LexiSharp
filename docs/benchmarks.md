@@ -230,63 +230,298 @@ column being the load-bearing evidence elsewhere on this page does not apply her
 the *baseline* `SearchBenchmarks` numbers earlier on this page remain valid and unaffected: that
 corpus never entered the candidate path.
 
-### Measured but not shipped: term-at-a-time scoring
+### Term-at-a-time scoring
 
-Every range scorer is document-at-a-time: `Bm25QueryPlan.Score` asks `index.TermFrequency(documentId,
-term)` for each (document, term) pair, and that is two string-dictionary lookups. A prototype that
-walks CSR posting lists into a score accumulator indexed by an integer document ordinal — one
-dictionary lookup per *term*, then integer arithmetic per posting — measured, as originally
-recorded, **0.097 ms against 2.00 ms** for a 2-term query over 10,000 documents. Both figures
-below are re-measurements; treat the original pair as a prototype note, not a shipped number.
+This section replaces an earlier one headed *Measured but not shipped: term-at-a-time scoring*, which
+recorded the same analysis and reached a different conclusion. The work is shipped; the history of
+how the original 20× turned out to be measured in the wrong regime is kept below, because it is the
+reason the benchmark corpus had to change.
 
-**Re-measured, that 20× is real but it is measured in the one regime where the engine deliberately
-does not use candidate generation.** The 20× baseline is a 2-term query on the 38-word benchmark
-corpus, where each term is in ~74% of documents, the summed document frequencies exceed half the
-corpus, and the engine's own `sum(df)/Count < 0.5` test sends it to a full scan instead. Re-run
-against that corpus (min of 200 iterations, load average 2.2), a TAT-over-CSR prototype measures
-0.020–0.067 ms with a fresh accumulator, or 0.041–0.212 ms with a reused one, against 0.83–4.11 ms
-for the engine — 12× to 42× depending on the query. The parity is the good news: contributions
-added per document in query-term order sum identically, so every top 10 came back identical to the
-engine down to the last bit, and the golden master is not at risk.
+**Host.** Different from the one named at the top of this page, and every number in this section
+comes from it — nothing here is comparable with a table above:
 
-On a realistic term distribution, though, the engine already enumerates candidates and is already
-fast, so there is very little left for loop inversion to win:
+```
+BenchmarkDotNet v0.14.0, Manjaro Linux
+Intel Core i7-8850H CPU @ 2.60GHz (Coffee Lake), 12 logical cores
+.NET SDK 10.0.111 · Runtime: .NET 10.0.11 (X64 RyuJIT AVX2)
+Job: default (ShortRun where stated)
+```
 
-| Zipf corpus, 10k docs | df sum | engine today | TAT over CSR | DAAT over CSR |
+Each before/after pair is **two BDN processes run back-to-back on this host**, which is what makes
+the ratio meaningful: the two sides share a machine state, and neither absolute figure is
+comparable with anything else on this page.
+
+**What the change is.** Every range scorer was document-at-a-time: `Bm25QueryPlan.Score` asks
+`index.TermFrequency(documentId, term)` for each (document, term) pair, and that is two
+string-dictionary lookups — one to resolve the term's posting list, one to resolve the document
+inside it. With `m` terms over `n` candidates that is `2·m·n` string hashes, and the term half of it
+is the same lookup repeated for the same `m` values on every one of the `n` documents.
+
+A scorer whose score decomposes into a per-term contribution depending on nothing but that
+document's **term frequency and length** now folds the inverted lists straight into an
+ordinal-indexed score buffer: one walk of each term's postings, no id hashed anywhere. BM25,
+BM25+, BM25L and TF-IDF qualify. BM25F (per-field geometry) and query likelihood (a `log P(t|d)`
+term for documents that do *not* contain the query term) do not, and keep the per-document loop.
+
+Three things make the two loops produce the *same doubles* rather than merely the same ranking —
+which matters because `TopRankedWindow` breaks ties with `==` on the score, so a last-bit difference
+reorders the page:
+
+- Terms are folded in **query order**, one posting list at a time, so each document's contributions
+  are summed in the order the per-document loop summed them. IEEE-754 addition is deterministic
+  given an order, so the sums come out bit-identical.
+- `QueryPlanParityTests` asserts that for 10 scorer configurations × 5 queries, and
+  `Engine_ResultsAreIdenticalWhicheverScoringPathItTakes` asserts it again through the public
+  surface, page for page, on a corpus deliberately full of exact ties.
+- The accumulator's buffers come from `ArrayPool`, which is a **process-wide** pool, so the
+  recorded-flags array is cleared on rent. Skipping that clear made the suite fail
+  *intermittently* — different tests on different runs of the parallel suite, all passing in
+  isolation. It is the kind of defect a benchmark would never surface, and
+  `ScoreAccumulatorTests` now pins it: remove the clear and that test fails, `Count` 0 against 512.
+
+**Search, head terms** (`CandidateSearchBenchmarks`, Zipf 10,000 × 50 words, s = 1.07). This is
+the representative table: a real term distribution, and the three head rows are new. No class here
+previously reached the regime where the engine scans the whole corpus, because the 38-word corpus
+puts every term in ~74% of documents — analytically (37/38)^50 ≈ 0.264, so 74% of 10,000 documents
+contain any given word. That figure is inherited from the existing benchmark comments, not
+re-measured here, and it is the number the next table below is *not* about.
+
+| Method           | Before      | After       | Speedup | Allocated before / after |
+|------------------|------------:|------------:|--------:|-------------------------:|
+| `OneTerm`        |    385.8 ns |    370.0 ns |   1.04× |     832 B / 848 B |
+| `TwoTerms`       |    700.2 ns |    695.7 ns |   1.01× |   1,152 B / 1,152 B |
+| `ThreeTerms`     |    813.2 ns |    783.7 ns |   1.04× |   1,208 B / 1,208 B |
+| `HeadTerm`       |  919,532 ns |  121,631 ns |  **7.6×** |   1,217 B / 1,224 B |
+| `TwoHeadTerms`   | 1,393,805 ns |  171,087 ns |  **8.1×** |   1,267 B / 1,272 B |
+| `ThreeHeadTerms` | 2,949,926 ns |  190,469 ns | **15.5×** |   1,313 B / 1,320 B |
+
+The three tail rows are at parity — slightly faster, in fact — and that is the point of them: they
+are the queries the new loop is *not* meant to win, and it does not cost them anything measurable.
+The `+16 B` on `OneTerm` is the only cost measured anywhere in this section and **its cause is not
+identified**.
+
+**The speedup tracks the cost the old loop already had, not the query's rarity as such.** Per unit
+of work: the document-at-a-time loop costs ~96 ns per document it scores (one `DocumentLength`
+hash plus one `TermFrequency` per query term, each a string hash), and the term-at-a-time pass
+costs ~13 ns per posting entry. That ~7× slope is the mechanism; the ratio reaches 10-15× at the
+head because the new path's fixed cost — clearing a corpus-sized buffer — has stopped mattering by
+then, and is *below* 1× at df = 1 for the same reason. So a query that already took 200 ns does not
+gain, and a query that took 1.6 ms does, which is a different and more useful statement than
+« it helps if your traffic has frequent terms ».
+
+**Search, the degenerate corpus** (`SearchBenchmarks`, 38 words, so every row walks 10,000
+documents). Quoted second and read as the upper bound it is: a corpus where *every* term is a head
+term is not a distribution any real query log resembles.
+
+| Method                    | Before      | After       | Speedup |
+|---------------------------|------------:|------------:|--------:|
+| `Bm25Search`              |  1,629.1 µs |    152.4 µs | **10.7×** |
+| `TfIdfSearch`             |  1,265.4 µs |    135.1 µs |  **9.4×** |
+| `QueryLikelihoodSearch`   |  2,139.2 µs |  1,848.5 µs |   1.16× |
+| `BooleanSearch`           |    864.8 µs |    862.0 µs |   1.00× |
+| `Bm25SearchRunAllQueries` | 14,656.8 µs |  1,022.3 µs | **14.3×** |
+| `TraceSaturated`          |  1,504.1 µs |    151.1 µs |  **9.9×** |
+| `TracePerSearch`          |  1,417.0 µs |    161.5 µs |  **8.8×** |
+
+The two control rows are `QueryLikelihoodSearch` and `BooleanSearch`: neither scorer has a
+separable per-term contribution, so neither takes the new loop, and **neither is claimed as a
+result**. `BooleanSearch` is at parity within this host's run-to-run noise — three runs each side
+gave 1,023 / 1,010 / 960 µs after and 1,042 / 1,044 / 1,349 µs before, so the distributions
+overlap almost entirely. `QueryLikelihoodSearch`'s 1.16× is **most likely noise too**: no mechanism
+for a real gain on that path has been identified, and the index changes make its per-document work
+marginally *heavier*, not lighter (one extra array read for `DocumentLength`). It was **not** at
+parity on the first attempt of the change, when the posting lists were keyed on a document object
+and cost that path a third dictionary probe: measured 1,714 µs against a 1,073 µs baseline. The
+`Allocated` column is identical to the byte on both sides for all four trace rows, so the
+`SearchTrace` cost pinned above is untouched.
+
+**How much of the gain is the loop inversion, and how much is the index restructuring?** Answered
+above, in the 2×2 table that follows the crossover: the restructuring is neutral on the path it does
+not accelerate, and the loop is the whole of the win.
+
+**Why the tail rows are flat.** The pass clears a buffer sized to the corpus before it scores
+anything, so it has a fixed cost the per-document loop does not have. `ScoringPathBenchmarks`
+measures the crossover by running both loops over the same query through the public surface — a
+metadata filter that passes every document is one of the two conditions that send a query down the
+per-document loop, and it changes nothing else (ShortRun, so read the direction, not the last
+digit):
+
+| Target df | Term-at-a-time | Per-document | Ratio |
+|----------:|---------------:|-------------:|------:|
+|         1 |        355.6 ns |      357.0 ns |  1.00× |
+|         4 |        645.8 ns |      666.2 ns |  0.97× |
+|        16 |      1,402.7 ns |    1,884.6 ns |  1.34× |
+|        64 |      2,337.1 ns |    5,930.2 ns |  2.54× |
+|       256 |      6,862.1 ns |   23,217.5 ns |  3.38× |
+|     1,024 |     17,103.4 ns |  102,627.3 ns |  6.00× |
+|     4,096 |     56,140.6 ns |  443,565.8 ns |  7.90× |
+|     9,525 |    120,129.6 ns |  935,566.9 ns |  7.79× |
+
+Read the direction, not the last digit: this is a ShortRun, and the per-document row's confidence
+interval is tens of microseconds wide at the bottom of the table. The shape is what carries the
+claim.
+
+**And the same crossover, at three corpus sizes** — the question the table above cannot answer,
+because it only ever measured 10,000 documents. Zipf corpora of 10,000 / 100,000 / 1,000,000
+documents, streamed so the document array is never resident alongside the index, min of N in one
+process, both loops over the same query:
+
+| corpus | resident | fixed cost | per posting entry | per candidate scored | break-even | threshold |
+|------:|---------:|-----------:|------------------:|---------------------:|-----------:|----------:|
+|   10,000 |   ~41 MB |    0.5 µs |           12.8 ns |                96 ns |      ≈ 6 |         8 |
+|  100,000 |  725 MB |      1 µs |           11.5 ns |               245 ns |      ≈ 4 |         8 |
+| 1,000,000 | 7,083 MB |   16.1 µs |           12.6 ns |               295 ns |     ≈ 57 |        50 |
+
+Two results here, and the second one is the more useful:
+
+- **The new pass's per-entry cost is flat** — 12.8 / 11.5 / 12.6 ns across two orders of magnitude —
+  while the old loop's per-candidate cost *triples*, 96 → 245 → 295 ns, as the postings
+  dictionaries outgrow the cache. That is the mechanism behind the whole section: the win grows
+  with corpus size instead of being a constant, and it is a cache effect, not an algorithmic one.
+- **The break-even barely moves** (6 / 4 / 57), so the fixed cost is *not* what should set the
+  threshold. Scaling the threshold on the fixed cost alone — which is what the first version of this
+  did, with a divisor of 1,024 — gives 9 / 97 / 976 and hands back a **1.2-2.4× win at two of the
+  three scales**. The divisor is now 20,000, fitted to the three measured crossings, which gives
+  8 / 8 / 50.
+
+At 1,000,000 documents the effect is unmistakable, and this is the scale where the change stops
+being a throughput win and becomes a latency one — the 38-word and Zipf tables at the top of this
+section are both 10,000-document numbers, where the whole search already fitted in a millisecond:
+
+| 1,000,000 documents, Zipf | term-at-a-time | per-document | ratio |
+|---|---:|---:|---:|
+| one term, df 70 |       28 µs |      25 µs |  0.91× |
+| one term, df 256 |       44 µs |      89 µs |  2.01× |
+| one term, df 1,000 |    141 µs |     356 µs |  2.52× |
+| one term, df 10,035 |   309 µs |   3,898 µs | 12.60× |
+| one term, df 99,254 | 1,998 µs |  37,426 µs | 18.73× |
+| one term, df 496,842 | 6,064 µs | 145,827 µs | 24.05× |
+| **three mixed terms** | **11,215 µs** | **328,717 µs** | **29.3×** |
+
+The three-mixed-terms row is the shape a real query has, and **11.2 ms against 328.7 ms** is the
+number that decides the question this section opened with: at a million documents the old path
+crosses into latency a user can feel, and the new one does not.
+
+Two honest limits on the 1,000,000 row. The vocabulary is held at 30,000 terms while the corpus
+grows, so the tail gets *thicker* with scale — the rarest term is in 70 documents, not 1 — and a
+longer tail at the same corpus size is not what was measured. And below df ≈ 57 the two paths are
+within 10 % of each other, which is why the threshold is set where it is rather than at 1.
+
+**What is still not measured:** anything above a million documents. Extrapolating the fixed cost
+alone would put a 10-million-document crossing near 400, and the divisor encodes that direction —
+but at that size the per-candidate cost is the quantity with the least evidence behind it, and it
+is the one that sets the crossing.
+
+**How much of the gain is the loop inversion, and how much is the index restructuring?** The
+restructuring is worth separating, because it is not a free enabler. All three available cells,
+same corpus, `ScoringPathBenchmarks` in both builds so the per-document row is the same query on
+each side:
+
+| df 9,525, 1 term | old index | new index |
+|---|---:|---:|
+| **document-at-a-time** |   910,206 ns | 935,567 ns (1.03×, i.e. noise) |
+| **term-at-a-time** | did not exist | 120,130 ns |
+
+So the restructuring is **neutral** on the path it does not accelerate, and the term-at-a-time pass
+is **7.8×** against that same path on the same index — which means essentially the whole 7.6×
+end-to-end is the loop, not the storage.
+
+That 1.03× is worth a note, because the first version of this measurement said 1.31× *slower* and
+was wrong. The per-document row on the new build was allocating 321 KB per search (see the
+`PassesFilters` section below); 288 KB of that was a per-candidate enumerator, and the resulting
+garbage-collection pressure was being charged to the loop as if it were work. The number moved when
+the allocation was removed, not when the code did. **A time number measured on a path that allocates
+a quarter of a megabyte per call is a measurement of the allocator**, and the honest reading of
+"the restructuring costs 31%" was "the restructuring exposed an allocation bug".
+
+**A pre-existing allocation bug this pass turned up, which the 321 KB above led to.**
+`SearchOptions.PassesFilters` is called once per candidate document — on a filtered full scan,
+once per document in the corpus. It walked the filter list with a `foreach` over an
+`IReadOnlyList<MetadataFilter>`, so the enumerator was resolved *through the interface* and
+heap-allocated on every call. The comment sitting next to that loop explained that a LINQ `All()`
+had been avoided because it would allocate an enumerator per candidate; the `foreach` it annotated
+allocated one per candidate anyway. Measured on a 10,000-document corpus with one filter that
+rejects nothing: **288,072 bytes per search before, 72 after** — and the same search without a
+filter allocates 1,224. This is not caused by the scoring work and is present in the pre-change
+build; it is reported here because it is what the 2×2 measurement ran into.
+`FilteredSearchAllocationTests` pins it with an allocation assertion (reverting the loop makes it
+fail at 317,587 bytes per query) rather than a stopwatch, because that is the property that
+regressed.
+
+**What it costs.** Index building is at parity (`IndexBenchmarks`, before / after on this host):
+
+| Method                            | DocumentCount | Before      | After       | Allocated before / after |
+|-----------------------------------|--------------:|------------:|------------:|-------------------------:|
+| BuildInvertedIndex                |          1000 |   11.73 ms |   11.98 ms |  9.37 MB / 9.37 MB |
+| BuildIndexWithStopWordsAndStemmer |          1000 |   12.51 ms |   12.39 ms |  9.41 MB / 9.41 MB |
+| BuildInvertedIndex                |         10000 |  164.99 ms |  162.90 ms | 91.08 MB / 91.08 MB |
+| BuildIndexWithStopWordsAndStemmer |         10000 |  172.25 ms |  169.45 ms | 91.48 MB / 91.48 MB |
+
+Resident memory of a served 10,000-document index, measured with `GC.GetTotalMemory` around an
+index build (the caller's document array is the same on both sides and is outside the delta):
+
+| Corpus / state               | Before   | After    |
+|------------------------------|---------:|---------:|
+| 38 words, untouched          |  40.9 MB |  40.9 MB |
+| 38 words, one query served   |  40.9 MB |  41.2 MB |
+| Zipf, untouched              |  72.5 MB |  72.7 MB |
+| Zipf, one query served       |  72.5 MB |  72.9 MB |
+| Zipf, three head terms       |  72.5 MB |  72.9 MB |
+| Zipf, 200 mid terms          |  72.5 MB |  72.9 MB |
+
+That is the dense ordinals the documents carry, plus the flat copy of the posting lists the
+term-at-a-time pass walks: 8 bytes per posting entry against roughly eighty for the dictionary
+entry, the `List<int>` and its backing array it mirrors. **Nothing is claimed about a corpus where
+that ratio differs**, and the last row is the honest statement of what a build-then-never-query
+index costs: nothing at all.
+
+**A contiguous posting layout was the larger of the two wins, and measurement found it rather than
+reasoning.** The first working version walked the dictionary in the term-at-a-time pass and landed
+at 1,208 µs for three head terms (26,525 posting entries) where the identical arithmetic over
+contiguous arrays landed at 122 µs — a 10× gap, all of it pointer chasing, because the enumerator
+has to follow a `List<int>` and a document object per entry. The flat copy is built on first use
+and rebuilt when the corpus changes, so a read-only index pays the build once while an index
+mutated between every query pays an O(df·log df) build per query. The dictionary stays
+authoritative; the flat copy is derived and can be dropped at any time.
+
+#### How the original 20× turned out to be measured in the wrong regime
+
+Worth keeping, because the failure is not obvious. The first prototype — CSR posting lists into a
+score accumulator indexed by an integer document ordinal — measured, as originally recorded,
+**0.097 ms against 2.00 ms** for a 2-term query over 10,000 documents. Re-measured, that 20× is real
+*and* it is measured in the one regime where the engine deliberately does not use candidate
+generation: the 38-word benchmark corpus puts every term in ~74% of documents, so `sum(df)/Count <
+0.5` fails and the engine full-scans. On a Zipf corpus, where the candidate path is the one real
+queries take, the engine was already at 0.001–0.013 ms and a term-at-a-time prototype had
+microseconds left to win. Parity was *not* the obstacle — the prototype's scores came back
+bit-identical to the engine's, which is why this shipped rather than being abandoned.
+
+| Zipf corpus, 10k docs | df sum | engine then | TAT over CSR | DAAT over CSR |
 |-----------------------|-------:|-------------:|-------------:|--------------:|
 | `w500x`               |     97 |      0.013 ms |     0.003 ms |      0.002 ms |
 | `w2000x w9000x`       |     35 |      0.007 ms |     0.001 ms |      0.001 ms |
-| `w20000x w25000x w29000x` |  2 |      0.001 ms |   < 0.001 ms |    < 0.001 ms |
+| `w20000x w25000x w29000x` |    2 |      0.001 ms |   < 0.001 ms |    < 0.001 ms |
 | `w1x w500x w9000x`    |  9,628 |      1.394 ms |     0.024 ms |      0.001 ms |
 
-The last row is the only one where the choice of inversion matters, because it is the only one where
-one term is rare and the others are not. Absolute headroom on shaped queries is microseconds, not
-milliseconds. The 20× is a ratio against a baseline that mostly does not occur, which is the
-« tuned vs tuned » mistake in a different costume: one side measured in a regime the other side
-would never be in.
+The 20× is a ratio against a baseline that mostly does not occur, which is the « tuned vs tuned »
+mistake in a different costume: one side measured in a regime the other side would never be in.
+The conclusion that survived — that the head terms are where the money is — is the one the shipped
+tables above confirm, but it took a benchmark corpus that could *reach* the path to confirm it, and
+that is exactly what the old table could not have told anyone. The engine also has to grow a
+threshold now, which the original 20× did not suggest it would need; see the crossover table.
 
-Two further costs the prototype does not carry. Its accumulator is 8 bytes × document count **per
-concurrent query** — 80 KB at 10,000 documents, 8 MB at a million — and the allocation-free version
-of it, a generation-stamped scratch reused across queries, measured 2× to 4× slower than the fresh
-one (0.117 ms against 0.067 ms, and 0.212 ms against 0.054 ms on the widest query), so the scratch
-has to be pooled and the pooling is part of the design.
-And with CSR the position lists stop being dictionary lookups: `GetTermPositions` becomes a binary
-search called per (document, phrase term) by the phrase gate and by `ProximityReranker`, and
-`GetTerms` needs a per-document position→term structure, i.e. a second inverted layout.
+Two costs the prototype was measured carrying, and how they were resolved:
 
-**If the loop is ever inverted, invert it document-at-a-time over sorted CSR lists, not
-term-at-a-time.** A two-pointer merge driven by the *smallest* document frequency, abandoning a
-term as soon as its cursor runs off the end, is the `DAAT` column above: 0.001 ms against 0.024 ms
-for TAT on the mixed-frequency query. It needs no corpus-sized accumulator, no document ordinals and
-no rebuild-on-mutation strategy, and it allocates nothing. Its cost is driven by the rarest term
-rather than the sum of the frequencies, which is the property that matters as corpora grow.
-
-Storage is the other half. The claim was 26.1 MB of nested posting dictionaries becoming ~2.1 MB of
-`int[]`; re-measured on the same corpus (279,832 (term, document) pairs, 500,000 positions) the
-direction holds and the ratio is larger — 36.78 MB nested against 2.90 MB of `int[]` for document
-ids and term frequencies, plus 1.91 MB for the position block the phrase gate still needs, so
-4.81 MB total, about 7.6×. The two absolute figures in the original claim are not reproducible as
-written and the 12× ratio should not be quoted; the order of magnitude is the part that survives.
+- Its accumulator is 8 bytes × document count **per concurrent query** — 80 KB at 10,000
+  documents, 8 MB at a million. It is rented from `ArrayPool` per search and returned, so a steady
+  stream of searches allocates nothing after the first few; the memory tables above are the
+  measured consequence, not a projection.
+- With CSR the position lists would stop being dictionary lookups: `GetTermPositions` would become a
+  binary search called per (document, phrase term) by the phrase gate and by `ProximityReranker`.
+  That did not happen here — the flat arrays carry ordinals and frequencies only, and the
+  authoritative `Dictionary<string, List<int>>` keeps serving positions — so the phrase gate and
+  `ProximityReranker` are unchanged, at the cost of the pointer-chasing walk remaining in the write
+  path. Replacing the authoritative form is a larger change than this one and is not attempted.
 
 ## Tokenizer (`TokenizerBenchmarks`)
 
@@ -349,7 +584,14 @@ code still reproduces it. See the
 dotnet run --project bench/LexiSharp.Benchmarks -c Release
 # search-only subset (fast):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*Search*'
+# the term-at-a-time crossover, both loops on the same query:
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*ScoringPath*'
 ```
+
+The three-corpus-size crossover above is **not** in the benchmark project: a 1,000,000-document
+index needs 7.1 GB resident and 57 s to build, which is not something a CI job should do on every
+push. It is a stopwatch harness run deliberately, and the numbers are on this page with the
+conditions they were taken under.
 
 Reports land in `BenchmarkDotNet.Artifacts/results/` (CSV, HTML, GitHub-flavored markdown).
 For stable numbers use the default (non-`ShortRun`) job configuration and publish the full
