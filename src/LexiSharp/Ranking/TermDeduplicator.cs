@@ -16,12 +16,13 @@ namespace LexiSharp.Ranking;
 /// Whether to deduplicate at all is a ranking decision, not an implementation detail, so
 /// <see cref="QueryTermWeighting"/> chooses and this class carries it out. A classic search query
 /// repeats nothing and both choices score identically; a query that <i>is</i> a document repeats
-/// its content words, and there the two differ sharply — measured on the ArguAna corpus, where
-/// every test query is a whole ~200-word argument, counting query-term frequency instead of
-/// deduplicating moves nDCG@10 from 0.2197 to 0.2902 at k1=0.9/b=0.4, and to 0.4061 at k1=3.0. On
+/// its content words, and there the two differ — measured on the ArguAna corpus, where every test
+/// query is a whole ~200-word argument, counting query-term frequency instead of deduplicating is
+/// worth +0.052 on nDCG@10 (0.219 to 0.271 at k1=0.9/b=0.4, 1,406 queries, English analysis). On
 /// NFCorpus and SciFact, whose queries are short, it changes nothing to four decimals. A reference
 /// implementation scores one clause per query-token occurrence, so it always counts; see
-/// <see cref="QueryTermWeighting"/> for why the default here is the other choice.
+/// <see cref="QueryTermWeighting"/> for why the default here is the other choice, and for the
+/// larger figure this repository used to publish for it and has withdrawn.
 /// </para>
 /// </remarks>
 internal static class TermDeduplicator

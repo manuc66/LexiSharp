@@ -96,17 +96,24 @@ external service.
 Stated plainly, so nothing is implied. The full list, with the measurement behind each claim,
 is [Scope and limits](docs/reference.md#scope-and-limits).
 
-- **It matches the published BM25 baseline where the comparison is set up like for like, and the
-  tables below are not that comparison.** On three public BEIR corpora, with the analysis, the BM25
-  parameters and the metric convention aligned to those the reference figures were produced with,
-  the plain BM25 scorer reaches nDCG@10 **0.3215** (NFCorpus) and **0.6788** (SciFact) against
-  **0.3218** and **0.6789** — equal to the fourth decimal — and **0.4061** (ArguAna) against
-  **0.3970**. The same scores read under the library defaults, which is how this repository's tables
-  were originally written, are **0.308 / 0.662 / 0.289**; that difference is the analyzer, the
+- **It matches the published BM25 baseline on two of the three corpora it can be compared on, and it
+  does not on the third.** On NFCorpus and SciFact, with the analysis, the BM25 parameters and the
+  metric convention aligned to those the reference figures were produced with, the plain BM25 scorer
+  reaches nDCG@10 **0.3215** and **0.6788** against **0.3218** and **0.6789** — equal to the fourth
+  decimal. On ArguAna, at the reference's own k1=0.9/b=0.4, it reaches **0.219** against the
+  **0.3970** that implementation publishes, and the deficit is **not accounted for**. The same scores
+  read under the library defaults are **0.308 / 0.662 / 0.289**; that difference is the analyzer, the
   parameters and one task convention, not the ranking. Corpora are md5-verified on download, and the
   numbers are pinned and re-checked by the `Pinned reference` workflow, which replays every pinned
   configuration and exits non-zero on drift. It runs on a dispatch, and on a push that touches the
   library or the harness — see [evaluation](docs/evaluation.md).
+- **A quality claim this repository withdrew.** Until 0.6.0 it also reported **0.4061** on ArguAna,
+  above the published 0.3970, and attributed the gap to query-term scoring: the library deduplicated
+  query terms, the reference counts them, and counting them was said to be worth +0.0705. Measured,
+  the setting is worth **+0.052** (0.219 to 0.271 at matched parameters) and the 0.4061 is not
+  reproducible by any code path. The figures could not have come from the code that cited them, which
+  deduplicated the query before the scorer could see a repetition. The measurement and the reasoning
+  are in [evaluation](docs/evaluation.md) and in `QueryTermWeighting`.
 - **No scorer here has a measured win over a tuned BM25.** BM25+ and BM25L, tuned on their own
   `δ`, **tie** a tuned BM25 on the reference corpus and NFCorpus and edge it by 0.002–0.004 on
   SciFact — an in-sample margin, so an upper bound rather than a result. On ArguAna, untuned,

@@ -484,10 +484,11 @@ public static class Program
               --query-term-frequency
                                 Score a repeated query term once per occurrence, as a reference
                                 implementation does,
-                                instead of once. Decisive where a query is a document: on ArguAna
-                                (every test query is a whole argument) 0.2197 -> 0.2902 at
-                                k1=0.9/b=0.4, and 0.4061 at k1=3.0. On NFCorpus and SciFact, whose
-                                queries are short, it changes nothing to four decimals.
+                                instead of once. Worth +0.052 where a query is a document: on
+                                ArguAna (every test query is a whole argument) 0.219 -> 0.271 at
+                                k1=0.9/b=0.4, 1406 queries, --analyzer english. On NFCorpus and
+                                SciFact, whose queries are short, it changes nothing to four
+                                decimals. The linear gain convention gives the same 0.271.
               --reference-bm25 <k1,b>
                                 Add a BM25 row at these parameters, e.g. 0.9,0.4 — the defaults the
                                 published BM25 baselines were produced with, which is neither of the

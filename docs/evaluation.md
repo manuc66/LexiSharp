@@ -43,20 +43,41 @@ parameters, the gain convention and the repeated-term rule aligned:
 |---|---:|---:|---:|
 | NFCorpus | 0.3215 at k1=0.9, b=0.4 | 0.3218 | −0.0003 |
 | SciFact | 0.6788 at k1=0.9, b=0.4 | 0.6789 | −0.0001 |
-| ArguAna | **0.4061** at k1=3.0, b=0.75 | 0.3970 at k1=0.9, b=0.4 | parameters cannot be aligned |
+| ArguAna | 0.219 at k1=0.9, b=0.4 | 0.3970 at k1=0.9, b=0.4 | **-0.178, cause not established** |
 
 At the published operating point, NFCorpus and SciFact reproduce the reference to the fourth
 decimal. The engine was never behind on those two; the comparison was measuring the analyzer.
 
-**ArguAna's 0.11 gap was a scoring rule, and it is now measured rather than open.** The library
-deduplicates query terms before scoring; the reference scores one clause per query-token
-occurrence, so a term repeated in the query multiplies its weight. On this corpus every test query
-is a whole ~200-word argument whose content words repeat, and counting them is worth **+0.0705**
-on its own (0.2197 → 0.2902 at the reference's own k1=0.9/b=0.4), taking it to **0.4061** at
-k1=3.0/b=0.75. On NFCorpus and SciFact, whose queries are short, the setting changes nothing to four
-decimals — which is why the gap looked like a capability difference and was not one. The remaining
-caveat is unchanged: ArguAna's k1 sensitivity runs opposite to the other two corpora, so the 0.4061
-is at a k1 the reference does not use and a like-for-like comparison there is still unmeasured.
+**ArguAna: this page previously said the gap was closed, and that was wrong.** Until 0.6.0 this
+page reported **0.4061** at k1=3.0/b=0.75, above the published 0.3970, and explained the difference
+as a scoring rule: the library deduplicated query terms, the reference scores one clause per
+query-token occurrence, and on a corpus whose every test query is a whole ~200-word argument,
+counting them was said to be worth **+0.0705** (0.2197 to 0.2902 at k1=0.9/b=0.4).
+
+Re-measured on 1,406 queries with the English analysis, at the reference's own k1=0.9/b=0.4:
+
+| setting | nDCG@10 |
+|---|---:|
+| `QueryTermWeighting.Distinct` (the default) | 0.219 |
+| `QueryTermWeighting.QueryFrequency` | 0.271 |
+| **effect of the setting** | **+0.052** |
+
+Three conventions were checked and none accounts for the difference. The linear gain convention
+returns the same 0.271 as the exponential one, and excluding the query document is worth +0.0012 by
+this repository's own measurement. Neither 0.2902 nor 0.4061 is reproducible.
+
+The reason is structural, and that is the part worth keeping. The harness flag fed exactly one
+thing - the `QueryTermWeighting` argument of `new Bm25Scorer(...)` - and that scorer went into
+`RankedTextSearchEngine`, which deduplicated the query before the scorer could see a repetition. The
+two settings could not have produced different rankings, so those figures could not have come from
+the code that published them. The engine now hands the scorer the raw term list, the setting is
+observable through `Search`, and `QueryTermWeightingTests` fails if it ever stops being.
+
+**What is left on ArguAna is open.** At matched parameters this library reads 0.219 where the
+reference publishes 0.3970, and the setting closes 0.052 of that 0.178. Nothing measured here
+accounts for the rest. ArguAna's k1 sensitivity also runs opposite to the other two corpora, so
+comparing this library at k1=1.5/b=0.75 against a reference figure produced at k1=0.9/b=0.4 is not a
+comparison at all, which is how a flattering number got in.
 
 The reference is also **newer than the table it is first compared against**: a current per-corpus
 regression for this exact index puts ArguAna at 0.3970, not the 0.315 of the 2021 paper.

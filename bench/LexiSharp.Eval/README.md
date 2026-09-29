@@ -166,13 +166,23 @@ NFCorpus, the one graded corpus here: 0.3080 exponential against 0.3071 linear f
 
 **`--query-term-frequency` is what closed the ArguAna gap, and it is worth nothing elsewhere.**
 A published BM25 measurement scores one clause per query-token occurrence, so a term repeated in the
-query multiplies its weight; this library deduplicates first, which is the natural reading of a bag
-of words and the default it keeps. Where queries are short the two are identical to four decimals
-(NFCorpus 0.3215 either way, SciFact 0.6788 either way). Where a query *is* a document they are not:
-ArguAna's every test query is a whole ~200-word argument whose content words repeat, and counting
-them takes nDCG@10 from **0.2197 to 0.2902** at k1=0.9/b=0.4 — and to **0.4061** at k1=3.0, against
-the **0.3970** published. That was the whole of the 0.11 that this repository had written down as an
-unexplained deficit, and it was a scoring rule, not a parameter.
+query multiplies its weight; this library deduplicates by default, which is the natural reading of a
+bag of words. Where queries are short the two are identical to four decimals (NFCorpus 0.3215 either
+way, SciFact 0.6788 either way). Where a query *is* a document they are not: ArguAna's every test
+query is a whole ~200-word argument whose content words repeat, and counting them takes nDCG@10
+from **0.219 to 0.271** at k1=0.9/b=0.4, a **+0.052** effect. Reproduce it with
+`--analyzer english --reference-bm25 0.9,0.4 --query-term-frequency`, and the default on the same
+line without the flag. The linear gain convention returns the same 0.271, so this is not an artifact
+of the metric convention.
+
+**This section previously said the effect was +0.0705 and that it closed the whole 0.11 deficit.
+Both were wrong, and the reason is structural rather than numerical.** `--query-term-frequency` fed
+exactly one thing - the `QueryTermWeighting` argument of `new Bm25Scorer(...)` - and that scorer went
+into `RankedTextSearchEngine`, which deduplicated the query before the scorer could see a
+repetition. The two settings could not have produced different rankings, so the 0.2902 and 0.4061
+this harness was said to produce could not have come from this harness. What is left on ArguAna at
+matched parameters is a 0.178 deficit that nothing measured here accounts for, of which this
+setting closes 0.052.
 
 **`--exclude-query-doc` is worth far less on ArguAna than it looks, and the measurement is in
 `reference/pinned.json`.** 1298 of the 1406 ArguAna test queries have a query id that is a document
@@ -419,17 +429,16 @@ section used to call that "8 % below the reference" and leave it there. It is no
 | configuration | nDCG@10 |
 |---|---:|
 | library defaults (the table above) | 0.289 |
-| + reference analysis, + query-frequency counting, at k1=0.9/b=0.4 | 0.2902 |
-| the same at k1=3.0/b=0.75 | **0.4061** |
+| + reference analysis, at k1=0.9/b=0.4 | 0.219 |
+| + reference analysis, + query-frequency counting, at k1=0.9/b=0.4 | 0.271 |
+| + reference analysis, + query-frequency counting, at k1=3.0/b=0.75 | 0.331 |
 | published reference, at k1=0.9/b=0.4 | 0.3970 |
 
-The cause is that this library deduplicates query terms before scoring and the reference counts
-one clause per query-token occurrence. On a corpus where every test query is a whole ~200-word
-argument, that is worth **+0.0705** on its own. Reproduce it with
-`--analyzer english --ndcg-gain linear --query-term-frequency --exclude-query-doc
---reference-bm25 3.0,0.75`. The 0.4061 is at a k1 the reference does not use, so this is not a
-like-for-like number either — what it shows is that the deficit was a scoring rule, not a
-capability, and that the corpus is sensitive to k1 in the opposite direction to the other two.
+Read the third and fourth rows together: the setting is worth +0.052 at the reference's own
+parameters and +0.027 at k1=3.0. The fifth row is at k1=0.9/b=0.4, so the honest comparison is the
+second against the fifth - 0.219 against 0.3970 - and that deficit is unexplained. The fourth row
+used to be quoted as 0.4061, above the reference, which would have meant this library beat it on
+ArguAna. It does not, and the number was not reproducible by any code path.
 A like-for-like ArguAna comparison at the reference's own parameters is **unmeasured** and would
 need the k1/b grid this corpus' 1406 long queries make expensive.
 

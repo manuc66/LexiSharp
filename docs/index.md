@@ -87,12 +87,19 @@ twice. Every figure below is reproducible with a command on the
 [Evaluation](evaluation.md) page.
 
 - **Against published baselines.** On three public BEIR corpora, with the analysis, the BM25
-  parameters, the gain convention and the repeated-term rule the reference figures were produced
-  with, the plain BM25 scorer reaches nDCG@10 **0.3215** on NFCorpus, **0.6788** on SciFact and
-  **0.4061** on ArguAna, against **0.3218 / 0.6789 / 0.3970**. Under the library's own defaults
-  the same scorer reads 0.308 / 0.662 / 0.289; that difference is the configuration, not the
-  ranking. The corpora are md5-verified on download, the harness ships no licence over them, and
-  every number here is pinned and re-checked by the `Pinned reference` workflow.
+  parameters and the metric convention aligned to those the reference figures were produced with, the
+  plain BM25 scorer reaches nDCG@10 **0.3215** on NFCorpus and **0.6788** on SciFact, against
+  **0.3218 / 0.6789** — equal to the fourth decimal. On ArguAna, at the reference's own
+  k1=0.9/b=0.4, it reaches **0.219** against **0.3970**, and that deficit is not accounted for.
+  Under the library's own defaults the same scorer reads 0.308 / 0.662 / 0.289; that difference is
+  the configuration, not the ranking. The corpora are md5-verified on download, the harness ships no
+  licence over them, and every number here is pinned and re-checked by the `Pinned reference`
+  workflow.
+- **A claim withdrawn.** Until 0.6.0 this page also reported **0.4061** on ArguAna, above the
+  published figure, on the grounds that the reference counts a repeated query term and the library
+  deduplicated it. Re-measured, the setting is worth +0.052 at matched parameters, not the +0.0705
+  claimed, and 0.4061 is not reproducible by any code path in this repository. See
+  [evaluation](evaluation.md).
 - **Where the composed stack pays off.** On NFCorpus — the one corpus where every lane is
   measured — a dense retriever alone lands at BM25 level (0.304), BM25+dense RRF fusion
   reaches **0.333**, and adding a cross-encoder rerank **0.346**, about 2.1 points above
@@ -129,6 +136,7 @@ twice. Every figure below is reproducible with a command on the
 | [Allocation and latency benchmarks](benchmarks.md) | allocations and timings, with the machine they came from and the command to reproduce them |
 | [Reference](reference.md) | packages, architecture, scoring conventions, scope and limits, build and test |
 | [SPLADE: learned sparse retrieval](SPLADE.md) | writing a consumer-side `ISparseEmbeddingProvider` around a SPLADE ONNX model |
+| [API reference](api.md) | every public type of the four packages, generated from the assemblies — the contracts you implement, and the classes that implement them |
 
 ## Scope
 
