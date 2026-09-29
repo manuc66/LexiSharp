@@ -34,6 +34,11 @@
     <ProjectReference Include="../../src/LexiSharp.AspNetCore/LexiSharp.AspNetCore.csproj" />
     <ProjectReference Include="../../src/LexiSharp.MessagePack/LexiSharp.MessagePack.csproj" />
     <ProjectReference Include="../../src/LexiSharp.Postgres/LexiSharp.Postgres.csproj" />
+
+    <!-- Build tooling, referenced so its reader can be tested. Declared excluded from coverage:
+         the console front end is not library code, and letting coverlet's default (which is every
+         referenced assembly) pull it into the 60% line gate would make the gate depend on a CLI. -->
+    <ProjectReference Include="../../bench/LexiSharp.CodeShape/LexiSharp.CodeShape.csproj" ExcludeFromCodeCoverage="true" />
   </ItemGroup>
 
 </Project>

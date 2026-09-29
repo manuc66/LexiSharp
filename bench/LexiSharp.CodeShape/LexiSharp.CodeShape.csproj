@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>LexiSharp.CodeShape</RootNamespace>
+    <Description>
+      Internal build tooling. Reads the structural shape of a compiled assembly — per method, the
+      length of its IL and its decoded local signature — so two builds can be compared for
+      unintended codegen changes. Not part of the shipped library.
+    </Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="LexiSharp.Tests" />
+  </ItemGroup>
+
+</Project>
