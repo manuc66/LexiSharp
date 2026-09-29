@@ -1,9 +1,12 @@
 ---
-title: SPLADE guide
+title: "SPLADE: learned sparse retrieval"
 nav_order: 14
+description: >-
+  Writing a consumer-side ISparseEmbeddingProvider in C# around a SPLADE ONNX model,
+  and wiring it into a LexiSharp pipeline.
 ---
 
-# SPLADE guide
+# SPLADE: learned sparse retrieval
 
 LexiSharp never runs an ML model. For learned-sparse retrieval, the library only consumes
 the output of your model through one interface:

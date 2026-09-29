@@ -1,9 +1,12 @@
 ---
-title: Benchmarks
+title: Allocation and latency benchmarks
 nav_order: 12
+description: >-
+  Allocation and latency measurements from BenchmarkDotNet, with the machine they
+  were taken on and the command to reproduce them.
 ---
 
-# Benchmarks
+# Allocation and latency benchmarks
 
 Numbers on this page come from BenchmarkDotNet runs on a single, aging developer machine —
 they are **indicative only**, not a performance claim. Run the suite yourself before drawing

@@ -1,7 +1,11 @@
 ---
 layout: home
-title: Home
+title: Full-text and hybrid search for .NET
 nav_order: 1
+description: >-
+  Full-text and hybrid search for C# and .NET: BM25, TF-IDF, rank fusion,
+  reranking, dense and learned-sparse seams, and PostgreSQL and ParadeDB
+  backends.
 ---
 
 # LexiSharp
@@ -113,18 +117,18 @@ twice. Every figure below is reproducible with a command on the
 | Page | What is in it |
 |---|---|
 | [Getting started](getting-started.md) | the engine in three lines, the typed `LexiSharpIndex<T>` facade, document loaders, an ASP.NET Core endpoint, the demo app |
-| [Indexing](indexing.md) | the inverted index and its statistics, named text fields, the tokenizer and stemming, binary persistence |
-| [Querying](querying.md) | metadata filters, pagination, phrase queries, highlighting, prefix & fuzzy terms, synonyms, facets, the span-first API |
-| [Ranking](ranking.md) | four scorers, BM25+ / BM25L and their δ tuners, BM25F, score boosting, proximity, per-term explanations — each with the measurement behind it |
-| [Pipelines](pipelines.md) | rerankers (MMR, cascade, cross-encoder, MaxSim), hybrid federation, cost-based and intent-based routing |
-| [Embeddings and expansion](embeddings.md) | dense, learned-sparse and corpus-derived expansion, all behind consumer-supplied seams |
-| [Text analysis](text-analysis.md) | lexical similarity, keyword extraction, Naive Bayes classification |
-| [Backends](backends.md) | PostgreSQL lexical / vector / sparse / fuzzy, ParadeDB BM25, what the integration tests cover |
-| [Observability](observability.md) | `SearchTrace`, production telemetry, source agreement, calibrated score confidence |
-| [Evaluation](evaluation.md) | the BEIR numbers in full, IR metrics, the benchmark CLI, per-query diffs, parameter tuning |
-| [Benchmarks](benchmarks.md) | allocations and timings, with the machine they came from and the command to reproduce them |
+| [Building an inverted index](indexing.md) | the inverted index and its statistics, named text fields, the tokenizer and stemming, binary persistence |
+| [Querying: filters, facets, highlighting](querying.md) | metadata filters, pagination, phrase queries, highlighting, prefix & fuzzy terms, synonyms, facets, the span-first API |
+| [BM25 and ranking functions](ranking.md) | four scorers, BM25+ / BM25L and their δ tuners, BM25F, score boosting, proximity, per-term explanations — each with the measurement behind it |
+| [Rerankers and hybrid search](pipelines.md) | rerankers (MMR, cascade, cross-encoder, MaxSim), hybrid federation, cost-based and intent-based routing |
+| [Dense, sparse and query expansion](embeddings.md) | dense, learned-sparse and corpus-derived expansion, all behind consumer-supplied seams |
+| [Classification and text analysis](text-analysis.md) | lexical similarity, keyword extraction, Naive Bayes classification |
+| [PostgreSQL and ParadeDB backends](backends.md) | PostgreSQL lexical / vector / sparse / fuzzy, ParadeDB BM25, what the integration tests cover |
+| [Search traces and telemetry](observability.md) | `SearchTrace`, production telemetry, source agreement, calibrated score confidence |
+| [Retrieval quality and IR metrics](evaluation.md) | the BEIR numbers in full, IR metrics, the benchmark CLI, per-query diffs, parameter tuning |
+| [Allocation and latency benchmarks](benchmarks.md) | allocations and timings, with the machine they came from and the command to reproduce them |
 | [Reference](reference.md) | packages, architecture, scoring conventions, scope and limits, build and test |
-| [SPLADE guide](SPLADE.md) | writing a consumer-side `ISparseEmbeddingProvider` around a SPLADE ONNX model |
+| [SPLADE: learned sparse retrieval](SPLADE.md) | writing a consumer-side `ISparseEmbeddingProvider` around a SPLADE ONNX model |
 
 ## Scope
 

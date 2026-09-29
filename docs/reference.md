@@ -1,6 +1,9 @@
 ---
 title: Reference
 nav_order: 13
+description: >-
+  The packages, the architecture, the scoring conventions, the scope and the limits,
+  and how to build and test LexiSharp.
 ---
 
 # Reference

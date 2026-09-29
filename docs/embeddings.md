@@ -1,9 +1,12 @@
 ---
-title: Embeddings and expansion
+title: Dense, sparse and query expansion
 nav_order: 7
+description: >-
+  Dense, learned-sparse and corpus-derived query expansion in .NET, all behind
+  consumer-supplied provider seams — no model ships in the package.
 ---
 
-# Embeddings and expansion
+# Dense, sparse and query expansion
 
 Three ways to reach past exact lexical overlap, and the seam each one leaves open. LexiSharp
 never runs a model: `IEmbeddingProvider`, `ISparseEmbeddingProvider` and

@@ -1,9 +1,12 @@
 ---
-title: Pipelines
+title: Rerankers and hybrid search
 nav_order: 6
+description: >-
+  Rerankers (MMR, cascade, cross-encoder, MaxSim), hybrid federation across
+  engines, and cost-based or intent-based query routing.
 ---
 
-# Pipelines
+# Rerankers and hybrid search
 
 Every engine here implements the same `ITextSearchEngine` contract, and they compose by
 wrapping rather than by configuring: a first stage retrieves for recall, a second stage

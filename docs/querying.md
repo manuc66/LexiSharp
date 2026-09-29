@@ -1,9 +1,12 @@
 ---
-title: Querying
+title: "Querying: filters, facets, highlighting"
 nav_order: 4
+description: >-
+  Metadata filters, pagination, phrase queries, highlighting, prefix and fuzzy
+  terms, synonyms and facets, through the span-first API.
 ---
 
-# Querying
+# Querying: filters, facets, highlighting
 
 The query side: what a query string may contain, and what comes back with the results.
 Every feature below is honored by the stock engine; the SQL backends support a subset and

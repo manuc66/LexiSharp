@@ -1,9 +1,12 @@
 ---
-title: Evaluation
+title: Retrieval quality and IR metrics
 nav_order: 11
+description: >-
+  Retrieval quality on the BEIR corpora, the metrics behind it (nDCG, MRR, MAP,
+  recall), the benchmark CLI, per-query diffs and BM25 parameter tuning.
 ---
 
-# Evaluation
+# Retrieval quality and IR metrics
 
 A ranking you cannot score is a ranking you are guessing about. This page is the evidence
 first, then the instruments: standard IR metrics, a parameter tuner, a benchmark CLI over

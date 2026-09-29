@@ -1,9 +1,12 @@
 ---
-title: Observability
+title: Search traces and telemetry
 nav_order: 10
+description: >-
+  SearchTrace — the per-stage score chain behind a result — plus production
+  telemetry, source agreement and calibrated score confidence.
 ---
 
-# Observability
+# Search traces and telemetry
 
 Three questions, three tools. *Why did this rank here?* — for one search, per document:
 `SearchTrace` below, and `Explain` in

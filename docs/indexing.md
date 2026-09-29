@@ -1,9 +1,12 @@
 ---
-title: Indexing
+title: Building an inverted index
 nav_order: 3
+description: >-
+  The in-memory inverted index and its statistics, named text fields, tokenization
+  and stemming, and binary persistence of a whole corpus.
 ---
 
-# Indexing
+# Building an inverted index
 
 What the core does with your text before anything is ranked: an inverted index over
 normalized terms, corpus statistics, optional named fields per document, a configurable
