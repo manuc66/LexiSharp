@@ -60,6 +60,15 @@ build artifact, 30-day retention. To ask whether codegen moved between two runs:
 `code-shape` artifact from each and `diff` them, or feed both to `compare` if you still have the
 assemblies.
 
+**Only compare runs built with the same toolchain.** The manifest measures what the compiler
+emitted, so a different SDK patch can move it with the source untouched. That is not
+hypothetical: the manifests published by the first CI run of this tool gave 135,181 IL bytes for
+`LexiSharp.dll`, where a local build of the same commit gave 135,373 — identical method counts,
+different code sizes. The repository pins no SDK version (no `global.json`, and the workflows ask
+for `10.0.x`, which floats), so the runner and a local machine are not guaranteed to agree. A
+`global.json` would be the fix; until then, read a size difference across two runs as a question,
+not as a finding.
+
 It is advisory and gates nothing, because every ordinary source edit changes a manifest. A gate
 would have to compare against a baseline, and a baseline is only worth having for the assemblies
 whose cost actually matters and whose source changes rarely.
