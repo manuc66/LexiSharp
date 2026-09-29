@@ -4,7 +4,7 @@ using System.Text;
 namespace LexiSharp.Benchmarking;
 
 /// <summary>What a comparison against a golden master found for one query of one configuration.</summary>
-public enum GoldenVerdict
+internal enum GoldenVerdict
 {
     /// <summary>Identical ranking and identical metrics.</summary>
     Match = 0,
@@ -27,7 +27,7 @@ public enum GoldenVerdict
 /// <param name="Expected">The recorded ranking, or an empty list when the query was not recorded.</param>
 /// <param name="Actual">The ranking produced by this run, or an empty list.</param>
 /// <param name="Detail">A human-readable explanation, present for anything other than a match.</param>
-public sealed record GoldenQueryVerdict(
+internal sealed record GoldenQueryVerdict(
     string Configuration,
     string QueryId,
     GoldenVerdict Verdict,
@@ -41,7 +41,7 @@ public sealed record GoldenQueryVerdict(
 /// <param name="Changes">Queries that genuinely differ.</param>
 /// <param name="Missing">Queries present in the run but absent from the baseline.</param>
 /// <param name="Extra">Queries present in the baseline but absent from the run.</param>
-public sealed record GoldenComparison(
+internal sealed record GoldenComparison(
     IReadOnlyList<GoldenQueryVerdict> Matches,
     IReadOnlyList<GoldenQueryVerdict> TieReorders,
     IReadOnlyList<GoldenQueryVerdict> Changes,
@@ -72,8 +72,19 @@ public sealed record GoldenComparison(
 /// Metrics are stored because they are the part a change moves silently: a re-ordering among tied
 /// documents leaves every rank intact and still shifts nDCG.
 /// </para>
+/// <para>
+/// <b>Internal, not public API.</b> A golden master is this repository's own regression net: it
+/// is written by <c>lexisharp baseline</c>, read by <c>lexisharp verify</c>, and consumed by
+/// nothing else — not by the evaluation harness, not by a library consumer, and not by the
+/// documentation. It was public because the types are declared in <c>src/</c>, which is not by
+/// itself a reason: the reader who installs the package was given a golden-master surface along
+/// with the retrieval one, and a second way to compare rankings that the first way already covers.
+/// The golden master is the <c>LexiSharp.Cli</c> command's business, so it stays
+/// <see langword="internal"/> and the two assemblies that legitimately drive it — the CLI and the
+/// test suite — are named as friends.
+/// </para>
 /// </remarks>
-public sealed record GoldenBaseline
+internal sealed record GoldenBaseline
 {
     /// <summary>Format version, so a future layout change is a loud error rather than a silent skip.</summary>
     public const int CurrentVersion = 1;
@@ -85,7 +96,7 @@ public sealed record GoldenBaseline
     /// <param name="QueryId">The query's id.</param>
     /// <param name="DocumentIds">The returned document ids, in rank order.</param>
     /// <param name="Metrics">That query's own metrics.</param>
-    public sealed record Entry(
+    internal sealed record Entry(
         string Configuration,
         string QueryId,
         IReadOnlyList<string> DocumentIds,
