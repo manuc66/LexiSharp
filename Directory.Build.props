@@ -1,0 +1,31 @@
+<Project>
+
+  <!--
+    Symbol packages. Portable PDBs are produced by default in Release, but they are
+    discarded by the pack: setting IncludeSymbols puts each assembly's PDB in a .snupkg
+    alongside the .nupkg, which is what nuget.org's symbol server expects. Applied to every
+    project here (not just the packable ones) because this file is imported before each
+    project body, so IsPackable is not yet defined at evaluation time; non-packable projects
+    never produce a package and are unaffected.
+
+    SourceLink is not referenced explicitly: the .NET SDK imports Microsoft.SourceLink.GitHub
+    in-box, so the PDBs already carry a mapping to the repository. Verified by inspecting a
+    produced .snupkg (see .github/workflows/ci.yml, "Symbol packages").
+  -->
+  <PropertyGroup>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <!--
+    Deterministic source paths. Normalizing them turns the agent's checkout directory
+    into a repository-relative path inside the PDB, so a debugger that reads a published
+    PDB does not resolve sources under /home/runner/work. Only in CI: it changes the path
+    mapping recorded in the PDB, so applying it locally too would make local PDBs differ
+    from the published ones. GitHub Actions sets CI=true.
+  -->
+  <PropertyGroup Condition="'$(CI)' == 'true'">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+</Project>

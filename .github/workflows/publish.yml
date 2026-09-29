@@ -66,18 +66,38 @@ jobs:
         with:
           user: manuc66
 
-      # No snupkg is produced (no symbol package configured), so plain
-      # --skip-duplicate is safe here: it never re-pushes a symbol package
-      # whose PDBs would not match the already-published DLLs.
       - name: Publish to nuget.org
         run: >
           dotnet nuget push "nupkgs/*.nupkg"
           --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
           --source https://api.nuget.org/v3/index.json --skip-duplicate
 
+      # Symbol packages (.snupkg, one per project, produced by the IncludeSymbols /
+      # SymbolPackageFormat settings in Directory.Build.props). nuget.org's symbol server
+      # takes them from the same endpoint, but not from a .nupkg push: the packages have
+      # to be pushed separately, and this is a separate step so that a symbol failure does
+      # not hide behind an already-green package push.
+      #
+      # nuget.org does not let a published version be overwritten, so a re-run of this
+      # workflow finds the symbols already there and --skip-duplicate makes the push a
+      # no-op instead of a 409. That is also why the PDBs can never drift from the DLLs
+      # they describe: a different build of the same version number cannot overwrite the
+      # symbols either. Not verified against nuget.org, only reasoned from the documented
+      # no-overwrite rule - the first tagged run is the real test.
+      - name: Publish symbol packages to nuget.org
+        run: >
+          dotnet nuget push "nupkgs/*.snupkg"
+          --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+          --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      # The symbol packages ride along with the release: nuget.org serves them, but only
+      # to a debugger that asks the symbol server. Attaching them makes a stack trace
+      # resolvable without that round trip.
       - name: Create GitHub release
         if: ${{ !contains(steps.ver.outputs.version, '-') }}
         uses: softprops/action-gh-release@c12583777ecdfd3be55c69cf75464299dc01057e
         with:
-          files: nupkgs/*.nupkg
+          files: |
+            nupkgs/*.nupkg
+            nupkgs/*.snupkg
           generate_release_notes: true
