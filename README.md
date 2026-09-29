@@ -107,13 +107,15 @@ is [Scope and limits](docs/reference.md#scope-and-limits).
   numbers are pinned and re-checked by the `Pinned reference` workflow, which replays every pinned
   configuration and exits non-zero on drift. It runs on a dispatch, and on a push that touches the
   library or the harness — see [evaluation](docs/evaluation.md).
-- **A quality claim this repository withdrew.** Until 0.6.0 it also reported **0.4061** on ArguAna,
-  above the published 0.3970, and attributed the gap to query-term scoring: the library deduplicated
-  query terms, the reference counts them, and counting them was said to be worth +0.0705. Measured,
-  the setting is worth **+0.052** (0.219 to 0.271 at matched parameters) and the 0.4061 is not
-  reproducible by any code path. The figures could not have come from the code that cited them, which
-  deduplicated the query before the scorer could see a repetition. The measurement and the reasoning
-  are in [evaluation](docs/evaluation.md) and in `QueryTermWeighting`.
+- **A quality claim this repository withdrew, before publishing it.** It reported **0.4061** on
+  ArguAna, above the published 0.3970, and attributed the gap to query-term scoring: the library
+  deduplicated query terms, the reference counts them, and counting them was said to be worth
+  +0.0705. Measured, the setting is worth **+0.052** (0.219 to 0.271 at matched parameters) and the
+  0.4061 is not reproducible by any code path. The figures could not have come from the code that
+  cited them, which deduplicated the query before the scorer could see a repetition. Neither the
+  claim nor the setting is in the `v0.6.0` tag — `git tag --contains` finds none — so no release
+  carried either. The measurement and the reasoning are in [evaluation](docs/evaluation.md) and in
+  `QueryTermWeighting`.
 - **No scorer here has a measured win over a tuned BM25.** BM25+ and BM25L, tuned on their own
   `δ`, **tie** a tuned BM25 on the reference corpus and NFCorpus and edge it by 0.002–0.004 on
   SciFact — an in-sample margin, so an upper bound rather than a result. On ArguAna, untuned,
