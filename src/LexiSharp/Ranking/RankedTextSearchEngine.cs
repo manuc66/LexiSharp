@@ -204,8 +204,28 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
         // Precompute the query-level corpus constants (idf, collection probabilities, ...) once
         // per search instead of per candidate document when the scorer supports it.
+        //
+        // The plan gets the *raw* terms, not the deduplicated ones, and that is the whole reason
+        // this call is not the tidy `CreatePlan(distinctQueryTerms, _index)` it looks like it should
+        // be. Whether a term repeated in the query counts once or once per occurrence is a ranking
+        // decision that belongs to the scorer (QueryTermWeighting), and handing it a list it can
+        // prove is already distinct answers the question before it is asked: Bm25Scorer.Terms
+        // short-circuits on DistinctTermList, so with this line as it was, QueryFrequency and
+        // Distinct produced bit-identical rankings through the engine, on every metric, on 1,406
+        // ArguAna queries. The setting was not broken by a later change; it never worked.
+        //
+        // The deduplicated list is still what the two decisions below get, and that is the half
+        // that would break if it were unified with the above. SumDocumentFrequencies and the
+        // candidate enumeration both want each term counted once: a query repeating a term thirty
+        // times would otherwise claim thirty times the reach, push itself over the accumulation
+        // threshold and change scoring path for a query that matches the same documents. The two
+        // lists answer different questions and are not interchangeable.
+        //
+        // Cost on the default path: nothing. TermDeduplicator.Distinct returns its input when it
+        // can prove the list has no duplicates, so a query with no repeated term resolves to the
+        // same instance it would have before, and the plan sees the same terms.
         var plan = _scorer is IQueryPlannableScorer plannable
-            ? plannable.CreatePlan(distinctQueryTerms, _index)
+            ? plannable.CreatePlan(queryTerms, _index)
             : null;
 
         // Bounded top-Window accumulation, worst-first, reproducing the exact semantics of

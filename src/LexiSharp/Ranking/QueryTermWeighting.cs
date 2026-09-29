@@ -20,6 +20,18 @@ namespace LexiSharp.Ranking;
 /// query-token occurrence and sums them, so repetition in the query multiplies that term's weight.
 /// </para>
 /// <para>
+/// <b>Where it is applied, and the trap that made it look broken for a release.</b> The setting is
+/// resolved once per search, in the scorer's query plan, so what has to reach the plan is the
+/// <i>raw</i> term list with its repetitions intact. The engine deduplicates too, for its own two
+/// decisions — how much of the corpus the query can reach, and which candidate documents to
+/// enumerate — and those need each term counted once, so the two lists are deliberately different
+/// and neither substitutes for the other. Handing the plan the deduplicated list makes this setting
+/// inert, and silently so: every scorer's term resolution short-circuits on a list it can prove is
+/// already distinct, so the two settings produce bit-identical rankings with nothing to indicate
+/// anything is wrong. That is what happened, and it is why
+/// <c>QueryTermWeightingTests</c> pins the setting's visibility as well as its meaning.
+/// </para>
+/// <para>
 /// Measured, with the analysis and metric convention aligned to that reference, on the three BEIR
 /// corpora at k1=0.9/b=0.4: ArguAna (each test query is a whole argument) 0.2197 against 0.2902 —
 /// and 0.4061 at k1=3.0, against the 0.3970 that implementation publishes. NFCorpus 0.3215 against
