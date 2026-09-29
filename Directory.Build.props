@@ -39,4 +39,21 @@
     <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
   </PropertyGroup>
 
+  <!--
+    The package version, declared once for every project. It used to be a <Version> in each
+    of the four packable csproj files, and a documentation page carried the same number in
+    prose, so a release meant editing five places and forgetting one: `5248329` is a commit
+    whose whole content is the version being three pages stale after a release.
+
+    Here rather than in a shared .props of its own, because this file is imported before
+    every project body, so the property is set before anything can override it. That is the
+    whole reason it lives here and not in a Directory.Packages.props-style import: an
+    explicit <Version> in a csproj still wins, silently, and a version that only *looks*
+    centralized is worse than one that was duplicated visibly. VersionTests.cs reads the four
+    csproj files to keep the duplication from coming back.
+  -->
+  <PropertyGroup>
+    <Version>0.7.0</Version>
+  </PropertyGroup>
+
 </Project>
