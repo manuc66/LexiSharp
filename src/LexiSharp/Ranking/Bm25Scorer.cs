@@ -18,10 +18,17 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 {
     private readonly double _k1;
     private readonly double _b;
+    private readonly QueryTermWeighting _queryTerms;
 
     /// <param name="k1">Term-frequency saturation: higher values let frequent terms contribute more.</param>
     /// <param name="b">Document-length normalization, in <c>[0, 1]</c>. <c>0</c> disables normalization.</param>
-    public Bm25Scorer(double k1 = 1.5, double b = 0.75)
+    /// <param name="queryTermWeighting">
+    /// How a term repeated in the query is treated. Default
+    /// <see cref="QueryTermWeighting.Distinct"/>. Pass
+    /// <see cref="QueryTermWeighting.QueryFrequency"/> to reproduce a published BM25 figure, which
+    /// counts one scoring clause per query-token occurrence.
+    /// </param>
+    public Bm25Scorer(double k1 = 1.5, double b = 0.75, QueryTermWeighting queryTermWeighting = QueryTermWeighting.Distinct)
     {
         if (double.IsNaN(k1) || double.IsInfinity(k1) || k1 < 0)
             throw new ArgumentOutOfRangeException(nameof(k1), k1, "k1 must be non-negative and finite.");
@@ -30,6 +37,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
         _k1 = k1;
         _b = b;
+        _queryTerms = queryTermWeighting;
     }
 
     /// <summary>Builds a scorer from a preset or tuned <see cref="Bm25Parameters"/> profile.</summary>
@@ -44,6 +52,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
         _k1 = parameters.K1;
         _b = parameters.B;
+        _queryTerms = QueryTermWeighting.Distinct;
     }
 
     /// <inheritdoc />
@@ -66,7 +75,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
         // Indexed loop over the IReadOnlyList<string> interface: a foreach would box the
         // enumerator once per scored document.
-        var terms = queryTerms is DistinctTermList ? queryTerms : TermDeduplicator.Distinct(queryTerms);
+        var terms = Terms(queryTerms);
 
         for (int i = 0; i < terms.Count; i++)
         {
@@ -87,12 +96,21 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
         return score;
     }
 
+    /// <summary>
+    /// The query terms as this scorer reads them: deduplicated, or kept whole so a repeated term is
+    /// scored once per occurrence.
+    /// </summary>
+    private IReadOnlyList<string> Terms(IReadOnlyList<string> queryTerms) =>
+        _queryTerms == QueryTermWeighting.QueryFrequency
+            ? queryTerms
+            : queryTerms is DistinctTermList ? queryTerms : TermDeduplicator.Distinct(queryTerms);
+
     ISearchQueryPlan IQueryPlannableScorer.CreatePlan(IReadOnlyList<string> queryTerms, ITextIndex index)
     {
         ArgumentNullException.ThrowIfNull(queryTerms);
         ArgumentNullException.ThrowIfNull(index);
 
-        return new Bm25QueryPlan(queryTerms, index, _k1, _b);
+        return new Bm25QueryPlan(Terms(queryTerms), index, _k1, _b);
     }
 
     private sealed class Bm25QueryPlan : IAccumulatingQueryPlan
@@ -106,6 +124,8 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
         public Bm25QueryPlan(IReadOnlyList<string> queryTerms, ITextIndex index, double k1, double b)
         {
+            ArgumentNullException.ThrowIfNull(queryTerms);
+
             _index = index;
             _terms = new string[queryTerms.Count];
             _idf = new double[queryTerms.Count];
@@ -207,7 +227,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
         if (documentCount > 0 && documentLength > 0 && averageLength > 0)
         {
-            var terms = queryTerms is DistinctTermList ? queryTerms : TermDeduplicator.Distinct(queryTerms);
+            var terms = Terms(queryTerms);
 
             for (int i = 0; i < terms.Count; i++)
             {

@@ -17,27 +17,36 @@ internal sealed record ConfigResult(
     double RecallAt10,
     TimeSpan Elapsed);
 
-internal sealed record EvaluatedQuery(BeirQuery Query, IReadOnlyDictionary<string, double> Graded);
+/// <param name="Graded">The query's relevance judgments, document id to qrel score.</param>
+/// <param name="Excluded">
+/// Ids to leave out of this query's ranking, or <c>null</c>. Non-null only under
+/// <c>--exclude-query-doc</c>, where the query id is itself a document id — the condition
+/// the published ArguAna figure was produced under addresses.
+/// </param>
+internal sealed record EvaluatedQuery(
+    BeirQuery Query,
+    IReadOnlyDictionary<string, double> Graded,
+    IReadOnlySet<string>? Excluded = null);
 
 internal static class Evaluation
 {
-    public static (IReadOnlyList<ConfigResult> Results, string TunedDescription) Run(
-        BeirCorpus corpus, int topK, int? limit, ITokenizer tokenizer, DenseVectors? dense = null,
-        bool tuned = true, IReranker? reranker = null, int rerankCandidates = 100)
+    /// <summary>
+    /// The corpus as indexable documents. Title and text go in as what they are — a named text
+    /// field and the body — rather than being concatenated. For BM25 this is bit-identical to the
+    /// flattened form: the flat view is the union of the fields, so the same tokens land at the same
+    /// frequencies and lengths, and only their order differs, which BM25 does not read. What it buys
+    /// is a field a field-weighted scorer can actually weigh.
+    /// </summary>
+    /// <remarks>
+    /// Shared with the index fingerprint, so the counts a run reports are the counts of the index it
+    /// actually scored. Two copies of this would be free to drift, and a fingerprint that no longer
+    /// describes the scored index is worse than none: it would keep passing.
+    /// </remarks>
+    public static IReadOnlyList<SearchDocument> BuildDocuments(BeirCorpus corpus)
     {
-        var queries = corpus.Queries
-            .Where(query => corpus.TestRelevance.ContainsKey(query.Id))
-            .OrderBy(query => query.Id, StringComparer.Ordinal)
-            .Select(query => new EvaluatedQuery(query, corpus.TestRelevance[query.Id]))
-            .Take(limit ?? int.MaxValue)
-            .ToList();
+        ArgumentNullException.ThrowIfNull(corpus);
 
-        // Title and text go in as what they are — a named text field and the body — rather than being
-        // concatenated. For BM25 this is bit-identical to the flattened form: the flat view is the
-        // union of the fields, so the same tokens land at the same frequencies and lengths, and only
-        // their order differs, which BM25 does not read. What it buys is a field a field-weighted
-        // scorer can actually weigh.
-        var documents = corpus.Documents
+        return corpus.Documents
             .Select(document => new SearchDocument(
                 document.Id,
                 document.Text,
@@ -45,6 +54,40 @@ internal static class Evaluation
                     ? null
                     : new Dictionary<string, string> { ["title"] = document.Title }))
             .ToList();
+    }
+
+    public static (IReadOnlyList<ConfigResult> Results, string TunedDescription) Run(
+        BeirCorpus corpus, int topK, int? limit, ITokenizer tokenizer, bool excludeQueryDocument = false,
+        NdcgGain ndcgGain = NdcgGain.Exponential,
+        Bm25Parameters? referenceBm25 = null,
+        bool queryFrequency = false,
+        DenseVectors? dense = null,
+        bool tuned = true, IReranker? reranker = null, int rerankCandidates = 100)
+    {
+        // Excluding a query's own document id is a no-op unless the corpus numbers its queries as
+        // documents, so the check needs no corpus-specific configuration. One membership test per
+        // query, not one scan of the corpus per query.
+        var documentIds = excludeQueryDocument
+            ? corpus.Documents.Select(document => document.Id).ToHashSet(StringComparer.Ordinal)
+            : null;
+
+        var queries = corpus.Queries
+            .Where(query => corpus.TestRelevance.ContainsKey(query.Id))
+            .OrderBy(query => query.Id, StringComparer.Ordinal)
+            .Select(query => new EvaluatedQuery(
+                query,
+                corpus.TestRelevance[query.Id],
+                documentIds is not null && documentIds.Contains(query.Id)
+                    ? new HashSet<string>(StringComparer.Ordinal) { query.Id }
+                    : null))
+            .Take(limit ?? int.MaxValue)
+            .ToList();
+
+        var documents = BuildDocuments(corpus);
+
+        // Null means the library default (distinct), so the shared value below is what every
+        // scorer in this run was actually built with.
+        var queryTerms = queryFrequency ? QueryTermWeighting.QueryFrequency : QueryTermWeighting.Distinct;
 
         // ArguAna carries no title, so a field-weighted configuration there would be the same three
         // rows over again with an inert weight. Say so instead of padding the table.
@@ -52,15 +95,39 @@ internal static class Evaluation
 
         var builders = new (string Name, Func<ITextSearchEngine> Factory)[]
         {
-            ("BM25 (k1=1.5, b=0.75)", () => Ranked(documents, new Bm25Scorer(1.5, 0.75), tokenizer)),
-            ("BM25 (k1=1.2, b=0.75)", () => Ranked(documents, new Bm25Scorer(1.2, 0.75), tokenizer)),
-            ("TF-IDF", () => Ranked(documents, new TfIdfScorer(), tokenizer)),
-            ("QueryLikelihood (lambda=0.2)", () => Ranked(documents, new QueryLikelihoodScorer(0.2), tokenizer)),
-            ("Hybrid BM25+QL weighted", () => Hybrid(documents,
-                new WeightedScoreResultMerger(1.0, 1.0), tokenizer)),
-            ("Hybrid BM25+QL RRF", () => Hybrid(documents,
-                new ReciprocalRankFusionMerger(), tokenizer)),
+            ("BM25 (k1=1.5, b=0.75)", () => Ranked(documents, new Bm25Scorer(1.5, 0.75, queryTerms), tokenizer)),
+            ("BM25 (k1=1.2, b=0.75)", () => Ranked(documents, new Bm25Scorer(1.2, 0.75, queryTerms), tokenizer)),
         };
+
+        // The published BM25 baselines were produced at the retrieval stack's own defaults,
+        // k1=0.9 and b=0.4, which is not one of the two rows above. A run has to be able to measure
+        // that operating point, or a comparison against a published number is a comparison of two
+        // different configurations. Opt-in, so the default table is unchanged.
+        if (referenceBm25 is { } reference)
+        {
+            builders = builders
+                .Concat(new (string, Func<ITextSearchEngine>)[]
+                {
+                    // Invariant formatting: a comma here would read as two parameters on a
+                    // machine whose culture uses it, in a table whose whole job is naming them.
+                    ($"BM25 (k1={reference.K1.ToString("0.##", CultureInfo.InvariantCulture)}, "
+                      + $"b={reference.B.ToString("0.##", CultureInfo.InvariantCulture)})",
+                        () => Ranked(documents, new Bm25Scorer(reference.K1, reference.B, queryTerms), tokenizer)),
+                })
+                .ToArray();
+        }
+
+        builders = builders
+            .Concat(new (string, Func<ITextSearchEngine>)[]
+            {
+                ("TF-IDF", () => Ranked(documents, new TfIdfScorer(), tokenizer)),
+                ("QueryLikelihood (lambda=0.2)", () => Ranked(documents, new QueryLikelihoodScorer(0.2), tokenizer)),
+                ("Hybrid BM25+QL weighted", () => Hybrid(documents,
+                    new WeightedScoreResultMerger(1.0, 1.0), tokenizer)),
+                ("Hybrid BM25+QL RRF", () => Hybrid(documents,
+                    new ReciprocalRankFusionMerger(), tokenizer)),
+            })
+            .ToArray();
 
         if (anyTitle)
         {
@@ -86,8 +153,8 @@ internal static class Evaluation
         builders = builders
             .Concat(new (string, Func<ITextSearchEngine>)[]
             {
-                ("BM25+ (delta=1.0)", () => Ranked(documents, new Bm25PlusScorer(1.5, 0.75, 1.0), tokenizer)),
-                ("BM25L (delta=0.5)", () => Ranked(documents, new Bm25LScorer(1.5, 0.75, 0.5), tokenizer)),
+                ("BM25+ (delta=1.0)", () => Ranked(documents, new Bm25PlusScorer(1.5, 0.75, 1.0, queryTerms), tokenizer)),
+                ("BM25L (delta=0.5)", () => Ranked(documents, new Bm25LScorer(1.5, 0.75, 0.5, queryTerms), tokenizer)),
             })
             .ToArray();
 
@@ -141,16 +208,18 @@ internal static class Evaluation
         var results = new List<ConfigResult>();
 
         foreach (var (name, factory) in buildersList)
-            results.Add(RunConfig(name, factory(), queries, topK));
+            results.Add(RunConfig(name, factory(), queries, topK, ndcgGain));
 
-        string tunedDescription = tuned ? RunTuned(documents, corpus, queries, topK, tokenizer, results) : "skipped (--no-tuned)";
+        string tunedDescription = tuned
+            ? RunTuned(documents, corpus, queries, topK, tokenizer, ndcgGain, results)
+            : "skipped (--no-tuned)";
 
         if (tuned)
         {
             // The delta axis is a free parameter of both variants, so "tuned BM25" next to "BM25+ at
             // delta=1.0" is tuned-against-unfitted. These two rows close that, which is the only way
             // the variant rows in docs/ranking.md mean what a reader takes them to mean.
-            RunTunedVariants(documents, queries, topK, tokenizer, results, out string plusDelta, out string lDelta);
+            RunTunedVariants(documents, queries, topK, tokenizer, ndcgGain, results, out string plusDelta, out string lDelta);
 
             tunedDescription += $"; {plusDelta}, {lDelta}";
         }
@@ -158,20 +227,23 @@ internal static class Evaluation
         return (results, tunedDescription);
     }
 
-    private static ConfigResult RunConfig(string name, ITextSearchEngine engine, IReadOnlyList<EvaluatedQuery> queries, int topK)
+    private static ConfigResult RunConfig(
+        string name, ITextSearchEngine engine, IReadOnlyList<EvaluatedQuery> queries, int topK, NdcgGain ndcgGain)
     {
         double ndcg = 0, map = 0, mrr = 0, recall = 0;
         var sw = Stopwatch.StartNew();
 
         foreach (var evaluated in queries)
         {
-            string[] retrieved = engine.Search(evaluated.Query.Text, new SearchOptions(topK))
+            string[] retrieved = engine.Search(
+                    evaluated.Query.Text,
+                    new SearchOptions(topK, ExcludedDocumentIds: evaluated.Excluded))
                 .Select(result => result.DocumentId)
                 .ToArray();
 
             var relevant = evaluated.Graded.Keys.ToArray();
 
-            ndcg += RetrievalMetrics.NdcgAtK(retrieved, evaluated.Graded, topK);
+            ndcg += RetrievalMetrics.NdcgAtK(retrieved, evaluated.Graded, topK, ndcgGain);
             map += RetrievalMetrics.AveragePrecisionAtK(retrieved, relevant, topK);
             mrr += RetrievalMetrics.ReciprocalRankAtK(retrieved, relevant, topK);
             recall += RetrievalMetrics.RecallAtK(retrieved, relevant, topK);
@@ -195,12 +267,14 @@ internal static class Evaluation
         IReadOnlyList<EvaluatedQuery> queries,
         int topK,
         ITokenizer tokenizer,
+        NdcgGain ndcgGain,
         List<ConfigResult> results)
     {
         var validation = queries
             .Select(evaluated => new Bm25ValidationQuery(
                 evaluated.Query.Text,
-                evaluated.Graded.Keys.ToArray()))
+                evaluated.Graded.Keys.ToArray(),
+                evaluated.Excluded))
             .ToList();
 
         var index = new InMemoryTextIndex(tokenizer);
@@ -213,7 +287,8 @@ internal static class Evaluation
             $"BM25 tuned (k1={tuned.Parameters.K1:0.##}, b={tuned.Parameters.B:0.##})",
             new RankedTextSearchEngine(index, new Bm25Scorer(tuned.Parameters), tokenizer),
             queries,
-            topK);
+            topK,
+            ndcgGain);
 
         results.Add(result);
 
@@ -237,6 +312,7 @@ internal static class Evaluation
         IReadOnlyList<EvaluatedQuery> queries,
         int topK,
         ITokenizer tokenizer,
+        NdcgGain ndcgGain,
         List<ConfigResult> results,
         out string plusDelta,
         out string lDelta)
@@ -244,7 +320,8 @@ internal static class Evaluation
         var validation = queries
             .Select(evaluated => new Bm25ValidationQuery(
                 evaluated.Query.Text,
-                evaluated.Graded.Keys.ToArray()))
+                evaluated.Graded.Keys.ToArray(),
+                evaluated.Excluded))
             .ToList();
 
         var index = new InMemoryTextIndex(tokenizer);
@@ -257,7 +334,8 @@ internal static class Evaluation
             $"BM25+ tuned (k1={plus.K1:0.##}, b={plus.B:0.##}, delta={plus.Delta:0.##})",
             new RankedTextSearchEngine(index, new Bm25PlusScorer(plus.K1, plus.B, plus.Delta), tokenizer),
             queries,
-            topK));
+            topK,
+            ndcgGain));
 
         // BM25+ at delta = 0 IS Bm25Scorer, so the tuner's own unfloored score is BM25's on the same
         // grid. Worth stating in the output: it means this row and the bm25-tuned row are fitted by
@@ -272,7 +350,8 @@ internal static class Evaluation
             $"BM25L tuned (k1={l.K1:0.##}, b={l.B:0.##}, delta={l.Delta:0.##})",
             new RankedTextSearchEngine(index, new Bm25LScorer(l.K1, l.B, l.Delta), tokenizer),
             queries,
-            topK));
+            topK,
+            ndcgGain));
 
         // Same reading applies: BM25L at delta = 0 is BM25 too, the compression cancelling.
         lDelta = Describe("BM25L", l.Delta, l.UnflooredMetricScore, l.MetricScore, l.DeltaHelped);
