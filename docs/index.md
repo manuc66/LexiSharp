@@ -92,7 +92,7 @@ twice. Every figure below is reproducible with a command on the
   **0.4061** on ArguAna, against **0.3218 / 0.6789 / 0.3970**. Under the library's own defaults
   the same scorer reads 0.308 / 0.662 / 0.289; that difference is the configuration, not the
   ranking. The corpora are md5-verified on download, the harness ships no licence over them, and
-  every number here is pinned and re-checked by `--verify-reference`.
+  every number here is pinned and re-checked by the `Pinned reference` workflow.
 - **Where the composed stack pays off.** On NFCorpus — the one corpus where every lane is
   measured — a dense retriever alone lands at BM25 level (0.304), BM25+dense RRF fusion
   reaches **0.333**, and adding a cross-encoder rerank **0.346**, about 2.1 points above
