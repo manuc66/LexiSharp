@@ -131,6 +131,12 @@ jobs:
         # worth failing on are the ones a reader counts as a cost change - a method present in both
         # runs with a different size or a different local signature - and those are what
         # `cod-shape compare` reports, on two manifests, when you go looking.
+        #
+        # Read a size difference across two runs as a question, not a finding: the manifest
+        # measures what the compiler emitted, no SDK version is pinned (no global.json, and
+        # 10.0.x floats), and the first run of this step reported 135,181 IL bytes for
+        # LexiSharp.dll where a local build of the same commit gave 135,373, with identical
+        # method counts. Same source, different compiler patch.
         run: |
           mkdir -p "$RUNNER_TEMP/cod-shape"
 
@@ -271,10 +277,16 @@ jobs:
       - name: Test with coverage
         # The build happens here: coverlet.msbuild instrumentation requires
         # build and test in the same invocation.
+        #
+        # The same LexiSharp.CodeShape exclusion as the core job, so the two cobertura reports
+        # stay comparable. It gates nothing here, but a report that differs from the core job's
+        # for a reason that has nothing to do with the code is a measurement artefact waiting to
+        # be mistaken for one.
         run: >
           dotnet test tests/LexiSharp.Tests -c Release
           -p:CollectCoverage=true -p:CoverletOutputFormat=cobertura
           -p:CoverletOutput=../../TestResults/coverage-
+          -p:Exclude="[LexiSharp.CodeShape]*"
 
       - name: End SonarCloud analysis
         run: dotnet-sonarscanner end /d:sonar.token="$SONAR_TOKEN"
