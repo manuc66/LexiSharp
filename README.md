@@ -38,6 +38,9 @@ using LexiSharp.Core;
 using LexiSharp.Indexing;
 using LexiSharp.Ranking;
 
+// Three pieces, one contract: the index owns the corpus statistics, the scorer is a pure
+// ranking strategy reading from it, the engine orchestrates. Each of the three is an
+// interface, so you replace one without touching the others.
 ITextSearchEngine engine = new RankedTextSearchEngine(
     new InMemoryTextIndex(),
     new Bm25Scorer());
@@ -52,6 +55,25 @@ engine.Index(new[]
 foreach (var result in engine.Search("textual search"))
     Console.WriteLine($"{result.DocumentId} - {result.Score:0.###}: {result.Document.Text}");
 ```
+
+That is the smallest thing the library does. The rest is composition: every engine above
+implements `ITextSearchEngine`, and a pipeline is stages wrapping each other. Given two
+engines over one index, `HashingEmbeddingProvider` standing in for your
+`IEmbeddingProvider` (no model, no service):
+
+```csharp
+var hybrid = new HybridTextSearchEngine(
+    new[] { lexical, dense },
+    new ReciprocalRankFusionMerger());   // a BM25 score and a cosine, fused by rank, uncalibrated
+
+ITextSearchEngine pipeline = new RerankedTextSearchEngine(
+    hybrid, new ProximityReranker(index));   // ...or MMR, a cascade, MaxSim, a cross-encoder
+```
+
+Replacing a piece is the whole extension model — a PostgreSQL, vector, sparse or fuzzy
+backend takes the same slot, and `IEmbeddingProvider`, `ISparseEmbeddingProvider` and
+`ICrossEncoderScorer` are yours to implement: [pipelines](docs/pipelines.md), and
+[backends](docs/backends.md).
 
 `LexiSharpIndex<T>` is the typed facade over the same engine if you would rather hand it your
 own objects — [Getting started](docs/getting-started.md).
