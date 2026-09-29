@@ -74,6 +74,44 @@ jobs:
           --configs bm25,bm25-semantic,bm25f,bm25+,bm25l,bm25-proximity-full --top-k 5
           --against bench/reference-corpus/golden/rankings.txt
 
+      # The publish workflow pushes .snupkg symbol packages, which are produced by
+      # Directory.Build.props rather than by an explicit flag on the csproj files. A
+      # setting that silently stops applying would not fail the build: `dotnet pack`
+      # would just emit one fewer file. So pack here and check what actually landed:
+      # every managed DLL in the nupkg has a PDB in the snupkg, and no PDB leaked into
+      # the nupkg (a PDB inside the nupkg is not a symbol package - nuget.org's symbol
+      # server would never be asked for it, and consumers would not get it either).
+      - name: Symbol packages
+        run: |
+          dotnet pack src/LexiSharp/LexiSharp.csproj -c Release -o "$RUNNER_TEMP/nupkgs"
+          python3 - "$RUNNER_TEMP/nupkgs" <<'PY'
+          import glob, os, sys, zipfile
+
+          out = sys.argv[1]
+          nupkgs = glob.glob(os.path.join(out, "*.nupkg"))
+          snupkgs = glob.glob(os.path.join(out, "*.snupkg"))
+          if len(nupkgs) != 1 or len(snupkgs) != 1:
+              sys.exit(f"expected exactly one .nupkg and one .snupkg, got {nupkgs} {snupkgs}")
+
+          nupkg, snupkg = zipfile.ZipFile(nupkgs[0]), zipfile.ZipFile(snupkgs[0])
+          pdbs = {e for e in snupkg.namelist() if e.endswith(".pdb")}
+          if not pdbs:
+              sys.exit("the .snupkg carries no PDB")
+          if any(e.endswith(".pdb") for e in nupkg.namelist()):
+              sys.exit("a PDB was packed into the .nupkg instead of the .snupkg")
+
+          # One PDB per assembly, matched on the entry path: the symbol server looks a
+          # symbol package up by the DLL's own path inside the package, so lib/net10.0/X.dll
+          # is served from lib/net10.0/X.pdb and nothing else counts.
+          missing = [
+              e for e in nupkg.namelist()
+              if e.startswith("lib/") and e.endswith(".dll") and e[:-len(".dll")] + ".pdb" not in pdbs
+          ]
+          if missing:
+              sys.exit(f"no PDB in the .snupkg for: {missing}")
+          print(f"OK: {len(pdbs)} PDB(s) in {os.path.basename(snupkgs[0])}")
+          PY
+
       - name: Upload coverage to Codecov
         # Auto-skipped until CODECOV_TOKEN is configured on the repository.
         env:
