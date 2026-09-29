@@ -306,8 +306,14 @@ public static class Program
         {
             foreach (var query in result.PerQuery)
             {
+                // The score fingerprint goes in because the file is committed and read on other
+                // machines: it is the only place a run's floating-point output is preserved exactly,
+                // and so the only place a difference of one unit in the last place could be seen.
+                // Skipping it would write a version-2 file that checks nothing, which is worse than
+                // not having changed the format at all.
                 entries.Add(new GoldenBaseline.Entry(
-                    result.Name, query.QueryId, query.RetrievedIds, query.Metrics));
+                    result.Name, query.QueryId, query.RetrievedIds, query.Metrics,
+                    GoldenBaseline.FoldScores(query.RetrievedIds, query.RetrievedScores)));
             }
         }
 
