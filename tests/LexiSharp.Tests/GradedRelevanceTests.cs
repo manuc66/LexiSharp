@@ -79,10 +79,9 @@ public class GradedRelevanceTests
     [Fact]
     public void LinearGainIsTheTreCevalConvention()
     {
-        // trec_eval's m_ndcg.c: "Gain values are set to the appropriate relevance level by
-        // default", i.e. gain = rel, which is what pytrec_eval's ndcg_cut — and therefore the BEIR
-        // paper's Table 2 — computes. One relevant document of level 2 at rank 1, one of level 1
-        // at rank 2, k = 2.
+        // The standard evaluation tool's rule: the gain is the relevance level itself, which is
+        // what the published BM25 figures are computed with. One relevant document of level 2 at
+        // rank 1, one of level 1 at rank 2, k = 2.
         //
         //   linear      DCG = 2/log2(2) + 1/log2(3) = 2 + 0.63093 = 2.63093
         //               IDCG = 2/log2(2) + 1/log2(3) = 2.63093   -> 1.0

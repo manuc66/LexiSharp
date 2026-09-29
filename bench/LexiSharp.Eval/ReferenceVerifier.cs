@@ -168,11 +168,11 @@ internal static class ReferenceVerifier
             Stemmer = new PorterStemmer(),
             RemoveStopWords = true,
         }),
-        "lucene-english" => new Tokenizer(new TokenizerOptions
+        "english" => new Tokenizer(new TokenizerOptions
         {
             Stemmer = new PorterStemmer(),
             RemoveStopWords = true,
-            StopWords = StopWords.LuceneEnglish,
+            StopWords = StopWords.EnglishFunction,
             KeepSingleCharTerms = true,
         }),
         _ => throw new ArgumentException($"Unknown analyzer '{analyzer}' in the pinned reference file."),

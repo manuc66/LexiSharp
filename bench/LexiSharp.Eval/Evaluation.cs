@@ -21,7 +21,7 @@ internal sealed record ConfigResult(
 /// <param name="Excluded">
 /// Ids to leave out of this query's ranking, or <c>null</c>. Non-null only under
 /// <c>--exclude-query-doc</c>, where the query id is itself a document id — the condition
-/// Anserini's <c>-removeQuery</c> addresses.
+/// the published ArguAna figure was produced under addresses.
 /// </param>
 internal sealed record EvaluatedQuery(
     BeirQuery Query,
@@ -60,6 +60,7 @@ internal static class Evaluation
         BeirCorpus corpus, int topK, int? limit, ITokenizer tokenizer, bool excludeQueryDocument = false,
         NdcgGain ndcgGain = NdcgGain.Exponential,
         Bm25Parameters? referenceBm25 = null,
+        bool queryFrequency = false,
         DenseVectors? dense = null,
         bool tuned = true, IReranker? reranker = null, int rerankCandidates = 100)
     {
@@ -84,14 +85,18 @@ internal static class Evaluation
 
         var documents = BuildDocuments(corpus);
 
+        // Null means the library default (distinct), so the shared value below is what every
+        // scorer in this run was actually built with.
+        var queryTerms = queryFrequency ? QueryTermWeighting.QueryFrequency : QueryTermWeighting.Distinct;
+
         // ArguAna carries no title, so a field-weighted configuration there would be the same three
         // rows over again with an inert weight. Say so instead of padding the table.
         bool anyTitle = corpus.Documents.Any(document => !string.IsNullOrEmpty(document.Title));
 
         var builders = new (string Name, Func<ITextSearchEngine> Factory)[]
         {
-            ("BM25 (k1=1.5, b=0.75)", () => Ranked(documents, new Bm25Scorer(1.5, 0.75), tokenizer)),
-            ("BM25 (k1=1.2, b=0.75)", () => Ranked(documents, new Bm25Scorer(1.2, 0.75), tokenizer)),
+            ("BM25 (k1=1.5, b=0.75)", () => Ranked(documents, new Bm25Scorer(1.5, 0.75, queryTerms), tokenizer)),
+            ("BM25 (k1=1.2, b=0.75)", () => Ranked(documents, new Bm25Scorer(1.2, 0.75, queryTerms), tokenizer)),
         };
 
         // The published BM25 baselines were produced at the retrieval stack's own defaults,
@@ -107,7 +112,7 @@ internal static class Evaluation
                     // machine whose culture uses it, in a table whose whole job is naming them.
                     ($"BM25 (k1={reference.K1.ToString("0.##", CultureInfo.InvariantCulture)}, "
                       + $"b={reference.B.ToString("0.##", CultureInfo.InvariantCulture)})",
-                        () => Ranked(documents, new Bm25Scorer(reference.K1, reference.B), tokenizer)),
+                        () => Ranked(documents, new Bm25Scorer(reference.K1, reference.B, queryTerms), tokenizer)),
                 })
                 .ToArray();
         }
@@ -148,8 +153,8 @@ internal static class Evaluation
         builders = builders
             .Concat(new (string, Func<ITextSearchEngine>)[]
             {
-                ("BM25+ (delta=1.0)", () => Ranked(documents, new Bm25PlusScorer(1.5, 0.75, 1.0), tokenizer)),
-                ("BM25L (delta=0.5)", () => Ranked(documents, new Bm25LScorer(1.5, 0.75, 0.5), tokenizer)),
+                ("BM25+ (delta=1.0)", () => Ranked(documents, new Bm25PlusScorer(1.5, 0.75, 1.0, queryTerms), tokenizer)),
+                ("BM25L (delta=0.5)", () => Ranked(documents, new Bm25LScorer(1.5, 0.75, 0.5, queryTerms), tokenizer)),
             })
             .ToArray();
 

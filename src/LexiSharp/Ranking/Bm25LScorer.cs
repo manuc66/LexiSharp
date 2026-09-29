@@ -50,6 +50,7 @@ public sealed class Bm25LScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
     private readonly double _k1;
     private readonly double _b;
     private readonly double _delta;
+    private readonly QueryTermWeighting _queryTerms;
 
     /// <param name="k1">Term-frequency saturation; higher values let frequent terms contribute more.</param>
     /// <param name="b">Document-length normalization, in <c>[0, 1]</c>. <c>0</c> disables normalization.</param>
@@ -58,7 +59,14 @@ public sealed class Bm25LScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
     /// paper's reported range is around <c>0.5</c> to <c>1.0</c>; that is a starting point to tune,
     /// not a recommended value.
     /// </param>
-    public Bm25LScorer(double k1 = 1.5, double b = 0.75, double delta = 0.5)
+    /// <param name="queryTermWeighting">
+    /// How a term repeated in the query is treated. Default
+    /// <see cref="QueryTermWeighting.Distinct"/>; pass
+    /// <see cref="QueryTermWeighting.QueryFrequency"/> to reproduce a published BM25 figure.
+    /// See <see cref="QueryTermWeighting"/> for the measured effect.
+    /// </param>
+    public Bm25LScorer(double k1 = 1.5, double b = 0.75, double delta = 0.5,
+        QueryTermWeighting queryTermWeighting = QueryTermWeighting.Distinct)
     {
         if (double.IsNaN(k1) || double.IsInfinity(k1) || k1 < 0)
             throw new ArgumentOutOfRangeException(nameof(k1), k1, "k1 must be non-negative and finite.");
@@ -73,7 +81,17 @@ public sealed class Bm25LScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
         _k1 = k1;
         _b = b;
         _delta = delta;
+        _queryTerms = queryTermWeighting;
     }
+
+    /// <summary>
+    /// The query terms as this scorer reads them: deduplicated, or kept whole so a repeated
+    /// term is scored once per occurrence.
+    /// </summary>
+    private IReadOnlyList<string> Terms(IReadOnlyList<string> queryTerms) =>
+        _queryTerms == QueryTermWeighting.QueryFrequency
+            ? queryTerms
+            : queryTerms is DistinctTermList ? queryTerms : TermDeduplicator.Distinct(queryTerms);
 
     /// <inheritdoc />
     public string Name => "BM25L";
@@ -92,7 +110,7 @@ public sealed class Bm25LScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
             return 0;
 
         double normalization = 1.0 - _b + _b * documentLength / averageLength;
-        var terms = queryTerms is DistinctTermList ? queryTerms : TermDeduplicator.Distinct(queryTerms);
+        var terms = Terms(queryTerms);
 
         double score = 0;
 
@@ -118,7 +136,7 @@ public sealed class Bm25LScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
         ArgumentNullException.ThrowIfNull(queryTerms);
         ArgumentNullException.ThrowIfNull(index);
 
-        return new Bm25LQueryPlan(queryTerms, index, _k1, _b, _delta);
+        return new Bm25LQueryPlan(Terms(queryTerms), index, _k1, _b, _delta);
     }
 
     /// <inheritdoc />
@@ -138,7 +156,7 @@ public sealed class Bm25LScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
 
         if (documentCount > 0 && documentLength > 0 && averageLength > 0)
         {
-            var terms = queryTerms is DistinctTermList ? queryTerms : TermDeduplicator.Distinct(queryTerms);
+            var terms = Terms(queryTerms);
 
             for (int i = 0; i < terms.Count; i++)
             {

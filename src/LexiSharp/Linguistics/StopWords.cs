@@ -7,10 +7,10 @@ namespace LexiSharp.Linguistics;
 /// </summary>
 public static class StopWords
 {
-    // org.apache.lucene.analysis.en.EnglishAnalyzer's STOP_WORDS_SET, in its own order.
-    // 33 words, and "i" is deliberately absent: Lucene's StandardTokenizer emits it and its stop
-    // filter keeps it. Reproduced here so a LexiSharp index can hold the same terms as a Lucene one.
-    private static readonly string[] _luceneEnglish =
+    // The 33 function words of the conventional English retrieval stop list, in a stable order.
+    // "i" is deliberately absent: it is a word here, not a stop word, and dropping single-character
+    // terms is a separate decision the tokenizer makes.
+    private static readonly string[] _englishFunction =
     {
         "a", "an", "and", "are", "as", "at", "be", "but", "by",
         "for", "if", "in", "into", "is", "it", "no", "not", "of",
@@ -43,24 +43,24 @@ public static class StopWords
     public static IReadOnlySet<string> English { get; } = CreateEnglish();
 
     /// <summary>
-    /// The 33-word English stop word list of Lucene's <c>EnglishAnalyzer</c> — the analyzer the
-    /// Anserini and Pyserini BM25 baselines use for the BEIR/Pyserini indices. Ship it when an
-    /// index has to be comparable with those published numbers; <see cref="English"/> is a
-    /// different, larger list and produces a measurably different index.
+    /// A short English stop word list: 33 function words, and nothing else. Ship it when an index
+    /// has to be comparable with a published BM25 measurement — the conventional English analysis
+    /// most of those numbers were produced with is a stemmer plus a list of this size, and
+    /// <see cref="English"/> is a different, larger list that produces a measurably different index.
     /// </summary>
     /// <remarks>
-    /// The two lists are not interchangeable, and the difference is not a rounding detail: measured
-    /// over the NFCorpus corpus, indexing with this set holds 655,155 terms where the Anserini
-    /// index of the same corpus holds 637,485 (+2.8%) and <see cref="English"/> holds 564,709
-    /// (−11.4% against Anserini). BM25 effectiveness is only comparable across two runs whose
-    /// analysis agrees, so a comparison against a Lucene-published number should use this set, not
-    /// <see cref="English"/>. It is exposed by name, not made the default, because changing the
-    /// default list would invalidate every recorded baseline in this repository.
+    /// The two lists are not interchangeable, and the difference is not a rounding detail. Measured
+    /// over the NFCorpus corpus, indexing with this set holds 655,155 terms against the 637,485 a
+    /// published reference index of the same corpus holds (+2.8%); <see cref="English"/> holds
+    /// 564,709, which is 11.4% short of it. BM25 effectiveness is only comparable across two runs
+    /// whose analysis agrees, so a comparison against a published figure should use this set, not
+    /// <see cref="English"/>. It is exposed by name rather than made the default, because changing
+    /// the default list would invalidate every recorded baseline in this repository.
     /// </remarks>
-    public static IReadOnlySet<string> LuceneEnglish { get; } = CreateLuceneEnglish();
+    public static IReadOnlySet<string> EnglishFunction { get; } = CreateEnglishFunction();
 
-    private static IReadOnlySet<string> CreateLuceneEnglish() =>
-        _luceneEnglish.ToFrozenSet(StringComparer.Ordinal);
+    private static IReadOnlySet<string> CreateEnglishFunction() =>
+        _englishFunction.ToFrozenSet(StringComparer.Ordinal);
 
     /// <summary>Returns a custom set from the given words (expected lowercase).</summary>
     public static IReadOnlySet<string> Create(params string[] words) =>

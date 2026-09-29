@@ -10,8 +10,8 @@ namespace LexiSharp.Tests;
 /// </summary>
 /// <remarks>
 /// It exists because some benchmarks use a corpus document as the query — the query id is then a
-/// document id, and the lexically closest document is the query's own text. Anserini's
-/// <c>-removeQuery</c> drops it, and a comparison against a published figure needs the same gate.
+/// document id, and the lexically closest document is the query's own text. The published
+/// measurement for such a corpus drops it, and a comparison against that figure needs the same gate.
 /// </remarks>
 public class ExcludedDocumentIdsTests
 {

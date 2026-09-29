@@ -19,9 +19,9 @@ public enum NdcgGain
     Exponential = 0,
 
     /// <summary>
-    /// <c>gain = rel</c>, the convention <c>trec_eval</c> uses and therefore the one behind
-    /// <c>pytrec_eval</c>'s <c>ndcg_cut</c> — which is what the BEIR paper's Table 2 numbers were
-    /// produced with. Quote this one when comparing against a published <c>trec_eval</c> figure.
+    /// <c>gain = rel</c>: the gain is the relevance level itself. This is the convention the
+    /// standard IR evaluation tool uses, and therefore the one behind the published BM25 figures a
+    /// comparison here is measured against. Use it when quoting a number next to a published one.
     /// </summary>
     Linear = 1,
 }
