@@ -24,4 +24,26 @@
     <None Include="../../README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
+  <!--
+    Two friends, and only two. Both drive the golden master — the repository's own ranking
+    regression net — which is internal on purpose: a consumer who installs this package was
+    given a second way to compare rankings, duplicating what the public benchmarking API
+    already does, and nobody outside this repository reads one.
+
+    bench/LexiSharp.Cli is the `baseline` and `verify` commands, the only things that write
+    and read a baseline file. tests/LexiSharp.Tests is the suite that pins the format and the
+    comparison rules, and a test that cannot see the type it is testing is a test that has to
+    go through the CLI to do it.
+
+    Both live under bench/ and tests/, so neither ships. This assembly is not strong-named, so the
+    friend list is a name check and nothing more — any assembly calling itself LexiSharp.Tests
+    would pass it. That is the ordinary trade for keeping build tooling out of a shipped package,
+    and it bounds the exposure to internals a consumer would have to deliberately claim the name
+    to reach.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="LexiSharp.Cli" />
+    <InternalsVisibleTo Include="LexiSharp.Tests" />
+  </ItemGroup>
+
 </Project>
