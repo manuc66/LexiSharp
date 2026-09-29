@@ -95,10 +95,11 @@ twice. Every figure below is reproducible with a command on the
   the configuration, not the ranking. The corpora are md5-verified on download, the harness ships no
   licence over them, and every number here is pinned and re-checked by the `Pinned reference`
   workflow.
-- **A claim withdrawn.** Until 0.6.0 this page also reported **0.4061** on ArguAna, above the
-  published figure, on the grounds that the reference counts a repeated query term and the library
-  deduplicated it. Re-measured, the setting is worth +0.052 at matched parameters, not the +0.0705
-  claimed, and 0.4061 is not reproducible by any code path in this repository. See
+- **A claim withdrawn before it was published.** This page reported **0.4061** on ArguAna, above
+  the published figure, on the grounds that the reference counts a repeated query term and the
+  library deduplicated it. Re-measured, the setting is worth +0.052 at matched parameters, not the
+  +0.0705 claimed, and 0.4061 is not reproducible by any code path in this repository. Neither the
+  figure nor the setting is in the `v0.6.0` tag, so no release carried it. See
   [evaluation](evaluation.md).
 - **Where the composed stack pays off.** On NFCorpus — the one corpus where every lane is
   measured — a dense retriever alone lands at BM25 level (0.304), BM25+dense RRF fusion

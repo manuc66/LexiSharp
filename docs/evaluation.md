@@ -48,11 +48,11 @@ parameters, the gain convention and the repeated-term rule aligned:
 At the published operating point, NFCorpus and SciFact reproduce the reference to the fourth
 decimal. The engine was never behind on those two; the comparison was measuring the analyzer.
 
-**ArguAna: this page previously said the gap was closed, and that was wrong.** Until 0.6.0 this
-page reported **0.4061** at k1=3.0/b=0.75, above the published 0.3970, and explained the difference
-as a scoring rule: the library deduplicated query terms, the reference scores one clause per
-query-token occurrence, and on a corpus whose every test query is a whole ~200-word argument,
-counting them was said to be worth **+0.0705** (0.2197 to 0.2902 at k1=0.9/b=0.4).
+**ArguAna: this page said the gap was closed, and that was wrong.** It reported **0.4061** at
+k1=3.0/b=0.75, above the published 0.3970, and explained the difference as a scoring rule: the
+library deduplicated query terms, the reference scores one clause per query-token occurrence, and on
+a corpus whose every test query is a whole ~200-word argument, counting them was said to be worth
+**+0.0705** (0.2197 to 0.2902 at k1=0.9/b=0.4).
 
 Re-measured on 1,406 queries with the English analysis, at the reference's own k1=0.9/b=0.4:
 
@@ -65,6 +65,11 @@ Re-measured on 1,406 queries with the English analysis, at the reference's own k
 Three conventions were checked and none accounts for the difference. The linear gain convention
 returns the same 0.271 as the exponential one, and excluding the query document is worth +0.0012 by
 this repository's own measurement. Neither 0.2902 nor 0.4061 is reproducible.
+
+**No release carried either figure.** The `v0.6.0` tag predates both the claim and the setting:
+`QueryTermWeighting` is absent from it, and `git tag --contains` returns no tag for the commit that
+added it. The claim was withdrawn here before 0.7.0 rather than in a release note, because no
+published release ever contained it.
 
 The reason is structural, and that is the part worth keeping. The harness flag fed exactly one
 thing - the `QueryTermWeighting` argument of `new Bm25Scorer(...)` - and that scorer went into
