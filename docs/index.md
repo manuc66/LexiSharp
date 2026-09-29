@@ -82,10 +82,13 @@ Stated up front, because a library that only quotes its good numbers is not wort
 twice. Every figure below is reproducible with a command on the
 [Evaluation](evaluation.md) page.
 
-- **Against published baselines.** On three public BEIR corpora, the plain BM25 scorer
-  reaches nDCG@10 **0.308** on NFCorpus, **0.662** on SciFact and **0.289** on ArguAna,
-  against BEIR's published **0.325 / 0.665 / 0.315** — 5.2 %, 0.5 % and 8.3 % below. The
-  corpora are md5-verified on download and the harness ships no licence over them.
+- **Against published baselines.** On three public BEIR corpora, with the analysis, the BM25
+  parameters, the gain convention and the repeated-term rule the reference figures were produced
+  with, the plain BM25 scorer reaches nDCG@10 **0.3215** on NFCorpus, **0.6788** on SciFact and
+  **0.4061** on ArguAna, against **0.3218 / 0.6789 / 0.3970**. Under the library's own defaults
+  the same scorer reads 0.308 / 0.662 / 0.289; that difference is the configuration, not the
+  ranking. The corpora are md5-verified on download, the harness ships no licence over them, and
+  every number here is pinned and re-checked by `--verify-reference`.
 - **Where the composed stack pays off.** On NFCorpus — the one corpus where every lane is
   measured — a dense retriever alone lands at BM25 level (0.304), BM25+dense RRF fusion
   reaches **0.333**, and adding a cross-encoder rerank **0.346**, about 2.1 points above

@@ -21,9 +21,10 @@ it with `dotnet run --project bench/LexiSharp.Eval`; the full per-dataset tables
 [its README](https://github.com/manuc66/LexiSharp/blob/main/bench/LexiSharp.Eval/README.md),
 and it grants no licence over the datasets it downloads.
 
-**The plain BM25 baseline, against the published reference (nDCG@10):**
+**The library defaults, against the published reference (nDCG@10).** Read this as "what the defaults
+do", not as a claim about the engine — the comparison below is the one that measures it:
 
-| Corpus | LexiSharp BM25 | BEIR's BM25 | Δ |
+| Corpus | LexiSharp BM25, defaults | published reference (2021) | Δ |
 |---|---:|---:|---:|
 | NFCorpus (323 judged queries) | 0.308 | 0.325 | −5.2 % |
 | SciFact (300 judged queries) | 0.662 | 0.665 | −0.5 % |
@@ -33,28 +34,35 @@ and it grants no licence over the datasets it downloads.
 page is the correction.** Each one compares two different systems: the left column is BM25 under
 `Tokenizer.Default` (no stemming, stop words kept) at k1=1.5/b=0.75; the right column is BM25 under
 the conventional English analysis at k1=0.9/b=0.4. Measured on the same corpora, with the analysis, the
-parameters and the metric convention aligned:
+parameters, the gain convention and the repeated-term rule aligned:
 
 | Corpus | LexiSharp, aligned | published reference | Δ at matched parameters |
 |---|---:|---:|---:|
 | NFCorpus | 0.3215 at k1=0.9, b=0.4 | 0.3218 | −0.0003 |
 | SciFact | 0.6788 at k1=0.9, b=0.4 | 0.6789 | −0.0001 |
-| ArguAna | 0.3056 at k1=3.0, b=0.75 | 0.3970 at k1=0.9, b=0.4 | parameters cannot be aligned |
+| ArguAna | **0.4061** at k1=3.0, b=0.75 | 0.3970 at k1=0.9, b=0.4 | parameters cannot be aligned |
 
-At the published operating point, NFCorpus and SciFact reproduce an independent implementation to
-the fourth decimal. The engine was never behind; the comparison was measuring the analyzer.
+At the published operating point, NFCorpus and SciFact reproduce the reference to the fourth
+decimal. The engine was never behind on those two; the comparison was measuring the analyzer.
 
-The reference is also **newer than the table it is compared against**: a current per-corpus
-regression for this exact index puts ArguAna at 0.3970, not the 0.315
-of the 2021 paper. ArguAna remains 0.11 below that, and it is the one genuine open gap: its
-sensitivity to k1 runs opposite to the other two corpora, so the parameters cannot be aligned and no
-like-for-like comparison is available yet.
+**ArguAna's 0.11 gap was a scoring rule, and it is now measured rather than open.** The library
+deduplicates query terms before scoring; the reference scores one clause per query-token
+occurrence, so a term repeated in the query multiplies its weight. On this corpus every test query
+is a whole ~200-word argument whose content words repeat, and counting them is worth **+0.0705**
+on its own (0.2197 → 0.2902 at the reference's own k1=0.9/b=0.4), taking it to **0.4061** at
+k1=3.0/b=0.75. On NFCorpus and SciFact, whose queries are short, the setting changes nothing to four
+decimals — which is why the gap looked like a capability difference and was not one. The remaining
+caveat is unchanged: ArguAna's k1 sensitivity runs opposite to the other two corpora, so the 0.4061
+is at a k1 the reference does not use and a like-for-like comparison there is still unmeasured.
+
+The reference is also **newer than the table it is first compared against**: a current per-corpus
+regression for this exact index puts ArguAna at 0.3970, not the 0.315 of the 2021 paper.
 
 Reproduce the alignment, and check it against pinned values:
 
 ```bash
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
-  --analyzer english --ndcg-gain linear --reference-bm25 0.9,0.4
+  --analyzer english --ndcg-gain linear --reference-bm25 0.9,0.4 --query-term-frequency
 dotnet run --project bench/LexiSharp.Eval -c Release -- --verify-reference
 ```
 
