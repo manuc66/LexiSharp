@@ -108,6 +108,22 @@ dotnet test  tests/LexiSharp.Tests                # xUnit suite (Postgres tests 
 dotnet run  --project bench/LexiSharp.Benchmarks  # BenchmarkDotNet suite (published numbers: benchmarks.md)
 ```
 
+The [API reference](api.md) is generated from those assemblies and the XML documentation they
+ship, so it cannot describe a surface that does not exist. A new public type with no regenerated
+page fails the build, which is the moment a type is still cheap to document:
+
+```bash
+dotnet run --project bench/LexiSharp.ApiDocs -c Release -- write   # regenerate docs/api.md
+dotnet run --project bench/LexiSharp.ApiDocs -c Release -- check   # what CI runs; exit 1 if stale
+```
+
+Its README is at
+[`bench/LexiSharp.ApiDocs`](https://github.com/manuc66/LexiSharp/blob/main/bench/LexiSharp.ApiDocs/README.md)
+— an absolute link, because a relative one resolves on GitHub and 404s on the published site,
+which serves this folder from `/LexiSharp/`. It is worth reading before editing a row: the
+*What it is* column is the type's own XML summary, so an edit that disagrees with the source is
+overwritten on the next run.
+
 Postgres/ParadeDB integration tests run against whatever `POSTGRES_TEST_CONNECTION` points to:
 `pgvector/pgvector:pg16` covers the lexical + vector + sparse + fuzzy suites,
 `paradedb/paradedb:pg16` covers the lexical + ParadeDB (BM25) + fuzzy suites. The sparse tests

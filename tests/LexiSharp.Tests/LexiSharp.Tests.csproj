@@ -39,6 +39,7 @@
          the console front end is not library code, and letting coverlet's default (which is every
          referenced assembly) pull it into the 60% line gate would make the gate depend on a CLI. -->
     <ProjectReference Include="../../bench/LexiSharp.CodeShape/LexiSharp.CodeShape.csproj" ExcludeFromCodeCoverage="true" />
+    <ProjectReference Include="../../bench/LexiSharp.ApiDocs/LexiSharp.ApiDocs.csproj" ExcludeFromCodeCoverage="true" />
   </ItemGroup>
 
 </Project>
