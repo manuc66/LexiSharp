@@ -6,7 +6,6 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <NoWarn>$(NoWarn);CS1591</NoWarn>
     <RootNamespace>LexiSharp.Postgres</RootNamespace>
     <PackageId>LexiSharp.Postgres</PackageId>
     <Title>LexiSharp.Postgres</Title>

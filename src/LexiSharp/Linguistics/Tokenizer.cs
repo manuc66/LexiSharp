@@ -39,6 +39,12 @@ public sealed class Tokenizer : ISpanTokenizer
     /// <summary>The normalized configuration this tokenizer runs with.</summary>
     public TokenizerOptions Options => _options;
 
+    /// <summary>Creates a tokenizer, using <c>TokenizerOptions.Default</c> when none is given.</summary>
+    /// <param name="options">
+    /// The configuration to sanitize and run with. Sanitizing is what keeps an impossible
+    /// combination — an n-gram size below 1, a stemmer that is off while stemming is on — from
+    /// reaching the hot path.
+    /// </param>
     public Tokenizer(TokenizerOptions? options = null)
     {
         _options = (options ?? TokenizerOptions.Default).Sanitize();

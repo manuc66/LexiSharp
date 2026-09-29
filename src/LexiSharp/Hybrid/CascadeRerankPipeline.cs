@@ -17,6 +17,7 @@ public sealed record CascadeRerankOptions(
     int? FinalLimit = null,
     double MinimumScore = double.NegativeInfinity)
 {
+    /// <summary>The defaults every positional parameter already has: keep 20 between stages, return 5.</summary>
     public static readonly CascadeRerankOptions Default = new();
 }
 
