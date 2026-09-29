@@ -31,11 +31,9 @@ plugins:
 # The social card image. jekyll-seo-tag reads `page.image` and emits no image tag at all
 # without it, so by default every link to the site previews as a bare text card. A
 # `defaults` block puts it on every page in one place instead of in 14 front matters.
-# UNVERIFIED: whether a `path: ""` default actually reaches the plugin has not been
-# checked against a real build — there is no Ruby on the machine that wrote this. If
-# og:image is still missing after the next deploy, add `image:` to the page front matter,
-# or write the tags into docs/_includes/head_custom.html. The declared size is the PNG's
-# real one; a dedicated 1200x630 card would crop better in a feed.
+# Checked against the deployed HTML: a `path: ""` default does reach the plugin, and the
+# card then comes out as summary_large_image. The declared size is the PNG's real one; a
+# dedicated 1200x630 card would crop better in a feed.
 defaults:
   - scope:
       path: ""
