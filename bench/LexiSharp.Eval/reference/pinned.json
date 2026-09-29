@@ -12,7 +12,8 @@
     "                     arguana row is aligned across different BM25 parameters, which is recorded",
     "                     as such rather than glossed over.",
     "",
-    "Regenerate with --verify-reference --write. Read the diff before committing it: re-recording is",
+    "Run --verify-reference to see what moved, then edit expectedNdcg here by hand: --write is",
+    "accepted and writes nothing, deliberately. Read the diff before committing it: re-recording is",
     "how a pinned baseline stops catching anything."
   ],
   "schemaVersion": 1,
