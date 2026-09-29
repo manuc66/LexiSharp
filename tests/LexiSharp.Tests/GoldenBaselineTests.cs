@@ -45,6 +45,10 @@ public class GoldenBaselineTests
         };
     }
 
+    /// <summary>The next representable double above <paramref name="value"/>, one bit away.</summary>
+    private static double NextAfter(double value) =>
+        BitConverter.UInt64BitsToDouble(BitConverter.DoubleToUInt64Bits(value) + 1);
+
     private static GoldenBaseline BaselineOf(params BenchmarkConfigResult[] results) =>
         new()
         {
@@ -52,7 +56,9 @@ public class GoldenBaselineTests
             CorpusDocuments = 3,
             Entries = results
                 .SelectMany(result => result.PerQuery.Select(query =>
-                    new GoldenBaseline.Entry(result.Name, query.QueryId, query.RetrievedIds, query.Metrics)))
+                    new GoldenBaseline.Entry(
+                        result.Name, query.QueryId, query.RetrievedIds, query.Metrics,
+                        GoldenBaseline.FoldScores(query.RetrievedIds, query.RetrievedScores))))
                 .ToList(),
         };
 
@@ -201,6 +207,105 @@ public class GoldenBaselineTests
         Assert.False(comparison.IsClean);
         Assert.Single(comparison.Changes);
         Assert.Contains("without a tie", comparison.Changes[0].Detail!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AScoreThatMovedInItsLastBitsIsAChangeEvenWhenNothingElseDid()
+    {
+        // The gap this column exists to close. The ranking is identical, the membership is
+        // identical, and every metric is rounded to four decimals and compared to 5e-5 — so a
+        // reassociated sum or a fused multiply-add, one unit in the last place wide, passes every
+        // other check in the repository. The pinned nDCG figures would not see it either: their
+        // tolerance is +/-0.002, about a hundred million times the width of the effect.
+        var baseline = BaselineOf(Result("BM25", [3, 2, 1], ("q1", ["alpha", "beta"])));
+
+        // Same ranking, same metrics, one bit different in one score. The nudge is done on the bit
+        // pattern rather than written as 3 + 2^-52, which is not representable and would silently
+        // fold back to 3 — a test that asserted the opposite of what it means.
+        var nudged = new BenchmarkConfigResult("BM25", new BenchmarkMetrics(0.5, 0.5, 1.0, 0.5, 0.25, 0.4), 0, 0, 1)
+        {
+            PerQuery =
+            [
+                new BenchmarkQueryResult("q1", "text of q1", new BenchmarkMetrics(0.5, 0.5, 1.0, 0.5, 0.25, 0.4), ["alpha", "beta"], 1, [NextAfter(3.0), 2]),
+            ],
+        };
+
+        var comparison = baseline.Compare([nudged]);
+
+        Assert.False(comparison.IsClean);
+        Assert.Single(comparison.Changes);
+        Assert.Contains("scores moved", comparison.Changes[0].Detail!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ATieSwappedOrderIsStillATieAndNotAScoreChange()
+    {
+        // The trap in folding the scores: two documents with equal scores that exchange places must
+        // not read as a score change, or every legitimate tie in the corpus becomes a red build and
+        // the report stops being read. Folding the (id, bits) pairs sorted by id is what makes the
+        // fingerprint insensitive to the permutation while still sensitive to a score that moved.
+        var baseline = BaselineOf(Result("BM25", [2, 2, 1], ("q1", ["alpha", "beta"])));
+
+        var swapped = new BenchmarkConfigResult("BM25", new BenchmarkMetrics(0.5, 0.5, 1.0, 0.5, 0.25, 0.4), 0, 0, 1)
+        {
+            PerQuery =
+            [
+                new BenchmarkQueryResult("q1", "text of q1", new BenchmarkMetrics(0.5, 0.5, 1.0, 0.5, 0.25, 0.4), ["beta", "alpha"], 1, [2, 2]),
+            ],
+        };
+
+        var comparison = baseline.Compare([swapped]);
+
+        Assert.Single(comparison.TieReorders);
+        Assert.Empty(comparison.Changes);
+    }
+
+    [Fact]
+    public void ARealReorderingIsReportedAsAReorderingAndNotAsAScoreChange()
+    {
+        // The fingerprint is computed first but reported last, precisely so it does not replace a
+        // more specific diagnosis. Here the scores really did change with the documents, and
+        // "re-ordered X and Y without a tie" is the fact a reader needs.
+        var baseline = BaselineOf(Result("BM25", [3, 2, 1], ("q1", ["alpha", "beta"])));
+
+        var reordered = new BenchmarkConfigResult("BM25", new BenchmarkMetrics(0.5, 0.5, 1.0, 0.5, 0.25, 0.4), 0, 0, 1)
+        {
+            PerQuery =
+            [
+                new BenchmarkQueryResult("q1", "text of q1", new BenchmarkMetrics(0.5, 0.5, 1.0, 0.5, 0.25, 0.4), ["beta", "alpha"], 1, [3, 2]),
+            ],
+        };
+
+        var comparison = baseline.Compare([reordered]);
+
+        Assert.Single(comparison.Changes);
+        Assert.Contains("without a tie", comparison.Changes[0].Detail!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheSameCorpusGivesTheSameFingerprintOnEveryRun()
+    {
+        // What makes the column a cross-machine check rather than a source of flaky builds: two
+        // independent runs over the same documents and the same scores must fold to the same token.
+        string first = GoldenBaseline.FoldScores(["alpha", "beta"], [3, 2]);
+        string second = GoldenBaseline.FoldScores(["alpha", "beta"], [3, 2]);
+
+        Assert.Equal(first, second);
+        Assert.Equal(16, first.Length);
+    }
+
+    [Fact]
+    public void TheFingerprintDependsOnTheBitsAndNotOnTheirOrder()
+    {
+        // Sorted by id, so a permutation of equal scores folds to the same token, and a score that
+        // moved to a different document does not.
+        Assert.Equal(
+            GoldenBaseline.FoldScores(["alpha", "beta"], [2, 2]),
+            GoldenBaseline.FoldScores(["beta", "alpha"], [2, 2]));
+
+        Assert.NotEqual(
+            GoldenBaseline.FoldScores(["alpha", "beta"], [3, 2]),
+            GoldenBaseline.FoldScores(["alpha", "beta"], [2, 3]));
     }
 
     [Fact]

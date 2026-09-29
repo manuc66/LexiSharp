@@ -194,14 +194,35 @@ read the diff.
 
 ### What it stores, and what it deliberately does not
 
-One line per query: the document ids in rank order and the six metrics to four decimals. No score
-vectors, no per-term breakdowns, no timings. A 22-query corpus produces 132 lines across the six
-configurations. That is
+One line per query: the document ids in rank order, the six metrics to four decimals, and one
+16-digit **score fingerprint**. No per-term breakdowns, no timings. A 22-query corpus produces 132
+lines across the six configurations. That is
 the point: a baseline nobody reads is not a baseline, and raw scores for every query would be
 unreadable while still looking like evidence.
 
 Metrics are stored because they are what a change moves *quietly*. Re-ordering two documents that
 tie leaves every rank intact and still shifts nDCG.
+
+The score fingerprint is the third column and it is exact. The ids and the metrics are both
+lossy — the metrics are rounded to four decimals and compared to 5e-5 — so a score that moved by
+one unit in the last place was invisible here until this column existed: a reassociated sum, a fused
+multiply-add or a vectorised reduction would leave the ranking, the membership and every metric
+untouched. The pinned nDCG figures would not have caught it either, their tolerance being ±0.002,
+about a hundred million times the width of the effect.
+
+It is a fold and not the scores themselves, for the reason the rest of the file is shaped the way it
+is: the corpus has 28-character document ids, and writing every score out took the longest line from
+267 to 539 characters, which is a diff nobody reads. Folding the (id, score bits) pairs — **sorted
+by document id** — costs 16 characters and stays insensitive to two tied documents swapping places,
+which must remain a tie and not become a red build. It can in principle collide, at 2⁻⁶⁴; that is
+the price of a 16-character token and it is stated rather than hidden.
+
+Because the file is committed, the fingerprint is also the repository's only **cross-machine**
+floating-point check: a run on the GitHub runner re-derives these bits from scratch, so the
+verification is a comparison of one machine's doubles against another's rather than of rounded
+text. That is the claim it exists to make checkable, and `classify` reports it only when the
+ranking, the membership and the metrics all agree — a run that moved a document is reported as a
+re-ordering, which is the more useful diagnosis.
 
 Timings are not stored on purpose: they are machine-dependent, so pinning them would produce
 constant false failures.
