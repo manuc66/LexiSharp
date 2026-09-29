@@ -1,4 +1,4 @@
-name: Pinned reference (on demand)
+name: Pinned reference
 
 # Replays every pinned configuration in bench/LexiSharp.Eval/reference/pinned.json and fails if a
 # value drifted. It exists because three documents promise this net and it was not attached to
@@ -15,7 +15,7 @@ name: Pinned reference (on demand)
 # 0.271). ArguAna's sensitivity to k1 runs opposite to the other two corpora, so the effect
 # scales with it and a bare "+0.05" would be wrong at one of those points.
 #
-# On demand rather than on every push, and the difference from the CI matrix is the corpora: they
+# Scoped rather than on every push, and the difference from the CI matrix is the corpora: they
 # are not in the repository (.gitignore excludes bench/LexiSharp.Eval/data/) and are downloaded and
 # md5-verified per run, so a per-push job would pay a ~100 MB download to re-answer a question that
 # a documentation commit cannot have changed. The push trigger below is scoped to the paths that can
@@ -26,6 +26,21 @@ name: Pinned reference (on demand)
 # committed baselines, a tolerance, and a non-zero exit on drift. If a run is red, the numbers in the
 # README and docs/evaluation.md are wrong until someone explains why.
 on:
+  # The one case the two triggers below cannot see: the runner's SDK moved and nobody pushed. The
+  # repository pins no SDK - there is no global.json, and every setup-dotnet step asks for 10.0.x,
+  # which floats - so a pin can go red with no commit deserving it, and the drift is not found
+  # until the next commit under one of the paths below turns this run red and is blamed for it. The
+  # host record this job already writes is what tells the two apart.
+  #
+  # This is not the fix for that drift, and it is not what would have caught QueryTermWeighting: a
+  # push covers a regression, and a global.json would pin the toolchain. What a schedule adds is
+  # detection for a drift that nobody caused, which is worth one run a week.
+  #
+  # Monday 05:23 UTC. Off the top of the hour, because GitHub delays scheduled runs queued at :00
+  # under load; off the working day, because each run downloads about 100 MB of corpora and two
+  # overlapping runs spend the same runner-hours twice.
+  schedule:
+    - cron: '23 5 * * 1'
   workflow_dispatch:
   push:
     paths:

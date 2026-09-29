@@ -105,8 +105,8 @@ is [Scope and limits](docs/reference.md#scope-and-limits).
   read under the library defaults are **0.308 / 0.662 / 0.289**; that difference is the analyzer, the
   parameters and one task convention, not the ranking. Corpora are md5-verified on download, and the
   numbers are pinned and re-checked by the `Pinned reference` workflow, which replays every pinned
-  configuration and exits non-zero on drift. It runs on a dispatch, and on a push that touches the
-  library or the harness — see [evaluation](docs/evaluation.md).
+  configuration and exits non-zero on drift. It runs on a dispatch, on a push that touches the
+  library or the harness, and weekly — see [evaluation](docs/evaluation.md).
 - **A quality claim this repository withdrew, before publishing it.** It reported **0.4061** on
   ArguAna, above the published 0.3970, and attributed the gap to query-term scoring: the library
   deduplicated query terms, the reference counts them, and counting them was said to be worth
