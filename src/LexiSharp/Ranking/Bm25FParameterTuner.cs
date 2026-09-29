@@ -357,7 +357,7 @@ public sealed class Bm25FParameterTuner
         foreach (var validationQuery in _validationQueries)
         {
             var retrievedIds = engine
-                .Search(validationQuery.Query, new SearchOptions(topK))
+                .Search(validationQuery.Query, new SearchOptions(topK, ExcludedDocumentIds: validationQuery.ExcludedDocumentIds))
                 .Select(result => result.DocumentId)
                 .ToArray();
 

@@ -1,0 +1,157 @@
+{
+  "$comment": [
+    "Pinned reference measurements for LexiSharp.Eval. Two kinds of assertion live here and they are",
+    "not the same thing:",
+    "",
+    "  regression pins  — the value LexiSharp produces at a fixed configuration. Tight tolerance.",
+    "                     These are the teeth of the net: deterministic, and they catch any change to",
+    "                     scoring, candidate generation, tokenization or metrics.",
+    "  parity figures   — the independent implementation's number for the same task and index.",
+    "                     A credibility claim with a source, not a guard. |lexisharp - anserini| is",
+    "                     meaningful only where the configuration is genuinely aligned, and the",
+    "                     arguana row is aligned across different BM25 parameters, which is recorded",
+    "                     as such rather than glossed over.",
+    "",
+    "Regenerate with --verify-reference --write. Read the diff before committing it: re-recording is",
+    "how a pinned baseline stops catching anything."
+  ],
+  "schemaVersion": 1,
+  "metric": "ndcg@10",
+  "regressionPins": [
+    {
+      "config": "nfcorpus/default",
+      "corpus": "nfcorpus",
+      "analyzer": "default",
+      "ndcgGain": "exponential",
+      "bm25": { "k1": 1.5, "b": 0.75 },
+      "excludeQueryDocument": false,
+      "queries": 323,
+      "expectedNdcg": 0.308,
+      "tolerance": 0.002,
+      "note": "The default analyzer, no stemming. Kept because every published table in this repository is this row."
+    },
+    {
+      "config": "nfcorpus/lucene-english",
+      "corpus": "nfcorpus",
+      "analyzer": "lucene-english",
+      "ndcgGain": "linear",
+      "bm25": { "k1": 1.5, "b": 0.75 },
+      "excludeQueryDocument": false,
+      "queries": 323,
+      "expectedNdcg": 0.327,
+      "tolerance": 0.002,
+      "note": "Reference analysis. Gain convention linear, which is what the published figures use."
+    },
+    {
+      "config": "scifact/default",
+      "corpus": "scifact",
+      "analyzer": "default",
+      "ndcgGain": "exponential",
+      "bm25": { "k1": 1.5, "b": 0.75 },
+      "excludeQueryDocument": false,
+      "queries": 300,
+      "expectedNdcg": 0.662,
+      "tolerance": 0.002
+    },
+    {
+      "config": "scifact/lucene-english",
+      "corpus": "scifact",
+      "analyzer": "lucene-english",
+      "ndcgGain": "linear",
+      "bm25": { "k1": 1.5, "b": 0.75 },
+      "excludeQueryDocument": false,
+      "queries": 300,
+      "expectedNdcg": 0.692,
+      "tolerance": 0.002,
+      "note": "Above the independent reference at its own parameters (0.6789); see the parity table."
+    },
+    {
+      "config": "arguana/default",
+      "corpus": "arguana",
+      "analyzer": "default",
+      "ndcgGain": "exponential",
+      "bm25": { "k1": 1.5, "b": 0.75 },
+      "excludeQueryDocument": false,
+      "queries": 1406,
+      "expectedNdcg": 0.289,
+      "tolerance": 0.002
+    },
+    {
+      "config": "arguana/lucene-english+exclude",
+      "corpus": "arguana",
+      "analyzer": "lucene-english",
+      "ndcgGain": "linear",
+      "bm25": { "k1": 1.5, "b": 0.75 },
+      "excludeQueryDocument": true,
+      "queries": 1406,
+      "expectedNdcg": 0.2864,
+      "tolerance": 0.002,
+      "note": "Measured on the full 1406-query split. Note what the exclusion is worth here: +0.0012 (0.2852 without). See the note on the arguana parity row for why that is smaller than it looks."
+    }
+  ],
+  "indexFingerprints": [
+    {
+      "corpus": "nfcorpus",
+      "analyzer": "lucene-english",
+      "documents": 3633,
+      "nonEmptyDocuments": 3633,
+      "totalTerms": 655155,
+      "referenceTotalTerms": 637485,
+      "tolerance": 0.03
+    },
+    {
+      "corpus": "scifact",
+      "analyzer": "lucene-english",
+      "documents": 5183,
+      "nonEmptyDocuments": 5183,
+      "totalTerms": 850694,
+      "referenceTotalTerms": 838128,
+      "tolerance": 0.03
+    },
+    {
+      "corpus": "arguana",
+      "analyzer": "lucene-english",
+      "documents": 8674,
+      "nonEmptyDocuments": 8673,
+      "totalTerms": 980418,
+      "referenceTotalTerms": 969528,
+      "tolerance": 0.03
+    }
+  ],
+  "parity": [
+    {
+      "corpus": "nfcorpus",
+      "lexisharpConfig": "nfcorpus/lucene-english",
+      "lexisharpNdcg": 0.327,
+      "referenceNdcg": 0.3218,
+      "referenceParameters": { "k1": 0.9, "b": 0.4 },
+      "alignedParameters": false,
+      "note": "Anserini's 0.3218 is at its own defaults (k1=0.9, b=0.4); the same parameters measured 0.3215 with the reference analysis, which is the like-for-like comparison."
+    },
+    {
+      "corpus": "scifact",
+      "lexisharpConfig": "scifact/lucene-english",
+      "lexisharpNdcg": 0.692,
+      "referenceNdcg": 0.6789,
+      "referenceParameters": { "k1": 0.9, "b": 0.4 },
+      "alignedParameters": false,
+      "note": "0.6788 measured at k1=0.9, b=0.4 with the reference analysis, against 0.6789 published."
+    },
+    {
+      "corpus": "arguana",
+      "lexisharpConfig": "arguana/lucene-english+exclude",
+      "lexisharpNdcg": 0.2864,
+      "referenceNdcg": 0.397,
+      "referenceParameters": { "k1": 0.9, "b": 0.4 },
+      "alignedParameters": false,
+      "note": "0.2957 at k1=2.0, b=0.75 and 0.3056 at k1=3.0, b=0.75, both with the same analysis and exclusion, against 0.3970 published at k1=0.9, b=0.4: this corpus' sensitivity to k1 runs opposite to the other two, so the parameters cannot be aligned and the comparison is cross-parameter by nature. THE EXCLUSION IS WORTH MUCH LESS THAN IT LOOKS. Measured: 0.2852 without, 0.2864 with, i.e. +0.0012. The reason is the corpus' shape, and it is worth stating because the flag looks like it should be worth far more: an ArguAna query is a whole document, so its own document is a near-duplicate and ranks first, and 1298 of 1406 test queries have a query id that is a document id. But the relevant document is ALREADY inside the top 10 in 869 of 869 cases where it is retrievable at all (median rank 3), and 537 queries have no relevant document in any page. Excluding the self-match therefore promotes the gold document by one rank in 810 queries, and the page refills from rank 11, which is almost never the gold document. A +0.095 estimate for this flag was measured on a dump that dropped the self-document from an already-cut 10-document page, leaving a hole instead of refilling it; the harness gates before the cut and the real effect is +0.0012."
+    }
+  ],
+  "referenceSource": {
+    "analyzedIndex": "Anserini 'flat' BEIR indexes: title and text concatenated into one field, as this harness does too",
+    "analysis": "Lucene EnglishAnalyzer (Porter stemming, its 33-word stop list, single-character terms kept)",
+    "evaluation": "trec_eval ndcg_cut.10 — linear gains",
+    "configFiles": "https://github.com/castorini/anserini/tree/master/src/main/resources/reproduce/from-document-collection/configs",
+    "readOn": "2026-09-29"
+  }
+}

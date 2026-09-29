@@ -398,13 +398,24 @@ internal sealed class DenseTextSearchEngine : ITextSearchEngine
 
         var results = new List<SearchResult>(Math.Min(limit, order.Count));
 
+        // The page is cut from the ranked order, skipping anything the caller excluded, so a dense
+        // row is cut on the same document set as the lexical rows it is compared with. Without this
+        // a run under --exclude-query-doc would quietly return a different number of documents per
+        // query across the fusion rows.
+        var excluded = options.ExcludedDocumentIds;
+
         for (int i = 0; i < order.Count && results.Count < limit; i++)
         {
             int index = order[i];
+            string documentId = _documents[index].Id;
+
+            if (excluded is not null && excluded.Count > 0 && excluded.Contains(documentId))
+                continue;
+
             results.Add(new SearchResult(
-                _documents[index].Id,
+                documentId,
                 scores[index],
-                new SearchDocument(_documents[index].Id, _documents[index].Text)));
+                new SearchDocument(documentId, _documents[index].Text)));
         }
 
         return results;

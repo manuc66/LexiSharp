@@ -131,6 +131,68 @@ Runtime, no Python:
   BERT pair); scores are validated against the HuggingFace `CrossEncoder` reference on the
   same query–doc pairs (Spearman ρ ≈ 0.99 on NFCorpus candidates, top-10 overlap ≈ 0.9).
 
+## Comparing against a published number
+
+A BM25 figure is only comparable with a run that shares its **analysis**, its **parameters** and its
+**task conventions**. Change any of the three and the difference is a statement about the
+configuration, not about the ranking engine — which is a mistake this harness was built to make easy
+to see rather than to hide.
+
+The three things that differ from a Lucene/Anserini run, and the flags that align them:
+
+| | published baseline | this harness by default | flag |
+|---|---|---|---|
+| analysis | `EnglishAnalyzer`: Porter + its 33 stop words, one-character terms kept | lowercase, diacritics folded, no stemming, stop words kept | `--analyzer lucene-english` |
+| parameters | the stack's own defaults, k1=0.9 b=0.4 | k1=1.5 b=0.75 (and 1.2) | `--reference-bm25 0.9,0.4` |
+| task | Anserini's `-removeQuery`: the document whose id equals the query id is dropped | kept | `--exclude-query-doc` |
+
+| nDCG gains | `trec_eval` uses gain = rel | `2^rel − 1` | `--ndcg-gain linear` |
+
+The gain conventions coincide on binary relevance (`2¹ − 1 = 1`), so the last row only matters on
+NFCorpus, the one graded corpus here: 0.3080 exponential against 0.3071 linear for the same run.
+
+**`--exclude-query-doc` is worth far less on ArguAna than it looks, and the measurement is in
+`reference/pinned.json`.** 1298 of the 1406 ArguAna test queries have a query id that is a document
+id, and their own document is a near-duplicate that ranks first, so dropping it looks like it should
+be worth a lot. Measured: **0.2852 without, 0.2864 with, i.e. +0.0012.** The reason is that the
+relevant document is already inside the top 10 in every one of the 869 cases where it is retrievable
+at all (median rank 3), and 537 queries have no relevant document in any page. Excluding the
+self-match promotes the gold document by one rank in 810 queries, and the page refills from rank 11,
+which is almost never the gold document. An earlier estimate of +0.095 for this flag was an artifact
+of dropping the self-document from an already-cut 10-document page — leaving a hole rather than
+refilling it — and it was wrong.
+
+
+`--fingerprint` reports what the index holds — documents, non-empty documents, total terms — next to
+the counts an independent implementation's index of the same corpus holds. Those are integers, and
+they say something a score cannot: whether the two runs indexed the same thing. Measured, with the
+reference analysis: NFCorpus 655,155 terms against 637,485 (2.8%), SciFact 850,694 against 838,128
+(1.5%), ArguAna 980,418 against 969,528 (1.1%). With the default analyzer the same corpora read
+838,401 / 1,111,245 / 1,407,061 — 31% to 45% larger, which is most of the apparent gap in the tables
+below.
+
+## The regression net
+
+`--verify-reference` replays every configuration in [`reference/pinned.json`](reference/pinned.json)
+and exits 1 on any drift, so it can gate a build. The file holds two kinds of number, and they are
+not interchangeable:
+
+- **Regression pins** — the value this repository must keep producing, at a named configuration
+  (analyzer, gain convention, BM25 parameters, query-document exclusion, query count). The
+  tolerance is tight (±0.002) because these are the assertions: they catch a change to scoring,
+  candidate generation, tokenization or the metric.
+- **Parity figures** — somebody else's published number, with its source and a note on whether the
+  parameters matched. Evidence, not assertions. A parity figure across *different* BM25 parameters
+  is a different claim from a like-for-like one, and the file records which is which.
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- --verify-reference
+```
+
+Re-recording is deliberately not a flag: `--write` is accepted and reports that it did not write.
+Recording is a separate, reviewed act — the same reasoning as `lexisharp baseline` in the CLI, and
+for the same reason. Read what moved, and why, before re-recording.
+
 ## Results (NFCorpus, k=10, 323 test queries)
 
 Default tokenizer, **no stemming** — see [Stemming](#stemming) for the same run with

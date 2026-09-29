@@ -77,6 +77,60 @@ public class GradedRelevanceTests
     }
 
     [Fact]
+    public void LinearGainIsTheTreCevalConvention()
+    {
+        // trec_eval's m_ndcg.c: "Gain values are set to the appropriate relevance level by
+        // default", i.e. gain = rel, which is what pytrec_eval's ndcg_cut — and therefore the BEIR
+        // paper's Table 2 — computes. One relevant document of level 2 at rank 1, one of level 1
+        // at rank 2, k = 2.
+        //
+        //   linear      DCG = 2/log2(2) + 1/log2(3) = 2 + 0.63093 = 2.63093
+        //               IDCG = 2/log2(2) + 1/log2(3) = 2.63093   -> 1.0
+        //   exponential DCG = 3/log2(2) + 1/log2(3) = 3 + 0.63093 = 3.63093
+        //               IDCG = 3/log2(2) + 1/log2(3) = 3.63093   -> 1.0
+        //
+        // Both are 1 here, so the conventions need a case where they actually differ: the level-2
+        // document retrieved *second*.
+        var graded = new Dictionary<string, double> { ["strong"] = 2, ["weak"] = 1 };
+        var strongLast = new[] { "weak", "strong" };
+
+        var linear = RetrievalMetrics.NdcgAtK(strongLast, graded, 2, NdcgGain.Linear);
+        var exponential = RetrievalMetrics.NdcgAtK(strongLast, graded, 2, NdcgGain.Exponential);
+
+        // linear      DCG = 1/log2(2) + 2/log2(3) = 1 + 1.26186 = 2.26186, over IDCG 2.63093
+        Assert.Equal(2.26186 / 2.63093, linear, 6);
+
+        // exponential DCG = 1/log2(2) + 3/log2(3) = 1 + 1.89279 = 2.89279, over IDCG 3.63093
+        Assert.Equal(2.89279 / 3.63093, exponential, 6);
+
+        // The exponential convention pays the stronger document more, so ranking it later costs
+        // more under it. That is the whole of the difference between the two numbers.
+        Assert.True(exponential < linear, $"{exponential} should be below {linear}");
+    }
+
+    [Fact]
+    public void TheGainConventionOnlyMattersAboveLevelOne()
+    {
+        // 2^1 - 1 == 1, so on binary relevance the two conventions are the same number. This is why
+        // the published SciFact and ArguAna figures are convention-independent and the NFCorpus one
+        // is not.
+        var binary = new[] { "a", "b", "c" };
+        var grades = new Dictionary<string, double> { ["a"] = 1, ["c"] = 1 };
+
+        Assert.Equal(
+            RetrievalMetrics.NdcgAtK(binary, grades, 3, NdcgGain.Linear),
+            RetrievalMetrics.NdcgAtK(binary, grades, 3, NdcgGain.Exponential),
+            12);
+
+        // The no-gain overload is the exponential one, and stays that way: a recorded baseline
+        // must not change meaning because a second convention was added next to it.
+        Assert.Equal(
+            RetrievalMetrics.NdcgAtK(binary, new Dictionary<string, double> { ["a"] = 2 }, 3),
+            RetrievalMetrics.NdcgAtK(binary, new Dictionary<string, double> { ["a"] = 2 }, 3, NdcgGain.Exponential),
+            12);
+    }
+
+    [Fact]
     public void AQueryBuiltFromIdsIsNotReportedAsGraded()
     {
         var query = new BenchmarkQuery("q1", "refresh token", new[] { "full", "partial" });

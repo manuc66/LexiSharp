@@ -194,7 +194,7 @@ internal static class Bm25VariantTunerCore
         foreach (var validationQuery in validationQueries)
         {
             var retrievedIds = engine
-                .Search(validationQuery.Query, new SearchOptions(topK))
+                .Search(validationQuery.Query, new SearchOptions(topK, ExcludedDocumentIds: validationQuery.ExcludedDocumentIds))
                 .Select(result => result.DocumentId)
                 .ToArray();
 
