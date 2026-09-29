@@ -130,7 +130,11 @@ internal static class ReferenceVerifier
         BeirCorpus corpus, ITextIndex index, PinnedReference.RegressionPin pin, CancellationToken cancellationToken)
     {
         var engine = new RankedTextSearchEngine(
-            index, new Bm25Scorer(pin.Bm25.K1, pin.Bm25.B), BuildTokenizer(pin.Analyzer));
+            index,
+            new Bm25Scorer(
+                pin.Bm25.K1, pin.Bm25.B,
+                pin.QueryTermFrequency ? QueryTermWeighting.QueryFrequency : QueryTermWeighting.Distinct),
+            BuildTokenizer(pin.Analyzer));
 
         var gain = pin.NdcgGain == "linear" ? NdcgGain.Linear : NdcgGain.Exponential;
         var documentIds = corpus.Documents.Select(document => document.Id).ToHashSet(StringComparer.Ordinal);

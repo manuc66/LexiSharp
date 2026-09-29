@@ -43,7 +43,10 @@ internal sealed record PinnedReference
                 pin.GetProperty("queries").GetInt32(),
                 pin.GetProperty("expectedNdcg").GetDouble(),
                 pin.GetProperty("tolerance").GetDouble(),
-                pin.TryGetProperty("note", out var note) ? note.GetString() : null)),
+                pin.TryGetProperty("note", out var note) ? note.GetString() : null)
+            {
+                QueryTermFrequency = pin.TryGetProperty("queryTermFrequency", out var qtf) && qtf.GetBoolean(),
+            }),
             IndexFingerprints = ReadArray(root, "indexFingerprints", pin => new IndexPin(
                 pin.GetProperty("corpus").GetString()!,
                 pin.GetProperty("analyzer").GetString()!,
@@ -105,6 +108,21 @@ internal sealed record PinnedReference
         double Tolerance,
         string? Note)
     {
+        /// <summary>
+        /// Whether the scorer counts a query term once per occurrence instead of once. Optional and
+        /// false by default, which is the library's default, so a pinned file that predates this
+        /// field is read as what it always meant rather than rejected.
+        /// </summary>
+        /// <remarks>
+        /// This dimension exists because of a gap that was measured, not assumed. The setting was
+        /// inert on the main search path for a whole release: the engine deduplicated the query
+        /// before the scorer could see a repetition, so the two settings produced bit-identical
+        /// rankings and the unit tests were the only thing that could catch it. A pin on the
+        /// Distinct side alone cannot catch the reverse failure, where the mechanism works and the
+        /// number moves.
+        /// </remarks>
+        public bool QueryTermFrequency { get; init; }
+
         /// <summary>Whether the measured value stays inside the band.</summary>
         public bool Accepts(double measured) => Math.Abs(measured - ExpectedNdcg) <= Tolerance;
 
@@ -114,7 +132,8 @@ internal sealed record PinnedReference
             + $"--dataset {Corpus} --no-tuned --analyzer {Analyzer} --ndcg-gain {NdcgGain} "
             + $"--reference-bm25 {Bm25.K1.ToString("0.##", CultureInfo.InvariantCulture)},"
             + $"{Bm25.B.ToString("0.##", CultureInfo.InvariantCulture)}"
-            + (ExcludeQueryDocument ? " --exclude-query-doc" : string.Empty);
+            + (ExcludeQueryDocument ? " --exclude-query-doc" : string.Empty)
+            + (QueryTermFrequency ? " --query-term-frequency" : string.Empty);
     }
 
     /// <summary>One index fingerprint, and the reference it is compared against.</summary>

@@ -7,8 +7,13 @@ name: Pinned reference (on demand)
 # workflow, no job in ci.yml ran --verify-reference at all, so the pins were re-checked when a human
 # remembered to type the command. That is not a net, and the gap had a visible cost: a public
 # constructor parameter, QueryTermWeighting, was inert on the main search path for a whole release
-# and nothing noticed, because the setting that would have moved ArguAna nDCG@10 by 0.042 had no
-# pin and no run to read it.
+# and nothing noticed. Pinning it was half the fix and was not done in that commit, so the
+# two arguana query-frequency pins below arrived later; they close the other half.
+#
+# On the effect's size, because it is quoted at two k1 and both are right: +0.042 at
+# k1=1.5, b=0.75 (0.285 to 0.327) and +0.052 at the reference's own k1=0.9, b=0.4 (0.219 to
+# 0.271). ArguAna's sensitivity to k1 runs opposite to the other two corpora, so the effect
+# scales with it and a bare "+0.05" would be wrong at one of those points.
 #
 # On demand rather than on every push, and the difference from the CI matrix is the corpora: they
 # are not in the repository (.gitignore excludes bench/LexiSharp.Eval/data/) and are downloaded and

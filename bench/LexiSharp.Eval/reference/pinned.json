@@ -78,6 +78,32 @@
       "tolerance": 0.002
     },
     {
+      "config": "arguana/english+qtf",
+      "corpus": "arguana",
+      "analyzer": "english",
+      "ndcgGain": "exponential",
+      "bm25": { "k1": 0.9, "b": 0.4 },
+      "excludeQueryDocument": false,
+      "queryTermFrequency": true,
+      "queries": 1406,
+      "expectedNdcg": 0.271,
+      "tolerance": 0.002,
+      "note": "The same configuration as arguana/english, counting a repeated query term once per occurrence. Together the two pins bracket what the setting is worth at this k1: 0.289 distinct, 0.271 query-frequency, so +0.018. Read that as the effect at k1=0.9, b=0.4 and not as the headline: at k1=1.5, b=0.75 the same comparison is 0.285 to 0.327, i.e. +0.042, because ArguAna's sensitivity to k1 runs opposite to the other two corpora and the effect scales with it."
+    },
+    {
+      "config": "arguana/english+qtf at k1=3.0",
+      "corpus": "arguana",
+      "analyzer": "english",
+      "ndcgGain": "exponential",
+      "bm25": { "k1": 3.0, "b": 0.75 },
+      "excludeQueryDocument": false,
+      "queryTermFrequency": true,
+      "queries": 1406,
+      "expectedNdcg": 0.331,
+      "tolerance": 0.002,
+      "note": "The same figure as the arguana parity row, and the reason that row is a measured value rather than the 0.4061 it used to carry: the parity section is displayed by --verify-reference but never replayed, this pin is replayed. It is not like-for-like against the published 0.3970, which was produced at k1=0.9, b=0.4 - at that k1 this library reads 0.271. The 0.178 deficit between 0.219 and 0.3970 at matched parameters is unaccounted for; this setting closes 0.052 of it at k1=0.9, b=0.4 and 0.027 at k1=3.0. Sweeping k1 does not close it: 0.219, 0.285, 0.304 distinct and 0.271, 0.327, 0.331 query-frequency for k1 = 0.9, 1.5, 3.0, so ArguAna rises with k1 and plateaus near 0.33."
+    },
+    {
       "config": "arguana/english+exclude",
       "corpus": "arguana",
       "analyzer": "english",
