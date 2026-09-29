@@ -316,6 +316,17 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// per-candidate cost is the part with the least evidence behind it, and it is the part that
     /// sets the crossing.
     /// </para>
+    /// <para>
+    /// The three "fixed cost" figures above are the weak column of that table and should not be
+    /// read as an end-to-end intercept. Part of that cost is an <c>Array.Clear</c> of the whole
+    /// ordinal space, timed alone on this host at 196 ns / 2.35 µs / 18.5 µs for 10,000 /
+    /// 100,000 / 1,000,000 — so at the two larger sizes the clear alone exceeds the recorded
+    /// figure, and the measurements behind the table are not affine in document frequency, which
+    /// is what an intercept would require. The two slopes (12.8 / 11.5 / 12.6 ns per entry and
+    /// 96 / 245 / 295 ns per candidate) survived a re-measurement at 100,000 documents; the
+    /// intercepts did not, and neither did the two outer corpus rows, which were not re-run. See
+    /// the correction in <c>docs/benchmarks.md</c>.
+    /// </para>
     /// </remarks>
     private const int MinimumPostingEntriesForAccumulation = 8;
 

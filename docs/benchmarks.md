@@ -379,6 +379,37 @@ process, both loops over the same query:
 |  100,000 |  725 MB |      1 µs |           11.5 ns |               245 ns |      ≈ 4 |         8 |
 | 1,000,000 | 7,083 MB |   16.1 µs |           12.6 ns |               295 ns |     ≈ 57 |        50 |
 
+**Correction, and the `fixed cost` column is the shaky one.** The pass opens with an
+`Array.Clear` of the whole ordinal space — `ScoreAccumulator.Rent(index.OrdinalSpace)` — so
+part of that fixed cost is a `memset` whose length is the corpus. Timed on its own, on a
+pooled array of that size (best of 7 rounds of 400, this host):
+
+| ordinal space | `Array.Clear`, measured alone | against the `fixed cost` above |
+|---------------:|------------------------------:|--------------------------------:|
+|         10,000 |                      196 ns |                            0.5 µs |
+|        100,000 |                     2.35 µs |                              1 µs |
+|       1,000,000 |                    18.5 µs |                           16.1 µs |
+
+At 10,000 documents the two are consistent: a 196 ns clear sits inside a 0.5 µs fixed cost.
+At 100,000 the clear alone is **2.3× the whole recorded fixed cost**, and at 1,000,000 it
+exceeds it. So the column cannot be read as an end-to-end intercept at the two larger sizes,
+and this re-measurement does not say which number is wrong — the clear here is timed in a
+tight loop with the array hot in cache, which is the friendliest possible condition for it.
+
+A second reason to distrust the column: the measurements behind it are **not affine in
+document frequency**, so an intercept is not well defined in the first place. Re-running the
+100,000-document probe and fitting its own output (the `df = 2` row excluded, because the
+threshold there is 8 and the engine takes the per-document path at `df = 2`) gives a
+worst-case residual of **21.9 µs** on the term-at-a-time row and an intercept of **−122 µs**
+on the per-document row. What *does* survive the re-run are the two slopes — 11.6 ns per
+posting entry and 255 ns per candidate scored, against the 11.5 and 245 recorded — because
+a slope is what a wide-range fit can still get right when the intercept cannot. The `break-even`
+column inherits the same weakness, since it is read off the crossing of two fitted lines.
+
+**What this section does not claim to have verified:** the 10,000 and 1,000,000 rows of the
+table above. Only 100,000 documents was re-measured, because the probe needs roughly 11 GB
+and the host had 7 GB free.
+
 Two results here, and the second one is the more useful:
 
 - **The new pass's per-entry cost is flat** — 12.8 / 11.5 / 12.6 ns across two orders of magnitude —
