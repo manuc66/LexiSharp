@@ -12,6 +12,7 @@ public static class Program
             typeof(IndexBenchmarks),
             typeof(SearchBenchmarks),
             typeof(CandidateSearchBenchmarks),
+            typeof(ScoringPathBenchmarks),
             typeof(LevenshteinBenchmarks),
             typeof(ClassificationBenchmarks),
         });

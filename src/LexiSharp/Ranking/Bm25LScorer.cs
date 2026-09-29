@@ -176,7 +176,7 @@ public sealed class Bm25LScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
             parameters);
     }
 
-    private sealed class Bm25LQueryPlan : ISearchQueryPlan
+    private sealed class Bm25LQueryPlan : IAccumulatingQueryPlan
     {
         private readonly ITextIndex _index;
         private readonly string[] _terms;
@@ -239,6 +239,36 @@ public sealed class Bm25LScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
             }
 
             return score;
+        }
+
+        /// <inheritdoc />
+        public bool TryAccumulate(IAccumulatingIndex index, ScoreAccumulator accumulator)
+        {
+            if (_index.Count == 0 || _avgLength <= 0)
+                return false;
+
+            for (int i = 0; i < _terms.Length; i++)
+            {
+                index.Accumulate(
+                    new Bm25LWeight(_terms[i], _idf[i], _k1, _b, _delta, _avgLength),
+                    accumulator);
+            }
+
+            return true;
+        }
+    }
+
+    private readonly struct Bm25LWeight(
+        string term, double idf, double k1, double b, double delta, double averageLength) : IPostingWeight
+    {
+        public string Term => term;
+
+        public double Weight(int termFrequency, int documentLength)
+        {
+            double normalization = 1.0 - b + b * documentLength / averageLength;
+            double compressed = termFrequency / normalization;
+
+            return idf * (k1 + 1.0) * (compressed + delta) / (k1 + compressed + delta);
         }
     }
 }

@@ -208,18 +208,6 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             ? plannable.CreatePlan(distinctQueryTerms, _index)
             : null;
 
-        // Convention: a score of exactly 0 means "not a match".
-        // When the index can enumerate the documents sharing at least one query term
-        // (ICandidateIndex) and the scorer provably returns 0 for every document that
-        // shares none (ITermOverlapScorer), score only those candidates: same results,
-        // same order, far fewer distance computations. Otherwise fall back to the full scan.
-        var candidateDocuments =
-            _index is ICandidateIndex candidateIndex &&
-            _scorer is ITermOverlapScorer &&
-            CandidatesCoverFractionOfCorpus(_index, distinctQueryTerms) < 0.5
-                ? Candidates(candidateIndex, distinctQueryTerms)
-                : _index.Documents;
-
         // Bounded top-Window accumulation, worst-first, reproducing the exact semantics of
         // OrderByDescending(Score).Skip(offset).Take(limit) with equal scores ordered by document id.
         // SearchResult objects are materialized only for the kept entries.
@@ -227,30 +215,53 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         var top = new TopRankedWindow(window);
         long ordinal = 0;
 
-        foreach (var document in candidateDocuments)
+        // One dictionary lookup per query term, feeding both of the decisions below. They are two
+        // readings of the same quantity — how much of the corpus this query can reach — so it is
+        // asked once rather than once per decision.
+        int reachableDocuments = SumDocumentFrequencies(_index, distinctQueryTerms);
+
+        // The term-at-a-time pass, when the plan and the index can both offer it. It subsumes the
+        // candidate-or-scan choice below: the posting walks produce the matched set themselves, so
+        // there is no union to build and no corpus to walk when the query terms are rare — and it
+        // does not have to be re-made per query shape. That choice stays as the fallback for
+        // everything this pass declines.
+        if (!TryRunAccumulatingQuery(plan, reachableDocuments, parsed, options, facets, top, out ordinal))
         {
-            // Structured filters gate the corpus before any relevance math is paid for.
-            if (!options.PassesFilters(document))
-                continue;
+            // Convention: a score of exactly 0 means "not a match".
+            // When the index can enumerate the documents sharing at least one query term
+            // (ICandidateIndex) and the scorer provably returns 0 for every document that
+            // shares none (ITermOverlapScorer), score only those candidates: same results,
+            // same order, far fewer distance computations. Otherwise fall back to the full scan.
+            var candidateDocuments =
+                _index is ICandidateIndex candidateIndex &&
+                _scorer is ITermOverlapScorer &&
+                CandidatesCoverFractionOfCorpus(reachableDocuments, _index.Count)
+                    ? Candidates(candidateIndex, distinctQueryTerms)
+                    : _index.Documents;
 
-            // Quoted segments are a hard positional gate: every phrase must appear at
-            // consecutive positions, checked before any relevance math is paid.
-            if (parsed.HasPhrases && !MatchesPhrases(document.Id, parsed.Phrases))
-                continue;
+            foreach (var document in candidateDocuments)
+            {
+                // Structured filters gate the corpus before any relevance math is paid for.
+                if (!options.PassesFilters(document))
+                    continue;
 
-            double score = plan is null
-                ? _scorer.Score(document.Id, distinctQueryTerms, _index)
-                : plan.Score(document.Id);
+                // Quoted segments are a hard positional gate: every phrase must appear at
+                // consecutive positions, checked before any relevance math is paid.
+                if (parsed.HasPhrases && !MatchesPhrases(document.Id, parsed.Phrases))
+                    continue;
 
-            if (double.IsNaN(score) || double.IsInfinity(score) || score == 0 || score < options.MinimumScore)
-                continue;
+                double score = plan is null
+                    ? _scorer.Score(document.Id, distinctQueryTerms, _index)
+                    : plan.Score(document.Id);
 
-            // Facets count every document that passed all gates — the whole match set,
-            // independent of the Offset/Limit window cut below.
-            facets?.Count(document);
+                if (double.IsNaN(score) || double.IsInfinity(score) || score == 0 || score < options.MinimumScore)
+                    continue;
 
-            top.Add(score, document);
-            ordinal++;
+                facets?.Count(document);
+
+                top.Add(score, document);
+                ordinal++;
+            }
         }
 
         // The accumulated window holds at most Offset + Limit entries; skip the Offset prefix
@@ -273,6 +284,155 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Floor on the total document frequency a query needs before the term-at-a-time pass runs.
+    /// </summary>
+    /// <remarks>
+    /// The floor exists for the pass's fixed setup, not for its per-entry work. It clears a buffer
+    /// sized to the corpus before it scores anything.
+    /// <para>
+    /// <b>Measured at three corpus sizes</b>, reported as the break-even where the two loops cost
+    /// the same. Both loops are timed over the same query and the same corpus in one process, the
+    /// per-document one forced by a metadata filter that rejects nothing.
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>10,000 documents — 0.5 µs fixed, 12.8 ns per posting entry, 96 ns per candidate scored, break-even <b>≈ 6</b></description></item>
+    /// <item><description>100,000 documents — 1 µs fixed, 11.5 ns per entry, 245 ns per candidate, break-even <b>≈ 4</b></description></item>
+    /// <item><description>1,000,000 documents — 16.1 µs fixed, 12.6 ns per entry, 295 ns per candidate, break-even <b>≈ 57</b></description></item>
+    /// </list>
+    /// <para>
+    /// Two things fall out of that. The new pass's per-entry cost is <b>flat across two orders of
+    /// magnitude</b> (12.8 / 11.5 / 12.6 ns) while the old loop's per-candidate cost triples
+    /// (96 / 245 / 295 ns) as the postings dictionaries outgrow the cache — which is why the win
+    /// grows with corpus size rather than staying put. And the break-even barely moves, so the
+    /// fixed cost is not what should be setting the threshold.
+    /// </para>
+    /// <para>
+    /// <b>What is not measured:</b> anything above a million documents. Extrapolating the fixed
+    /// cost alone would put a 10-million-document corpus somewhere near 400, which is the
+    /// direction <see cref="AccumulationCorpusDivisor"/> encodes — but at that size the
+    /// per-candidate cost is the part with the least evidence behind it, and it is the part that
+    /// sets the crossing.
+    /// </para>
+    /// </remarks>
+    private const int MinimumPostingEntriesForAccumulation = 8;
+
+    /// <summary>
+    /// How the floor above scales with the corpus: one posting entry per this many documents.
+    /// </summary>
+    /// <remarks>
+    /// Fitted to the three break-evens above (6 / 4 / 57): this divisor gives 8 / 8 / 50 against
+    /// them. The divisor of 1,024 that came first — a guess, made before any of this was measured —
+    /// gives 9 / 97 / 976, and hands back a 1.2-2.4× win at two of the three scales.
+    /// <para>
+    /// The scaling has to be this weak because <b>both</b> sides of the crossing grow with the
+    /// corpus: the pass clears an <c>N</c>-byte buffer, and the per-document loop's lookups get
+    /// slower as the postings dictionaries outgrow the cache. Scaling the threshold on the fixed
+    /// cost alone over-corrects for that second effect, which is exactly what the 1,024 did.
+    /// </para>
+    /// </remarks>
+    private const int AccumulationCorpusDivisor = 20_000;
+
+    /// <summary>
+    /// Scores the query in one term-at-a-time pass and cuts the window from the matched set,
+    /// returning <c>false</c> — having changed nothing but a rented buffer — when the query has
+    /// to go the per-document way instead.
+    /// </summary>
+    /// <remarks>
+    /// The gates this path refuses are the two that are cheaper before scoring than after:
+    /// a metadata filter and a phrase both reject documents, and both do it by walking positions
+    /// or fields, so a selective filter over a large corpus would have most of its score
+    /// arithmetic thrown away. The term-at-a-time pass has already paid for the arithmetic by the
+    /// time it can apply either, which is the opposite of what those requests want. Everything
+    /// else — the rare-term and head-term regimes alike — is a win, because the pass replaces
+    /// <c>2 · terms · documents</c> string hashes with one walk of the posting entries that
+    /// actually exist.
+    /// <para>
+    /// The matched set arrives in posting order rather than corpus order. Nothing downstream
+    /// depends on the difference: the gates are per document, the facet counts are increments, and
+    /// <see cref="TopRankedWindow"/> breaks ties on the document id rather than on arrival order.
+    /// </para>
+    /// </remarks>
+    private bool TryRunAccumulatingQuery(
+        ISearchQueryPlan? plan,
+        int reachableDocuments,
+        ParsedQuery parsed,
+        SearchOptions options,
+        FacetCollector? facets,
+        TopRankedWindow top,
+        out long ordinal)
+    {
+        ordinal = 0;
+
+        if (plan is not IAccumulatingQueryPlan accumulating ||
+            _index is not IAccumulatingIndex index ||
+            _scorer is not ITermOverlapScorer ||
+            parsed.HasPhrases ||
+            options.Filters is { Count: > 0 })
+        {
+            return false;
+        }
+
+        // The pass clears a buffer sized to the corpus before it scores anything, so a query too
+        // small to amortize that is better served by the per-document loop. See the constants.
+        int minimumEntries = Math.Max(
+            MinimumPostingEntriesForAccumulation,
+            index.OrdinalSpace / AccumulationCorpusDivisor);
+
+        if (reachableDocuments < minimumEntries)
+            return false;
+
+        var accumulator = ScoreAccumulator.Rent(index.OrdinalSpace);
+
+        try
+        {
+            if (!accumulating.TryAccumulate(index, accumulator))
+                return false;
+
+            for (int i = 0; i < accumulator.Count; i++)
+            {
+                int candidate = accumulator.OrdinalAt(i);
+                var document = index.DocumentAt(candidate)!;
+                double score = accumulator[candidate];
+
+                if (double.IsNaN(score) || double.IsInfinity(score) || score == 0 || score < options.MinimumScore)
+                    continue;
+
+                facets?.Count(document);
+
+                top.Add(score, document);
+                ordinal++;
+            }
+
+            return true;
+        }
+        finally
+        {
+            // Only the recorded ordinals hold state, so the buffer is reusable after clearing those
+            // — and the rented arrays go back whether the pass completed or the plan declined.
+            accumulator.Reset();
+            accumulator.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Sum of the query terms' document frequencies: an upper bound on the union of the candidate
+    /// documents, and the unit both the accumulation threshold and the candidate-or-scan choice
+    /// below are written in.
+    /// </summary>
+    private static int SumDocumentFrequencies(ITextIndex index, IReadOnlyList<string> queryTerms)
+    {
+        if (index.Count == 0)
+            return 0;
+
+        long total = 0;
+
+        foreach (var term in queryTerms)
+            total += index.DocumentFrequency(term);
+
+        return total > int.MaxValue ? int.MaxValue : (int)total;
     }
 
     /// <summary>
@@ -612,18 +772,11 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// the query terms (the sum of per-term document frequencies), used to decide whether
     /// scoring candidates is cheaper than scoring the whole corpus.
     /// </summary>
-    private static double CandidatesCoverFractionOfCorpus(ITextIndex index, IReadOnlyList<string> queryTerms)
-    {
-        if (index.Count == 0)
-            return 1;
-
-        long documentUnionUpperBound = 0;
-
-        foreach (var term in queryTerms)
-            documentUnionUpperBound += index.DocumentFrequency(term);
-
-        return (double)documentUnionUpperBound / index.Count;
-    }
+    /// <summary>
+    /// Whether scoring the union of the query terms' documents is cheaper than scoring the corpus.
+    /// </summary>
+    private static bool CandidatesCoverFractionOfCorpus(int reachableDocuments, int documentCount) =>
+        documentCount == 0 || (double)reachableDocuments / documentCount < 0.5;
 
     /// <summary>
     /// Heuristic cost for <see cref="RoutedSearchEngine"/>: the sum of the literal query terms'

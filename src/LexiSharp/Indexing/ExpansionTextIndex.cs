@@ -29,7 +29,7 @@ namespace LexiSharp.Indexing;
 /// real token stream for the purposes of length statistics and candidate generation.
 /// </para>
 /// </remarks>
-public sealed class ExpansionTextIndex : ITextIndex, ICandidateIndex, IUnorderedCandidateIndex, IVocabularyIndex
+public sealed class ExpansionTextIndex : ITextIndex, ICandidateIndex, IUnorderedCandidateIndex, IVocabularyIndex, IAccumulatingIndex
 {
     private readonly InMemoryTextIndex _inner;
     private readonly ITermExpander _expander;
@@ -201,6 +201,24 @@ public sealed class ExpansionTextIndex : ITextIndex, ICandidateIndex, IUnordered
         ArgumentNullException.ThrowIfNull(terms);
         return ((IUnorderedCandidateIndex)_inner).GetCandidatesUnordered(terms);
     }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Forwarded rather than reimplemented, for the same reason as the unordered candidate path:
+    /// the inverted lists the accumulation pass walks are the inner index's, and they carry the
+    /// injected expansion terms. Not forwarding would leave the semantic lexical path on the
+    /// per-document scoring loop while the plain index had moved on — the same silent gap
+    /// <c>CandidateEnumerationOrderTests</c> guards for the candidate path.
+    /// </remarks>
+    int IAccumulatingIndex.OrdinalSpace => ((IAccumulatingIndex)_inner).OrdinalSpace;
+
+    /// <inheritdoc />
+    SearchDocument? IAccumulatingIndex.DocumentAt(int ordinal) =>
+        ((IAccumulatingIndex)_inner).DocumentAt(ordinal);
+
+    /// <inheritdoc />
+    void IAccumulatingIndex.Accumulate<TWeight>(TWeight weight, ScoreAccumulator accumulator) =>
+        ((IAccumulatingIndex)_inner).Accumulate(weight, accumulator);
 
     private void Expand(string documentId, IReadOnlyList<string> terms)
     {

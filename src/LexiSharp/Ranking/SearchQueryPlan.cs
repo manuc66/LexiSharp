@@ -30,3 +30,39 @@ internal interface IQueryPlannableScorer : ITextScorer
     /// <summary>Builds a reusable plan for the given tokenized query against the corpus.</summary>
     ISearchQueryPlan CreatePlan(IReadOnlyList<string> queryTerms, ITextIndex index);
 }
+
+/// <summary>
+/// A plan whose score decomposes into a per-term contribution that depends only on the
+/// document's term frequency and length, so the whole query can be scored in one term-at-a-time
+/// pass over the inverted lists (see <see cref="IAccumulatingIndex"/>).
+/// </summary>
+/// <remarks>
+/// <para>
+/// The engine prefers this path and falls back to <see cref="ISearchQueryPlan.Score"/> per
+/// document when the index cannot offer it, when a positional or metadata gate has to run first,
+/// or when the plan declines (an empty corpus, a zero average length). Both paths must produce the
+/// same doubles, not merely the same ranking: <c>QueryPlanParityTests</c> pins that, and
+/// <c>TopRankedWindow</c> breaks ties on <c>==</c>, so a last-bit difference would reorder the
+/// page.
+/// </para>
+/// <para>
+/// A scorer opts in by having its contribution depend on nothing but (term, tf, length). The
+/// query-wide constants — idf, <c>k1</c>, <c>b</c>, <c>δ</c>, the average document length — are
+/// captured in the per-term weight. A scorer whose score also depends on documents the term is
+/// <i>absent</i> from (query likelihood's <c>log P(t|d)</c> smoothing) or on per-field geometry
+/// (BM25F) cannot, and stays on the per-document path.
+/// </para>
+/// </remarks>
+internal interface IAccumulatingQueryPlan : ISearchQueryPlan
+{
+    /// <summary>
+    /// Folds every query term into <paramref name="accumulator"/>, in query order, so each
+    /// document's score is summed in the same order the per-document loop would have summed it.
+    /// </summary>
+    /// <returns>
+    /// <c>false</c> when the plan cannot run (no corpus, no average length); the caller then falls
+    /// back to <see cref="ISearchQueryPlan.Score"/>. <c>true</c> on success, with the accumulator
+    /// reset to empty first.
+    /// </returns>
+    bool TryAccumulate(IAccumulatingIndex index, ScoreAccumulator accumulator);
+}
