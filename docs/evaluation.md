@@ -66,10 +66,10 @@ Three conventions were checked and none accounts for the difference. The linear 
 returns the same 0.271 as the exponential one, and excluding the query document is worth +0.0012 by
 this repository's own measurement. Neither 0.2902 nor 0.4061 is reproducible.
 
-**No release carried either figure.** The `v0.6.0` tag predates both the claim and the setting:
-`QueryTermWeighting` is absent from it, and `git tag --contains` returns no tag for the commit that
-added it. The claim was withdrawn here before 0.7.0 rather than in a release note, because no
-published release ever contained it.
+**No release carried either figure.** `QueryTermWeighting` is absent from the `v0.6.0` tag, which
+predates the commit that added it, and 0.4061 is absent from the 0.6.0 documents entirely
+(`git show v0.6.0:docs/evaluation.md | grep -c 0.4061` is 0). So the claim was withdrawn here,
+before 0.7.0, rather than in a release note: no published release ever contained it.
 
 The reason is structural, and that is the part worth keeping. The harness flag fed exactly one
 thing - the `QueryTermWeighting` argument of `new Bm25Scorer(...)` - and that scorer went into
