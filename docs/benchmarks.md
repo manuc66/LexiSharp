@@ -310,6 +310,22 @@ are the queries the new loop is *not* meant to win, and it does not cost them an
 The `+16 B` on `OneTerm` is the only cost measured anywhere in this section and **its cause is not
 identified**.
 
+**What was re-verified after the query-term fix, and what was not.** The engine was changed to hand
+the query plan the raw term list instead of the deduplicated one, so that a repeated query term
+reaches the scorer (see `QueryTermWeighting`). Every figure in the table above predates that change.
+The `Allocated` column was re-measured afterwards and reproduces **byte for byte** on all six rows —
+848 / 1,152 / 1,208 / 1,224 / 1,272 / 1,320 B — which is what the reasoning predicted:
+`TermDeduplicator.Distinct` returns its input when it can prove there is no duplicate, and none of
+these six queries repeats a term, so the plan receives the same terms in the same order.
+
+The **timings were not re-measured, and are not claimed to describe the current build.** A fresh run
+would not validate the numbers above, it would replace them: the drift between two runs of the same
+code on this host is larger than the effect a re-measurement is looking for, so validating an old
+figure requires measuring before and after in one session. What is claimed instead is narrower and
+checked: the scored path is identical, not merely similar. Scoring the same eight queries against the
+two builds — repetitions up to forty — gives **bit-identical** scores in round-trippable form, and
+the golden master is unchanged at 132 rankings with no tie reordering.
+
 **The speedup tracks the cost the old loop already had, not the query's rarity as such.** Per unit
 of work: the document-at-a-time loop costs ~96 ns per document it scores (one `DocumentLength`
 hash plus one `TermFrequency` per query term, each a string hash), and the term-at-a-time pass
