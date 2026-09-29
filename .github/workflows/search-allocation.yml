@@ -1,0 +1,67 @@
+name: Search allocation (on demand)
+
+# On demand, deliberately: this is a re-measurement you read by hand, not a gate.
+#
+# It ran on every push for a week and produced the same Allocated column byte for byte on five
+# consecutive runs at unchanged code (1.25 / 1.23 / 1.27 / 1.11 / 1.25 / 1.78 KB). Nothing in the
+# repository reads the artifact - no baseline is compared, no threshold is applied, no alert fires -
+# so the only way its output reaches anyone is a human opening the run. A run per day carries
+# exactly as much information as a run per week when the reader is that human, and at ~13 min per
+# run it was costing roughly nine runner-hours a week to say nothing new.
+#
+# What would justify running it on every push is a committed baseline that the job compares against
+# and fails on. That is not implemented, so running it on every push bought nothing. Dispatch it
+# instead, after a commit that touches the index or the scoring path.
+#
+# Read the Allocated columns, never the Mean ones. Allocation is counted in bytes and does not
+# depend on how fast the host is, so that number travels; timing does not. The runner is an Azure VM
+# shared between tenants, where host-level contention is a documented source of variance, and the
+# SearchTrace overhead being priced here is a few percent - a shared runner cannot resolve a delta
+# that small. Copying a Mean from this report into docs/benchmarks.md would not be a measurement.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+
+jobs:
+  search-cost:
+    # No continue-on-error here, unlike when this ran inside CI. It was there so an advisory
+    # measurement would not redden the push status; that status no longer contains this job, and a
+    # run you dispatched on purpose should be able to report an error honestly. The artifact is
+    # uploaded with `if: always()` either way, so a failed run still hands over whatever was measured.
+    name: Search allocation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Record the host these numbers come from
+        run: |
+          {
+            echo "cores: $(nproc)"
+            grep -m1 'model name' /proc/cpuinfo || true
+            dotnet --info
+          } | tee search-cost-host.txt
+
+      - name: Run the search benchmarks
+        run: >
+          dotnet run --project bench/LexiSharp.Benchmarks -c Release --
+          --filter '*SearchBenchmarks*' --job medium
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: search-allocation
+          path: |
+            bench/LexiSharp.Benchmarks/BenchmarkDotNet.Artifacts/results/
+            search-cost-host.txt
+          if-no-files-found: ignore
