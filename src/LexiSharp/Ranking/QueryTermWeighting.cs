@@ -32,12 +32,21 @@ namespace LexiSharp.Ranking;
 /// <c>QueryTermWeightingTests</c> pins the setting's visibility as well as its meaning.
 /// </para>
 /// <para>
-/// Measured, with the analysis and metric convention aligned to that reference, on the three BEIR
-/// corpora at k1=0.9/b=0.4: ArguAna (each test query is a whole argument) 0.2197 against 0.2902 —
-/// and 0.4061 at k1=3.0, against the 0.3970 that implementation publishes. NFCorpus 0.3215 against
-/// 0.3215 and SciFact 0.6788 against 0.6788: unchanged to four decimals, because their queries are
-/// short and barely repeat. So the setting is free where queries are keywords and decisive where a
-/// query is a document.
+/// Measured on ArguAna, where every test query is a whole ~200-word argument and its content words
+/// repeat; 1,406 queries, <c>--analyzer english</c>, k1=0.9/b=0.4, nDCG@10:
+/// <c>Distinct</c> 0.219 and <c>QueryFrequency</c> 0.271, so the setting is worth <b>+0.052</b> there.
+/// The linear gain convention gives the same two numbers to three decimals, so the effect is not an
+/// artefact of the metric convention. On NFCorpus and SciFact, whose queries are short, it changes
+/// nothing to four decimals, because they barely repeat. So the setting is free where queries are
+/// keywords and worth five points of nDCG where a query is a document.
+/// </para>
+/// <para>
+/// <b>A larger figure this repository used to publish for it, and has withdrawn.</b> Versions up to
+/// and including 0.6.0 claimed <c>+0.0705</c> here, and 0.2902 and 0.4061 in absolute terms. Neither
+/// is reproducible, and the reason is structural rather than numerical: the harness flag fed one
+/// constructor argument and nothing else, and the engine it reached deduplicated the query before
+/// the scorer, so the two settings could not have produced different rankings. The figures could not
+/// have come from the code that cited them. The measured values above replace them.
 /// </para>
 /// </remarks>
 public enum QueryTermWeighting
