@@ -51,7 +51,9 @@ internal static class ReferenceVerifier
             {
                 line += Environment.NewLine + "      reproduce: " + pin.CommandLine(dataBaseDir);
                 line += Environment.NewLine
-                    + "      if the change is intended, re-record with --verify-reference --write and read the diff.";
+                    + "      --write does not re-record: it says so and changes nothing. Read what moved"
+                    + " and why, then edit expectedNdcg in the pinned file as a reviewed change -"
+                    + " the same reasoning as `lexisharp baseline` in the CLI.";
             }
 
             regressions.Add((ok, line));
