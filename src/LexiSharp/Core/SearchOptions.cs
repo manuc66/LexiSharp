@@ -41,6 +41,7 @@ public sealed record SearchOptions(
     IReadOnlySet<string>? ExcludedDocumentIds = null,
     SearchTrace? Trace = null)
 {
+    /// <summary>The defaults every positional parameter already has: ten hits, no floor, no offset.</summary>
     public static readonly SearchOptions Default = new();
 
     /// <summary>

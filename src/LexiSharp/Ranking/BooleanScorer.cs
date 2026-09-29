@@ -20,6 +20,12 @@ public sealed class BooleanScorer : ITermOverlapScorer, IScoreExplainer
 {
     private readonly BooleanMatch _match;
 
+    /// <summary>Creates a scorer, matching every query term by default.</summary>
+    /// <param name="match">
+    /// Whether a document has to carry <see cref="BooleanMatch.AllTerms"/> of them or only
+    /// <see cref="BooleanMatch.AnyTerm"/>. Either way the score is the fraction of matched terms,
+    /// so it is comparable between documents, not a 0/1 flag.
+    /// </param>
     public BooleanScorer(BooleanMatch match = BooleanMatch.AllTerms)
     {
         _match = match;

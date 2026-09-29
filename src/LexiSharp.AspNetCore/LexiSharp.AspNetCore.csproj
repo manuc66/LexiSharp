@@ -6,7 +6,6 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <NoWarn>$(NoWarn);CS1591</NoWarn>
     <RootNamespace>LexiSharp.AspNetCore</RootNamespace>
     <PackageId>LexiSharp.AspNetCore</PackageId>
     <Title>LexiSharp.AspNetCore</Title>

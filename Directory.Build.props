@@ -1,6 +1,17 @@
 <Project>
 
   <!--
+    CS1591 (missing XML comment on a public member) is NOT suppressed. It used to be, set
+    per project, and the suppression is gone: every package sets GenerateDocumentationFile,
+    the SDK packs the resulting LexiSharp.xml into the nupkg, and that file is what a
+    consumer's IntelliSense reads. A public member with no `<summary>` is therefore a hole in
+    a shipped artifact rather than a style preference, and the warning is the cheapest way to
+    keep it closed. The five the warning found when it was enabled are documented now, and
+    the generated API reference (bench/LexiSharp.ApiDocs) reads that same XML, so a hole
+    shows up there as an empty "What it is" cell.
+  -->
+
+  <!--
     Symbol packages. Portable PDBs are produced by default in Release, but they are
     discarded by the pack: setting IncludeSymbols puts each assembly's PDB in a .snupkg
     alongside the .nupkg, which is what nuget.org's symbol server expects. Applied to every

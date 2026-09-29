@@ -6,7 +6,6 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <NoWarn>$(NoWarn);CS1591</NoWarn>
     <RootNamespace>LexiSharp</RootNamespace>
     <PackageId>LexiSharp</PackageId>
     <Title>LexiSharp</Title>

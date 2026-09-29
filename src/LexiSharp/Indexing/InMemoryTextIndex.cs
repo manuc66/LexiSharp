@@ -181,6 +181,11 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
 
     private long _totalTokens;
 
+    /// <summary>Creates an empty index, tokenizing with <c>Tokenizer.Default</c> unless told otherwise.</summary>
+    /// <param name="tokenizer">
+    /// The tokenizer whose terms, stop-word removal and stemming shape the index statistics. It
+    /// must be the same one the queries are tokenized with, or the terms will not match.
+    /// </param>
     public InMemoryTextIndex(ITokenizer? tokenizer = null)
     {
         _tokenizer = tokenizer ?? LexiSharp.Linguistics.Tokenizer.Default;
