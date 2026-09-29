@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/bench/">
+    <Project Path="bench/LexiSharp.ApiDocs/LexiSharp.ApiDocs.csproj" />
     <Project Path="bench/LexiSharp.Benchmarks/LexiSharp.Benchmarks.csproj" />
     <Project Path="bench/LexiSharp.Cli/LexiSharp.Cli.csproj" />
     <Project Path="bench/LexiSharp.CodeShape/LexiSharp.CodeShape.csproj" />

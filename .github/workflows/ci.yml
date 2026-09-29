@@ -46,19 +46,26 @@ jobs:
       # requires the build to happen inside the same dotnet test invocation
       # (--no-build would skip instrumentation and empty the report).
       #
-      # LexiSharp.CodeShape is build tooling under bench/, excluded for the same reason the
-      # SonarCloud step below already excludes bench/: the 60% line gate is about the library,
-      # and a console front end is not library code. Measured rather than assumed - including it
-      # moves the total by 0.85 points (81.83% -> 80.98%), because its Program.cs has no tests
-      # while its reader does. ExcludeFromCodeCoverage on the ProjectReference is not honoured
-      # by coverlet.msbuild, which is why the filter is spelled out in the command.
+      # The two console tools under bench/ (LexiSharp.CodeShape, LexiSharp.ApiDocs) are build
+      # tooling, excluded for the same reason the SonarCloud step below already excludes bench/:
+      # the 60% line gate is about the library, and a console front end is not library code.
+      # Measured rather than assumed, on this commit: excluding both gives 81.80%; counting
+      # ApiDocs (75.67% of its own lines - the reader is tested, its Program.cs is not) gives
+      # 81.46%; counting both also gives 80.67%, CodeShape sitting at 41.97%.
+      #
+      # Two spellings matter here, and both were found by running them rather than by reading
+      # about them. ExcludeFromCodeCoverage on the ProjectReference is not honoured by
+      # coverlet.msbuild, which is why the filter is spelled out in the command. And the list is
+      # comma-separated with the comma written %2c: MSBuild reads a literal semicolon in a -p:
+      # value as a property separator and rejects the switch outright, while a bare comma makes
+      # it through this shell but is one quoting change away from failing the step.
       - name: Test with coverage (60% total line gate)
         run: >
           dotnet test tests/LexiSharp.Tests -c Release
           -p:CollectCoverage=true -p:CoverletOutputFormat=cobertura
           -p:CoverletOutput=../../TestResults/coverage-
           -p:Threshold=60 -p:ThresholdType=line -p:ThresholdStat=total
-          -p:Exclude="[LexiSharp.CodeShape]*"
+          -p:Exclude="[LexiSharp.CodeShape]*%2c[LexiSharp.ApiDocs]*"
 
       # The behavioural gate. The xUnit suite pins contracts - BM25 ranks X above Y on a
       # three-document corpus - but nothing pinned the *output* of a realistic run, so a
@@ -152,6 +159,21 @@ jobs:
               "$assembly" "$RUNNER_TEMP/cod-shape/$project.shape.txt"
           done
           wc -l "$RUNNER_TEMP/cod-shape/"*.txt
+
+      - name: API reference is in sync
+        # docs/api.md is generated from the compiled assemblies and the XML documentation they
+        # ship, so the page cannot describe a public surface that does not exist. This step is
+        # what makes that a property of the build rather than a habit: a new public type with no
+        # regenerated page fails here, while adding the type is still cheap to document.
+        #
+        # It reads the Release assemblies the step above produced, so it asserts they are there
+        # rather than trusting a previous step to have built them.
+        run: |
+          for project in LexiSharp LexiSharp.AspNetCore LexiSharp.MessagePack LexiSharp.Postgres; do
+            test -f "src/$project/bin/Release/net10.0/$project.dll" || { echo "missing build of $project"; exit 1; }
+          done
+
+          dotnet run --project bench/LexiSharp.ApiDocs -c Release --no-build -- check
 
       - name: Upload code shape manifests
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
