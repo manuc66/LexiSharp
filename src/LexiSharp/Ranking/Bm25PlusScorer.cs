@@ -176,7 +176,7 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
             parameters);
     }
 
-    private sealed class Bm25PlusQueryPlan : ISearchQueryPlan
+    private sealed class Bm25PlusQueryPlan : IAccumulatingQueryPlan
     {
         private readonly ITextIndex _index;
         private readonly string[] _terms;
@@ -239,5 +239,33 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
 
             return score;
         }
+
+        /// <inheritdoc />
+        public bool TryAccumulate(IAccumulatingIndex index, ScoreAccumulator accumulator)
+        {
+            // Same two guards as Score, hoisted: the accumulation only reaches documents that have
+            // the term, so the per-document tf gate needs no counterpart.
+            if (_index.Count == 0 || _avgLength <= 0)
+                return false;
+
+            for (int i = 0; i < _terms.Length; i++)
+            {
+                index.Accumulate(
+                    new Bm25PlusWeight(_terms[i], _idf[i], _k1, _b, _delta, _avgLength),
+                    accumulator);
+            }
+
+            return true;
+        }
+    }
+
+    private readonly struct Bm25PlusWeight(
+        string term, double idf, double k1, double b, double delta, double averageLength) : IPostingWeight
+    {
+        public string Term => term;
+
+        public double Weight(int termFrequency, int documentLength) =>
+            idf * (termFrequency * (k1 + 1.0)
+                / (termFrequency + k1 * (1.0 - b + b * documentLength / averageLength)) + delta);
     }
 }

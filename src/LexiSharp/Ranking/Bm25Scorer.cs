@@ -95,7 +95,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
         return new Bm25QueryPlan(queryTerms, index, _k1, _b);
     }
 
-    private sealed class Bm25QueryPlan : ISearchQueryPlan
+    private sealed class Bm25QueryPlan : IAccumulatingQueryPlan
     {
         private readonly ITextIndex _index;
         private readonly string[] _terms;
@@ -151,6 +151,36 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
             return score;
         }
+
+        /// <inheritdoc />
+        public bool TryAccumulate(IAccumulatingIndex index, ScoreAccumulator accumulator)
+        {
+            // The guards Score applies per document, hoisted: with no corpus or no average length
+            // every score is 0, and with a zero length the normalization is not a number. A
+            // document of length 0 has no posting entries at all, so it never reaches the loop.
+            if (_index.Count == 0 || _avgLength <= 0)
+                return false;
+
+            for (int i = 0; i < _terms.Length; i++)
+                index.Accumulate(new Bm25Weight(_terms[i], _idf[i], _k1, _b, _avgLength), accumulator);
+
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// The query-bound half of BM25: everything that does not depend on the document, so the
+    /// accumulation loop is left with the same arithmetic and in the same order as
+    /// <see cref="Bm25QueryPlan.Score"/>.
+    /// </summary>
+    private readonly struct Bm25Weight(string term, double idf, double k1, double b, double averageLength)
+        : IPostingWeight
+    {
+        public string Term => term;
+
+        public double Weight(int termFrequency, int documentLength) =>
+            idf * termFrequency * (k1 + 1.0)
+            / (termFrequency + k1 * (1.0 - b + b * documentLength / averageLength));
     }
 
     /// <inheritdoc />

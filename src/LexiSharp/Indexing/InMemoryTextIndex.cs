@@ -14,15 +14,46 @@ namespace LexiSharp.Indexing;
 /// single thread (or synchronize externally). Read-only queries hold no shared mutable state and
 /// may run concurrently with one another.
 /// </remarks>
-public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateIndex, IVocabularyIndex
+public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateIndex, IVocabularyIndex, IAccumulatingIndex
 {
     private readonly ITokenizer _tokenizer;
 
-    private readonly Dictionary<string, SearchDocument> _documents = new(StringComparer.Ordinal);
+    /// <summary>Document id → the document's ordinal. The one map ids are resolved through.</summary>
+    private readonly Dictionary<string, int> _documents = new(StringComparer.Ordinal);
     private readonly Dictionary<string, PostingList> _postings = new(StringComparer.Ordinal);
     private readonly Dictionary<string, IReadOnlyList<string>> _tokens = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, int> _lengths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _corpusFrequencies = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The corpus in slot order: <c>list[ordinal]</c> is the document living in that slot, or
+    /// <c>null</c> when the slot is free. This is what <see cref="Documents"/> and the ordered
+    /// candidate path walk, and what the term-at-a-time pass resolves an ordinal through.
+    /// </summary>
+    /// <remarks>
+    /// A list rather than the dictionary's own value collection, because the scoring pass addresses
+    /// documents by ordinal and one structure should answer both questions. Order is insertion
+    /// order, which is the order the value collection already gave; the difference is that a freed
+    /// slot is now reused deterministically rather than by the dictionary's hash-anchored
+    /// free-slot scan, so enumeration does not depend on the id hashes.
+    /// </remarks>
+    private readonly List<SearchDocument?> _byOrdinal = [];
+
+    /// <summary>Slots freed by <see cref="Remove"/>, reused before the list grows.</summary>
+    private readonly List<int> _freeOrdinals = [];
+
+    /// <summary>
+    /// Token count per document, indexed by ordinal. The single source of truth for document
+    /// length: an array rather than a field on a per-document object because the term-at-a-time pass
+    /// reads it once per posting entry, and a 4-byte-per-document read beats a dependent load
+    /// through an object for the very reason the flat posting lists exist.
+    /// </summary>
+    private int[] _lengthsByOrdinal = [];
+
+    /// <summary>
+    /// Bumped by every corpus mutation. The derived per-term posting copies carry the epoch they
+    /// were built from, so a stale copy is recognised and rebuilt rather than silently used.
+    /// </summary>
+    private int _epoch;
 
     /// <summary>
     /// One term's inverted list, and the single string instance the whole index uses for that term.
@@ -44,8 +75,100 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
         /// <summary>The shared instance for this term's value; store this, not the caller's string.</summary>
         public string Term { get; } = term;
 
-        /// <summary>Document id → the term's positions in that document.</summary>
-        public Dictionary<string, List<int>> ByDocument { get; } = new(StringComparer.Ordinal);
+        /// <summary>
+        /// Document id → where the term sits in that document: its ordinal and its positions.
+        /// </summary>
+        /// <remarks>
+        /// Keyed on the id, so <see cref="ITextIndex.TermFrequency"/> and
+        /// <see cref="ITextIndex.GetTermPositions"/> stay at the two string lookups they have always
+        /// cost — one to resolve the term, one to resolve the document inside its list. Keying on
+        /// an object instead saves nothing there and costs a third lookup to recover the id, which
+        /// is a measured 0.63x on <c>SearchBenchmarks.BooleanSearch</c>.
+        /// <para>
+        /// The ordinal rides in the value rather than in the key, as a field of a struct so the
+        /// dictionary stores it inline beside the key. That is what lets the term-at-a-time pass and
+        /// the candidate union reach a document's ordinal without hashing an id: they read it out of
+        /// the value the enumerator has already fetched.
+        /// </para>
+        /// </remarks>
+        public Dictionary<string, Posting> ByDocument { get; } = new(StringComparer.Ordinal);
+
+        private FlatPosting? _flat;
+
+        /// <summary>
+        /// The contiguous view of <see cref="ByDocument"/>, or <c>null</c> when there is none for
+        /// the current corpus.
+        /// </summary>
+        /// <remarks>
+        /// <b>Concurrent readers:</b> two searches can miss at the same time and both build a copy.
+        /// They build identical arrays and the reference is published with a volatile write, so the
+        /// loser is wasted work rather than a correctness problem — as long as a half-built array
+        /// can never be observed, which is why the epoch and the arrays travel together inside one
+        /// immutable object rather than in two fields.
+        /// </remarks>
+        public FlatPosting? Flat => Volatile.Read(ref _flat);
+
+        /// <summary>Publishes a freshly built copy for concurrent readers.</summary>
+        public void PublishFlat(FlatPosting flat) => Volatile.Write(ref _flat, flat);
+    }
+
+    /// <summary>
+    /// One term's placement inside one document. A struct, deliberately: as a class it would be a
+    /// second dependent load per posting entry on every path that walks a posting list.
+    /// </summary>
+    private readonly struct Posting(int ordinal, List<int> positions)
+    {
+        /// <summary>The document's dense ordinal, the address the scoring pass writes to.</summary>
+        public int Ordinal { get; } = ordinal;
+
+        /// <summary>Ascending token positions of the term in the document; the phrase gate's input.</summary>
+        public List<int> Positions { get; } = positions;
+    }
+
+    /// <summary>
+    /// A term's postings as two parallel arrays — document ordinals ascending, term frequencies
+    /// aligned — plus the index epoch they were built from.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The dictionary form is the right shape for «what are this term's positions in this
+    /// document?» and the wrong shape for «score every document this term appears in». The second
+    /// question is what a query actually asks, and answering it from the dictionary costs a
+    /// dependent load per posting entry — the <c>List&lt;int&gt;</c> of positions, a separate heap
+    /// object. Measured on a 10,000-document Zipf corpus with three head terms (26,525 posting
+    /// entries), the dictionary walk takes 1.21 ms and the identical arithmetic over these arrays
+    /// takes 0.12 ms, a ~10x gap that is entirely the pointer chasing.
+    /// </para>
+    /// <para>
+    /// Eight bytes per posting entry, against roughly eighty for the dictionary entry, the
+    /// <c>List&lt;int&gt;</c> and its backing array it mirrors — so caching every term's copy costs
+    /// about a tenth of what the authoritative form already costs. Measured: a 10,000-document
+    /// Zipf index grows 72.5 MB to 72.9 MB once three head terms have been queried, and 41.2 MB
+    /// from 40.9 MB on a 38-word corpus, that difference being the ordinals the documents carry.
+    /// </para>
+    /// <para>
+    /// <b>Concurrent readers:</b> two searches can miss the cache at the same time and both build
+    /// a copy. They build identical arrays, the reference is published with a volatile write, and
+    /// the arrays are immutable once published — so the loser is wasted work, not a correctness
+    /// problem. What would not be safe is a half-built array, which is why the epoch and the arrays
+    /// travel together inside one immutable object rather than in two fields.
+    /// </para>
+    /// <para>
+    /// Built on first use and rebuilt whenever the corpus changes, which is the trade: a read-only
+    /// index pays the build once, and an index mutated between every query pays an O(df · log df)
+    /// build per query. That is still cheaper than the walk it replaces, but it is a real cost,
+    /// and it is why the build is skipped for the tiny lists that gain nothing from it.
+    /// </para>
+    /// </remarks>
+    private sealed class FlatPosting(int epoch, int[] ordinals, int[] frequencies)
+    {
+        public int Epoch { get; } = epoch;
+
+        public int[] Ordinals { get; } = ordinals;
+
+        public int[] Frequencies { get; } = frequencies;
+
+        public int Count => Ordinals.Length;
     }
 
     // Per-field statistics, populated from SearchDocument.TextFields. The document's main Text is
@@ -66,11 +189,40 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
     /// <summary>The tokenizer used to split documents and queries into terms.</summary>
     public ITokenizer Tokenizer => _tokenizer;
 
-    /// <inheritdoc />
-    public IReadOnlyCollection<SearchDocument> Documents => _documents.Values;
+    /// <summary>
+    /// The corpus in insertion order, rebuilt on no allocation: the wrapper reads the live
+    /// <see cref="_byOrdinal"/> list, so it tracks additions and removals the way the dictionary's
+    /// value collection did.
+    /// </summary>
+    public IReadOnlyCollection<SearchDocument> Documents => new DocumentView(this);
 
     /// <inheritdoc />
     public int Count => _documents.Count;
+
+    /// <summary>
+    /// The live corpus view over the ordinal slots. Allocation-free to enumerate and to pass
+    /// around, unlike a materialised list, which is what keeps <c>ITextIndex.Documents</c> usable
+    /// on a hot path that only wants to walk it.
+    /// </summary>
+    private sealed class DocumentView(InMemoryTextIndex owner) : IReadOnlyCollection<SearchDocument>
+    {
+        public int Count => owner._documents.Count;
+
+        public IEnumerator<SearchDocument> GetEnumerator()
+        {
+            var slots = owner._byOrdinal;
+
+            for (int ordinal = 0; ordinal < slots.Count; ordinal++)
+            {
+                var document = slots[ordinal];
+
+                if (document is not null)
+                    yield return document;
+            }
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
 
     /// <inheritdoc />
     public double AverageDocumentLength =>
@@ -104,7 +256,33 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
         if (_documents.ContainsKey(document.Id))
             Remove(document.Id);
 
-        _documents[document.Id] = document;
+        // A freed slot is reused before the list grows, so the ordinal space tracks the live
+        // corpus instead of every document the index has ever held.
+        int ordinal;
+
+        if (_freeOrdinals.Count > 0)
+        {
+            ordinal = _freeOrdinals[^1];
+            _freeOrdinals.RemoveAt(_freeOrdinals.Count - 1);
+            _byOrdinal[ordinal] = null;
+        }
+        else
+        {
+            ordinal = _byOrdinal.Count;
+            _byOrdinal.Add(null);
+        }
+
+        // The length array is sized to the ordinal space, doubling so a bulk load stays amortized.
+        if (ordinal >= _lengthsByOrdinal.Length)
+        {
+            int size = _lengthsByOrdinal.Length == 0 ? 4 : _lengthsByOrdinal.Length * 2;
+            Array.Resize(ref _lengthsByOrdinal, Math.Max(ordinal + 1, size));
+        }
+
+        _byOrdinal[ordinal] = document;
+        _documents[document.Id] = ordinal;
+        _lengthsByOrdinal[ordinal] = 0;
+        InvalidateDerivedPostings();
 
         // Post returns the index's shared instance of the term, so the token list built here holds
         // one string per distinct value rather than one per occurrence -- the tokenizer hands back
@@ -114,7 +292,7 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
         var mainTerms = new List<string>(raw.Count);
 
         for (int position = 0; position < raw.Count; position++)
-            mainTerms.Add(Post(document.Id, raw[position], position));
+            mainTerms.Add(Post(document.Id, ordinal, raw[position], position));
 
         RecordField(TextFields.Default, document.Id, mainTerms);
 
@@ -122,11 +300,11 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
         // length-normalized scorer divides by it, so missing it silently rescales the whole
         // ranking.
         _totalTokens += mainTerms.Count;
+        _lengthsByOrdinal[ordinal] = mainTerms.Count;
 
         if (document.TextFields is not { Count: > 0 })
         {
             _tokens[document.Id] = mainTerms;
-            _lengths[document.Id] = mainTerms.Count;
             return;
         }
 
@@ -148,7 +326,7 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
             nextPosition += FieldPositionGap;
 
             for (int i = 0; i < rawField.Count; i++)
-                fieldTerms.Add(Post(document.Id, rawField[i], nextPosition + i));
+                fieldTerms.Add(Post(document.Id, ordinal, rawField[i], nextPosition + i));
 
             nextPosition += fieldTerms.Count;
 
@@ -159,7 +337,7 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
         }
 
         _tokens[document.Id] = allTerms;
-        _lengths[document.Id] = allTerms.Count;
+        _lengthsByOrdinal[ordinal] = allTerms.Count;
     }
 
     /// <summary>
@@ -175,7 +353,7 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
     /// <paramref name="position"/>, and returns the index's shared instance of the term — which is
     /// what callers must store, not the string they were handed.
     /// </summary>
-    private string Post(string documentId, string term, int position)
+    private string Post(string documentId, int ordinal, string term, int position)
     {
         // The lookup the index had to do anyway, carrying the shared instance along: the first
         // occurrence of a value defines the instance, and every later occurrence is rewritten to it
@@ -186,13 +364,16 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
         string shared = posting.Term;
         var postings = posting.ByDocument;
 
-        if (!postings.TryGetValue(documentId, out var positions))
+        if (!postings.TryGetValue(documentId, out var existing))
         {
-            positions = new List<int>(2);
-            postings[documentId] = positions;
+            // Assigned locally first: writing straight into the dictionary and reading it back
+            // would cost a second hash and probe of the same key, once per (document, term) pair
+            // the document introduces.
+            existing = new Posting(ordinal, new List<int>(2));
+            postings[documentId] = existing;
         }
 
-        positions.Add(position);
+        existing.Positions.Add(position);
 
         _corpusFrequencies.TryGetValue(shared, out int corpusCount);
         _corpusFrequencies[shared] = corpusCount + 1;
@@ -256,11 +437,11 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
         ArgumentException.ThrowIfNullOrEmpty(documentId);
         ArgumentNullException.ThrowIfNull(additionalTerms);
 
-        if (!_documents.TryGetValue(documentId, out _))
+        if (!_documents.TryGetValue(documentId, out int ordinal))
             throw new KeyNotFoundException($"Unknown document id: '{documentId}'.");
 
         var existing = new HashSet<string>(_tokens[documentId], StringComparer.Ordinal);
-        int nextPosition = _lengths[documentId] + ExpansionPositionOffset;
+        int nextPosition = _lengthsByOrdinal[ordinal] + ExpansionPositionOffset;
 
         var added = new List<string>();
         int addedCount = 0;
@@ -275,13 +456,13 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
 
             string term = posting.Term;
 
-            if (!posting.ByDocument.TryGetValue(documentId, out var positions))
+            if (!posting.ByDocument.TryGetValue(documentId, out var placed))
             {
-                positions = new List<int>(1);
-                posting.ByDocument[documentId] = positions;
+                placed = new Posting(ordinal, new List<int>(1));
+                posting.ByDocument[documentId] = placed;
             }
 
-            positions.Add(nextPosition++);
+            placed.Positions.Add(nextPosition++);
             added.Add(term);
             addedCount++;
 
@@ -296,15 +477,18 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
         allTokens.AddRange(added);
         _tokens[documentId] = allTokens;
 
-        _lengths[documentId] += addedCount;
+        _lengthsByOrdinal[ordinal] += addedCount;
         _totalTokens += addedCount;
+        InvalidateDerivedPostings();
     }
 
     /// <inheritdoc />
     public bool Remove(string documentId)
     {
-        if (!_documents.Remove(documentId))
+        if (!_documents.Remove(documentId, out int ordinal))
             return false;
+
+        InvalidateDerivedPostings();
 
         if (_tokens.TryGetValue(documentId, out var terms))
         {
@@ -326,13 +510,25 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
 
         _tokens.Remove(documentId);
 
-        if (_lengths.Remove(documentId, out int length))
-            _totalTokens -= length;
+        _totalTokens -= _lengthsByOrdinal[ordinal];
+
+        // Free the slot rather than closing the list up: the ordinals other documents already hold
+        // must stay valid, because a search that is running concurrently reads them.
+        _lengthsByOrdinal[ordinal] = 0;
+        _byOrdinal[ordinal] = null;
+        _freeOrdinals.Add(ordinal);
 
         RemoveFromFieldStatistics(documentId);
 
         return true;
     }
+
+    /// <summary>
+    /// Marks every derived per-term posting copy stale. One integer bump rather than a walk over
+    /// the vocabulary, so a bulk load does not pay a full sweep per document added; the copies
+    /// themselves are dropped lazily, the next reader of each term replacing its own.
+    /// </summary>
+    private void InvalidateDerivedPostings() => _epoch++;
 
     /// <summary>
     /// Drops one document from every per-field structure, and forgets a field once no document
@@ -387,12 +583,15 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
         _documents.Clear();
         _postings.Clear();
         _tokens.Clear();
-        _lengths.Clear();
         _corpusFrequencies.Clear();
         _fieldFrequencies.Clear();
         _fieldLengths.Clear();
         _fieldTotalTokens.Clear();
+        _byOrdinal.Clear();
+        _freeOrdinals.Clear();
+        _lengthsByOrdinal = [];
         _totalTokens = 0;
+        InvalidateDerivedPostings();
     }
 
     /// <inheritdoc />
@@ -408,9 +607,9 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
     public IReadOnlyList<int> GetTermPositions(string documentId, string term)
     {
         if (_postings.TryGetValue(term, out var posting) &&
-            posting.ByDocument.TryGetValue(documentId, out var positions))
+            posting.ByDocument.TryGetValue(documentId, out var placed))
         {
-            return positions;
+            return placed.Positions;
         }
 
         return Array.Empty<int>();
@@ -431,19 +630,28 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
     /// <inheritdoc />
     public int TermFrequency(string documentId, string term) =>
         _postings.TryGetValue(term, out var posting) &&
-        posting.ByDocument.TryGetValue(documentId, out var positions)
-            ? positions.Count
+        posting.ByDocument.TryGetValue(documentId, out var placed)
+            ? placed.Positions.Count
             : 0;
 
     /// <inheritdoc />
     public int DocumentLength(string documentId) =>
-        _lengths.TryGetValue(documentId, out int length)
-            ? length
+        _documents.TryGetValue(documentId, out int ordinal)
+            ? _lengthsByOrdinal[ordinal]
             : 0;
 
     /// <inheritdoc />
-    public bool TryGetDocument(string documentId, [NotNullWhen(true)] out SearchDocument? document) =>
-        _documents.TryGetValue(documentId, out document);
+    public bool TryGetDocument(string documentId, [NotNullWhen(true)] out SearchDocument? document)
+    {
+        if (_documents.TryGetValue(documentId, out int ordinal))
+        {
+            document = _byOrdinal[ordinal]!;
+            return true;
+        }
+
+        document = null;
+        return false;
+    }
 
     /// <inheritdoc />
     public IEnumerable<SearchDocument> GetCandidateDocuments(IReadOnlyList<string> terms)
@@ -485,11 +693,12 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
         if (!_postings.TryGetValue(term, out var posting) || posting.ByDocument.Count == 0)
             yield break;
 
-        foreach (var documentId in posting.ByDocument.Keys)
-        {
-            if (_documents.TryGetValue(documentId, out var document))
-                yield return document;
-        }
+        // The ordinal rides in the posting value, so a candidate costs one array read rather than
+        // a string-hashed lookup of the id.
+        var slots = _byOrdinal;
+
+        foreach (var placed in posting.ByDocument.Values)
+            yield return slots[placed.Ordinal]!;
     }
 
     private IEnumerable<SearchDocument> EnumerateMultiTerm(IReadOnlyList<string> terms)
@@ -501,9 +710,13 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
 
         // Re-enumerate the corpus so ties keep the corpus order, performing plain identity
         // lookups (no string hashing) against the local candidate set.
-        foreach (var document in _documents.Values)
+        var slots = _byOrdinal;
+
+        for (int ordinal = 0; ordinal < slots.Count; ordinal++)
         {
-            if (candidates.Contains(document))
+            var document = slots[ordinal];
+
+            if (document is not null && candidates.Contains(document))
                 yield return document;
         }
     }
@@ -528,19 +741,95 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
     private HashSet<SearchDocument> UnionCandidates(IReadOnlyList<string> terms)
     {
         var candidates = new HashSet<SearchDocument>(ReferenceEqualityComparer.Instance);
+        var slots = _byOrdinal;
 
         // Per-query hot path: LINQ Where on these loops would allocate per candidate. // NOSONAR:S3267
         foreach (var term in terms)
         {
             if (_postings.TryGetValue(term, out var posting))
             {
-                foreach (var documentId in posting.ByDocument.Keys)
-                    candidates.Add(_documents[documentId]);
+                // Ordinal to document is an array read, so a candidate costs a reference add and a
+                // read — no string hash anywhere in the walk.
+                foreach (var placed in posting.ByDocument.Values)
+                    candidates.Add(slots[placed.Ordinal]!);
             }
         }
 
         return candidates;
     }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The whole of the term-at-a-time pass: resolve the term's list once, then walk it folding
+    /// the weight in. No id is hashed anywhere in here — the loop reads a dictionary enumerator,
+    /// a term frequency and the length the enumerator already brought into cache.
+    /// <para>
+    /// Generic over the weight and constrained to a <c>struct</c> on purpose. A
+    /// <c>Func</c>-shaped or interface-shaped call here would be an indirect call per posting
+    /// entry, which at these volumes costs more than everything else in the loop put together.
+    /// </para>
+    /// </remarks>
+    void IAccumulatingIndex.Accumulate<TWeight>(TWeight weight, ScoreAccumulator accumulator)
+    {
+        if (!_postings.TryGetValue(weight.Term, out var posting))
+            return;
+
+        var flat = posting.Flat;
+
+        if (flat is null || flat.Epoch != _epoch)
+        {
+            flat = BuildFlatPosting(posting, _epoch);
+            posting.PublishFlat(flat);
+        }
+
+        int[] ordinals = flat.Ordinals;
+        int[] frequencies = flat.Frequencies;
+        int[] lengths = _lengthsByOrdinal;
+        int count = flat.Count;
+
+        for (int i = 0; i < count; i++)
+        {
+            int ordinal = ordinals[i];
+            accumulator.Record(ordinal, weight.Weight(frequencies[i], lengths[ordinal]));
+        }
+    }
+
+    /// <summary>
+    /// The contiguous copy of one posting list, ordered by document ordinal.
+    /// </summary>
+    /// <remarks>
+    /// Sorting is what turns the accumulator's scatter into a mostly sequential one: the ordinals
+    /// come out of the dictionary in hash order, which is close to random, and walking them in
+    /// ordinal order lets the score writes sweep forward through the buffer instead of jumping
+    /// across it. The sort also means the touched-ordinal list a search produces is ascending, so
+    /// two runs over the same corpus visit the same documents in the same order.
+    /// </remarks>
+    private FlatPosting BuildFlatPosting(PostingList posting, int epoch)
+    {
+        int count = posting.ByDocument.Count;
+        var ordinals = new int[count];
+        var frequencies = new int[count];
+
+        int i = 0;
+
+        foreach (var placed in posting.ByDocument.Values)
+        {
+            ordinals[i] = placed.Ordinal;
+            frequencies[i] = placed.Positions.Count;
+            i++;
+        }
+
+        Array.Sort(ordinals, frequencies);
+
+        return new FlatPosting(epoch, ordinals, frequencies);
+    }
+
+    /// <inheritdoc />
+    public int OrdinalSpace => _byOrdinal.Count;
+
+    /// <inheritdoc />
+    public SearchDocument? DocumentAt(int ordinal) =>
+        ordinal >= 0 && ordinal < _byOrdinal.Count ? _byOrdinal[ordinal] : null;
 
     /// <inheritdoc />
     public TextIndexStatistics GetStatistics() => TextIndexStatistics.From(this);

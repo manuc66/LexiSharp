@@ -111,7 +111,7 @@ public sealed class TfIdfScorer : ITermOverlapScorer, IQueryPlannableScorer, ISc
             new Dictionary<string, double>());
     }
 
-    private sealed class TfIdfQueryPlan : ISearchQueryPlan
+    private sealed class TfIdfQueryPlan : IAccumulatingQueryPlan
     {
         private readonly ITextIndex _index;
         private readonly string[] _terms;
@@ -155,5 +155,28 @@ public sealed class TfIdfScorer : ITermOverlapScorer, IQueryPlannableScorer, ISc
 
             return score;
         }
+
+        /// <inheritdoc />
+        /// <remarks>
+        /// TF-IDF applies no length normalization, so a document's contribution depends on its term
+        /// frequency alone and the accumulation loop has nothing to carry but the idf.
+        /// </remarks>
+        public bool TryAccumulate(IAccumulatingIndex index, ScoreAccumulator accumulator)
+        {
+            if (_index.Count == 0)
+                return false;
+
+            for (int i = 0; i < _terms.Length; i++)
+                index.Accumulate(new TfIdfWeight(_terms[i], _idf[i]), accumulator);
+
+            return true;
+        }
+    }
+
+    private readonly struct TfIdfWeight(string term, double idf) : IPostingWeight
+    {
+        public string Term => term;
+
+        public double Weight(int termFrequency, int documentLength) => termFrequency * idf;
     }
 }
