@@ -39,8 +39,8 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
-        with:
-          dotnet-version: '10.0.x'
+      # No dotnet-version here on purpose: setup-dotnet installs the version it is
+      # given *as well as* the one in global.json, so naming one leaves the float.
 
       # coverlet.msbuild instruments during the build, so coverage collection
       # requires the build to happen inside the same dotnet test invocation
@@ -140,10 +140,10 @@ jobs:
         # `cod-shape compare` reports, on two manifests, when you go looking.
         #
         # Read a size difference across two runs as a question, not a finding: the manifest
-        # measures what the compiler emitted, no SDK version is pinned (no global.json, and
-        # 10.0.x floats), and the first run of this step reported 135,181 IL bytes for
-        # LexiSharp.dll where a local build of the same commit gave 135,373, with identical
-        # method counts. Same source, different compiler patch.
+        # measures what the compiler emitted, and the first run of this step reported 135,181 IL
+        # bytes for LexiSharp.dll where a local build of the same commit gave 135,373, with
+        # identical method counts. Same source, SDK 10.0.401 against 10.0.111 - which is what
+        # moved it, and what global.json now pins so a manifest and a local build agree.
         run: |
           mkdir -p "$RUNNER_TEMP/cod-shape"
 
@@ -215,8 +215,8 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
-        with:
-          dotnet-version: '10.0.x'
+      # No dotnet-version here on purpose: setup-dotnet installs the version it is
+      # given *as well as* the one in global.json, so naming one leaves the float.
 
       - name: Build
         run: dotnet build LexiSharp.slnx -c Release
@@ -246,8 +246,8 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
-        with:
-          dotnet-version: '10.0.x'
+      # No dotnet-version here on purpose: setup-dotnet installs the version it is
+      # given *as well as* the one in global.json, so naming one leaves the float.
 
       - name: Build
         run: dotnet build LexiSharp.slnx -c Release
@@ -277,8 +277,8 @@ jobs:
           fetch-depth: 0
 
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
-        with:
-          dotnet-version: '10.0.x'
+      # No dotnet-version here on purpose: setup-dotnet installs the version it is
+      # given *as well as* the one in global.json, so naming one leaves the float.
 
       - name: Install SonarScanner for .NET
         run: dotnet tool install --global dotnet-sonarscanner --version 11.2.1
@@ -365,8 +365,8 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
-        with:
-          dotnet-version: '10.0.x'
+      # No dotnet-version here on purpose: setup-dotnet installs the version it is
+      # given *as well as* the one in global.json, so naming one leaves the float.
 
       - name: Run one benchmark class (short job)
         run: >

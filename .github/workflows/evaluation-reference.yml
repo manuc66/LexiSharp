@@ -26,15 +26,19 @@ name: Pinned reference
 # committed baselines, a tolerance, and a non-zero exit on drift. If a run is red, the numbers in the
 # README and docs/evaluation.md are wrong until someone explains why.
 on:
-  # The one case the two triggers below cannot see: the runner's SDK moved and nobody pushed. The
-  # repository pins no SDK - there is no global.json, and every setup-dotnet step asks for 10.0.x,
-  # which floats - so a pin can go red with no commit deserving it, and the drift is not found
-  # until the next commit under one of the paths below turns this run red and is blamed for it. The
-  # host record this job already writes is what tells the two apart.
+  # The case the push trigger below cannot see. The repository pinned no SDK until commit 42ed550:
+  # every setup-dotnet step asked for 10.0.x, which resolved to 10.0.111 on a developer machine and
+  # 10.0.401 on the runner, and a pin could go red with no commit deserving it - the drift is then
+  # found by the next commit under one of the paths below, which turns this run red and gets blamed
+  # for it. global.json now pins the SDK, so the frequent half of that is closed.
   #
-  # This is not the fix for that drift, and it is not what would have caught QueryTermWeighting: a
-  # push covers a regression, and a global.json would pin the toolchain. What a schedule adds is
-  # detection for a drift that nobody caused, which is worth one run a week.
+  # The schedule is not redundant with the pin, and the reason is narrow. A pin freezes the version
+  # this repository chooses; it does not freeze the base image, the runtime patch or the RID, and
+  # those still move underneath a commit that never touched a file. What a schedule adds is
+  # detection for a drift nobody caused - one run a week, cheap enough to be worth it for that.
+  #
+  # It is also not what would have caught QueryTermWeighting. A push covers a regression; the
+  # schedule covers the environment. Both were needed, and the incident needed the first.
   #
   # Monday 05:23 UTC. Off the top of the hour, because GitHub delays scheduled runs queued at :00
   # under load; off the working day, because each run downloads about 100 MB of corpora and two
@@ -47,6 +51,10 @@ on:
       - 'src/**'
       - 'bench/LexiSharp.Eval/**'
       - 'Directory.Build.props'
+      # global.json is here for the same reason Directory.Build.props is: it decides what these
+      # numbers are measured with. Bumping the SDK can move a score without touching a single file
+      # under src/, and the commit that made that change would otherwise ship without a replay.
+      - 'global.json'
 
 permissions:
   contents: read
@@ -67,8 +75,8 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
-        with:
-          dotnet-version: '10.0.x'
+      # No dotnet-version here on purpose: setup-dotnet installs the version it is
+      # given *as well as* the one in global.json, so naming one leaves the float.
 
       - name: Record the host these numbers come from
         run: |

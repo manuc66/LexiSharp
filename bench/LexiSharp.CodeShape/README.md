@@ -64,10 +64,12 @@ assemblies.
 emitted, so a different SDK patch can move it with the source untouched. That is not
 hypothetical: the manifests published by the first CI run of this tool gave 135,181 IL bytes for
 `LexiSharp.dll`, where a local build of the same commit gave 135,373 — identical method counts,
-different code sizes. The repository pins no SDK version (no `global.json`, and the workflows ask
-for `10.0.x`, which floats), so the runner and a local machine are not guaranteed to agree. A
-`global.json` would be the fix; until then, read a size difference across two runs as a question,
-not as a finding.
+different code sizes, on SDK 10.0.401 and 10.0.111 respectively. Same source, different compiler.
+
+The repository now pins the SDK in `global.json`, so a build here and a build on the runner use
+the same one. A manifest recorded before that pin is still only comparable with a manifest
+recorded under the same SDK, and `SdkPinTests` is what keeps the two sides from drifting apart
+again. Read a size difference across two runs as a question, not as a finding.
 
 It is advisory and gates nothing, because every ordinary source edit changes a manifest. A gate
 would have to compare against a baseline, and a baseline is only worth having for the assemblies
