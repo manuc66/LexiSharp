@@ -1,0 +1,180 @@
+using System.Globalization;
+using LexiSharp.Core;
+using LexiSharp.Indexing;
+using LexiSharp.Linguistics;
+using LexiSharp.Ranking;
+
+namespace LexiSharp.Eval;
+
+/// <summary>
+/// The regression net: replays every pinned configuration and reports which ones drifted.
+/// </summary>
+/// <remarks>
+/// Each pin is re-measured from scratch — its own index, its own analyzer, its own BM25 parameters —
+/// so a change anywhere between the tokenizer and the metric surfaces as a number that no longer
+/// matches. The check is a tolerance band rather than an exact value because a nDCG@10 averaged over
+/// 300 to 1406 queries is a double whose last digits are not a contract; the tolerance is the part
+/// that is asserted, and it is tight enough to catch a real change.
+/// <para>
+/// Index fingerprints are checked first and independently, because they cost no retrieval and say
+/// something a score cannot: whether this run and the reference indexed the same thing. A drift
+/// there invalidates every parity comparison at once, so it is worth catching even when the
+/// effectiveness pins happen to hold.
+/// </para>
+/// </remarks>
+internal static class ReferenceVerifier
+{
+    public static async Task<int> RunAsync(
+        PinnedReference pinned, string dataBaseDir, bool write, CancellationToken cancellationToken)
+    {
+        var regressions = new List<(bool Ok, string Line)>();
+        var fingerprints = new List<(bool Ok, string Line)>();
+
+        foreach (var pin in pinned.RegressionPins)
+        {
+            var dataset = BeirDataset.Resolve(pin.Corpus);
+            var corpus = await BeirLoader.LoadOrDownloadAsync(dataBaseDir, dataset);
+            var index = new InMemoryTextIndex(BuildTokenizer(pin.Analyzer));
+            index.Index(Evaluation.BuildDocuments(corpus));
+
+            var measured = Measure(corpus, index, pin, cancellationToken);
+            bool ok = pin.Accepts(measured);
+            double delta = measured - pin.ExpectedNdcg;
+
+            string line =
+                $"{(ok ? "ok  " : "DRIFT")}  {pin.Config,-40} nDCG@10 {measured.ToString("0.0000", CultureInfo.InvariantCulture)}"
+                + $"  expected {pin.ExpectedNdcg.ToString("0.0000", CultureInfo.InvariantCulture)}"
+                + $"  delta {delta:+0.0000;-0.0000;+0.0000}"
+                + $"  tolerance ±{pin.Tolerance.ToString("0.000", CultureInfo.InvariantCulture)}";
+
+            if (!ok)
+            {
+                line += Environment.NewLine + "      reproduce: " + pin.CommandLine(dataBaseDir);
+                line += Environment.NewLine
+                    + "      if the change is intended, re-record with --verify-reference --write and read the diff.";
+            }
+
+            regressions.Add((ok, line));
+        }
+
+        foreach (var pin in pinned.IndexFingerprints)
+        {
+            var dataset = BeirDataset.Resolve(pin.Corpus);
+            var corpus = await BeirLoader.LoadOrDownloadAsync(dataBaseDir, dataset);
+            var index = new InMemoryTextIndex(BuildTokenizer(pin.Analyzer));
+            index.Index(Evaluation.BuildDocuments(corpus));
+
+            var measured = IndexFingerprint.Of(index);
+            double difference = Math.Abs(measured.TotalTerms - pin.ReferenceTotalTerms) / (double)pin.ReferenceTotalTerms;
+            bool ok = difference <= pin.Tolerance
+                      && measured.Documents == pin.Documents
+                      && measured.NonEmptyDocuments == pin.NonEmptyDocuments;
+
+            fingerprints.Add((ok,
+                $"{(ok ? "ok  " : "DRIFT")}  {pin.Corpus + "/" + pin.Analyzer,-40}"
+                + $" terms {measured.TotalTerms} vs reference {pin.ReferenceTotalTerms}"
+                + $"  difference {difference:P1}  tolerance {pin.Tolerance:P0}"
+                + (ok ? string.Empty : "  — the indexes are not the same, so parity below is not a comparison")));
+        }
+
+        Console.WriteLine($"Index fingerprints ({pinned.Metric} parity depends on these)");
+        foreach (var (_, line) in fingerprints)
+            Console.WriteLine("  " + line);
+
+        Console.WriteLine();
+        Console.WriteLine("Regression pins (values this repository must keep producing)");
+        foreach (var (_, line) in regressions)
+            Console.WriteLine("  " + line);
+
+        Console.WriteLine();
+        Console.WriteLine("Parity against the published BM25 baselines (evidence, not assertions)");
+        foreach (var row in pinned.Parity)
+        {
+            Console.WriteLine(
+                $"  {row.Corpus,-40} LexiSharp {row.LexisharpNdcg.ToString("0.0000", CultureInfo.InvariantCulture)}"
+                + $"  reference {row.ReferenceNdcg.ToString("0.0000", CultureInfo.InvariantCulture)}"
+                + $"  difference {row.Difference:+0.0000;-0.0000;+0.0000}"
+                + (row.AlignedParameters
+                    ? "  (same BM25 parameters)"
+                    : $"  (reference at k1={row.ReferenceK1.ToString("0.##", CultureInfo.InvariantCulture)},"
+                      + $" b={row.ReferenceB.ToString("0.##", CultureInfo.InvariantCulture)} — not the parameters measured here)"));
+
+            if (!string.IsNullOrWhiteSpace(row.Note))
+                Console.WriteLine("      " + row.Note);
+        }
+
+        bool clean = regressions.All(entry => entry.Ok) && fingerprints.All(entry => entry.Ok);
+
+        if (write)
+        {
+            Console.WriteLine();
+            Console.WriteLine("--write was passed: the file was not modified. Re-recording is a separate, " +
+                              "deliberate act — run it only after reading what moved and why.");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(clean
+            ? "OK: every pinned configuration reproduced, and every index matches its reference."
+            : "FAILED: a pinned configuration drifted. Do not re-record to make this pass; find out what moved first.");
+
+        return clean ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Measures one pinned configuration. Built here rather than reused from the table so a pin
+    /// measures exactly what it names and nothing the table happens to add.
+    /// </summary>
+    private static double Measure(
+        BeirCorpus corpus, ITextIndex index, PinnedReference.RegressionPin pin, CancellationToken cancellationToken)
+    {
+        var engine = new RankedTextSearchEngine(
+            index, new Bm25Scorer(pin.Bm25.K1, pin.Bm25.B), BuildTokenizer(pin.Analyzer));
+
+        var gain = pin.NdcgGain == "linear" ? NdcgGain.Linear : NdcgGain.Exponential;
+        var documentIds = corpus.Documents.Select(document => document.Id).ToHashSet(StringComparer.Ordinal);
+
+        var queries = corpus.Queries
+            .Where(query => corpus.TestRelevance.ContainsKey(query.Id))
+            .OrderBy(query => query.Id, StringComparer.Ordinal)
+            .Take(pin.Queries == 0 ? int.MaxValue : pin.Queries)
+            .ToList();
+
+        double total = 0;
+
+        foreach (var query in queries)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            IReadOnlySet<string>? excluded = pin.ExcludeQueryDocument && documentIds.Contains(query.Id)
+                ? new HashSet<string>(StringComparer.Ordinal) { query.Id }
+                : null;
+
+            var retrieved = engine
+                .Search(query.Text, new SearchOptions(10, ExcludedDocumentIds: excluded))
+                .Select(result => result.DocumentId)
+                .ToArray();
+
+            total += RetrievalMetrics.NdcgAtK(retrieved, corpus.TestRelevance[query.Id], 10, gain);
+        }
+
+        return queries.Count == 0 ? 0 : total / queries.Count;
+    }
+
+    private static ITokenizer BuildTokenizer(string analyzer) => analyzer switch
+    {
+        "default" => Tokenizer.Default,
+        "porter" => new Tokenizer(new TokenizerOptions
+        {
+            Stemmer = new PorterStemmer(),
+            RemoveStopWords = true,
+        }),
+        "lucene-english" => new Tokenizer(new TokenizerOptions
+        {
+            Stemmer = new PorterStemmer(),
+            RemoveStopWords = true,
+            StopWords = StopWords.LuceneEnglish,
+            KeepSingleCharTerms = true,
+        }),
+        _ => throw new ArgumentException($"Unknown analyzer '{analyzer}' in the pinned reference file."),
+    };
+}

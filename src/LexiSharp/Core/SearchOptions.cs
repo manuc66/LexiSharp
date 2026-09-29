@@ -22,6 +22,11 @@ namespace LexiSharp.Core;
 /// words are corrected, so a correctly spelled word can no longer be degraded by unrelated
 /// close variants. Default: <c>false</c> (start from the base form and add close variants).
 /// </param>
+/// <param name="ExcludedDocumentIds">
+/// Optional set of document ids to leave out of the ranking, whatever they score. Excluded
+/// documents are gated before scoring, so they cost no relevance computation. Default:
+/// <c>null</c> — nothing is excluded, and the check costs one null test per candidate.
+/// </param>
 /// <param name="Trace">
 /// Optional <see cref="SearchTrace"/> to record each ranking stage into. Default: <c>null</c> —
 /// no engine records, allocates or formats anything. See <see cref="SearchTrace"/> for the bounds
@@ -33,6 +38,7 @@ public sealed record SearchOptions(
     IReadOnlyList<MetadataFilter>? Filters = null,
     int Offset = 0,
     bool FuzzyOnlyOutOfVocabulary = false,
+    IReadOnlySet<string>? ExcludedDocumentIds = null,
     SearchTrace? Trace = null)
 {
     public static readonly SearchOptions Default = new();
@@ -52,11 +58,20 @@ public sealed record SearchOptions(
     public int Window => Offset > int.MaxValue - Limit ? int.MaxValue : Offset + Limit;
 
     /// <summary>
-    /// Whether the document passes every configured filter. Documents always pass when no
-    /// filter is set.
+    /// Whether the document passes every configured filter and is not excluded by id. Documents
+    /// always pass when neither is set.
     /// </summary>
     internal bool PassesFilters(SearchDocument document)
     {
+        // Id exclusion is checked first and on its own line because it is the one gate that can be
+        // set without a filter list, and this method runs once per candidate document. The null
+        // test is what the overwhelmingly common case pays; the lookup is only reached by a caller
+        // that asked for exclusions.
+        var excluded = ExcludedDocumentIds;
+
+        if (excluded is not null && excluded.Count > 0 && excluded.Contains(document.Id))
+            return false;
+
         var filters = Filters;
 
         if (filters is null || filters.Count == 0)

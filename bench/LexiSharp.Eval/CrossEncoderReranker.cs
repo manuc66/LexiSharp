@@ -328,7 +328,9 @@ internal sealed class RerankTextSearchEngine(
     {
         options ??= SearchOptions.Default;
 
-        var candidateResults = baseEngine.Search(query, new SearchOptions(candidates));
+        // The caller's exclusions reach the first stage, so the reranker never spends a cross-encoder
+        // pass on a document the caller has already excluded.
+        var candidateResults = baseEngine.Search(query, new SearchOptions(candidates, ExcludedDocumentIds: options.ExcludedDocumentIds));
         var byId = candidateResults.ToDictionary(candidate => candidate.DocumentId, StringComparer.Ordinal);
 
         var reranked = reranker.Rerank(query, candidateResults.Select(candidate => candidate.Document).ToList());

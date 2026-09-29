@@ -29,9 +29,37 @@ and it grants no licence over the datasets it downloads.
 | SciFact (300 judged queries) | 0.662 | 0.665 | −0.5 % |
 | ArguAna (1406 judged queries) | 0.289 | 0.315 | −8.3 % |
 
-That is the honest headline: a dependency-free BM25 lands within half a point of a
-reference implementation on SciFact and 5–8 % below it on the other two. A gap that size is
-a starting point worth measuring, not a claim of parity.
+**Those deltas are a statement about the configuration, not about the engine, and the rest of this
+page is the correction.** Each one compares two different systems: the left column is BM25 under
+`Tokenizer.Default` (no stemming, stop words kept) at k1=1.5/b=0.75; the right column is BM25 under
+Lucene's `EnglishAnalyzer` at k1=0.9/b=0.4. Measured on the same corpora, with the analysis, the
+parameters and the metric convention aligned:
+
+| Corpus | LexiSharp, aligned | Anserini, published | Δ at matched parameters |
+|---|---:|---:|---:|
+| NFCorpus | 0.3215 at k1=0.9, b=0.4 | 0.3218 | −0.0003 |
+| SciFact | 0.6788 at k1=0.9, b=0.4 | 0.6789 | −0.0001 |
+| ArguAna | 0.3056 at k1=3.0, b=0.75 | 0.3970 at k1=0.9, b=0.4 | parameters cannot be aligned |
+
+At the published operating point, NFCorpus and SciFact reproduce an independent implementation to
+the fourth decimal. The engine was never behind; the comparison was measuring the analyzer.
+
+The reference is also **newer than the table it is compared against**: Anserini publishes a
+per-corpus regression for this exact index, and its current ArguAna figure is 0.3970, not the 0.315
+of the 2021 paper. ArguAna remains 0.11 below that, and it is the one genuine open gap: its
+sensitivity to k1 runs opposite to the other two corpora, so the parameters cannot be aligned and no
+like-for-like comparison is available yet.
+
+Reproduce the alignment, and check it against pinned values:
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
+  --analyzer lucene-english --ndcg-gain linear --reference-bm25 0.9,0.4
+dotnet run --project bench/LexiSharp.Eval -c Release -- --verify-reference
+```
+
+See [the harness README](../bench/LexiSharp.Eval/README.md) for what each flag changes and
+`reference/pinned.json` for the measured values.
 
 **NFCorpus, the one corpus where the whole stack is measured** (nDCG@10 / MAP@10 / MRR@10 /
 R@10, 323 judged queries, default tokenizer, no stemming):
@@ -69,7 +97,9 @@ What it does **not** say:
   rows at all, so the full stack is measured on **one** of the three corpora, not three;
 - stemming is not settled either: `--stem porter` takes NFCorpus 0.308 → 0.322 and SciFact
   0.662 → 0.687, and *hurts* ArguAna 0.289 → 0.279. That is why it stays opt-in — see
-  [Tokenizer customization](indexing.md#tokenizer-customization);
+  [Tokenizer customization](indexing.md#tokenizer-customization). What that comparison leaves out is
+  the stop word list, which is the larger half of the analysis: `--analyzer lucene-english` (Porter
+  plus Lucene's own 33 words) takes SciFact to 0.692 and NFCorpus to 0.327;
 - ArguAna's BM25F 0.344 is **untested, not a result**: it is default-vs-default, and a tuned
   BM25 over its 1406 queries did not fit the compute available here.
 
@@ -81,13 +111,19 @@ literature:
 | Metric | The question it answers |
 |---|---|
 | `Precision@k`, `Recall@k`, `F1@k` | how much of the page was right, how much of the truth was found |
-| `nDCG@k`, binary and **graded** (exponential gains) | is the right document near the top, weighted by its grade |
+| `nDCG@k`, binary and **graded**, both gain conventions | is the right document near the top, weighted by its grade |
 | `ReciprocalRank@k` (→ MRR) | how high the first relevant document appears |
 | `AveragePrecision@k` (→ MAP) | precision at every rank where a relevant document appears |
 
 Relevance grades come from the qrels file. A query carrying no judgement is loaded and
 counted in the run, but excluded from the averages rather than scored as a zero — silently
 averaging in a zero is how a harness flatters itself.
+
+**nDCG has two conventions and only one of them is the published one.** `NdcgAtK` defaults to
+exponential gains (`2^rel − 1`); `trec_eval` — and therefore `pytrec_eval`, and therefore the BEIR
+paper's Table 2 — sets the gain to the relevance level itself. They agree on binary relevance and
+disagree on a graded corpus: NFCorpus scores 0.3080 exponential against 0.3071 linear for the same
+run. Pass `--ndcg-gain linear` before quoting a number next to a published one.
 
 ## Tuning BM25, BM25F, BM25+ and BM25L
 
