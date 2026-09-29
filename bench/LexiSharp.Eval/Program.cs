@@ -27,6 +27,7 @@ public static class Program
         Bm25Parameters? referenceBm25 = null;
         string? verifyAgainst = null;
         bool writePins = false;
+        bool queryFrequency = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -73,6 +74,9 @@ public static class Program
                     break;
                 case "--fingerprint":
                     fingerprintOnly = true;
+                    break;
+                case "--query-term-frequency":
+                    queryFrequency = true;
                     break;
                 case "--reference-bm25" when i + 1 < args.Length:
                     referenceBm25 = ParseBm25Parameters(args[++i]);
@@ -148,14 +152,14 @@ public static class Program
 
         NdcgGain gain = ParseNdcgGain(ndcgGain);
         Console.WriteLine(
-            $"nDCG gains: {(gain == NdcgGain.Linear ? "linear (trec_eval / pytrec_eval, the BEIR paper's convention)" : "exponential (2^rel - 1, the library default)")}.");
+            $"nDCG gains: {(gain == NdcgGain.Linear ? "linear (gain = rel, the convention the published figures use)" : "exponential (2^rel - 1, the library default)")}.");
 
         if (excludeQueryDocument)
         {
             Console.WriteLine(
-                "Excluded: the document whose id equals the query id, which is what Anserini's " +
-                "-removeQuery does. Affects only corpora where queries are documents (ArguAna: " +
-                "1298 of 1406 test queries); a no-op elsewhere.");
+                "Excluded: the document whose id equals the query id, which is the convention the " +
+                "published ArguAna figure was produced under. Affects only corpora that number " +
+                "their queries as documents (ArguAna: 1298 of 1406 test queries); a no-op elsewhere.");
         }
 
         Console.WriteLine();
@@ -164,7 +168,8 @@ public static class Program
         {
             await RunDatasetAsync(
                 dataset, dataBaseDir, topK, limit, tokenizer, analysisDescription, gain,
-                excludeQueryDocument, fingerprintOnly, referenceBm25, dense, denseSeq, tuned, reranker, rerankCandidates);
+                excludeQueryDocument, fingerprintOnly, referenceBm25, queryFrequency, dense, denseSeq,
+                tuned, reranker, rerankCandidates);
             Console.WriteLine();
         }
 
@@ -173,10 +178,9 @@ public static class Program
 
     /// <summary>
     /// Builds the shared tokenizer for a run, and the description of the analysis it applies.
-    /// <c>lucene-english</c> is the analysis the published BM25 baselines were produced with —
-    /// Lucene's <c>EnglishAnalyzer</c>: Porter stemming, its 33-word stop word list, and
-    /// single-character terms kept — and it is the only setting under which a LexiSharp number is
-    /// comparable with those published figures.
+    /// <c>english</c> is the analysis the published BM25 baselines were produced with — Porter
+    /// stemming, a 33-word function-word list, and single-character terms kept — and it is the
+    /// only setting under which a LexiSharp number is comparable with those published figures.
     /// </summary>
     private static (ITokenizer Tokenizer, string Description) BuildAnalysis(string analyzer, bool stem)
     {
@@ -189,17 +193,17 @@ public static class Program
                 Stemmer = new PorterStemmer(),
                 RemoveStopWords = true,
             },
-            "lucene-english" => new TokenizerOptions
+            "english" => new TokenizerOptions
             {
                 Stemmer = new PorterStemmer(),
                 RemoveStopWords = true,
-                StopWords = StopWords.LuceneEnglish,
-                // Lucene's StandardTokenizer emits one-character terms and its stop list keeps "i",
-                // so dropping them here would make this index hold terms Lucene's does not.
+                StopWords = StopWords.EnglishFunction,
+                // The reference analysis keeps single-character terms and its stop list keeps "i",
+                // so dropping them here would make this index hold terms the reference does not.
                 KeepSingleCharTerms = true,
             },
             _ => throw new ArgumentException(
-                $"--analyzer expects 'default', 'porter' or 'lucene-english', got '{analyzer}'."),
+                $"--analyzer expects 'default', 'porter' or 'english', got '{analyzer}'."),
         };
 
         // Tokenizer.Default is a shared instance built from TokenizerOptions.Default; naming its
@@ -217,7 +221,7 @@ public static class Program
         string stopWords = options.RemoveStopWords
             ? options.StopWords is null || ReferenceEquals(options.StopWords, StopWords.English)
                 ? "LexiSharp stop words"
-                : "Lucene stop words"
+                : "function-word stop list"
             : "stop words kept";
 
         string singleChar = options.KeepSingleCharTerms ? ", single-char terms kept" : string.Empty;
@@ -228,7 +232,7 @@ public static class Program
     private static async Task RunDatasetAsync(
         BeirDataset dataset, string dataBaseDir, int topK, int? limit, ITokenizer tokenizer,
         string analysisDescription, NdcgGain gain, bool excludeQueryDocument, bool fingerprintOnly,
-        Bm25Parameters? referenceBm25, bool dense, int denseSeq, bool tuned,
+        Bm25Parameters? referenceBm25, bool queryFrequency, bool dense, int denseSeq, bool tuned,
         IReranker? reranker, int rerankCandidates)
     {
         Console.WriteLine($"== {dataset.Name} ==");
@@ -267,7 +271,7 @@ public static class Program
 
         var (results, tunedDescription) = Evaluation.Run(
             corpus, topK, limit, tokenizer, excludeQueryDocument, gain, referenceBm25,
-            denseVectors, tuned, reranker, rerankCandidates);
+            queryFrequency, denseVectors, tuned, reranker, rerankCandidates);
 
         PrintTable(results, topK);
         PrintReference(dataset, analysisDescription, gain);
@@ -277,7 +281,7 @@ public static class Program
             "Note: absolute scores depend on the analysis, which is why the run states it. The " +
             "relative ordering of the configs above is meaningful within a run; the comparison to " +
             "the published reference is meaningful only under the analysis the reference used " +
-            "(--analyzer lucene-english for the Anserini/Pyserini figures).");
+            "(--analyzer english for the published figures).");
     }
 
     private static void PrintTable(IReadOnlyList<ConfigResult> results, int topK)
@@ -319,12 +323,12 @@ public static class Program
             ? "  Relevance is graded (3 levels) in the qrels."
             : "  Relevance is binary (0/1) in the qrels.");
 
-        if (dataset.AnseriniNdcg10Ref is { } anserini)
+        if (dataset.PublishedNdcg10Ref is { } published)
         {
             Console.WriteLine(
-                $"Reference (Anserini regression for the same flat index, current): BM25 nDCG@10 = " +
-                $"{anserini.ToString("0.0000", CultureInfo.InvariantCulture)} on {dataset.Name}.");
-            Console.WriteLine($"  {dataset.AnseriniSource}");
+                $"Reference (independent implementation, same flat index, current): BM25 nDCG@10 = " +
+                $"{published.ToString("0.0000", CultureInfo.InvariantCulture)} on {dataset.Name}.");
+            Console.WriteLine($"  {dataset.PublishedSource}");
         }
 
         Console.WriteLine($"This run's analysis: {analysisDescription}.");
@@ -336,9 +340,9 @@ public static class Program
         if (gain == NdcgGain.Exponential && dataset.Graded)
         {
             Console.WriteLine(
-                "  nDCG here uses 2^rel - 1. The reference figures were computed by trec_eval, which" +
-                " uses gain = rel; pass --ndcg-gain linear to compare like with like. On a binary" +
-                " corpus the two are identical, so this only matters for a graded one.");
+                "  nDCG here uses 2^rel - 1. The published figures use gain = rel; pass" +
+                " --ndcg-gain linear to compare like with like. On a binary corpus the two are" +
+                " identical, so this only matters for a graded one.");
         }
     }
 
@@ -357,7 +361,7 @@ public static class Program
         Console.WriteLine($"  documents (non-empty): {fingerprint.NonEmptyDocuments}");
         Console.WriteLine($"  total terms         : {fingerprint.TotalTerms}");
 
-        if (dataset.AnseriniTotalTerms is not { } expected || dataset.Documents is not { } documents)
+        if (dataset.PublishedTotalTerms is not { } expected || dataset.Documents is not { } documents)
             return;
 
         var reference = new IndexFingerprint(
@@ -366,7 +370,7 @@ public static class Program
         double difference = fingerprint.RelativeDifference(reference);
 
         Console.WriteLine(
-            $"  reference (Anserini) : {reference.Documents} / {reference.NonEmptyDocuments} / " +
+            $"  reference          : {reference.Documents} / {reference.NonEmptyDocuments} / " +
             $"{reference.TotalTerms} terms — difference {difference:P1}");
         Console.WriteLine(
             difference <= FingerprintTolerance
@@ -377,8 +381,8 @@ public static class Program
 
     /// <summary>
     /// How far an index fingerprint may drift from the reference before the run says so. The
-    /// measured gap is 1.1–2.8% on these three corpora (Porter plus Lucene's stop list against
-    /// Lucene's own filter chain), so a tighter band would report a disagreement where none exists.
+    /// measured gap is 1.1–2.8% on these three corpora, so a tighter band would report a
+    /// disagreement where none exists.
     /// </summary>
     private const double FingerprintTolerance = 0.03;
 
@@ -463,20 +467,27 @@ public static class Program
                                 opt-in; off by default, so the tables stay comparable).
               --analyzer <name> Analysis for the whole run: 'default' (lowercase, diacritics folded,
                                 no stemming, stop words kept), 'porter' (stemming + LexiSharp stop
-                                words) or 'lucene-english' (Porter + Lucene's 33-word stop list +
-                                single-character terms kept). 'lucene-english' is the analysis the
+                                words) or 'english' (Porter + the conventional 33-word stop list +
+                                single-character terms kept). 'english' is the analysis the
                                 published BM25 baselines used, and the only one under which these
                                 numbers are comparable with them.
               --exclude-query-doc
                                 Exclude the document whose id equals the query id, which is what
-                                Anserini's -removeQuery does. Affects only corpora that number their
+                                published figures was produced under. Affects only corpora that number their
                                 queries as documents (ArguAna: 1298 of 1406 test queries); a no-op
                                 on the others.
               --ndcg-gain <name>
                                 nDCG gain convention: 'exponential' (2^rel - 1, the library default)
-                                or 'linear' (gain = rel, what trec_eval/pytrec_eval use, and so what
-                                the published BEIR figures were computed with). Identical on binary
-                                relevance; pass 'linear' to compare with a published number.
+                                or 'linear' (gain = rel, the convention the published figures were
+                                computed with). Identical on binary relevance; pass 'linear' to
+                                compare with a published number.
+              --query-term-frequency
+                                Score a repeated query term once per occurrence, as a reference
+                                implementation does,
+                                instead of once. Decisive where a query is a document: on ArguAna
+                                (every test query is a whole argument) 0.2197 -> 0.2902 at
+                                k1=0.9/b=0.4, and 0.4061 at k1=3.0. On NFCorpus and SciFact, whose
+                                queries are short, it changes nothing to four decimals.
               --reference-bm25 <k1,b>
                                 Add a BM25 row at these parameters, e.g. 0.9,0.4 — the defaults the
                                 published BM25 baselines were produced with, which is neither of the

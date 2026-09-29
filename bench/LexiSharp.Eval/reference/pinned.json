@@ -31,9 +31,9 @@
       "note": "The default analyzer, no stemming. Kept because every published table in this repository is this row."
     },
     {
-      "config": "nfcorpus/lucene-english",
+      "config": "nfcorpus/english",
       "corpus": "nfcorpus",
-      "analyzer": "lucene-english",
+      "analyzer": "english",
       "ndcgGain": "linear",
       "bm25": { "k1": 1.5, "b": 0.75 },
       "excludeQueryDocument": false,
@@ -54,9 +54,9 @@
       "tolerance": 0.002
     },
     {
-      "config": "scifact/lucene-english",
+      "config": "scifact/english",
       "corpus": "scifact",
-      "analyzer": "lucene-english",
+      "analyzer": "english",
       "ndcgGain": "linear",
       "bm25": { "k1": 1.5, "b": 0.75 },
       "excludeQueryDocument": false,
@@ -77,9 +77,9 @@
       "tolerance": 0.002
     },
     {
-      "config": "arguana/lucene-english+exclude",
+      "config": "arguana/english+exclude",
       "corpus": "arguana",
-      "analyzer": "lucene-english",
+      "analyzer": "english",
       "ndcgGain": "linear",
       "bm25": { "k1": 1.5, "b": 0.75 },
       "excludeQueryDocument": true,
@@ -92,7 +92,7 @@
   "indexFingerprints": [
     {
       "corpus": "nfcorpus",
-      "analyzer": "lucene-english",
+      "analyzer": "english",
       "documents": 3633,
       "nonEmptyDocuments": 3633,
       "totalTerms": 655155,
@@ -101,7 +101,7 @@
     },
     {
       "corpus": "scifact",
-      "analyzer": "lucene-english",
+      "analyzer": "english",
       "documents": 5183,
       "nonEmptyDocuments": 5183,
       "totalTerms": 850694,
@@ -110,7 +110,7 @@
     },
     {
       "corpus": "arguana",
-      "analyzer": "lucene-english",
+      "analyzer": "english",
       "documents": 8674,
       "nonEmptyDocuments": 8673,
       "totalTerms": 980418,
@@ -121,7 +121,7 @@
   "parity": [
     {
       "corpus": "nfcorpus",
-      "lexisharpConfig": "nfcorpus/lucene-english",
+      "lexisharpConfig": "nfcorpus/english",
       "lexisharpNdcg": 0.327,
       "referenceNdcg": 0.3218,
       "referenceParameters": { "k1": 0.9, "b": 0.4 },
@@ -130,7 +130,7 @@
     },
     {
       "corpus": "scifact",
-      "lexisharpConfig": "scifact/lucene-english",
+      "lexisharpConfig": "scifact/english",
       "lexisharpNdcg": 0.692,
       "referenceNdcg": 0.6789,
       "referenceParameters": { "k1": 0.9, "b": 0.4 },
@@ -139,7 +139,7 @@
     },
     {
       "corpus": "arguana",
-      "lexisharpConfig": "arguana/lucene-english+exclude",
+      "lexisharpConfig": "arguana/english+exclude",
       "lexisharpNdcg": 0.2864,
       "referenceNdcg": 0.397,
       "referenceParameters": { "k1": 0.9, "b": 0.4 },

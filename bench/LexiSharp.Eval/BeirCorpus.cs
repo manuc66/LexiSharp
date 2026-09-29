@@ -24,12 +24,12 @@ internal sealed class BeirCorpus
 /// independent implementation publishes one for the same index and task — its current reference.
 /// </summary>
 /// <param name="Bm25Ndcg10Ref">The figure in Table 2 of the BEIR paper.</param>
-/// <param name="AnseriniNdcg10Ref">
+/// <param name="PublishedNdcg10Ref">
 /// BM25 nDCG@10 from the Anserini regression for this corpus's "flat" index, which is the
 /// reproducible counterpart of <paramref name="Bm25Ndcg10Ref"/> and the one a comparison should
 /// use. Null where none is published.
 /// </param>
-/// <param name="AnseriniTotalTerms">
+/// <param name="PublishedTotalTerms">
 /// The <c>total terms</c> that Anserini's index of this corpus holds, as a fingerprint of the
 /// analysis a reference was produced with. Null where none is published.
 /// </param>
@@ -38,18 +38,18 @@ internal sealed class BeirCorpus
 /// How many of those documents produced at least one term. ArguAna is the one corpus where this is
 /// fewer than <paramref name="Documents"/>, which is itself worth checking against.
 /// </param>
-/// <param name="AnseriniSource">Where the Anserini figure and fingerprint are published.</param>
+/// <param name="PublishedSource">Where the Anserini figure and fingerprint are published.</param>
 internal sealed record BeirDataset(
     string Name,
     string DownloadUrl,
     string ExpectedMd5,
     double Bm25Ndcg10Ref,
     bool Graded,
-    double? AnseriniNdcg10Ref = null,
-    long? AnseriniTotalTerms = null,
+    double? PublishedNdcg10Ref = null,
+    long? PublishedTotalTerms = null,
     int? Documents = null,
     int? NonEmptyDocuments = null,
-    string? AnseriniSource = null)
+    string? PublishedSource = null)
 {
     public static readonly IReadOnlyList<BeirDataset> All =
     [
@@ -59,33 +59,33 @@ internal sealed record BeirDataset(
             "a89dba18a62ef92f7d323ec890a0d38d",
             Bm25Ndcg10Ref: 0.325,
             Graded: true,
-            AnseriniNdcg10Ref: 0.3218,
-            AnseriniTotalTerms: 637_485,
+            PublishedNdcg10Ref: 0.3218,
+            PublishedTotalTerms: 637_485,
             Documents: 3_633,
             NonEmptyDocuments: 3_633,
-            AnseriniSource: "https://github.com/castorini/anserini/blob/master/src/main/resources/reproduce/from-document-collection/configs/beir-v1.0.0-nfcorpus.flat.yaml"),
+            PublishedSource: "https://github.com/castorini/anserini/blob/master/src/main/resources/reproduce/from-document-collection/configs/beir-v1.0.0-nfcorpus.flat.yaml"),
         new(
             "scifact",
             "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip",
             "5f7d1de60b170fc8027bb7898e2efca1",
             Bm25Ndcg10Ref: 0.665,
             Graded: false,
-            AnseriniNdcg10Ref: 0.6789,
-            AnseriniTotalTerms: 838_128,
+            PublishedNdcg10Ref: 0.6789,
+            PublishedTotalTerms: 838_128,
             Documents: 5_183,
             NonEmptyDocuments: 5_183,
-            AnseriniSource: "https://github.com/castorini/anserini/blob/master/src/main/resources/reproduce/from-document-collection/configs/beir-v1.0.0-scifact.flat.yaml"),
+            PublishedSource: "https://github.com/castorini/anserini/blob/master/src/main/resources/reproduce/from-document-collection/configs/beir-v1.0.0-scifact.flat.yaml"),
         new(
             "arguana",
             "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/arguana.zip",
             "8ad3e3c2a5867cdced806d6503f29b99",
             Bm25Ndcg10Ref: 0.315,
             Graded: false,
-            AnseriniNdcg10Ref: 0.3970,
-            AnseriniTotalTerms: 969_528,
+            PublishedNdcg10Ref: 0.3970,
+            PublishedTotalTerms: 969_528,
             Documents: 8_674,
             NonEmptyDocuments: 8_673,
-            AnseriniSource: "https://github.com/castorini/anserini/blob/master/src/main/resources/reproduce/from-document-collection/configs/beir-v1.0.0-arguana.flat.yaml"),
+            PublishedSource: "https://github.com/castorini/anserini/blob/master/src/main/resources/reproduce/from-document-collection/configs/beir-v1.0.0-arguana.flat.yaml"),
     ];
 
     public static BeirDataset Resolve(string name)
@@ -112,7 +112,7 @@ internal sealed record BeirDataset(
 /// before spending a single retrieval: a stop word list, a stemmer or a tokenizer that differs
 /// moves this number by percent, long before it moves nDCG by a visible amount. Anserini
 /// publishes these counts per corpus in its regression configuration files; see
-/// <see cref="BeirDataset.AnseriniSource"/>.
+/// <see cref="BeirDataset.PublishedSource"/>.
 /// </remarks>
 public sealed record IndexFingerprint(int Documents, int NonEmptyDocuments, long TotalTerms)
 {

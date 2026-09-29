@@ -29,35 +29,35 @@ public class StopWordsTests
     }
 
     [Fact]
-    public void LuceneEnglish_HasTheThirtyThreeWordsOfLucenesAnalyzer()
+    public void EnglishFunction_HasTheConventionalThirtyThreeWords()
     {
-        // org.apache.lucene.analysis.en.EnglishAnalyzer's STOP_WORDS_SET. The count is asserted
-        // because a list that silently gained or lost a word would no longer be that analyzer, and
-        // an index built from it would no longer be comparable with the published BM25 numbers
-        // the set exists for.
-        Assert.Equal(33, StopWords.LuceneEnglish.Count);
+        // The exact contents matter: a list that silently gained or lost a word would produce a
+        // different index, and an index built from it would no longer be comparable with the
+        // published BM25 measurements the set exists for. The count is the cheap guard.
+        Assert.Equal(33, StopWords.EnglishFunction.Count);
 
         foreach (var word in new[] { "a", "an", "and", "the", "with", "will", "not", "such" })
-            Assert.Contains(word, StopWords.LuceneEnglish);
+            Assert.Contains(word, StopWords.EnglishFunction);
     }
 
     [Fact]
-    public void LuceneEnglish_KeepsWordsTheTokenizerWouldOtherwiseDrop()
+    public void EnglishFunction_KeepsWordsTheTokenizerWouldOtherwiseDrop()
     {
-        // "i" survives Lucene's analyzer and must survive here too, or a one-character term is
-        // missing from the index for a reason that has nothing to do with the stop word list.
-        Assert.DoesNotContain("i", StopWords.LuceneEnglish);
+        // "i" survives the conventional English stop list and must survive here too, or a
+        // single-character term goes missing from the index for a reason that has nothing to do
+        // with stop words.
+        Assert.DoesNotContain("i", StopWords.EnglishFunction);
 
         // A subset of the larger list, so a caller can reason about the difference in one step.
-        Assert.True(StopWords.LuceneEnglish.IsProperSubsetOf(StopWords.English));
+        Assert.True(StopWords.EnglishFunction.IsProperSubsetOf(StopWords.English));
     }
 
     [Fact]
-    public void LuceneEnglish_IsNotTheDefault()
+    public void EnglishFunction_IsNotTheDefault()
     {
         // Changing the default list would invalidate every recorded baseline in this repository.
-        Assert.NotSame(StopWords.English, StopWords.LuceneEnglish);
-        Assert.True(StopWords.English.Count > StopWords.LuceneEnglish.Count);
+        Assert.NotSame(StopWords.English, StopWords.EnglishFunction);
+        Assert.True(StopWords.English.Count > StopWords.EnglishFunction.Count);
     }
 
     [Fact]

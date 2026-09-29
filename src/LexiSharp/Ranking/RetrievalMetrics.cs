@@ -94,9 +94,10 @@ public static class RetrievalMetrics
     /// relevance levels. Documents missing from the map count as relevance 0.
     /// </summary>
     /// <remarks>
-    /// This is the exponential convention. For the linear one — what <c>trec_eval</c> uses, and
-    /// therefore what the BEIR paper's published figures were computed with — call the overload
-    /// taking an <see cref="NdcgGain"/>. The two differ on graded corpora only; see <see cref="NdcgGain"/>.
+    /// This is the exponential convention. The linear one — the convention the standard evaluation
+    /// tool uses, and therefore the one behind the published figures this repository is compared
+    /// against — is the <see cref="NdcgGain.Linear"/> overload. The two differ on graded corpora
+    /// only; see <see cref="NdcgGain"/>.
     /// </remarks>
     public static double NdcgAtK(IReadOnlyCollection<string> retrievedIds, IReadOnlyDictionary<string, double> gradedRelevance, int k) =>
         NdcgAtK(retrievedIds, gradedRelevance, k, NdcgGain.Exponential);
