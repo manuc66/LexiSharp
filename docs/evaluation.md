@@ -154,8 +154,37 @@ harness can actually support.
 **What would close it, and why it was not done here.** Attributing the remainder needs the
 reference's own run file — the trec_run ranking all 1,406 queries — and the reproduction publishes no
 results directory, only commands, configs and docgen. Without it the gap can be bounded and
-characterised, as above, and not attributed. That is the one thing still worth doing, and it needs
-the file rather than more argument.
+characterised, as above, and not attributed.
+
+**And the honest answer to whether the remainder is a defect: the published figure for this corpus is
+not one number.** Gathering what has actually been published for BM25 on ArguAna, each with the
+construction that produced it:
+
+| value | source | index construction |
+|---:|---|---|
+| 0.315 | the 2021 BEIR paper | title and body as separate fields, Elasticsearch |
+| 0.3970 | Anserini's flat regression | title and text concatenated into one field |
+| 0.414 | the official BEIR leaderboard paper | Anserini multi-field, `--fields contents=1.0 title=1.0` |
+| **0.364** | **this library, flat** | **same as the 0.3970 row, verified** |
+| **0.370** | **this library, multi-field, equal weights** | **same construction as the 0.414 row** |
+
+Two things follow, and the second is why this stops here. First, matching a construction does not match
+the number: this library's multi-field measurement reaches 0.370 where the leaderboard paper reports
+0.414 for the same construction, so the 0.044 between them is not an indexing difference. Second — and
+this is the part worth remembering — **the spread among published values for the same corpus and the
+same metric is 0.099, and the gap this page spent a session chasing is 0.033.** There is no single
+number to close that gap *to*. A deficit measured against one published value is not evidence of a
+defect while other published values for the same quantity sit on both sides of it.
+
+Both constructions were measured here rather than reasoned about: the multi-field run scores the title
+and the body as separate fields with their own document frequencies and their own length, then sums
+the two scores, which is what a multi-field Lucene query does. It gives nDCG@10 0.370 and R@100
+0.802 — better than flat on nDCG@10 and worse on recall, and short of 0.414 either way.
+
+The figures read out of the leaderboard paper are its Table 1 row for ArguAna, whose header names the
+two metric groups. The same paper contains a second table with a different column arrangement whose
+ArguAna row does not reconcile with the first, which is why the citation is to the row and its header
+rather than to a bare number.
 
 **Why a small difference can be worth this much.** The gold document is outside the top 10 for
 **39.9 %** of these queries, and the score gap between rank 10 and rank 11 has a tenth percentile of
