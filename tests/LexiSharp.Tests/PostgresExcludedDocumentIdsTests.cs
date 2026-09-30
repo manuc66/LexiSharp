@@ -112,10 +112,17 @@ public class PostgresExcludedDocumentIdsTests
         Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
 
         // Every document gets the same sparse vector, so all four match and the ranking between them
-        // is the tie-break — the condition the page-length assertion needs.
-        var vectors = Corpus().ToDictionary(
-            document => document.Text,
-            _ => (IReadOnlyDictionary<string, float>)new Dictionary<string, float> { ["shared"] = 1f, ["common"] = 1f, ["term"] = 1f });
+        // is decided by the tie-break — the condition the page-length assertion needs. The dictionary
+        // is keyed by text, and the sparse provider looks a text up in it, so the four documents share
+        // a key on purpose; the query has the same text as the corpus and therefore the same vector.
+        var vector = (IReadOnlyDictionary<string, float>)new Dictionary<string, float>
+        {
+            ["shared"] = 1f,
+            ["common"] = 1f,
+            ["term"] = 1f,
+        };
+
+        var vectors = new Dictionary<string, IReadOnlyDictionary<string, float>> { [Query] = vector };
 
         using var engine = new PostgresSparseSearchEngine(
             ConnectionString!,
