@@ -32,7 +32,9 @@
       "queries": 323,
       "expectedNdcg": 0.308,
       "tolerance": 0.002,
-      "note": "The default analyzer, no stemming. Kept because every published table in this repository is this row."
+      "note": "The default analyzer, no stemming. Kept because every published table in this repository is this row. The same config also publishes recall, which this harness measures but the pin does not yet assert: reference R@100 0.2457, R@1000 0.3704, at k1=0.9, b=0.4. Not asserted here because the pinned metric is nDCG@10 and the recall figures are recorded in the configuration's own results block for a reader who wants them.",
+      "referenceRecallAt100": 0.2457,
+      "referenceRecallAt1000": 0.3704
     },
     {
       "config": "nfcorpus/english",
@@ -47,7 +49,9 @@
       "queries": 323,
       "expectedNdcg": 0.327,
       "tolerance": 0.002,
-      "note": "Reference analysis. Gain convention linear, which is what the published figures use."
+      "note": "Reference analysis. Gain convention linear, which is what the published figures use. The same config also publishes recall, which this harness measures but the pin does not yet assert: reference R@100 0.2457, R@1000 0.3704, at k1=0.9, b=0.4. Not asserted here because the pinned metric is nDCG@10 and the recall figures are recorded in the configuration's own results block for a reader who wants them.",
+      "referenceRecallAt100": 0.2457,
+      "referenceRecallAt1000": 0.3704
     },
     {
       "config": "scifact/default",
@@ -61,7 +65,10 @@
       "excludeQueryDocument": false,
       "queries": 300,
       "expectedNdcg": 0.662,
-      "tolerance": 0.002
+      "tolerance": 0.002,
+      "referenceRecallAt100": 0.9253,
+      "referenceRecallAt1000": 0.9767,
+      "note": " The same config also publishes recall, which this harness measures but the pin does not yet assert: reference R@100 0.9253, R@1000 0.9767, at k1=0.9, b=0.4. Not asserted here because the pinned metric is nDCG@10 and the recall figures are recorded in the configuration's own results block for a reader who wants them."
     },
     {
       "config": "scifact/english",
@@ -76,7 +83,9 @@
       "queries": 300,
       "expectedNdcg": 0.692,
       "tolerance": 0.002,
-      "note": "Above the independent reference at its own parameters (0.6789); see the parity table."
+      "note": "Above the independent reference at its own parameters (0.6789); see the parity table. The same config also publishes recall, which this harness measures but the pin does not yet assert: reference R@100 0.9253, R@1000 0.9767, at k1=0.9, b=0.4. Not asserted here because the pinned metric is nDCG@10 and the recall figures are recorded in the configuration's own results block for a reader who wants them.",
+      "referenceRecallAt100": 0.9253,
+      "referenceRecallAt1000": 0.9767
     },
     {
       "config": "arguana/default",
@@ -90,7 +99,10 @@
       "excludeQueryDocument": false,
       "queries": 1406,
       "expectedNdcg": 0.289,
-      "tolerance": 0.002
+      "tolerance": 0.002,
+      "referenceRecallAt100": 0.9324,
+      "referenceRecallAt1000": 0.9872,
+      "note": " The same config also publishes recall, which this harness measures but the pin does not yet assert: reference R@100 0.9324, R@1000 0.9872, at k1=0.9, b=0.4. Not asserted here because the pinned metric is nDCG@10 and the recall figures are recorded in the configuration's own results block for a reader who wants them."
     },
     {
       "config": "arguana/english+qtf",
@@ -106,7 +118,9 @@
       "queries": 1406,
       "expectedNdcg": 0.271,
       "tolerance": 0.002,
-      "note": "The same configuration as arguana/english, counting a repeated query term once per occurrence. Together the two pins bracket what the setting is worth at this k1: 0.289 distinct, 0.271 query-frequency, so +0.018. Read that as the effect at k1=0.9, b=0.4 and not as the headline: at k1=1.5, b=0.75 the same comparison is 0.285 to 0.327, i.e. +0.042, because ArguAna's sensitivity to k1 runs opposite to the other two corpora and the effect scales with it."
+      "note": "The same configuration as arguana/english, counting a repeated query term once per occurrence. Together the two pins bracket what the setting is worth at this k1: 0.289 distinct, 0.271 query-frequency, so +0.018. Read that as the effect at k1=0.9, b=0.4 and not as the headline: at k1=1.5, b=0.75 the same comparison is 0.285 to 0.327, i.e. +0.042, because ArguAna's sensitivity to k1 runs opposite to the other two corpora and the effect scales with it. The same config also publishes recall, which this harness measures but the pin does not yet assert: reference R@100 0.9324, R@1000 0.9872, at k1=0.9, b=0.4. Not asserted here because the pinned metric is nDCG@10 and the recall figures are recorded in the configuration's own results block for a reader who wants them.",
+      "referenceRecallAt100": 0.9324,
+      "referenceRecallAt1000": 0.9872
     },
     {
       "config": "arguana/english+qtf at k1=3.0",
@@ -122,7 +136,9 @@
       "queries": 1406,
       "expectedNdcg": 0.331,
       "tolerance": 0.002,
-      "note": "The same figure as the arguana parity row, and the reason that row is a measured value rather than the 0.4061 it used to carry: the parity section is displayed by --verify-reference but never replayed, this pin is replayed. It is not like-for-like against the published 0.3970, which was produced at k1=0.9, b=0.4 - at that k1 this library reads 0.271. The 0.178 deficit between 0.219 and 0.3970 at matched parameters is unaccounted for; this setting closes 0.052 of it at k1=0.9, b=0.4 and 0.027 at k1=3.0. Sweeping k1 does not close it: 0.219, 0.285, 0.304 distinct and 0.271, 0.327, 0.331 query-frequency for k1 = 0.9, 1.5, 3.0, so ArguAna rises with k1 and plateaus near 0.33."
+      "note": "The same figure as the arguana parity row, and the reason that row is a measured value rather than the 0.4061 it used to carry: the parity section is displayed by --verify-reference but never replayed, this pin is replayed. It is not like-for-like against the published 0.3970, which was produced at k1=0.9, b=0.4 - at that k1 this library reads 0.271. The 0.178 deficit between 0.219 and 0.3970 at matched parameters is unaccounted for; this setting closes 0.052 of it at k1=0.9, b=0.4 and 0.027 at k1=3.0. Sweeping k1 does not close it: 0.219, 0.285, 0.304 distinct and 0.271, 0.327, 0.331 query-frequency for k1 = 0.9, 1.5, 3.0, so ArguAna rises with k1 and plateaus near 0.33. The same config also publishes recall, which this harness measures but the pin does not yet assert: reference R@100 0.9324, R@1000 0.9872, at k1=0.9, b=0.4. Not asserted here because the pinned metric is nDCG@10 and the recall figures are recorded in the configuration's own results block for a reader who wants them.",
+      "referenceRecallAt100": 0.9324,
+      "referenceRecallAt1000": 0.9872
     },
     {
       "config": "arguana/english+exclude",
@@ -137,7 +153,9 @@
       "queries": 1406,
       "expectedNdcg": 0.3806,
       "tolerance": 0.002,
-      "note": "RE-RECORDED after a fix, and the value it replaces recorded a defect rather than a behaviour. SearchOptions.ExcludedDocumentIds was never applied on the term-at-a-time path, which is the one this query takes on a corpus of 8,674 documents and 645-word queries, so the document being excluded stayed at rank 1 - and for this corpus it is the lexically closest document to the query, because the query text is a document's own text. 0.2864 is what the option produced while doing nothing. Measured after the fix: 0.3806. The seven other nDCG pins and all three index fingerprints are unchanged and the golden master is byte-identical, which is the evidence that the fix reached the path it was aimed at and no other."
+      "note": "RE-RECORDED after a fix, and the value it replaces recorded a defect rather than a behaviour. SearchOptions.ExcludedDocumentIds was never applied on the term-at-a-time path, which is the one this query takes on a corpus of 8,674 documents and 645-word queries, so the document being excluded stayed at rank 1 - and for this corpus it is the lexically closest document to the query, because the query text is a document's own text. 0.2864 is what the option produced while doing nothing. Measured after the fix: 0.3806. The seven other nDCG pins and all three index fingerprints are unchanged and the golden master is byte-identical, which is the evidence that the fix reached the path it was aimed at and no other. The same config also publishes recall, which this harness measures but the pin does not yet assert: reference R@100 0.9324, R@1000 0.9872, at k1=0.9, b=0.4. Not asserted here because the pinned metric is nDCG@10 and the recall figures are recorded in the configuration's own results block for a reader who wants them.",
+      "referenceRecallAt100": 0.9324,
+      "referenceRecallAt1000": 0.9872
     }
   ],
   "indexFingerprints": [
@@ -209,10 +227,15 @@
     }
   ],
   "referenceSource": {
-    "analyzedIndex": "Anserini 'flat' BEIR indexes: title and text concatenated into one field, as this harness does too",
-    "analysis": "Lucene EnglishAnalyzer (Porter stemming, its 33-word stop list, single-character terms kept)",
-    "evaluation": "trec_eval ndcg_cut.10 — linear gains",
+    "what": "The BM25 figures on the three corpora below, and the index statistics, are the ones Anserini's own BEIR reproduction configs record as the result of their 'bm25' model. They are not transcribed from a paper's table: the configs carry the numbers in a results block next to the command that produced them.",
     "configFiles": "https://github.com/castorini/anserini/tree/master/src/main/resources/reproduce/from-document-collection/configs",
-    "readOn": "2026-09-29"
+    "perCorpusConfig": "beir-v1.0.0-{arguana,nfcorpus,scifact}.flat.yaml, one file per corpus, each carrying index_stats, the metric command, the model parameters and the results",
+    "analyzedIndex": "BeirFlatCollection with DefaultLuceneDocumentGenerator: title and text concatenated into one field, as this harness does too",
+    "analysis": "Lucene EnglishAnalyzer: Porter stemming, its 33-word stop list, single-character terms kept. StopWords.EnglishFunction is word-for-word that list, checked.",
+    "parameters": "k1=0.9, b=0.4 - not an assumption. The configs pass '-bm25' with no override, and Anserini's own defaults for -bm25.k1 and -bm25.b are 0.9 and 0.4, chosen to follow Trotman et al. (SIGIR 2012 OSIR Workshop). Lucene's own BM25 defaults are 1.2/0.75, so this had to be checked rather than assumed.",
+    "queryOwnDocument": "REMOVED. The configs pass '-removeQuery', documented as 'Remove docids that have the query id when writing final run output'. So the published ArguAna figure was produced with the query's own document dropped - which is the convention --exclude-query-doc implements, and the reason that gate was a defect here rather than a nicety: 1,298 of ArguAna's 1,406 test queries are corpus documents whose text is the query text.",
+    "evaluation": "trec_eval -c -m ndcg_cut.10, linear gains, metric_precision 4",
+    "readOn": "2026-09-30",
+    "verifiedOn": "Every figure and index statistic above was read back out of the configs on readOn, not carried from an earlier session: 0.3970 / 0.3218 / 0.6789 and 8674/8673/969528, 3633/3633/637485, 5183/5183/838128."
   }
 }
