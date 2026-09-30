@@ -242,8 +242,13 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, I
         // Without filters, fetch the whole window (Offset + Limit): score-based drops below happen
         // in C# after the ordered prefix is read, then Skip/Take cuts the requested page. With
         // filters, the LIMIT is dropped (see filterInMemory) so every match is filtered first.
+        //
+        // The window is over-fetched by one row per excluded id, because the exclusion below drops
+        // rows *after* this prefix is read: a prefix of exactly Window would come back one short for
+        // every excluded document it contained. This engine applied the exclusion but got the page
+        // wrong, which is a quieter failure than the four that ignored it.
         if (!filterInMemory)
-            command.Parameters.AddWithValue("limit", options.Window);
+            command.Parameters.AddWithValue("limit", PostgresDocumentExclusion.FetchLimit(options));
 
         var results = new List<SearchResult>();
 
@@ -264,6 +269,9 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, I
             if (!PassesFilters(options, document))
                 continue;
 
+            if (!PostgresDocumentExclusion.Passes(options, document.Id))
+                continue;
+
             results.Add(new SearchResult(document.Id, score, document));
         }
 
@@ -272,13 +280,11 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, I
 
     private static bool PassesFilters(SearchOptions options, SearchDocument document)
     {
-        // Same two gates as SearchOptions.PassesFilters, kept separate because this engine assembles
-        // results from SQL and cannot call the internal helper.
-        var excluded = options.ExcludedDocumentIds;
-
-        if (excluded is not null && excluded.Count > 0 && excluded.Contains(document.Id))
-            return false;
-
+        // The metadata filters only, and for the reason this method exists: the filters are part of
+        // the generated SQL when it can express them, and this is the in-memory fallback for the
+        // shapes it cannot. The id exclusion used to be checked here too; it now lives in
+        // PostgresDocumentExclusion, shared with the four engines that had no gate at all, so that one
+        // place decides how the option is honoured on SQL.
         var filters = options.Filters;
 
         if (filters is null || filters.Count == 0)

@@ -226,7 +226,9 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable, 
         // Fetch the whole window (Offset + Limit): the C# side drops rows below MinimumScore
         // afterwards, and the ORDER BY is score-equivalent (DESC, or distance ASC in Nearest
         // mode) — so those drops are a suffix of the fetched prefix and Skip/Take cuts the page.
-        command.Parameters.AddWithValue("limit", options.Window);
+        // The window plus one row per excluded id: the exclusion is applied below, so a window of
+        // exactly Window would come back one short for every excluded document inside it.
+        command.Parameters.AddWithValue("limit", PostgresDocumentExclusion.FetchLimit(options));
 
         if (_options.UseLevenshteinRefinement)
             command.Parameters.AddWithValue("maxLevenshtein", _options.MaxLevenshteinDistance);
@@ -246,6 +248,10 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable, 
                 continue;
 
             var document = ReadDocument(reader);
+
+            if (!PostgresDocumentExclusion.Passes(options, document.Id))
+                continue;
+
             results.Add(new SearchResult(document.Id, score, document));
         }
 

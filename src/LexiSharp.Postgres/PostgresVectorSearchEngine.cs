@@ -425,9 +425,14 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         // and keep it below/at the HNSW ef_search when one is configured (an ANN scan only ever
         // yields ef_search rows). The window (Offset + Limit) is always covered so the final
         // Skip/Take can cut any page of the merged ranking.
+        // Same over-fetch as the other engines: the id exclusion is applied to the merged ranking
+        // below, so a candidate set of exactly Window would leave the page one short per excluded
+        // document it contained.
+        int window = PostgresDocumentExclusion.FetchLimit(options);
+
         int candidateLimit = columns.Count == 1
-            ? options.Window
-            : Math.Max(options.Window, Math.Max(40, _options.HnswEfSearch ?? 0));
+            ? window
+            : Math.Max(window, Math.Max(40, _options.HnswEfSearch ?? 0));
 
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
@@ -505,6 +510,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
 
         var results = bestScores
             .Where(x => x.Value >= options.MinimumScore)
+            .Where(x => PostgresDocumentExclusion.Passes(options, x.Key))
             .OrderByDescending(x => x.Value)
             .Skip(options.Offset)
             .Take(options.Limit)
