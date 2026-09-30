@@ -127,6 +127,36 @@ That is the state of it, stated plainly rather than dressed up: the exclusion de
 recall is unexplained. Whoever picks this up should start from which documents are matchable rather
 than from where they land.
 
+**The failing queries are not unmatchable, which narrows it further.** Of the 216 queries whose gold
+document does not reach the top 100, **every one shares at least one analysed term** with it. Zero are
+lexically unreachable. So the documents are findable in principle and are not being found. Five of the
+1,406 test qrels point at a document id that is not in the corpus at all, so 1,401 queries are usable
+and nobody can retrieve those five — which does not explain a gap of this size either.
+
+**The stemmer is not it, measured three ways.** R@100 with no stemming at all, with this repository's
+`PorterStemmer`, and with a second Porter written from the published algorithm rather than from this
+codebase: 0.842, 0.846, 0.846. The third exists so the comparison does not rest on trusting a
+from-memory reimplementation of the reference's stemmer — if a different Porter moves nothing, the
+stemmer is not the cause whichever one is correct. The b curve is short at every point: 0.790 at b=0,
+0.843 at b=0.4, 0.868 at b=0.75, against 0.9324 published.
+
+**The published figure for this corpus is not one number, and the spread is wider than the gap.** The
+2021 BEIR paper reports BM25 on ArguAna at **0.315**, indexing *"the title (if available) and passage
+of each document as separate text fields"* through Elasticsearch's defaults. Anserini's regression
+reports **0.3970** for the same corpus, indexing *"in a 'flat' manner, by concatenating the title and
+text into the contents field"* — which is what this harness does, checked against the reproduction's
+own docgen template. Same corpus, same metric, same k1 and b, and **0.082 apart**, because a flat
+index and separate fields are not the same index. This library's aligned 0.364 falls between the two:
+0.049 above the 2021 figure, 0.033 below the regression. A claim about matching "the published
+ArguAna number" therefore depends on which one is meant; the table above states the comparison this
+harness can actually support.
+
+**What would close it, and why it was not done here.** Attributing the remainder needs the
+reference's own run file — the trec_run ranking all 1,406 queries — and the reproduction publishes no
+results directory, only commands, configs and docgen. Without it the gap can be bounded and
+characterised, as above, and not attributed. That is the one thing still worth doing, and it needs
+the file rather than more argument.
+
 **Why a small difference can be worth this much.** The gold document is outside the top 10 for
 **39.9 %** of these queries, and the score gap between rank 10 and rank 11 has a tenth percentile of
 **0.118 %** — a fifth of the queries are decided by less than 0.046 %. Moving 0.033 of nDCG is roughly
