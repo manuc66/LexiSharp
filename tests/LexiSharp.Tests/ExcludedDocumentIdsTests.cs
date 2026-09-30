@@ -106,6 +106,46 @@ public class ExcludedDocumentIdsTests
     }
 
     [Fact]
+    public void AnExcludedDocumentIsNotReturnedOnTheAccumulatingPathEither()
+    {
+        // The regression this file did not catch, and the reason is in the fixtures above: they all
+        // use three documents of identical text, which is below the size at which the term-at-a-time
+        // pass engages, so they all run the fallback. The exclusion lived in PassesFilters, and only
+        // the fallback calls it.
+        //
+        // The pass is taken when the query reaches at least max(MinimumPostingEntriesForAccumulation,
+        // OrdinalSpace / AccumulationCorpusDivisor) documents — 8 for a corpus this size, since 4,000
+        // / 20,000 rounds down to nothing. The fixture is sized well past that, and the assertion
+        // compares against the same search without the exclusion so that the two shapes cannot both
+        // be satisfied by a page-level filter, which is the defect being distinguished from a gate.
+        var index = new InMemoryTextIndex();
+        index.Index(Enumerable.Range(0, 4_000)
+            .Select(i => new SearchDocument(
+                $"doc-{i:D5}",
+                $"shared common filler text number {i} unique{i:D5}")));
+
+        const string query = "shared common filler";
+        const int window = 50;
+        var engine = new RankedTextSearchEngine(index, new Bm25Scorer());
+
+        var unexcluded = engine.Search(query, new SearchOptions(window + 1));
+        Assert.Equal(window + 1, unexcluded.Count);
+
+        var after = engine.Search(
+            query,
+            new SearchOptions(window, ExcludedDocumentIds: new HashSet<string>(StringComparer.Ordinal) { "doc-00000" }));
+
+        Assert.Equal(window, after.Count);
+        Assert.DoesNotContain(after, result => result.DocumentId == "doc-00000");
+
+        // Gated, not filtered: the page is the same ranking with the excluded entry removed and one
+        // more document pulled in behind it.
+        Assert.Equal(
+            unexcluded.Where(result => result.DocumentId != "doc-00000").Take(window).Select(result => result.DocumentId),
+            after.Select(result => result.DocumentId));
+    }
+
+    [Fact]
     public void AValidationQueryCarriesItsExclusionIntoTuning()
     {
         // The tuner builds its own SearchOptions per query, so a pin's exclusion only reaches the

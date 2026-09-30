@@ -16,6 +16,45 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --verify-reference
 on every push that touches the library or the harness, and weekly by the `Pinned reference`
 workflow.
 
+## [0.8.0] — Unreleased
+
+The version number is not settled: nothing here changes the public API, but the excluded-ids fix
+changes observable behaviour for anyone who set that option on a large corpus, and a patch release
+would understate it. Whichever number is chosen, the reason is here.
+
+### Fixed
+
+- **`SearchOptions.ExcludedDocumentIds` was ignored on the term-at-a-time path.** The exclusion is
+  implemented in `SearchOptions.PassesFilters`, and only the per-document loop called it; the
+  accumulating pass carries its own gate list — NaN, infinity, zero, `MinimumScore` — and the
+  exclusion was not in it. A query that took that path therefore ranked and returned the document it
+  had been told to drop. The path is entered when the query reaches at least
+  `max(MinimumPostingEntriesForAccumulation, OrdinalSpace / AccumulationCorpusDivisor)` documents,
+  which is why the six tests for this option all passed: their fixture is three documents of
+  identical text, so every one of them runs the other path.
+
+  The cost was measurable and large on the corpus this matters for. When a query is a document's own
+  text — ArguAna, where 1,298 of 1,406 test queries are corpus documents — the excluded document is
+  the lexically closest thing to the query and takes rank 1. At k1=0.9, b=0.4 with the reference
+  analysis, 1,406 queries: **0.271 → 0.364**, and the pin `arguana/english+exclude` moves from
+  0.2864 to 0.3806. A figure of "+0.002 for the exclusion" was circulated before this and was wrong:
+  it measured an option that did nothing. The seven other nDCG pins, all three index fingerprints and
+  the golden master are unchanged.
+
+  The per-candidate cost is one null test on an already-hoisted set, the same shape as the gate
+  already at the top of the other loop; **the benchmark could not resolve it** — run-to-run error on
+  this host is ±5 % to ±25 % — so no timing claim is made here.
+
+### Known, not fixed
+
+- **`ExcludedDocumentIds` is ignored entirely by four Postgres engines.** `PostgresTextSearchEngine`,
+  `PostgresSparseSearchEngine`, `PostgresFuzzySearchEngine` and `PostgresVectorSearchEngine` build
+  their SQL from `Filters` and `Limit` and never read the option, while `ParadeDBTextSearchEngine` in
+  the same package applies it. Measured by reading, not by a test, and left alone here because it
+  does not affect the in-memory engines or any figure in this file. `HybridTextSearchEngine`,
+  `ExpandingTextSearchEngine`, `RerankedTextSearchEngine` and `BoostedTextSearchEngine` delegate to an
+  inner engine that applies it, so they honour it transitively.
+
 ## [0.7.0]
 
 ### Added
