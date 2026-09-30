@@ -287,7 +287,9 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
 
         // Fetch the whole window (Offset + Limit): score-based drops below happen in C# after
         // the ordered prefix is read, then Skip/Take cuts the requested page.
-        command.Parameters.AddWithValue("limit", options.Window);
+        // The window plus one row per excluded id: the exclusion is applied below, so a window of
+        // exactly Window would come back one short for every excluded document inside it.
+        command.Parameters.AddWithValue("limit", PostgresDocumentExclusion.FetchLimit(options));
 
         var results = new List<SearchResult>();
 
@@ -304,6 +306,10 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
                     continue;
 
                 var document = ReadDocument(reader);
+
+                if (!PostgresDocumentExclusion.Passes(options, document.Id))
+                    continue;
+
                 results.Add(new SearchResult(document.Id, score, document));
             }
         }

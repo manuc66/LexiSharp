@@ -53,15 +53,24 @@ would understate it. Whichever number is chosen, the reason is here.
   already at the top of the other loop; **the benchmark could not resolve it** — run-to-run error on
   this host is ±5 % to ±25 % — so no timing claim is made here.
 
-### Known, not fixed
+- **`SearchOptions.ExcludedDocumentIds` was ignored on every Postgres backend.** Four of the five —
+  `PostgresTextSearchEngine`, `PostgresSparseSearchEngine`, `PostgresFuzzySearchEngine` and
+  `PostgresVectorSearchEngine` — never read the option, so a caller excluding the query's own
+  document got it back, ranked first. The fifth, `ParadeDBTextSearchEngine`, read it and still
+  returned a short page: it fetched exactly `Options.Window` rows and then dropped the excluded ones
+  from that prefix, so a caller asking for ten results received nine. The second failure is the
+  quieter one, and it is the reason the fix is in a helper rather than four edits: one place decides
+  how many rows to fetch and which to keep, and each engine applies it. `HybridTextSearchEngine`,
+  `ExpandingTextSearchEngine`, `RerankedTextSearchEngine` and `BoostedTextSearchEngine` delegate to
+  an inner engine, so they honour it transitively and are unchanged.
 
-- **`ExcludedDocumentIds` is ignored entirely by four Postgres engines.** `PostgresTextSearchEngine`,
-  `PostgresSparseSearchEngine`, `PostgresFuzzySearchEngine` and `PostgresVectorSearchEngine` build
-  their SQL from `Filters` and `Limit` and never read the option, while `ParadeDBTextSearchEngine` in
-  the same package applies it. Measured by reading, not by a test, and left alone here because it
-  does not affect the in-memory engines or any figure in this file. `HybridTextSearchEngine`,
-  `ExpandingTextSearchEngine`, `RerankedTextSearchEngine` and `BoostedTextSearchEngine` delegate to an
-  inner engine that applies it, so they honour it transitively.
+  The exclusion is applied in the C# loop rather than pushed into the SQL, which is what this
+  package already does for `MinimumScore`, so the id list never becomes a parameter. The row count is
+  raised by one per excluded id to keep the page full, saturating rather than overflowing. The
+  arithmetic is unit-tested in `PostgresDocumentExclusionTests`; the wiring is integration-tested
+  against a real server in `PostgresExcludedDocumentIdsTests`. **Those integration tests could not be
+  run on the machine this was written on — no reachable PostgreSQL — so they are verified by the CI
+  jobs that carry `POSTGRES_TEST_CONNECTION`, not by a local run.**
 
 ## [0.7.0]
 

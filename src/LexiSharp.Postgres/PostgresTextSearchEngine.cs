@@ -238,7 +238,9 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable, I
         // Fetch the whole window (Offset + Limit): the C# side drops rows below MinimumScore
         // afterwards, and score DESC makes those drops a suffix of the fetched prefix — so the
         // Skip/Take below cuts the same page the in-memory engines would.
-        command.Parameters.AddWithValue("limit", options.Window);
+        // The window plus one row per excluded id: the exclusion is applied below, so a window of
+        // exactly Window would come back one short for every excluded document inside it.
+        command.Parameters.AddWithValue("limit", PostgresDocumentExclusion.FetchLimit(options));
 
         var results = new List<SearchResult>();
 
@@ -255,6 +257,10 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable, I
                 continue;
 
             var document = ReadDocument(reader);
+
+            if (!PostgresDocumentExclusion.Passes(options, document.Id))
+                continue;
+
             results.Add(new SearchResult(document.Id, score, document));
         }
 
