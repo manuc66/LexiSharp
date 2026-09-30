@@ -41,6 +41,14 @@ would understate it. Whichever number is chosen, the reason is here.
   it measured an option that did nothing. The seven other nDCG pins, all three index fingerprints and
   the golden master are unchanged.
 
+  **The corpus is not behind.** At this library's own defaults — k1=1.5, b=0.75, the repeated-term
+  setting on — the same 1,406 queries read **0.444** against a published 0.397. ArguAna's score is
+  steep in k1: 0.290 to 0.381 on the repeated-term setting alone, from k1 alone, so the published
+  figure was produced at an operating point that looks poor for this corpus. Whether the reference
+  reads higher at k1=1.5 cannot be tested from here, so the aligned comparison stands and the 0.033
+  at k1=0.9/b=0.4 is recorded rather than explained away. On all three corpora this library now meets
+  or exceeds the published figure at its own defaults.
+
   The per-candidate cost is one null test on an already-hoisted set, the same shape as the gate
   already at the top of the other loop; **the benchmark could not resolve it** — run-to-run error on
   this host is ±5 % to ±25 % — so no timing claim is made here.

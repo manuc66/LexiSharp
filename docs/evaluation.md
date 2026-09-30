@@ -59,16 +59,50 @@ reference's own k1 and b: **0.364 against 0.3970**.
 That also retires a number this page repeated. "+0.0012 for the exclusion" was this repository's own
 measurement of an option that did nothing, which is why it looked negligible. It was worth +0.093.
 
-The remaining 0.033 is not explained. What is measured about it: this library's index holds 1.12 %
-more terms than the reference index, and the same excess appears on all three corpora — NFCorpus
-2.77 %, SciFact 1.50 % — always in the same direction, always inside the 3 % tolerance. The cause is
-contractions. The reference tokenizer keeps an apostrophe inside a word, so `don't` is one token;
-this library's produces two, a stem plus a single-character fragment, and `it's` yields only the
-fragment `s`. Single-character tokens are 3.4 % of ArguAna, 6.3 % of NFCorpus and 4.5 % of SciFact,
-and the excess tracks that ordering. Removing the apostrophe before analysis brings ArguAna to
-973,318 terms, 0.39 % from the reference instead of 1.12 %. **Whether that also moves the score is a
-separate measurement and is not claimed.** Changing the tokenizer would invalidate every recorded
-baseline in the repository, so it is not a change to make while a release is being prepared.
+The remaining 0.033 sits at a parameter choice, and the measurements below say as much — though not
+more than that.
+
+**At the library's own default parameters this corpus is not behind.** With the exclusion applied and
+the repeated-term setting on, 1,406 queries, English analysis, linear gains:
+
+| | k1=0.9, b=0.4 — the reference's operating point | k1=1.5, b=0.75 — this library's default |
+|---|---:|---:|
+| `QueryTermWeighting.Distinct` | 0.290 | 0.381 |
+| `QueryTermWeighting.QueryFrequency` | 0.364 | **0.444** |
+
+against a published 0.397. So the comparison is now true both ways, and neither half alone is the
+story: at the reference's own k1 and b this library reads 0.364 and is 0.033 behind; at its own
+defaults it reads **0.444 and is 0.047 ahead**. ArguAna's score is steep in k1 here — 0.290 to 0.381
+on the repeated-term setting alone, from k1 alone — so 0.397 is a figure produced at a point that
+looks like a poor operating point for this corpus. **Whether the reference would also read higher at
+k1=1.5 is not something this repository can test**, and until it is, the aligned comparison stands as
+the honest one and the deficit at that point is recorded rather than explained away.
+
+**What was ruled out, by measurement.** The stop list: `StopWords.EnglishFunction` is word-for-word
+the reference's 33. The idf: `ln(1 + (N − df + 0.5) / (df + 0.5))` is the reference's formula. The
+title field: indexed, scored, counted in the document length, term frequencies summed — the index is
+equivalent to the concatenation the reference uses. Query or document truncation: there is none.
+
+**The tokenization difference is real, confirmed, and not the cause.** This index holds 1.12 % more
+terms than the reference, and the excess appears on all three corpora — NFCorpus 2.77 %, SciFact
+1.50 % — always in the same direction, always inside the 3 % tolerance. Two rules account for it, both
+seen by inspecting the tokenizer:
+
+- *Contractions.* The reference keeps an apostrophe inside a word, so `don't` is one token; this one
+  produces two, a stem and a single-character fragment, and `it's` yields only the fragment `s`.
+- *Hyphens.* The same for a hyphen between two letters, so `environment-friendly` is one token there
+  and two here. 7,717 hyphenated words in this corpus.
+
+Measured end to end at matched parameters with the exclusion applied: **0.364** as shipped, **0.362**
+with the apostrophes joined, **0.367** with the hyphens joined. Aligning both analyses is worth about
++0.003 of the 0.033. Both differences are larger than the 0.39 % excess left after the apostrophes,
+so some compensating difference exists that has not been identified. Changing the tokenizer would
+invalidate every recorded baseline here, so it is not done.
+
+**Why a small difference can be worth this much.** The gold document is outside the top 10 for
+**39.9 %** of these queries, and the score gap between rank 10 and rank 11 has a tenth percentile of
+**0.118 %** — a fifth of the queries are decided by less than 0.046 %. Moving 0.033 of nDCG is roughly
+165 documents promoted from outside the top 10 into it.
 
 **ArguAna: this page said the gap was closed, and that was wrong.** It reported **0.4061** at
 k1=3.0/b=0.75, above the published 0.3970, and explained the difference as a scoring rule: the
