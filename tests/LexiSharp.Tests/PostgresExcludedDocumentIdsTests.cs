@@ -112,9 +112,9 @@ public class PostgresExcludedDocumentIdsTests
         Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
 
         // Every document gets the same sparse vector, so all four match and the ranking between them
-        // is decided by the tie-break — the condition the page-length assertion needs. The dictionary
-        // is keyed by text, and the sparse provider looks a text up in it, so the four documents share
-        // a key on purpose; the query has the same text as the corpus and therefore the same vector.
+        // is decided by the tie-break — the condition the page-length assertion needs. The provider's
+        // dictionary is keyed by text, and the four documents share a key on purpose; the query has
+        // the same text as the corpus and therefore the same vector.
         var vector = (IReadOnlyDictionary<string, float>)new Dictionary<string, float>
         {
             ["shared"] = 1f,
@@ -124,10 +124,21 @@ public class PostgresExcludedDocumentIdsTests
 
         var vectors = new Dictionary<string, IReadOnlyDictionary<string, float>> { [Query] = vector };
 
+        // The vocabulary is not optional: the engine validates that it is non-empty before it opens a
+        // connection, so an options object without one fails at construction rather than at query time.
+        // Its indices must match the vector's keys, which is why the three terms are numbered here
+        // and nowhere else.
+        var vocabulary = new Dictionary<string, int>
+        {
+            ["shared"] = 0,
+            ["common"] = 1,
+            ["term"] = 2,
+        };
+
         using var engine = new PostgresSparseSearchEngine(
             ConnectionString!,
             new ConstantSparseProvider(vectors),
-            new PostgresSparseOptions { Table = Table("sparse") });
+            new PostgresSparseOptions { Table = Table("sparse"), Vocabulary = vocabulary });
 
         try
         {
