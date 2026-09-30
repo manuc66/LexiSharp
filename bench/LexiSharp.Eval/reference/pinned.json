@@ -173,27 +173,27 @@
   "parity": [
     {
       "corpus": "nfcorpus",
-      "lexisharpConfig": "nfcorpus/english",
-      "lexisharpNdcg": 0.327,
+      "lexisharpConfig": "nfcorpus/english at k1=0.9, b=0.4",
+      "lexisharpNdcg": 0.3215,
       "referenceNdcg": 0.3218,
       "referenceParameters": {
         "k1": 0.9,
         "b": 0.4
       },
-      "alignedParameters": false,
-      "note": "The like-for-like comparison is at the reference's own operating point: 0.3215 measured at k1=0.9, b=0.4 with the reference analysis, against 0.3218. The 0.327 above is this library's default k1/b under the reference analysis."
+      "alignedParameters": true,
+      "note": "Like for like: 0.3215 measured at the reference's own k1=0.9, b=0.4 under the reference analysis, against 0.3218 published - a difference of -0.0003. 0.327 at this library's default k1/b under the reference analysis. The aligned figure is what belongs in this field, so that one column means one thing across all three rows: the first time this field was written it held the default-parameter figure for this row and the aligned one for ArguAna, which made a difference column computed from it meaningless."
     },
     {
       "corpus": "scifact",
-      "lexisharpConfig": "scifact/english",
-      "lexisharpNdcg": 0.692,
+      "lexisharpConfig": "scifact/english at k1=0.9, b=0.4",
+      "lexisharpNdcg": 0.6788,
       "referenceNdcg": 0.6789,
       "referenceParameters": {
         "k1": 0.9,
         "b": 0.4
       },
-      "alignedParameters": false,
-      "note": "0.6788 measured at k1=0.9, b=0.4 with the reference analysis, against 0.6789 published."
+      "alignedParameters": true,
+      "note": "Like for like: 0.6788 measured at the reference's own k1=0.9, b=0.4 under the reference analysis, against 0.6789 published - a difference of -0.0001. 0.692 at this library's default k1/b under the reference analysis. The aligned figure is what belongs in this field, so that one column means one thing across all three rows: the first time this field was written it held the default-parameter figure for this row and the aligned one for ArguAna, which made a difference column computed from it meaningless."
     },
     {
       "corpus": "arguana",
