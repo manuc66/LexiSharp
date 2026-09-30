@@ -45,6 +45,13 @@ parameters, the gain convention and the repeated-term rule aligned:
 | SciFact | 0.6788 at k1=0.9, b=0.4 | 0.6789 | −0.0001 |
 | ArguAna | 0.364 at k1=0.9, b=0.4 | 0.3970 at k1=0.9, b=0.4 | **−0.033, cause not established** |
 
+Every row is at the reference's own k1 and b. That matters for what may be concluded from the table,
+and it is worth being explicit about the trap: **at its own defaults this library reads higher on all
+three corpora** — 0.327, 0.692 and 0.444 against 0.3218, 0.6789 and 0.397 — and that is *not* a claim
+that the published figures are beaten. Those two numbers are produced at different operating points,
+and reading the second as the first is the same mistake that put a withdrawn figure in this file. The
+aligned column is the comparison that means anything; the defaults are quoted in each pin's note.
+
 At the published operating point, NFCorpus and SciFact reproduce the reference to the fourth
 decimal. The engine was never behind on those two; the comparison was measuring the analyzer.
 
