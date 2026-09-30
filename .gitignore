@@ -4,6 +4,10 @@ obj/
 .vs/
 .idea/
 BenchmarkDotNet.Artifacts/
+# Sweep output: one directory per run, and the logs of a run that is already over are evidence for
+# nobody. The run's own conclusion is the results.tsv it prints, and a reader who wants a fresh
+# sweep runs the script rather than reading the last one's console transcript.
+artifacts/
 TestResults/
 bench/LexiSharp.Eval/data/
 
