@@ -236,6 +236,9 @@
     "queryOwnDocument": "REMOVED. The configs pass '-removeQuery', documented as 'Remove docids that have the query id when writing final run output'. So the published ArguAna figure was produced with the query's own document dropped - which is the convention --exclude-query-doc implements, and the reason that gate was a defect here rather than a nicety: 1,298 of ArguAna's 1,406 test queries are corpus documents whose text is the query text.",
     "evaluation": "trec_eval -c -m ndcg_cut.10, linear gains, metric_precision 4",
     "readOn": "2026-09-30",
-    "verifiedOn": "Every figure and index statistic above was read back out of the configs on readOn, not carried from an earlier session: 0.3970 / 0.3218 / 0.6789 and 8674/8673/969528, 3633/3633/637485, 5183/5183/838128."
+    "verifiedOn": "Every figure and index statistic above was read back out of the configs on readOn, not carried from an earlier session: 0.3970 / 0.3218 / 0.6789 and 8674/8673/969528, 3633/3633/637485, 5183/5183/838128.",
+    "docgenTemplate": "beir-v1.0.0-{corpus}.flat.template, which states the index construction in its own words: \"These experiments index the corpus in a 'flat' manner, by concatenating the 'title' and 'text' into the 'contents' field.\" This harness concatenates them the same way, checked rather than assumed.",
+    "theBaselineIsNotOneNumber": "The 2021 BEIR paper reports BM25 on arguana at 0.315, and indexes the title and passage as SEPARATE text fields through Elasticsearch defaults. Anserini's regression reports 0.3970 for the same corpus at the same k1 and b, indexing title and text concatenated. The two published values are 0.082 apart because they are different indexes. nfcorpus and scifact agree across both, so the arguana row is the one where the choice of published figure changes the conclusion.",
+    "noPublishedRunFile": "The reproduction directory publishes commands, configs and docgen only - no results, and no per-query trec_run. Attribution of the remaining arguana gap therefore needs that file from outside this repository; it is bounded and characterised here instead."
   }
 }
