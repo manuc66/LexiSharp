@@ -106,6 +106,27 @@ with the apostrophes joined, **0.367** with the hyphens joined. Aligning both an
 so some compensating difference exists that has not been identified. Changing the tokenizer would
 invalidate every recorded baseline here, so it is not done.
 
+**The same conclusion at top-k 100, and a sharper signature.** The reference configuration publishes
+recall as well as nDCG@10, and the harness measures it, so the comparison can be made at both ends of
+the ranking. At k1=0.9, b=0.4 with the exclusion applied, on the same 1,406 queries:
+
+| | LexiSharp | published reference | Δ |
+|---|---:|---:|---:|
+| nDCG@10 | 0.364 | 0.3970 | −0.033 |
+| **R@100** | **0.843** | **0.9324** | **−0.089** |
+
+The reference finds the gold document inside the top 100 for 93 % of these queries; this library
+does for 84 %. **The deficit is a retrieval difference, not a ranking one** — it is not documents
+being ordered differently near the cutoff, it is documents not being found at all. And the
+tokenization variants do not close it either: joining hyphens gives R@100 0.841 and joining both
+rules 0.839, against 0.843 as shipped. So the two measures agree, and the answer to "which rule
+differs" is that no rule found so far accounts for it.
+
+That is the state of it, stated plainly rather than dressed up: the exclusion defect was most of the
+0.126, the parameters are not it, the analyzer is not it by two independent measurements, and 0.089 of
+recall is unexplained. Whoever picks this up should start from which documents are matchable rather
+than from where they land.
+
 **Why a small difference can be worth this much.** The gold document is outside the top 10 for
 **39.9 %** of these queries, and the score gap between rank 10 and rank 11 has a tenth percentile of
 **0.118 %** — a fifth of the queries are decided by less than 0.046 %. Moving 0.033 of nDCG is roughly
