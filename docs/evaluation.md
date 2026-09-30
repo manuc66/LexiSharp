@@ -43,10 +43,32 @@ parameters, the gain convention and the repeated-term rule aligned:
 |---|---:|---:|---:|
 | NFCorpus | 0.3215 at k1=0.9, b=0.4 | 0.3218 | −0.0003 |
 | SciFact | 0.6788 at k1=0.9, b=0.4 | 0.6789 | −0.0001 |
-| ArguAna | 0.219 at k1=0.9, b=0.4 | 0.3970 at k1=0.9, b=0.4 | **-0.178, cause not established** |
+| ArguAna | 0.364 at k1=0.9, b=0.4 | 0.3970 at k1=0.9, b=0.4 | **−0.033, cause not established** |
 
 At the published operating point, NFCorpus and SciFact reproduce the reference to the fourth
 decimal. The engine was never behind on those two; the comparison was measuring the analyzer.
+
+**ArguAna was measuring a defect.** The table above used to read 0.219 here, a deficit of 0.178, and
+this page said the cause was not established. It was established as soon as somebody asked where the
+number came from: `SearchOptions.ExcludedDocumentIds` was never applied on the term-at-a-time path,
+which is the one this corpus takes. ArguAna queries are documents — 1,298 of the 1,406 test queries
+have their id in the corpus, and the query text is that document's own text — so the document being
+excluded was the lexically closest thing to the query and held rank 1. With the gate applied, at the
+reference's own k1 and b: **0.364 against 0.3970**.
+
+That also retires a number this page repeated. "+0.0012 for the exclusion" was this repository's own
+measurement of an option that did nothing, which is why it looked negligible. It was worth +0.093.
+
+The remaining 0.033 is not explained. What is measured about it: this library's index holds 1.12 %
+more terms than the reference index, and the same excess appears on all three corpora — NFCorpus
+2.77 %, SciFact 1.50 % — always in the same direction, always inside the 3 % tolerance. The cause is
+contractions. The reference tokenizer keeps an apostrophe inside a word, so `don't` is one token;
+this library's produces two, a stem plus a single-character fragment, and `it's` yields only the
+fragment `s`. Single-character tokens are 3.4 % of ArguAna, 6.3 % of NFCorpus and 4.5 % of SciFact,
+and the excess tracks that ordering. Removing the apostrophe before analysis brings ArguAna to
+973,318 terms, 0.39 % from the reference instead of 1.12 %. **Whether that also moves the score is a
+separate measurement and is not claimed.** Changing the tokenizer would invalidate every recorded
+baseline in the repository, so it is not a change to make while a release is being prepared.
 
 **ArguAna: this page said the gap was closed, and that was wrong.** It reported **0.4061** at
 k1=3.0/b=0.75, above the published 0.3970, and explained the difference as a scoring rule: the
@@ -62,9 +84,11 @@ Re-measured on 1,406 queries with the English analysis, at the reference's own k
 | `QueryTermWeighting.QueryFrequency` | 0.271 |
 | **effect of the setting** | **+0.052** |
 
-Three conventions were checked and none accounts for the difference. The linear gain convention
-returns the same 0.271 as the exponential one, and excluding the query document is worth +0.0012 by
-this repository's own measurement. Neither 0.2902 nor 0.4061 is reproducible.
+Three conventions were checked, and the third one is the defect. The linear gain convention returns
+the same 0.271 as the exponential one. Excluding the query document was measured as worth +0.0012 by
+this repository's own measurement — a number that was wrong, because the option was inert: it is
+worth **+0.093** once applied. Neither 0.2902 nor 0.4061 is reproducible, and the 0.271 above is
+measured without the exclusion, as the other two were.
 
 **No release carried either figure.** `QueryTermWeighting` is absent from the `v0.6.0` tag, which
 predates the commit that added it, and 0.4061 is absent from the 0.6.0 documents entirely
@@ -78,11 +102,14 @@ two settings could not have produced different rankings, so those figures could 
 the code that published them. The engine now hands the scorer the raw term list, the setting is
 observable through `Search`, and `QueryTermWeightingTests` fails if it ever stops being.
 
-**What is left on ArguAna is open.** At matched parameters this library reads 0.219 where the
-reference publishes 0.3970, and the setting closes 0.052 of that 0.178. Nothing measured here
-accounts for the rest. ArguAna's k1 sensitivity also runs opposite to the other two corpora, so
-comparing this library at k1=1.5/b=0.75 against a reference figure produced at k1=0.9/b=0.4 is not a
-comparison at all, which is how a flattering number got in.
+**What is left on ArguAna is 0.033, and it is not accounted for.** At matched parameters this
+library reads 0.364 where the reference publishes 0.3970. The query-frequency setting is part of that
+column and the excluded-ids fix is most of the rest; what remains is measured to be a difference in
+how the two analyses tokenize, described above, and it has not been shown to be the cause of the
+score difference — only that the two indexes differ by 1.12 % in terms and 3.4 % in single-character
+tokens. ArguAna's k1 sensitivity also runs opposite to the other two corpora, so comparing this
+library at k1=1.5/b=0.75 against a reference figure produced at k1=0.9/b=0.4 is not a comparison at
+all, which is how a flattering number got in.
 
 The reference is also **newer than the table it is first compared against**: a current per-corpus
 regression for this exact index puts ArguAna at 0.3970, not the 0.315 of the 2021 paper.

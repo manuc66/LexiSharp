@@ -422,6 +422,21 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             if (!accumulating.TryAccumulate(index, accumulator))
                 return false;
 
+            // The id exclusion, hoisted out of the loop for the same reason it is the first line of
+            // PassesFilters: the overwhelmingly common case is a null set, so what the per-candidate
+            // loop must pay for it is one null test. This pass did not pay even that.
+            //
+            // It did not apply the exclusion at all, and the loop below does not call
+            // PassesFilters, which is where the exclusion lives — so on any query that takes this
+            // path, an excluded document was ranked and returned. The path is declined for small
+            // corpora and for queries that touch few documents, which is exactly why the six tests
+            // for this option all passed: their fixture is three documents of identical text, so
+            // every one of them runs the fallback and never reaches here. ArguAna is the opposite
+            // case — 8,674 documents and 645-word queries — and the published measurement for that
+            // corpus is produced with the query's own document dropped, so the comparison was made
+            // against a ranking that did not drop it.
+            var excluded = options.ExcludedDocumentIds;
+
             for (int i = 0; i < accumulator.Count; i++)
             {
                 int candidate = accumulator.OrdinalAt(i);
@@ -429,6 +444,9 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
                 double score = accumulator[candidate];
 
                 if (double.IsNaN(score) || double.IsInfinity(score) || score == 0 || score < options.MinimumScore)
+                    continue;
+
+                if (excluded is not null && excluded.Count > 0 && excluded.Contains(document.Id))
                     continue;
 
                 facets?.Count(document);
