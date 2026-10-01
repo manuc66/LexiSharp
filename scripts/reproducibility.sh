@@ -51,6 +51,22 @@ GOLDEN="bench/reference-corpus/golden/rankings.txt"
 CONFIGS="bm25,bm25-semantic,bm25f,bm25+,bm25l,bm25-proximity-full"
 COMMON=(--queries bench/reference-corpus/queries.json --qrels bench/reference-corpus/qrels.tsv)
 
+# Pinned rather than left to the default. The harness defaults --jobs to ProcessorCount-1, which
+# means a sweep run on a workstation and the same sweep run on a CI runner reduce the per-query scores
+# over a different number of partitions. The reduction is deterministic, so the *numbers* do not move,
+# but neither the runtime nor the wall-clock line in the log is then comparable between the two, and a
+# sweep whose own timings drift with the host is a sweep nobody can read. Cap 8 as well: past that the
+# harness is contending with itself, and the sweep is not measuring the library.
+JOBS="${LEXISHARP_EVAL_JOBS:-8}"
+
+# The scores a reference run recorded, tab-separated as "query id, document id, score" — the third
+# column at the precision the run file carries. The ArguAna stage compares against it pair by pair,
+# which is the only comparison that can tell two implementations apart: a metric sees an order, and an
+# order can agree while every score behind it differs. It is a path rather than a download because it is
+# 130 MB and a stage that fetches 130 MB is a stage nobody runs. Without it the stage still measures the
+# metric and says so.
+REFERENCE_SCORES="${LEXISHARP_REFERENCE_SCORES:-bench/reference-corpus/golden/arguana-reference-scores.tsv}"
+
 # stage <name> <must-be-stable: yes|no> <description>; body reads stdin.
 declare -a ROWS=()
 FAILED=0
@@ -91,7 +107,7 @@ golden_verify()    { dotnet run --project bench/LexiSharp.Cli -c Release --no-bu
 # The whole log, not a tail. A truncated log kept the verdict and dropped the evidence: the
 # first version showed "OK" with four of the eleven checks visible, which reads as proof and
 # is not. A stage that cannot show its work has not shown its work.
-pins_verify()      { dotnet run --project bench/LexiSharp.Eval -c Release --no-build -- --data bench/LexiSharp.Eval/data --verify-reference 2>&1; }
+pins_verify()      { dotnet run --project bench/LexiSharp.Eval -c Release --no-build -- --data bench/LexiSharp.Eval/data --verify-reference --jobs "$JOBS" 2>&1; }
 
 # Re-record to a scratch file and byte-compare against the committed one. This is the
 # cross-machine check: the file in git was recorded on whatever machine wrote it, and this
@@ -172,7 +188,71 @@ code_shape() {
 eval_corpus() {
   local dataset="$1"; shift
   dotnet run --project bench/LexiSharp.Eval -c Release --no-build -- --data bench/LexiSharp.Eval/data \
-    --dataset "$dataset" --no-tuned "$@" 2>&1 | grep -E "^\s*(BM25|BM25F|BM25\+|BM25L|TF-IDF)" | head -20
+    --dataset "$dataset" --no-tuned --jobs "$JOBS" "$@" 2>&1 | grep -E "^\s*(BM25|BM25F|BM25\+|BM25L|TF-IDF)" | head -20
+}
+
+# The parity row that used to be a gap: ArguAna at the reference's own k1 and b under the reference
+# analysis, which now reproduces 0.3970. Gated, because the gap it replaced was 0.033 of nDCG and a
+# silent regression back into it would otherwise pass every other stage here. Three of the settings it
+# needs are opt-in, so they are named here rather than hidden in a preset: --analyzer uax29 selects
+# the reference segmentation, --reference-index-statistics checks the index against the reference's own
+# term count before any score is computed, and --query-term-frequency counts a repeated query term once
+# per occurrence. Query syntax needs no flag: this harness leaves SearchOptions.ParseQuerySyntax at
+# false by default, which is what a corpus of prose needs, and --query-syntax turns it on.
+#
+# The run is written out so the per-query comparison is possible with trec_eval and not only in
+# aggregate. --index-cache is not used here: it is for iterating on a corpus, and a sweep that trusted a
+# cache would be checking that the cache was written correctly rather than that the index is.
+arguana_parity() {
+  local run="$OUT/arguana-parity-run.txt"
+  local scores="$OUT/arguana-parity-scores.txt"
+  # The three reproduction flags are the point of this stage and are not decorative. The reference
+  # scores its terms in single precision against a reciprocal table, keeps the query-side frequency in
+  # the weight instead of scoring a term once per occurrence, leaves the k1+1 out of the numerator, and
+  # rounds what it returns to four decimals before walking down each run of near-equal scores. Without
+  # all four the ranking is right and the scores are not: measured against a run that reference's own
+  # searcher produced, 6.18% of 14,168 paired scores match on the raw bits with only the idf count
+  # fixed, and 100.00% with all of it. Each is off by default; they are here because a run file is
+  # compared score by score.
+  dotnet run --project bench/LexiSharp.Eval -c Release --no-build -- --data bench/LexiSharp.Eval/data \
+    --dataset arguana --analyzer uax29 --exclude-query-doc --reference-bm25 0.9,0.4 \
+    --ndcg-gain linear --query-term-frequency --omit-saturation-constant \
+    --single-precision-bm25 --reference-score-rounding --no-tuned \
+    --jobs "$JOBS" --reference-index-statistics --top-k 1000 --run "$run" 2>&1 \
+    | grep -E "nDCG@10|recall@|Index fingerprint|terms |conventions" | head -12
+  echo "run written to $run"
+
+  # And the raw scores, on the depth the reference's own run file carries, so the bit-level claim can be
+  # checked rather than taken on trust. It is one line of awk: a mismatch on the score is a mismatch.
+  dotnet run --project bench/LexiSharp.Eval -c Release --no-build -- --data bench/LexiSharp.Eval/data \
+    --dataset arguana --analyzer uax29 --exclude-query-doc --reference-bm25 0.9,0.4 \
+    --ndcg-gain linear --query-term-frequency --omit-saturation-constant \
+    --single-precision-bm25 --reference-score-rounding --no-tuned \
+    --jobs "$JOBS" --reference-index-statistics --top-k 11 --run "$scores" >/dev/null 2>&1
+  if [ -s "$REFERENCE_SCORES" ]; then
+    awk 'NR==FNR { s[$1" "$2]=$3; next }
+         { k=$1" "$3; if (k in s && s[k]!=$5) { d++; if (d<=3) print "  differe: " k " nous " s[k] " reference " $5 } }
+         END { printf "  %d scores sur %d different sur le bit\n", d+0, FNR }' \
+      "$REFERENCE_SCORES" "$scores"
+  else
+    echo "  pas de scores de reference a $REFERENCE_SCORES : la metrique ci-dessus est mesuree, le bit non"
+  fi
+
+  # The index fingerprint is the cheap half of this stage and it is checked above; the expensive half is
+  # the score. Both matter: a score reproduced over a differently-analysed index is not a reproduction.
+
+  # And the metric scored by something that is not this repository. The harness computing its own
+  # nDCG and agreeing with itself is a weaker claim than an independent evaluator reading the run file
+  # this stage just wrote, so trec_eval is asked to read it when it is on the machine. Measured with
+  # trec_eval 9.0.8: ndcg_cut_10 0.3970 and recall_100 0.9324, against 0.3970 and 0.9324 published.
+  local evaluator="${TREC_EVAL:-trec_eval}"
+  if command -v "$evaluator" >/dev/null 2>&1 && [ -s "${ARGUANA_QRELS:-}" ]; then
+    echo "  $evaluator on the run file above:"
+    "$evaluator" -m ndcg_cut.10 -m recall.100 "$ARGUANA_QRELS" "$run" | sed 's/^/    /'
+  else
+    echo "  $evaluator indisponible ou qrels absents : l'egalite au bit ci-dessus reste verifiee,"
+    echo "  le nDCG@10 affiche au-dessus est mesure par ce harnais et n'est pas confirme a l'exterieur."
+  fi
 }
 
 # The ArguAna exclusion comparison, kept as a stage because it is the measurement that found a
@@ -182,18 +262,30 @@ eval_corpus() {
 arguana_exclusion() {
   local out="$OUT/arguana-exclusion.tsv"
   : > "$out"
-  local p
+  local p k1 b
   for p in 0.9,0.4 1.5,0.75; do
+    k1="${p%%,*}"; b="${p#*,}"
     local extra=()
     [ "$p" = "0.9,0.4" ] && extra=(--exclude-query-doc)
     local row
+    # The label is printed with a space after the comma, so the pattern has to carry one. Matching the
+    # parameters exactly rather than a prefix of them is what makes this stage able to fail: written as
+    # "k1=$p" it never matched, the column came out empty, and the range check below failed on that
+    # rather than on a number. The stage was marked stable and had never run green.
     row=$(dotnet run --project bench/LexiSharp.Eval -c Release --no-build -- \
       --data bench/LexiSharp.Eval/data --dataset arguana --no-tuned --analyzer english \
-      --reference-bm25 "$p" --query-term-frequency --ndcg-gain linear "${extra[@]}" 2>&1 \
-      | grep -E "^\s*BM25 \(k1=$p" | head -1)
+      --jobs "$JOBS" --reference-bm25 "$p" --query-term-frequency --ndcg-gain linear "${extra[@]}" 2>&1 \
+      | grep -F "BM25 (k1=$k1, b=$b)" | head -1)
     printf '%s\t%s\t%s\n' "$p" "$([ ${#extra[@]} -gt 0 ] && echo exclude || echo plain)" "$row" >> "$out"
   done
   cat "$out"
+  # An empty metric column is a failure of this stage, not a value: it is what a pattern that matches
+  # nothing looks like, and it passed the range check below as "outside the range" rather than as
+  # "absent". Checked before the range so the two are not confused.
+  if awk -F'\t' 'NF < 3 || $3 == "" { found = 1 } END { exit !found }' "$out"; then
+    echo "a row produced no metric: the grep above matched nothing"
+    return 1
+  fi
   grep -qE "0\.3[0-9][0-9]|0\.4[0-9][0-9]" "$out" || { echo "no ArguAna row reached the expected range"; return 1; }
 }
 
@@ -256,10 +348,11 @@ if [ "$MODE" = full ]; then
   stage eval-nfcorpus    yes "nFCorpus reproduces"                                      eval_corpus nfcorpus --analyzer english
   stage eval-scifact     yes "SciFact reproduces"                                       eval_corpus scifact --analyzer english
   stage eval-arguana     yes "ArguAna reproduces"                                       eval_corpus arguana --analyzer english
+  stage arguana-parity   yes "ArguAna at the reference's own parameters reaches 0.3970" arguana_parity
   stage arguana-excl     yes "ArguAna with and without the query's own document"        arguana_exclusion
   stage benchmarks       no  "BenchmarkDotNet suite (timings: reported, never gated)"  benchmarks
 else
-  printf '\n=== skipped in --quick ===\neval corpora, the ArguAna exclusion comparison, benchmark suite.\nRe-run with --full.\n'
+  printf '\n=== skipped in --quick ===\neval corpora, the ArguAna parity and exclusion comparisons, benchmark suite.\nRe-run with --full.\n'
 fi
 
 # ---------------------------------------------------------------- summary

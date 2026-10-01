@@ -16,13 +16,129 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --verify-reference
 on every push that touches the library or the harness, and weekly by the `Pinned reference`
 workflow.
 
-## [0.8.0] — Unreleased
-
-The version number is not settled: nothing here changes the public API, but the excluded-ids fix
-changes observable behaviour for anyone who set that option on a large corpus, and a patch release
-would understate it. Whichever number is chosen, the reason is here.
+## Unreleased
 
 ### Fixed
+
+- **BM25's inverse document frequency was built over the wrong document count.** It used every indexed
+  document; it should use the documents carrying the field. The difference is one document on any corpus
+  holding one with no term in it — 1 of 8,674 on BEIR ArguAna — and it moved every score by about three
+  parts in a hundred thousand, which is invisible in a ranking and decided the last digit of a score.
+  Measured against a run produced by the reference implementation's own searcher: the median relative
+  gap falls from 2.6e-05 to 3.3e-07. `ITextIndex.StatisticDocumentCount` is the new member, and the
+  count it returns is the one `AverageDocumentLength` already divided by, so the two cannot drift apart;
+  under the default divisor it is `Count` and nothing changes.
+
+### Added
+
+- `SearchOptions.ScoreRounding`, off by default. `ScoreRounding.FourDecimals` reproduces what a system
+  that writes its scores down does to them before writing: round every returned score to four decimals,
+  then walk down each run of scores within a ten-thousandth by one millionth a position, so that
+  documents the arithmetic scored identically come out distinguishable. Lossy by construction and not an
+  improvement — a decision about the comparison being made. Measured on ArguAna against that system's
+  run: 14,168 of 14,168 compared scores identical on the raw bits, against 6.18% without it.
+- `Bm25Scorer`'s `saturationConstant`, on by default. Passing `false` leaves `k1 + 1` out of the
+  numerator, which is the same ranking scaled by `1 / (k1 + 1)` and therefore the same order — but the
+  reference implementation's BM25 has no such factor, so a score compared against one of its runs is off
+  by that factor before any rounding is discussed.
+- `Bm25Arithmetic`, off by default. `SinglePrecision` computes each term's contribution in single
+  precision, sums those in double and rounds the total once, and reads the length normalisation from a
+  single-precision reciprocal table instead of evaluating it per document. Same ranking, one fewer
+  significant figure, and it is the figure the reference has.
+- Together, and only together, those three reach bit-for-bit equality with a run that reference
+  implementation wrote: 14,168 of 14,168 scores, verified on all 1,406 ArguAna test queries. All three
+  default to this library's own conventions and none of them is on by default.
+- `LexiSharp.Eval` flags `--omit-saturation-constant`, `--single-precision-bm25` and
+  `--reference-score-rounding`, and states the rounding on the run file it writes, since a score read
+  back from that file is not the scorer's score when the flag is on.
+- `IAccumulatingQueryPlan.Finalise`, a default-implemented member, so a scorer that rounds a score at
+  the end of the sum can do so on the path that accumulates postings. It had nowhere to do it before:
+  on a corpus large enough to take that path, the per-document loop is never called and the rounding
+  was silently skipped.
+- `IdealDcg` no longer lets a document of relevance level 0 occupy a rank in the ideal ranking. It
+  added nothing to the ideal and advanced the rank, which shrank the denominator and so raised every
+  nDCG computed against it. The corpus loader here drops judgments of 0, so no reported figure moves;
+  it was reachable through the public `RetrievalMetrics.NdcgAtK` overload, which takes whatever map
+  it is handed. Two tests cover it, one of which fails on the previous code.
+- The evaluation harness measures its metrics at rank 10 rather than at the depth the run retrieves.
+  The two were the same value, so a parity run — which retrieves one document deeper than it measures,
+  to compare scores document by document — reported nDCG@11 under a heading reading nDCG@10. On
+  ArguAna that was worth 0.006, and it is the whole of the gap this repository had been recording
+  between its figure and the published one. The cutoff is now named (`MetricDepth`) and is
+  independent of `--top-k`.
+- `pinned.json` records the ArguAna parity figure as reproduced, at 0.397, with the verification
+  written down: `trec_eval` 9.0.8 reads nDCG@10 0.3970 and recall@100 0.9324 from a run this harness
+  wrote, against 0.3970 and 0.9324 published, so the aggregate no longer rests on this harness's own
+  metric code. The 15,466 of 15,466 bit-identical raw scores are unchanged and are what makes the
+  ranking the same ranking. A 0.0004 residual against `trec_eval` is recorded as measured, localized
+  to the 102 of 1,406 queries that contain a score tie, and not explained.
+- The reciprocal table `SinglePrecision` builds is now published through a single immutable reference
+  behind a `Volatile` read and a lock, instead of two ordinary fields written in sequence. One scorer
+  serves every query an engine runs and those run concurrently, and the previous shape let a thread
+  publish a reference to an array another was still filling. It is the only state in that mode, which
+  is why it went unnoticed until it was looked for: the symptom is a wrong score occasionally rather
+  than a failure. Covered by a test that compares a shared scorer's answers under 64 threads with its
+  own answers serially, on the raw bits.
+
+## [0.8.0] — Unreleased
+
+The version number is not settled. Nothing here changes an existing default, but two fixes change
+observable behaviour for callers who rely on the old results, and a patch release would understate
+that. Whichever number is chosen, the reason is here.
+
+### Reproduced
+
+**The ArguAna figure published by the independent BEIR regression — nDCG@10 0.3970 — is now
+reproduced exactly, on all 1,406 queries, one by one.** Paired difference 0.00000000, 95 % interval
+[0.00000000, 0.00000000]. Recall@100 (0.9324), recall@1000 (0.9872), nDCG@5 (0.3445), MAP@100 (0.3280)
+and reciprocal rank (0.3282) all match as well. The two indexes agree **term for term**: 23,895 distinct terms
+and 969,528 occurrences on each side, zero terms differing in document frequency, zero in term
+frequency, and zero terms present in one index and not the other.
+
+The deficit was never a ranking question. Four analysis rules accounted for it, each measured rather
+than assumed, and each shipped as an option whose default is unchanged:
+
+| option | default | what it aligns |
+|---|---|---|
+| `SearchOptions.ParseQuerySyntax` | `true` | a query language's `"` against prose's, 138 of 1,406 queries |
+| `QueryTermWeighting.QueryFrequency` | `Distinct` | one boost per occurrence of a repeated query term |
+| `TokenizerOptions.WordSegmentation` | `Flat` | 18 separators tested across digit and letter on both sides |
+| `TokenizerOptions.StripPossessives` | `false` | possessive removal **before** the stop word list |
+| `TokenizerOptions.FoldDiacritics` | `true` | diacritics kept |
+| `InMemoryTextIndex.DocumentLengthQuantization` | `Exact` | lengths stored as one byte |
+
+Two of these were defects in this library rather than differences of convention, and are fixed outright
+below. The other four are conventions, and stay opt-in.
+
+### Fixed
+
+- **A combining mark ended the word it followed.** `celi\u0307l` was split into `celi` and `l` into two
+  tokens, because the scanner accepted letters and digits and nothing else. A mark modifies the character
+  it follows, so it extends a word and cannot open one — measured: `a\u0307b` and `a\u0307` are each one
+  token, while `\u0307ab` is just `ab` and a lone mark is nothing. ArguAna holds no combining mark at all,
+  SciFact none either, NFCorpus four characters out of 5,779,318; the rule is here because a word is the
+  unit everything downstream counts.
+
+- **`PorterStemmer` returned every term containing a non-ASCII character unchanged.** The guard read
+  `!Ascii.IsValid(term)` and bailed, so `they’re`, `naïve`, `façade` and `exposé` were never stemmed —
+  the algorithm is defined over characters, not scripts, and everything outside `aeiou` is a consonant.
+  Asking the reference implementation's own stemmer settled what it does with those words (`they’re` →
+  `they’r`, `naïve` → `naïv`, `façade` → `façad`); its answers are now this library's.
+
+- **`Tokenizer` did not remove a possessive before consulting the stop word list.** Trimming the
+  possessive inside the stemmer is too late: the list has already been tested, and it was tested on
+  `it's` rather than on `it`. So `it's` survived as a stop word it should never have been and only then
+  became `it`. On BEIR ArguAna this indexed an `it` 3,501 times where the reference has 3,134, and
+  indexed a `that` (83 occurrences) and a `there` (36) the reference does not have at all — 486 of the
+  487 occurrences by which the two indexes differed. The reference's own `it` comes from `its`, which
+  is not a possessive and is not on the list. Correcting it in the tokenizer, before the list is
+  consulted, accounts for all three to the occurrence.
+
+- **`TokenizerOptions.WordSegmentation.UnicodeWordBoundaries` dropped a leading unconditional joiner.**
+  The joiner rule needs a word character on both sides, which an underscore at the start of a token
+  cannot satisfy, so `_630888` indexed as `630888` and `__alpha` as `_alpha`. Measured: the reference
+  keeps `_630888`, `_alpha`, `__alpha` and `___` alone as `___`-with-no-word, while `-alpha` is just
+  `alpha` — so this is the underscore's rule and not a rule about any separator.
 
 - **`SearchOptions.ExcludedDocumentIds` was ignored on the term-at-a-time path.** The exclusion is
   implemented in `SearchOptions.PassesFilters`, and only the per-document loop called it; the
@@ -41,13 +157,12 @@ would understate it. Whichever number is chosen, the reason is here.
   it measured an option that did nothing. The seven other nDCG pins, all three index fingerprints and
   the golden master are unchanged.
 
-  **The corpus is not behind.** At this library's own defaults — k1=1.5, b=0.75, the repeated-term
-  setting on — the same 1,406 queries read **0.444** against a published 0.397. ArguAna's score is
-  steep in k1: 0.290 to 0.381 on the repeated-term setting alone, from k1 alone, so the published
-  figure was produced at an operating point that looks poor for this corpus. Whether the reference
-  reads higher at k1=1.5 cannot be tested from here, so the aligned comparison stands and the 0.033
-  at k1=0.9/b=0.4 is recorded rather than explained away. On all three corpora this library now meets
-  or exceeds the published figure at its own defaults.
+  **What the remaining 0.033 turned out to be.** This entry previously closed by arguing that the
+  corpus was not behind, on the strength of 0.444 at this library's own defaults against a published
+  0.397. That reading was wrong, and it was wrong in a way worth recording: 0.444 was not a sign the
+  corpus suited these defaults, it was 0.397 plus four analysis differences that happened to point the
+  same way. With the analysis aligned, the defaults give 0.444 and the reference's parameters give
+  0.3970, and the two agree. Nothing about ArguAna needed explaining.
 
   The per-candidate cost is one null test on an already-hoisted set, the same shape as the gate
   already at the top of the other loop; **the benchmark could not resolve it** — run-to-run error on
@@ -75,6 +190,58 @@ would understate it. Whichever number is chosen, the reason is here.
 ## [0.7.0]
 
 ### Added
+
+- **`TokenizerOptions.WordJoiners`** and **`TokenizerOptions.WordSegmentation`**, which control which
+  characters join a word and under which condition. `Flat` remains the default and joins nothing.
+  Whether a character joins depends on what sits either side of it: a comma joins two digits and splits
+  two letters, a colon does the exact opposite, a full stop and an apostrophe do both, an underscore
+  joins anything. Flattening those into one set gets `1,2,3` right and `0335204279.pdf` wrong, and being
+  wrong on one word out of a million still changes document frequencies, which changes every score.
+  Eighteen separators were measured across digit and letter on both sides; characters outside that set
+  are not implemented, because nothing has established here what they do.
+
+- **`TokenizerOptions.StripPossessives`**, default `false`. The published algorithm removes a possessive
+  as its first step, so without this `Adam's` stems to `adam'` — a word no query will ever contain. It
+  lives in the tokenizer rather than the stemmer for a reason that was measured, not chosen: the stop
+  word list is consulted in between, so trimming afterwards tests `it's` rather than `it` and lets
+  through a term the caller asked to remove.
+
+- **`TokenizerOptions.FoldTurkishDottedI`**, default `false`. Of the 505 code points whose lowercase
+  differs from themselves over the ranges a European corpus contains, this is the single one where .NET's
+  invariant casing and the reference implementation disagree: U+0130, the Turkish dotted capital I. Left
+  alone it is the right answer for a Turkish index, where `İ` and `i` are different letters; folded, it is
+  what a language-independent index wants. The fold is the Unicode **simple** mapping — U+0069, one
+  character — and not the full one, which the reference's own index settles: it holds a five-character
+  `celil`, and handing its analyzer a six-character `celi\u0307l` returns the dot intact.
+
+- **`TokenizerOptions.FoldDiacritics`**, default `true`, exposed rather than fixed. Folding merges
+  spellings and raises document frequencies; on BEIR ArguAna it is worth about 0.003 nDCG@10 in one
+  direction, which is why an analysis claiming to reproduce a published figure has to say which way it
+  went.
+
+- **`InMemoryTextIndex.AverageLengthDivisor`** and **`DocumentLengthQuantization`**, default
+  `AllDocuments` and `Exact`. The first chooses whether an empty document counts towards the average
+  document length — on ArguAna, one document in 8,674, worth about one part in ten thousand, far too
+  small to move a ranking but large enough to change the last bits of a score, and an exact tie is
+  decided on exactly those bits. The second stores a length as one byte through an arithmetic encoding,
+  which makes two documents of 149 and 151 terms score identically. Quantizing measured **worse**, by
+  about 0.006: it is a device for reproducing a published figure, not an improvement.
+
+- **`SearchOptions.TieBreak`**, default `TieBreak.DocumentId`. Two documents with the same score have
+  no ranking between them, so something decides, and each convention answers a different question.
+  `InsertionOrder` orders them by the position the engine produced them in, which is what a system that
+  breaks ties as documents are added does — use it to reproduce one. The order stays total and
+  deterministic, but it depends on the load order rather than only on the documents, so results are
+  reproducible for a given index and not for a given set of documents.
+
+- **`SearchOptions.ParseQuerySyntax`**, default `true`. When `true` the query is read as query syntax:
+  `"a phrase"` requires positional adjacency, `term*` is a prefix, `term~` is fuzzy. When `false` the
+  query is literal text and the parser is not consulted. This is not a preference — a double quote is
+  ordinary text in prose, and a query language cannot tell a quotation mark from a phrase delimiter.
+  Measured on BEIR ArguAna, where all 1,406 test queries are whole arguments: 138 contain a straight
+  `"`, and each had the quoted span turned into a mandatory phrase, after which no document but the
+  query's own could satisfy it. 91 returned nothing at all and 20 returned a single result, at any
+  retrieval depth. Set it to `false` for a corpus of natural-language queries.
 
 - **`QueryTermWeighting`** on `Bm25Scorer`, `Bm25PlusScorer` and `Bm25LScorer`. `Distinct` is the
   default and remains so; `QueryFrequency` counts a repeated query term once per occurrence. It is
