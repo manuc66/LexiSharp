@@ -105,13 +105,11 @@ score(q,d) = Σ_t  idf(t) · (k1 + 1)·(ctd(t,d) + δ) / (k1 + ctd(t,d) + δ)
 ```
 
 **Both variants degenerate to `Bm25Scorer` at `delta = 0`** — trivially for BM25+, whose δ is
-additive, and not obviously for BM25L, which is the subject of [the next
-subsection](#tuning-delta-and-what-it-does-to-the-comparison). A test asserts the BM25+ equality bit
-for bit, but it **cannot** see where δ sits, since a formula that shifted `tf` by δ inside the
-fraction would satisfy it too. `Bm25PlusAddsDeltaOutsideTheFraction` is the test that discriminates,
-and `Bm25LUsesTheCompressedDenominatorNotBm25s` does the same job for BM25L against BM25's
-denominator. Both exist because the first version of this section got both wrong — see the
-correction below.
+additive, and not obviously for BM25L, which is [shown below](#tuning-delta-and-what-it-does-to-the-comparison).
+A test asserts the BM25+ equality bit for bit, but it **cannot** see where δ sits, since a formula
+that shifted `tf` by δ inside the fraction would satisfy it too. `Bm25PlusAddsDeltaOutsideTheFraction`
+is the test that discriminates, and `Bm25LUsesTheCompressedDenominatorNotBm25s` does the same job
+for BM25L against BM25's denominator.
 
 One departure for BM25+: read literally, `idf(t)·δ` applies even to terms the document lacks, so the
 paper's model scores non-matching documents above zero. Reference implementations handle that by
@@ -136,9 +134,9 @@ new Bm25LScorer(l.K1, l.B, l.Delta);
 ```
 
 **Both variants degenerate to BM25 at `delta = 0`**, which is what makes the two tables
-comparable. BM25+'s is obvious — the bound is additive. BM25L's is not, and used to be documented
-here as *not* holding: its denominator carries the compressed frequency where BM25's carries the
-raw one. The compression is on the numerator too, so it cancels:
+comparable. BM25+'s is obvious — the bound is additive. BM25L's is not: its denominator carries
+the compressed frequency where BM25's carries the raw one, which looks like a difference until you
+notice the compression is on the numerator too, so it cancels:
 
 ```
 ctd / (k1 + ctd) = (tf / norm) / (k1 + tf / norm) = tf / (k1·norm + tf)      ... BM25's term weight
@@ -150,7 +148,7 @@ So `delta = 0` is plain BM25, term for term, and a `delta = 0` grid returns
 and compares. It is also why `delta = 0` is in the default grid — it is the baseline, and without
 it `DeltaHelped` has nothing to measure against and reports `UnflooredMetricScore = NaN`.
 
-### The measurement, and a retraction
+### The measurement
 
 | Config | reference (nDCG@5) | NFCorpus (nDCG@10) | SciFact (nDCG@10) |
 |---|---|---|---|
@@ -200,21 +198,15 @@ at all, and ArguAna is where it hurts most, this is the corpus where the result 
 either direction. Run it yourself before concluding anything about δ on long-document
 counter-argument retrieval.
 
-**What this retracts.** An earlier version of this page reported the variants beating a tuned BM25
-by **+0.017** on the reference corpus, and losing by 13–17 % on the BEIR corpora. Both numbers are
-gone. The +0.017 was a comparison of BM25+ at a *default* `δ` against BM25 at a *fitted* `(k1, b)`
-— 0.8978 against 0.8812 — and the gap was the unfitted `δ`, not the formula. The 13–17 % was
-already retracted in 9bb7c92 as a transcription error (both formulas were wrong; fixing them moved
-BM25L from 0.575 to 0.655 on SciFact). The +0.017 has now gone the same way: with `δ` searched, it
-converges onto tuned BM25 exactly on the reference corpus and on NFCorpus, and is worth +0.004 on
-SciFact.
-
-The cost of that earlier claim was a metric mismatch. The 0.8812 it compared against came from a run
+**Reading the tables against an unfitted number.** A +0.017 here comes from comparing BM25+ at a
+*default* `δ` against BM25 at a *fitted* `(k1, b)` — 0.8978 against 0.8812. The gap is the unfitted
+`δ`, not the formula: with `δ` searched, the variants converge onto tuned BM25 exactly on the reference
+corpus and on NFCorpus, and are worth +0.004 on SciFact. The 0.8812 it compares against comes from a run
 whose tuners optimized **F1@k**, which is flat on the reference corpus (0.3588 for all six
-configurations) — so the "tuned" BM25 had no signal to fit and the tie-break handed it the first
-grid point. The BEIR harness tunes on nDCG; the CLI now takes `--metric` so a tuned row's objective
-is stated rather than assumed. Every tuned number on this page is fitted on **nDCG**, the metric it
-is reported in.
+configurations) — so the "tuned" BM25 has no signal to fit and the tie-break hands it the first grid
+point. The BEIR harness tunes on nDCG; the CLI takes `--metric` so a tuned row's objective is stated
+rather than assumed. Every tuned number on this page is fitted on **nDCG**, the metric it is reported
+in.
 
 `DeltaHelped` is the part worth keeping: it is how you find out on *your* corpus whether `δ` is
 doing anything, without a table. Two corpora report `false` and one reports `true` by 0.004, all
@@ -284,8 +276,8 @@ queries, SciFact 300, ArguAna 1406. BM25's own row reproduces the numbers this R
 quoted for the same harness, which is the cross-check that the title-field change below left plain
 BM25 untouched.
 
-**A correction the numbers forced, and it matters more than the table.** The rows above compare
-*default* parameters against each other, and on the reference corpus tuning shows what that was worth:
+**What tuning shows the rows above were worth.** The rows compare *default* parameters against each
+other, and on the reference corpus tuning shows what that was worth:
 
 ```
 Config                       nDCG@5      MAP@5      MRR@10        R@5
@@ -300,12 +292,11 @@ All tuned rows here are fitted on **nDCG@5**, the metric they are reported in
 
 **Tuned BM25F does not beat a tuned BM25 on the reference corpus — it trails it by 0.011**, and the
 un-tuned gap was BM25F's defaults (k1=1.2) being a worse fit for a 42-document corpus than BM25's
-(k1=1.5), not a per-field length term doing something useful. This table previously showed the two
-tuned rows *equal at 0.8812*, and that equality was an artifact: those runs tuned on **F1@5**, which
-is flat on this corpus (0.3588 for every configuration), so the "tuned" rows had no signal to fit
-and the tie-break handed both the first grid point. Re-fitted on the metric being reported, BM25F
-loses. The conclusion the equality supported — no measured case where BM25F beats BM25 after both
-are tuned — survives, and is now better supported than before. The ArguAna 0.344 stands as an
+(k1=1.5), not a per-field length term doing something useful. Read those two tuned rows as fitted on
+nDCG@5: fitting on **F1@5**, which is flat on this corpus (0.3588 for every configuration), leaves the
+tuner no signal to fit and hands both the first grid point, which puts them equal at 0.8812 and hides
+the loss. So the comparison stands on the nDCG-fitted rows: no measured case where BM25F beats BM25
+after both are tuned. The ArguAna 0.344 stands as an
 **un-tuned** comparison: whether it survives a tuned BM25 is untested, and running that grid on 1406
 queries was not affordable here.
 
@@ -392,7 +383,7 @@ and at opposite ends of a 10 000-token document `n/W ≈ 0.0002`. That punishes 
 floor and cost 0.15 nDCG@5 on the reference corpus. The unit tests did not catch it, because they
 asserted that an adjacent match outranks a spread one — which holds just as happily under a 2 %
 penalty as under a 97 % one.
-`TheDampPenaltyIsBoundedRegardlessOfDocumentLength` now pins it.
+`TheDampPenaltyIsBoundedRegardlessOfDocumentLength` pins it.
 
 **And the measurement:**
 

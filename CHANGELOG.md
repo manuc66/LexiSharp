@@ -306,12 +306,14 @@ below. The other four are conventions, and stay opt-in.
 ### Withdrawn
 
 - **A quality claim that no code path could produce.** The README and two documentation pages
-  reported a figure on ArguAna that the deduplicating engine could not have returned, and
-  attributed the gap to a scoring rule that measurement then priced differently. The claim and the
-  setting it rested on both landed on `main` **after** the `v0.6.0` tag — `QueryTermWeighting` is
-  absent from it, and `git tag --contains` returns no tag for the commit that added it — so no
-  published release ever asserted either; `v0.7.0` names the figure only to withdraw it. The
-  measurement, the two conventions that were checked and ruled out, and the structural reason are in
+  reported **0.4061** on ArguAna — above the published figure — which the deduplicating engine
+  could not have returned, and attributed the gap to a scoring rule that measurement then priced
+  differently (+0.0705 claimed, +0.052 measured at matched parameters). The figure is named here
+  so a reader carrying it can match it to this entry. The claim and the setting it rested on both
+  landed on `main` **after** the `v0.6.0` tag — `QueryTermWeighting` is absent from it, and
+  `git tag --contains` returns no tag for the commit that added it — so no published release ever
+  asserted either. The measurement, the two conventions that were checked and ruled out, and the
+  structural reason are in
   [docs/evaluation.md](docs/evaluation.md#measured-against-published-baselines); the figures are the
   `parity` rows of `reference/pinned.json`.
 - **Three documentation pages led with a comparison that was not like-for-like.** They reported

@@ -77,14 +77,9 @@ it. **Read only its `Allocated` column.** Allocation is counted in bytes and doe
 fast the host is, so that number travels; the `Mean` column does not. These are Azure VMs shared
 between tenants, where host-level contention is a documented source of variance, and the effect
 being measured here is a few percent — a shared runner cannot resolve it, and a `Mean` copied from
-that artifact into this file would not be a measurement. The workflow gates nothing, deliberately.
-
-It also runs on no schedule and on no push, because nothing reads its output on a schedule either:
-there is no committed baseline to compare against and no threshold to trip, so the reader is a person
-opening a run. Across a week on every push it reported the same `Allocated` column byte for byte on
-five consecutive runs at unchanged code, at a cost of roughly nine runner-hours. Dispatch it after a
-commit that touches the index or the scoring path. A future version that compares against a
-committed baseline could gate, and would then be worth running continuously.
+that artifact into this file would not be a measurement. The workflow gates nothing, deliberately, and
+runs on no schedule: it has no committed baseline to compare against and no threshold to trip, so its
+reader is a person opening a run.
 
 What *does* gate, deterministically, is `lexisharp verify` in the `core` CI job: it replays this
 corpus against the committed baseline and fails the build on any drift in ranking or metrics. No
@@ -142,21 +137,21 @@ the byte counts are the load-bearing evidence, because they do not depend on the
 | Naive Bayes `Predict`            |   9.5 µs   |   7.2 µs  | −24 %      |
 | Naive Bayes `Predict` allocation |   2,385 B  |   2,505 B | +5.0 %     |
 
-**Dense search, 4.5×.** `VectorSimilarity` now runs on `Vector<float>` (AVX2/AVX-512 where the host
+**Dense search, 4.5×.** `VectorSimilarity` runs on `Vector<float>` (AVX2/AVX-512 where the host
 has it) with two independent accumulator chains, and the engine computes each document's squared
 norm once at insert time, so a scan costs a dot product per document instead of a dot product
-plus two norm accumulations. Vectors moved into one contiguous dimension-strided block, so a scan
+plus two norm accumulations. Vectors live in one contiguous dimension-strided block, so a scan
 walks memory linearly rather than a dictionary entry per document. The page is cut by a bounded
-worst-first window instead of materializing and sorting every document that scored above zero,
+worst-first window rather than materializing and sorting every document that scored above zero,
 which is where the 99.3 % allocation drop comes from: the old path built a `SearchResult` for all
 10,000 documents and a LINQ sort chain on top, to return 10 rows. The worst "after" sample
 (2,206 µs) still beats the best "baseline" sample (4,900 µs), so the distributions do not overlap.
 
-**Index size, −31 %.** The tokenizer allocates a fresh string per token occurrence, so the index
-was holding one string object per *token* — 500,000 objects to represent 38 distinct words on
-this corpus. `InMemoryTextIndex` now keeps one instance per term in its posting list and rewrites
-each occurrence to it, so the corpus holds a vocabulary. It costs no extra hashing, because
-resolving a term to its posting list was already a required lookup; the shared instance rides
+**Index size, −31 %.** The tokenizer allocates a fresh string per token occurrence, so an index
+built straight from it holds one string object per *token* — 500,000 objects to represent 38
+distinct words on this corpus. `InMemoryTextIndex` keeps one instance per term in its posting list
+and rewrites each occurrence to it, so the corpus holds a vocabulary. It costs no extra hashing,
+because resolving a term to its posting list is a required lookup anyway; the shared instance rides
 along. Build allocation rises 5.3 % (a second, exactly-sized token list per document) and build
 time is unchanged within this host's resolution.
 
@@ -166,18 +161,17 @@ and, timed, is indistinguishable from the baseline in a three-way interleaved ru
 2,920 / 2,945 / 2,877 µs for baseline / with-window / with-window-reverted). The third build
 exists to make that check falsifiable.
 
-**Naive Bayes, −24 %.** The per-token idf weight and vocabulary flag were recomputed once per
-class inside the scoring loop, i.e. a dictionary lookup per (class, token) pair. They are now
-resolved once per prediction into a single array, and the corpus count is materialized only when
-`Complement` is on, so a default model pays for one array rather than five. Costs 5 % more
-allocation.
+**Naive Bayes, −24 %.** The per-token idf weight and vocabulary flag were a dictionary lookup per
+(class, token) pair, recomputed once per class inside the scoring loop. They are resolved once per
+prediction into a single array, and the corpus count is materialized only when `Complement` is on,
+so a default model pays for one array rather than five. Costs 5 % more allocation.
 
-**Correction, later:** the same pass had also made the *vocabulary membership lookup itself*
-conditional on `SkipOutOfVocabularyTokens`, which is wrong — `IdfWeight` reads the
-document-frequency table and needs the answer whatever the options say, so an
-out-of-vocabulary query term threw `KeyNotFoundException` on any model with a non-default
-`IdfMode`. Membership is now resolved unconditionally and the flag array is still only
-materialized when `SkipOutOfVocabularyTokens` is on. The cost is one `TryGetValue` per query
+**The vocabulary membership lookup is unconditional.** Making it conditional on
+`SkipOutOfVocabularyTokens` is wrong — `IdfWeight` reads the document-frequency table and needs the
+answer whatever the options say, so an out-of-vocabulary query term would throw
+`KeyNotFoundException` on any model with a non-default `IdfMode`. Membership is resolved
+unconditionally and the flag array is only materialized when `SkipOutOfVocabularyTokens` is on. The
+cost is one `TryGetValue` per query
 token, and it is **not** measurable above noise on this host: 7 interleaved rounds of 40 000
 `PredictBest` calls give 2.025 / 2.034 / 2.047 µs per call with the lookup against
 1.911 / 2.046 / 2.015 µs without, i.e. overlapping. The −24 % stands; treat the per-token
@@ -216,15 +210,15 @@ in corpus order, so there is no union and no ordering pass to skip — and the t
 `OneTerm` difference, so `OneTerm` is reported as unchanged rather than as a 2.5% regression.
 
 **What the change is.** `ICandidateIndex.GetCandidateDocuments` documents that its result is in
-corpus order, and honouring that cost a walk of the *entire* corpus after the union of the posting
-lists — O(corpus) however few documents matched. A 3-term query whose candidate set was 2 documents
-out of 10,000 still paid for 10,000 documents. The engine now asks for the set through an internal
-`IUnorderedCandidateIndex` capability and the walk is gone. The public method keeps its documented
+corpus order, and honouring that costs a walk of the *entire* corpus after the union of the posting
+lists — O(corpus) however few documents matched. A 3-term query whose candidate set is 2 documents
+out of 10,000 still pays for 10,000 documents. The engine asks for the set through an internal
+`IUnorderedCandidateIndex` capability, and the walk is gone. The public method keeps its documented
 order, so this is the engine declining to pay for it, not the contract being narrowed.
 
-This is safe because the ranking order was already total and never depended on candidate order:
-`TopRankedWindow` orders by score descending with ties broken by ordinal document id. That was
-already documented and it is now checked. `CandidateEnumerationOrderTests` builds a corpus of 100
+This is safe because the ranking order is total and does not depend on candidate order:
+`TopRankedWindow` orders by score descending with ties broken by ordinal document id — documented, and
+checked by `CandidateEnumerationOrderTests`, which builds a corpus of 100
 documents that all score *exactly* the same and runs the query twice, with the candidates handed
 back ascending and then descending, asserting the two pages are identical — comparing the two runs
 rather than asserting the expected ids, because a window that is order-dependent can still get the
@@ -268,7 +262,7 @@ inside it. With `m` terms over `n` candidates that is `2·m·n` string hashes, a
 is the same lookup repeated for the same `m` values on every one of the `n` documents.
 
 A scorer whose score decomposes into a per-term contribution depending on nothing but that
-document's **term frequency and length** now folds the inverted lists straight into an
+document's **term frequency and length** folds the inverted lists straight into an
 ordinal-indexed score buffer: one walk of each term's postings, no id hashed anywhere. BM25,
 BM25+, BM25L and TF-IDF qualify. BM25F (per-field geometry) and query likelihood (a `log P(t|d)`
 term for documents that do *not* contain the query term) do not, and keep the per-document loop.
@@ -287,14 +281,14 @@ reorders the page:
   recorded-flags array is cleared on rent. Skipping that clear made the suite fail
   *intermittently* — different tests on different runs of the parallel suite, all passing in
   isolation. It is the kind of defect a benchmark would never surface, and
-  `ScoreAccumulatorTests` now pins it: remove the clear and that test fails, `Count` 0 against 512.
+  `ScoreAccumulatorTests` pins it: remove the clear and that test fails, `Count` 0 against 512.
 
 **Search, head terms** (`CandidateSearchBenchmarks`, Zipf 10,000 × 50 words, s = 1.07). This is
-the representative table: a real term distribution, and the three head rows are new. No class here
-previously reached the regime where the engine scans the whole corpus, because the 38-word corpus
-puts every term in ~74% of documents — analytically (37/38)^50 ≈ 0.264, so 74% of 10,000 documents
-contain any given word. That figure is inherited from the existing benchmark comments, not
-re-measured here, and it is the number the next table below is *not* about.
+the representative table: a real term distribution, and the three head rows are the ones that
+exercise the regime the 38-word corpus cannot reach, because there every term lands in ~74 % of
+documents — analytically (37/38)^50 ≈ 0.264 — and the engine full-scans instead of enumerating. That
+74 % is inherited from the existing benchmark comments, not re-measured here, and it is the number
+the next table below is *not* about.
 
 | Method           | Before      | After       | Speedup | Allocated before / after |
 |------------------|------------:|------------:|--------:|-------------------------:|
@@ -436,10 +430,9 @@ Two results here, and the second one is the more useful:
   dictionaries outgrow the cache. That is the mechanism behind the whole section: the win grows
   with corpus size instead of being a constant, and it is a cache effect, not an algorithmic one.
 - **The break-even barely moves** (6 / 4 / 57), so the fixed cost is *not* what should set the
-  threshold. Scaling the threshold on the fixed cost alone — which is what the first version of this
-  did, with a divisor of 1,024 — gives 9 / 97 / 976 and hands back a **1.2-2.4× win at two of the
-  three scales**. The divisor is now 20,000, fitted to the three measured crossings, which gives
-  8 / 8 / 50.
+  threshold. Scaling the threshold on the fixed cost alone gives 9 / 97 / 976 and hands back a
+  **1.2-2.4× win at two of the three scales**. The divisor is 20,000, fitted to the three measured
+  crossings, which gives 8 / 8 / 50.
 
 At 1,000,000 documents the effect is unmistakable, and this is the scale where the change stops
 being a throughput win and becomes a latency one — the 38-word and Zipf tables at the top of this
@@ -483,27 +476,24 @@ So the restructuring is **neutral** on the path it does not accelerate, and the 
 is **7.8×** against that same path on the same index — which means essentially the whole 7.6×
 end-to-end is the loop, not the storage.
 
-That 1.03× is worth a note, because the first version of this measurement said 1.31× *slower* and
-was wrong. The per-document row on the new build was allocating 321 KB per search (see the
-`PassesFilters` section below); 288 KB of that was a per-candidate enumerator, and the resulting
-garbage-collection pressure was being charged to the loop as if it were work. The number moved when
-the allocation was removed, not when the code did. **A time number measured on a path that allocates
-a quarter of a megabyte per call is a measurement of the allocator**, and the honest reading of
-"the restructuring costs 31%" was "the restructuring exposed an allocation bug".
+That 1.03× is worth a note, because a version of this measurement read 1.31× *slower*. The per-document
+row was allocating 321 KB per search, 288 KB of it a per-candidate enumerator (the `PassesFilters`
+defect below), and the resulting garbage-collection pressure was being charged to the loop as if it
+were work. **A time number measured on a path that allocates a quarter of a megabyte per call is a
+measurement of the allocator**, and "the restructuring costs 31%" should be read as "the restructuring
+exposed an allocation bug".
 
-**A pre-existing allocation bug this pass turned up, which the 321 KB above led to.**
-`SearchOptions.PassesFilters` is called once per candidate document — on a filtered full scan,
-once per document in the corpus. It walked the filter list with a `foreach` over an
-`IReadOnlyList<MetadataFilter>`, so the enumerator was resolved *through the interface* and
-heap-allocated on every call. The comment sitting next to that loop explained that a LINQ `All()`
-had been avoided because it would allocate an enumerator per candidate; the `foreach` it annotated
-allocated one per candidate anyway. Measured on a 10,000-document corpus with one filter that
-rejects nothing: **288,072 bytes per search before, 72 after** — and the same search without a
-filter allocates 1,224. This is not caused by the scoring work and is present in the pre-change
-build; it is reported here because it is what the 2×2 measurement ran into.
-`FilteredSearchAllocationTests` pins it with an allocation assertion (reverting the loop makes it
-fail at 317,587 bytes per query) rather than a stopwatch, because that is the property that
-regressed.
+**A pre-existing allocation bug, found by that measurement.** `SearchOptions.PassesFilters` is called
+once per candidate document — on a filtered full scan, once per document in the corpus. It walked the
+filter list with a `foreach` over an `IReadOnlyList<MetadataFilter>`, so the enumerator was resolved
+*through the interface* and heap-allocated on every call. The comment sitting next to that loop
+explained that a LINQ `All()` had been avoided because it would allocate an enumerator per candidate;
+the `foreach` it annotated allocated one per candidate anyway. Measured on a 10,000-document corpus
+with one filter that rejects nothing: **288,072 bytes per search before, 72 after** — and the same
+search without a filter allocates 1,224. This is not caused by the scoring work and is present in the
+pre-change build. `FilteredSearchAllocationTests` pins it with an allocation assertion (reverting the
+loop makes it fail at 317,587 bytes per query) rather than a stopwatch, because that is the property
+that regressed.
 
 **What it costs.** Index building is at parity (`IndexBenchmarks`, before / after on this host):
 
@@ -541,44 +531,33 @@ and rebuilt when the corpus changes, so a read-only index pays the build once wh
 mutated between every query pays an O(df·log df) build per query. The dictionary stays
 authoritative; the flat copy is derived and can be dropped at any time.
 
-#### How the original 20× turned out to be measured in the wrong regime
+#### The 20× was real, and measured in a regime real queries never enter
 
-Worth keeping, because the failure is not obvious. The first prototype — CSR posting lists into a
-score accumulator indexed by an integer document ordinal — measured, as originally recorded,
-**0.097 ms against 2.00 ms** for a 2-term query over 10,000 documents. Re-measured, that 20× is real
-*and* it is measured in the one regime where the engine deliberately does not use candidate
-generation: the 38-word benchmark corpus puts every term in ~74% of documents, so `sum(df)/Count <
-0.5` fails and the engine full-scans. On a Zipf corpus, where the candidate path is the one real
-queries take, the engine was already at 0.001–0.013 ms and a term-at-a-time prototype had
-microseconds left to win. Parity was *not* the obstacle — the prototype's scores came back
-bit-identical to the engine's, which is why this shipped rather than being abandoned.
+The failure is not obvious, so it is worth stating. A CSR-posting-list prototype into a score
+accumulator indexed by integer document ordinal measures **0.097 ms against 2.00 ms** for a 2-term
+query over 10,000 documents. That 20× is real *and* it is measured in the one regime where the engine
+deliberately does not use candidate generation: the 38-word benchmark corpus puts every term in ~74 %
+of documents, so `sum(df)/Count < 0.5` fails and the engine full-scans. On a Zipf corpus — where the
+candidate path is the one real queries take — the engine was already at 0.001–0.013 ms, and there were
+microseconds left to win. A three-term tail query there has a `df` sum of 2; a three-term head query has
+9,628. Parity was *not* the obstacle: the prototype's scores came back bit-identical to the engine's.
 
-| Zipf corpus, 10k docs | df sum | engine then | TAT over CSR | DAAT over CSR |
-|-----------------------|-------:|-------------:|-------------:|--------------:|
-| `w500x`               |     97 |      0.013 ms |     0.003 ms |      0.002 ms |
-| `w2000x w9000x`       |     35 |      0.007 ms |     0.001 ms |      0.001 ms |
-| `w20000x w25000x w29000x` |    2 |      0.001 ms |   < 0.001 ms |    < 0.001 ms |
-| `w1x w500x w9000x`    |  9,628 |      1.394 ms |     0.024 ms |      0.001 ms |
+So the 20× is a ratio against a baseline that mostly does not occur — the « tuned vs tuned » mistake in
+a different costume, one side measured in a regime the other would never be in. What survived it is
+that the head terms are where the money is, which the shipped tables above confirm. This is also why
+the accumulation path is gated on a `df` threshold at all: a speedup measured inside the one regime
+that bypasses candidate generation would never have suggested one. See the crossover table.
 
-The 20× is a ratio against a baseline that mostly does not occur, which is the « tuned vs tuned »
-mistake in a different costume: one side measured in a regime the other side would never be in.
-The conclusion that survived — that the head terms are where the money is — is the one the shipped
-tables above confirm, but it took a benchmark corpus that could *reach* the path to confirm it, and
-that is exactly what the old table could not have told anyone. The engine also has to grow a
-threshold now, which the original 20× did not suggest it would need; see the crossover table.
+Two properties the shipped design carries, both of which the shape above forced:
 
-Two costs the prototype was measured carrying, and how they were resolved:
-
-- Its accumulator is 8 bytes × document count **per concurrent query** — 80 KB at 10,000
-  documents, 8 MB at a million. It is rented from `ArrayPool` per search and returned, so a steady
-  stream of searches allocates nothing after the first few; the memory tables above are the
-  measured consequence, not a projection.
-- With CSR the position lists would stop being dictionary lookups: `GetTermPositions` would become a
-  binary search called per (document, phrase term) by the phrase gate and by `ProximityReranker`.
-  That did not happen here — the flat arrays carry ordinals and frequencies only, and the
-  authoritative `Dictionary<string, List<int>>` keeps serving positions — so the phrase gate and
-  `ProximityReranker` are unchanged, at the cost of the pointer-chasing walk remaining in the write
-  path. Replacing the authoritative form is a larger change than this one and is not attempted.
+- The accumulator is 8 bytes × document count **per concurrent query** — 80 KB at 10,000 documents,
+  8 MB at a million. It is rented from `ArrayPool` per search and returned, so a steady stream of
+  searches allocates nothing after the first few; the memory tables above are the measured
+  consequence, not a projection.
+- The flat arrays carry ordinals and frequencies only. `GetTermPositions` therefore stays a dictionary
+  lookup, which the phrase gate and `ProximityReranker` call per (document, phrase term); the
+  pointer-chasing walk remains in the write path. Replacing the authoritative
+  `Dictionary<string, List<int>>` is a larger change than this one and is not attempted.
 
 ## Tokenizer (`TokenizerBenchmarks`)
 

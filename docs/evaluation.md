@@ -24,26 +24,25 @@ it with `dotnet run --project bench/LexiSharp.Eval`; the full per-dataset tables
 [its README](https://github.com/manuc66/LexiSharp/blob/main/bench/LexiSharp.Eval/README.md),
 and it grants no licence over the datasets it downloads.
 
-**The library defaults, against the published reference (nDCG@10).** Read this as "what the defaults
-do", not as a claim about the engine — the comparison below is the one that measures it:
+**Two configurations, and what each one answers.** Both are this library's BM25 over the same
+three corpora, scored on the same runs. They differ in analysis and parameters, and the
+published figures were produced with the second — which is why the first is not a like-for-like
+comparison. nDCG@10:
 
-| Corpus | LexiSharp BM25, defaults | published reference (2021) | Δ |
-|---|---:|---:|---:|
-| NFCorpus (323 judged queries) | 0.308 | 0.325 | −5.2 % |
-| SciFact (300 judged queries) | 0.662 | 0.665 | −0.5 % |
-| ArguAna (1406 judged queries) | 0.289 | 0.315 | −8.3 % |
+| Corpus | Analysis and parameters | LexiSharp | published reference (2021) | Δ |
+|---|---|---:|---:|---:|
+| NFCorpus | defaults: `Tokenizer.Default`, k1=1.5, b=0.75 | 0.308 | 0.325 | −5.2 % |
+| SciFact | defaults | 0.662 | 0.665 | −0.5 % |
+| ArguAna | defaults | 0.289 | 0.315 | −8.3 % |
+| NFCorpus | aligned: English analysis, k1=0.9, b=0.4 | 0.3215 | 0.3218 | −0.0003 |
+| SciFact | aligned | 0.6788 | 0.6789 | −0.0001 |
+| ArguAna | aligned | 0.3970 | 0.3970 at k1=0.9, b=0.4 | 0.0000 |
 
-**Those deltas are a statement about the configuration, not about the engine, and the rest of this
-page is the correction.** Each one compares two different systems: the left column is BM25 under
-`Tokenizer.Default` (no stemming, stop words kept) at k1=1.5/b=0.75; the right column is BM25 under
-the conventional English analysis at k1=0.9/b=0.4. Measured on the same corpora, with the analysis, the
-parameters, the gain convention and the repeated-term rule aligned:
-
-| Corpus | LexiSharp, aligned | published reference | Δ at matched parameters |
-|---|---:|---:|---:|
-| NFCorpus | 0.3215 at k1=0.9, b=0.4 | 0.3218 | −0.0003 |
-| SciFact | 0.6788 at k1=0.9, b=0.4 | 0.6789 | −0.0001 |
-| ArguAna | 0.3970 at k1=0.9, b=0.4 | 0.3970 at k1=0.9, b=0.4 | 0.0000 |
+The **defaults** rows answer *what the library does out of the box*: no stemming, stop words
+kept. The **aligned** rows answer *is this comparable to the published figure* — and with the
+analysis, the parameters, the gain convention and the repeated-term rule matched, the two agree
+to the fourth decimal on NFCorpus and SciFact and are identical on ArguAna. The gap between the
+two row groups is configuration, not ranking.
 
 **ArguAna: the metric is reproduced, and so are the raw scores.** The two are verified by different
 means and the distinction is the point.
@@ -62,7 +61,7 @@ that looked like a ranking result. The harness measures at **rank 10**, not at t
 retrieved, and the two being the same value is a coincidence of the default: a bit-for-bit
 reproduction run retrieves one document deeper than it measures, so measuring at the retrieval depth
 reported nDCG@11 under a heading reading nDCG@10. Retrieval depth and evaluation depth are different
-things, and the cutoff is now named (`MetricDepth`) and independent of `--top-k`. The table below
+things, and the cutoff is named (`MetricDepth`) and independent of `--top-k`. The table below
 holds the full set of figures the published config produces, at the cutoff:
 
 | | LexiSharp | reference | Δ |
@@ -143,29 +142,23 @@ thing that gets "fixed" the wrong way:
   across all four positions: `a\u0307b` and `a\u0307` are each one token, `\u0307ab` is just `ab`, a lone
   mark is nothing. ArguAna holds no combining mark, so it moved no number here; NFCorpus holds four
   characters out of 5,779,318.
-- **The stemmer was refusing every term containing a non-ASCII character.** The algorithm is defined
+- **The stemmer refuses every term containing a non-ASCII character.** The algorithm is defined
   over characters, not scripts: everything outside `aeiou` is a consonant. Asking the reference's own
   stemmer settled it — `they’re` → `they’r`, `naïve` → `naïv`, `façade` → `façad` — and its answers are
-  now this library's. That same stemmer does **not** remove possessives: asked directly, it answers
-  `adam'`, which is what first showed the possessive removal to be a separate stage.
+  this library's. That same stemmer does **not** remove possessives: asked directly, it answers
+  `adam'`, which makes the possessive removal a separate stage.
 
-**No difference remains.** The last one was `celİl` against `celil`, and pinning it down turned out to be
-worth more than closing it. Of the 505 code points whose lowercase differs from themselves over the ranges
-a European corpus contains, U+0130 is the *only* one where .NET's invariant casing and the reference
-disagree — so it is a single character, not a difference of strategy. And the fold is the Unicode **simple**
-mapping, U+0069, rather than the full one that appends U+0307: their index holds a five-character `celil`,
-and handing their analyzer a six-character `celi\u0307l` returns the dot intact, which means their
-pipeline never produced one. Implementing the full mapping first, on the assumption that "fold it to i"
-meant the complete Unicode answer, is what the measurement argued against.
+**No difference remains.** Of the 505 code points whose lowercase differs from themselves over the
+ranges a European corpus contains, U+0130 is the *only* one where .NET's invariant casing and the
+reference disagree — so it is a single character, not a difference of strategy. And the fold is the
+Unicode **simple** mapping, U+0069, rather than the full one that appends U+0307: their index holds a
+five-character `celil`, and handing their analyzer a six-character `celi\u0307l` returns the dot intact,
+which means their pipeline never produced one. Folding to the full mapping, on the reading that "fold it
+to i" wants the complete Unicode answer, is a different function and does not reproduce it.
 
 Leaving the character alone is still defensible — it is the right answer for a Turkish index, where `İ`
 and `i` are different letters and folding them merges two words — which is why it is an option and why the
 default is unchanged.
-
-**What the earlier reading of the tokenization gap got wrong.** This page reported a systematic 1.12 %
-excess over the reference index, appearing on all three corpora in the same direction, and attributed
-it to contractions producing stray fragments. The direction and the systematicity were right; the cause
-was not. Aligning the analysis closes the excess entirely rather than narrowing it.
 
 Both constructions were measured here rather than reasoned about: the multi-field run scores the title
 and the body as separate fields with their own document frequencies and their own length, then sums
@@ -183,11 +176,12 @@ rather than to a bare number.
 session chasing was therefore about 165 documents promoted from outside the top 10 into it, which is
 why no amount of staring at aggregate scores found it.
 
-**ArguAna: this page said the gap was closed, and that was wrong.** It reported **0.4061** at
-k1=3.0/b=0.75, above the published 0.3970, and explained the difference as a scoring rule: the
-library deduplicated query terms, the reference scores one clause per query-token occurrence, and on
-a corpus whose every test query is a whole ~200-word argument, counting them was said to be worth
-**+0.0705** (0.2197 to 0.2902 at k1=0.9/b=0.4).
+**The withdrawn ArguAna figure.** **0.4061** was reported at k1=3.0/b=0.75, above the published
+0.3970, and explained as a scoring rule: the library deduplicated query terms, the reference scores one
+clause per query-token occurrence, and on a corpus whose every test query is a whole ~200-word
+argument, counting them was said to be worth **+0.0705** (0.2197 to 0.2902 at k1=0.9/b=0.4). It is
+withdrawn, and no published release ever carried it — see the
+[changelog](../CHANGELOG.md#withdrawn) for the provenance.
 
 Re-measured on 1,406 queries with the English analysis, at the reference's own k1=0.9/b=0.4:
 
@@ -198,24 +192,16 @@ Re-measured on 1,406 queries with the English analysis, at the reference's own k
 | **effect of the setting** | **+0.052** |
 
 Three conventions were checked, and the third one is the defect. The linear gain convention returns
-the same 0.271 as the exponential one. Excluding the query document was measured as worth +0.0012 by
-this repository's own measurement — a number that was wrong, because the option was inert: it is
-worth **+0.093** once applied. Neither 0.2902 nor 0.4061 is reproducible, and the 0.271 above is
-measured without the exclusion, as the other two were.
+the same 0.271 as the exponential one. Excluding the query document measured as worth +0.0012 while the
+option was inert; it is worth **+0.093** once applied. Neither 0.2902 nor 0.4061 is reproducible, and
+the 0.271 above is measured without the exclusion, as the other two were.
 
-**No release carried the claim itself; `v0.7.0` carried the withdrawal.** `QueryTermWeighting` is
-absent from the `v0.6.0` tag, which predates the commit that added it, and 0.4061 is absent from the
-0.6.0 documents entirely (`git show v0.6.0:docs/evaluation.md | grep -c 0.4061` is 0). The figure
-appears in the `v0.7.0` documents only inside its own retraction. If you are reading a number and
-want to know whether anything shipped it: check the tag, not this sentence — the claim is
-`git log -S0.4061 --oneline`, and the release that mentions it withdraws it.
-
-The reason is structural, and that is the part worth keeping. The harness flag fed exactly one
-thing - the `QueryTermWeighting` argument of `new Bm25Scorer(...)` - and that scorer went into
-`RankedTextSearchEngine`, which deduplicated the query before the scorer could see a repetition. The
-two settings could not have produced different rankings, so those figures could not have come from
-the code that published them. The engine now hands the scorer the raw term list, the setting is
-observable through `Search`, and `QueryTermWeightingTests` fails if it ever stops being.
+The reason the withdrawn figures could not have come from this code is structural. The harness flag fed
+exactly one thing — the `QueryTermWeighting` argument of `new Bm25Scorer(...)` — and that scorer went
+into `RankedTextSearchEngine`, which deduplicated the query before the scorer could see a repetition. The
+two settings could not have produced different rankings. The engine hands the scorer the raw term
+list, the setting is observable through `Search`, and `QueryTermWeightingTests` fails if it ever stops
+being.
 
 **There is nothing left on ArguAna.** At matched parameters this library reads 0.3970 where the
 reference publishes 0.3970, identically on all 1,406 queries. The analysis rules that accounted for it
@@ -327,11 +313,10 @@ the corpus.
 **State the objective, and check it is not flat.** Every tuner maximizes the metric you name, and
 the default is `F1@k`. On the reference corpus `F1@5` is **0.3588 for all six configurations** — a
 flat objective gives a tuner no signal, so its "winner" is whichever grid point the tie-break
-reached first, and a tuned row built on it is a number that means nothing. Two figures in this
-repository's history were quietly wrong for that reason alone: BM25F-tuned and BM25-tuned both read
-0.8812, and re-fitting both on the nDCG they were being reported in moved them to 0.8867 and
-0.8978. The `lexisharp benchmark` CLI takes `--metric ndcg` for exactly this, and prints the
-objective it used.
+reached first, and a tuned row built on it is a number that means nothing. Fitting two scorers on
+that flat objective is how BM25F-tuned and BM25-tuned both came out at 0.8812; re-fitted on the
+nDCG they are reported in, they are 0.8867 and 0.8978. The `lexisharp benchmark` CLI takes
+`--metric ndcg` for exactly this, and prints the objective it used.
 
 **`DeltaHelped` is the answer to "does the lower bound help on my corpus".** It is `false` on the
 reference corpus and on NFCorpus — where all three tuners settled on identical parameters
@@ -347,10 +332,9 @@ fitted in-sample over 125 candidates, so an upper bound rather than a result. `0
 `deltaValues` for the other reason: without a no-bound candidate the search cannot conclude that
 nothing helps, and `UnflooredMetricScore` is `NaN` rather than a fabricated comparison.
 
-**Both variants degenerate to BM25 at `δ = 0`, which is what makes the tables readable.** Obvious for
-BM25+, whose `δ` is additive. For BM25L it is not, and used to be documented here as *not* holding —
-its denominator carries the compressed frequency where BM25's carries the raw one. The compression is
-on the numerator too, so it cancels: `ctd / (k1 + ctd) = tf / (k1·norm + tf)`, BM25's term weight. A
+**Both variants degenerate to BM25 at `δ = 0`, which is what makes the tables readable** — obvious for
+BM25+, whose `δ` is additive, and for BM25L a cancellation in the term weight
+([worked through in BM25 variants](ranking.md#tuning-delta-and-what-it-does-to-the-comparison)). A
 `δ = 0` grid therefore returns `Bm25ParameterTuner`'s own winner and score, which
 `AZeroDeltaGridReproducesTheBm25ParameterTunerExactly` asserts across all three tuners.
 
