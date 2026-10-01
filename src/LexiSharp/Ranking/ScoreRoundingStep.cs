@@ -83,7 +83,12 @@ internal static class ScoreRoundingStep
 
             previous = score;
 
-            if ((double)score != result.Score)
+            // Exact comparison, on purpose: the write-back exists only to replace a score the rounding
+            // changed, and it is defined as "the narrowed, rounded value does not come back to the same
+            // number" — not "is within an epsilon of it". Comparing widened-then-rounded against the
+            // original is the sharpest test of that, so an epsilon here would leave rows that a later
+            // reader compares bit-for-bit looking changed, or false.
+            if ((double)score != result.Score) // NOSONAR:S1244
                 results[i] = result with { Score = score };
         }
 

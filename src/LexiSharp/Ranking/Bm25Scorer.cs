@@ -206,14 +206,14 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
         NormInverseTable? current = Volatile.Read(ref _normInverse);
 
-        if (current is not null && current.For == averageLength)
+        if (Serves(current, averageLength))
             return current.Entries;
 
         lock (_normInverseLock)
         {
             current = _normInverse;
 
-            if (current is not null && current.For == averageLength)
+            if (Serves(current, averageLength))
                 return current.Entries;
 
             var built = new NormInverseTable(averageLength, BuildNormInverseTable(_k1, _b, averageLength));
@@ -228,6 +228,15 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
     /// <summary>A reciprocal table and the average document length it was computed for.</summary>
     private sealed record NormInverseTable(double For, float[] Entries);
+
+    /// <summary>
+    /// Whether the cached table, if any, was built for exactly this average document length. Bitwise
+    /// equality on purpose: the table is a function of the average, not an approximation of it, so the
+    /// cache is keyed on the exact value the table was built for. An epsilon here would serve a table
+    /// built for a different average to scores that claim the new one.
+    /// </summary>
+    private static bool Serves(NormInverseTable? table, double averageLength) =>
+        table is not null && table.For == averageLength; // NOSONAR:S1244
 
     /// <summary>
     /// The single-precision reciprocal table, one entry per stored length, each entry built by the same
