@@ -95,6 +95,14 @@ public sealed class LexiSharpIndex<TDocument>
             ? _baseEngine
             : new RerankedTextSearchEngine(
                 _baseEngine, options.Reranker, options.RerankerMaxCandidates, options.Telemetry);
+
+        // The transformer decorates last, so every variant runs the full inner pipeline
+        // (retrieval, rerank, routing) and the fusion sees each one's final page pool.
+        if (options.QueryTransformer is not null)
+        {
+            _engine = new TransformingTextSearchEngine(
+                _engine, options.QueryTransformer, telemetry: options.Telemetry);
+        }
     }
 
     /// <summary>Number of indexed documents.</summary>
