@@ -96,6 +96,16 @@ public sealed class LexiSharpIndexOptions<TDocument>
     /// </summary>
     public IReranker? Reranker { get; set; }
 
+    /// <summary>
+    /// Optional pre-retrieval query transformer (see
+    /// <see cref="Expansion.TransformingTextSearchEngine"/>): the raw query is rewritten into
+    /// one or more variants — a rewrite, sub-queries of a decomposed question, lexical
+    /// variants, or a HyDE-style generated answer — each searched against the same engine and
+    /// fused by best score per document. A broken transformer falls back to the untransformed
+    /// query. Default: <c>null</c> (no transformation).
+    /// </summary>
+    public IQueryTransformer? QueryTransformer { get; set; }
+
     /// <summary>Candidates fetched from the base engine for <see cref="Reranker"/> (default: 50).</summary>
     public int RerankerMaxCandidates { get; set; } = 50;
 
