@@ -180,6 +180,37 @@ public class SemanticLexicalIndexTests
     }
 
     /// <summary>
+    /// The neighbour's weight is normalized by the most frequent candidate in the list, and the most
+    /// frequent candidate is not the first one once ranking stops being by count.
+    /// </summary>
+    /// <remarks>
+    /// A weight is documented as lying in (0, 1]. Normalizing by the first entry made that true only
+    /// for one of the two rankings, which is how a rare, strongly associated neighbour could be
+    /// handed a weight of 7. Pinned here rather than in the ranking test because it is the invariant
+    /// a caller may rely on, and it is independent of which ranking produced the list.
+    /// </remarks>
+    [Theory]
+    [InlineData(ExpansionRanking.CoOccurrenceCount)]
+    [InlineData(ExpansionRanking.PositiveMutualInformation)]
+    public void Expand_WeightStaysWithinTheUnitIntervalUnderEveryRanking(ExpansionRanking ranking)
+    {
+        var expander = PmiTermExpander.LearnFrom(
+            TokenCorpus,
+            options: new PmiTermExpanderOptions { MaxWindowDensity = 0.9, Ranking = ranking });
+
+        foreach (var term in new[] { "refresh", "session", "token", "sunny" })
+        {
+            var expanded = expander.Expand([term]);
+
+            Assert.All(expanded, neighbour =>
+            {
+                Assert.InRange(neighbour.Weight, double.Epsilon, 1.0);
+                Assert.True(neighbour.Weight > 0, $"weight was not positive for '{neighbour.Term}'");
+            });
+        }
+    }
+
+    /// <summary>
     /// Two candidates with the same co-occurrence count are ordered by mutual information.
     /// </summary>
     /// <remarks>
@@ -235,4 +266,37 @@ public class SemanticLexicalIndexTests
         Assert.Equal("common", expanded[1].Term);
     }
 
+    /// <summary>
+    /// Ranking by mutual information orders the candidates differently from ranking by count.
+    /// </summary>
+    /// <remarks>
+    /// The mutual information an association is scored by is computed, used as a filter, and then
+    /// discarded, so every stored score was zero: the tiebreak the sort documents compared zero with
+    /// zero and the statistic could not order anything. This test fails against that, and it fails
+    /// for the right reason — a list ordered by a statistic that is always the same value cannot
+    /// differ from a list ordered by anything else.
+    /// </remarks>
+    [Fact]
+    public void Expand_RankingByMutualInformationOrdersDifferentlyFromRankingByCount()
+    {
+        var byCount = PmiTermExpander.LearnFrom(
+            TokenCorpus, options: new PmiTermExpanderOptions { MaxWindowDensity = 0.9, MaxTotalTerms = 8 });
+        var byPmi = PmiTermExpander.LearnFrom(
+            TokenCorpus, options: new PmiTermExpanderOptions
+            {
+                MaxWindowDensity = 0.9,
+                MaxTotalTerms = 8,
+                Ranking = ExpansionRanking.PositiveMutualInformation,
+            });
+
+        string Order(IReadOnlyCollection<ExpandedTerm> expanded) => string.Join(' ', expanded.Select(e => e.Term));
+
+        var differing = TokenCorpus
+            .SelectMany(document => Tokenizer.Default.Tokenize(document.Text))
+            .Distinct(StringComparer.Ordinal)
+            .Where(term => Order(byCount.Expand([term])) != Order(byPmi.Expand([term])))
+            .ToList();
+
+        Assert.NotEmpty(differing);
+    }
 }
