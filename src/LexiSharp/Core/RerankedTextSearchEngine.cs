@@ -22,6 +22,14 @@ namespace LexiSharp.Core;
 /// may replace scores entirely, so the threshold only applies to the <i>final</i> score, after
 /// re-ranking — exactly like <see cref="BoostedTextSearchEngine"/> treats its boosted scores.
 /// </para>
+/// <para>
+/// This decorator does <b>not</b> forward the inner engine's capability interfaces
+/// (<see cref="IFacetedSearchEngine"/>, <see cref="IDetailedSearchEngine"/>,
+/// <see cref="IExplainableSearchEngine"/>): the reranker replaces scores, so a facet page, a
+/// detail breakdown or an explanation would describe the <i>pre-rerank</i> scores, which is not
+/// the ranking this engine returns. Wrap the inner engine <i>after</i> re-ranking if those
+/// surfaces are needed, or implement them on the reranker's result.
+/// </para>
 /// </remarks>
 public sealed class RerankedTextSearchEngine : ITextSearchEngine, IQueryCostProbe
 {

@@ -22,9 +22,17 @@ namespace LexiSharp.Core;
 /// </para>
 /// <para>
 /// The decorator only sees what the inner engine returns. To give boosted documents a chance
-    /// to surface, more candidates than the final limit are requested from the inner engine
-    /// (<c>maxCandidates</c>); a document ranked beyond that retrieval depth stays out
-    /// of reach no matter its boost.
+/// to surface, more candidates than the final limit are requested from the inner engine
+/// (<c>maxCandidates</c>); a document ranked beyond that retrieval depth stays out
+/// of reach no matter its boost.
+/// </para>
+/// <para>
+/// This decorator does <b>not</b> forward the inner engine's capability interfaces
+/// (<see cref="IFacetedSearchEngine"/>, <see cref="IDetailedSearchEngine"/>,
+/// <see cref="IExplainableSearchEngine"/>): a facet page, a detail breakdown or an explanation
+/// would describe the <i>pre-boost</i> scores, and a caller who reads them as the ranking this
+/// engine returned would be misled, not informed. Wrap the inner engine <i>after</i> boosting if
+/// those surfaces are needed.
 /// </para>
 /// </remarks>
 public sealed class BoostedTextSearchEngine : ITextSearchEngine, IQueryCostProbe
