@@ -310,8 +310,8 @@ below. The other four are conventions, and stay opt-in.
   attributed the gap to a scoring rule that measurement then priced differently. The claim and the
   setting it rested on both landed on `main` **after** the `v0.6.0` tag — `QueryTermWeighting` is
   absent from it, and `git tag --contains` returns no tag for the commit that added it — so no
-  published release ever carried either. The measurement, the two conventions that were checked and
-  ruled out, and the structural reason are in
+  published release ever asserted either; `v0.7.0` names the figure only to withdraw it. The
+  measurement, the two conventions that were checked and ruled out, and the structural reason are in
   [docs/evaluation.md](docs/evaluation.md#measured-against-published-baselines); the figures are the
   `parity` rows of `reference/pinned.json`.
 - **Three documentation pages led with a comparison that was not like-for-like.** They reported

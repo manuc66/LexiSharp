@@ -226,6 +226,33 @@ Re-recording is deliberately not a flag: `--write` is accepted and reports that 
 Recording is a separate, reviewed act — the same reasoning as `lexisharp baseline` in the CLI, and
 for the same reason. Read what moved, and why, before re-recording.
 
+### Two rules for writing a pin
+
+**A pin is a norm, not a by-product.** It states what a configuration produces, independently of
+whatever the metrics table happens to do today. `Measure` therefore builds its own tokenizer, query
+list and options rather than calling into the table, and a change to the table's defaults must not
+move a pin: if it did, the gate would be asserting the table against itself and would stay green
+through exactly the regression it exists to catch.
+
+**A pin must name everything that changes the number.** Anything it leaves unnamed is a setting it
+inherits, and an inherited setting is invisible to it — change that default and every pin moves
+together while the gate reports success. Name the analyzer, the BM25 parameters, the gain convention,
+the query-document exclusion, the query count, the query syntax, the tie-break, and the score
+rounding. The test for each: *could a reader reproduce this number from what the file says?* If a
+setting would have to be guessed, it belongs in the file.
+
+The distinction that keeps those two from colliding, because it is not obvious from either:
+**sharing a definition is safe when the pin names it, and inheriting one is not.** The tokenizer a
+pin uses is a definition, and it may be built in one place — a pin that says `"analyzer": "uax29"`
+and gets the wrong `uax29` is a real defect, and two copies of that table drifting apart is how it
+happens. A default the pin does not mention is not a definition it shares, it is a value it is
+taking on trust, and no amount of sharing fixes it. So: one construction per definition, referenced
+by name; every setting a number depends on, written down.
+
+Where a rule can be made structural, make it structural rather than written: a configuration whose
+fields are all required cannot forget to name one. The rule exists to say why that is wanted; the
+type is what makes it hold.
+
 ## Results (NFCorpus, k=10, 323 test queries)
 
 Default tokenizer, **no stemming** — see [Stemming](#stemming) for the same run with
