@@ -432,15 +432,29 @@ section used to call that "8 % below the reference" and leave it there. It is no
 | + reference analysis, at k1=0.9/b=0.4 | 0.219 |
 | + reference analysis, + query-frequency counting, at k1=0.9/b=0.4 | 0.271 |
 | + reference analysis, + query-frequency counting, at k1=3.0/b=0.75 | 0.331 |
+| + the parity options, at k1=0.9/b=0.4 | 0.3970 |
 | published reference, at k1=0.9/b=0.4 | 0.3970 |
 
 Read the third and fourth rows together: the setting is worth +0.052 at the reference's own
-parameters and +0.027 at k1=3.0. The fifth row is at k1=0.9/b=0.4, so the honest comparison is the
-second against the fifth - 0.219 against 0.3970 - and that deficit is unexplained. The fourth row
-used to be quoted as 0.4061, above the reference, which would have meant this library beat it on
-ArguAna. It does not, and the number was not reproducible by any code path.
-A like-for-like ArguAna comparison at the reference's own parameters is **unmeasured** and would
-need the k1/b grid this corpus' 1406 long queries make expensive.
+parameters and +0.027 at k1=3.0. Those are settings the library exposes; the fifth row is the one
+that reaches the published figure, and it is worth being exact about what it is. It adds the four
+options a bit-for-bit comparison needs — the document count that carries the field rather than every
+indexed document, the reference's scale and precision, its four-decimal rounding, and the query's own
+document removed — all off by default. What they buy is the arithmetic, not the ranking: with them
+the 15,466 returned scores for the 1,406 queries match the reference's own searcher on the raw bits,
+and without them the same ranking is reached by a different route and scores the same order.
+
+The sixth row is measured outside this harness. `trec_eval` on a run this harness writes reads
+nDCG@10 0.3970 and recall@100 0.9324, matching both published figures, so the claim does not rest on
+the metric code above. A residual of 0.0004 against `trec_eval` remains, confined to the 102 of 1,406
+queries whose returned scores contain a tie; the mechanism is not established and the sweep records
+it as measured rather than explained.
+
+The fourth row used to be quoted as 0.4061, above the reference, which would have meant this library
+beat it on ArguAna. It did not, and the number was not reproducible by any code path. A like-for-like
+ArguAna comparison at the reference's own parameters is no longer unmeasured: it is the fifth row,
+and the k1/b grid that section once called expensive is not what was needed after all — the deficit
+was four analysis rules, one document count, and a metric that was measuring rank 11.
 
 Correction that stands: the ArguAna row here used to read 0.320 and was described as "slightly
 above the reference". That number is not reproducible — `--limit 50`, which evaluates only the

@@ -90,9 +90,10 @@ twice. Every figure below is reproducible with a command on the
   parameters and the metric convention aligned to those the reference figures were produced with, the
   plain BM25 scorer reaches nDCG@10 **0.3215** on NFCorpus and **0.6788** on SciFact, against
   **0.3218 / 0.6789** — equal to the fourth decimal. On ArguAna, at the reference's own
-  k1=0.9/b=0.4, it reaches **0.219** against **0.3970**, and that deficit is not accounted for.
-  Under the library's own defaults the same scorer reads 0.308 / 0.662 / 0.289; that difference is
-  the configuration, not the ranking. The corpora are md5-verified on download, the harness ships no
+  k1=0.9/b=0.4, it reaches **0.3970** against **0.3970**, and recall@100 **0.9324** against
+  **0.9324**; `trec_eval` reads both off a run this harness writes, so neither figure rests on this
+  repository's metric code. Under the library's own defaults the same scorer reads
+  0.308 / 0.662 / 0.289; that difference is the configuration, not the ranking. The corpora are md5-verified on download, the harness ships no
   licence over them, and every number here is pinned and re-checked by the `Pinned reference`
   workflow.
 - **A claim withdrawn before it was published.** This page reported **0.4061** on ArguAna, above

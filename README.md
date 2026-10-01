@@ -96,17 +96,20 @@ external service.
 Stated plainly, so nothing is implied. The full list, with the measurement behind each claim,
 is [Scope and limits](docs/reference.md#scope-and-limits).
 
-- **It matches the published BM25 baseline on two of the three corpora it can be compared on, and it
-  does not on the third.** On NFCorpus and SciFact, with the analysis, the BM25 parameters and the
-  metric convention aligned to those the reference figures were produced with, the plain BM25 scorer
-  reaches nDCG@10 **0.3215** and **0.6788** against **0.3218** and **0.6789** — equal to the fourth
-  decimal. On ArguAna, at the reference's own k1=0.9/b=0.4, it reaches **0.219** against the
-  **0.3970** that implementation publishes, and the deficit is **not accounted for**. The same scores
-  read under the library defaults are **0.308 / 0.662 / 0.289**; that difference is the analyzer, the
-  parameters and one task convention, not the ranking. Corpora are md5-verified on download, and the
-  numbers are pinned and re-checked by the `Pinned reference` workflow, which replays every pinned
-  configuration and exits non-zero on drift. It runs on a dispatch, on a push that touches the
-  library or the harness, and weekly — see [evaluation](docs/evaluation.md).
+- **It matches the published BM25 baseline on all three corpora it can be compared on.** On NFCorpus
+  and SciFact, with the analysis, the BM25 parameters and the metric convention aligned to those the
+  reference figures were produced with, the plain BM25 scorer reaches nDCG@10 **0.3215** and
+  **0.6788** against **0.3218** and **0.6789** — equal to the fourth decimal. On ArguAna, at the
+  reference's own k1=0.9/b=0.4, it reaches **0.3970** against the **0.3970** that implementation
+  publishes, and recall@100 **0.9324** against **0.9324**. That last one is not measured only by this
+  harness: `trec_eval` — the standard evaluator, not this repository's code — reads both figures off
+  a run this harness writes, and the 15,466 returned scores for the 1,406 queries match the
+  reference's own searcher on the raw bits, so the ranking is that ranking rather than a lookalike.
+  The same scores read under the library defaults are **0.308 / 0.662 / 0.289**; that difference is
+  the analyzer, the parameters and one task convention, not the ranking. Corpora are md5-verified on
+  download, and the numbers are pinned and re-checked by the `Pinned reference` workflow, which
+  replays every pinned configuration and exits non-zero on drift. It runs on a dispatch, on a push
+  that touches the library or the harness, and weekly — see [evaluation](docs/evaluation.md).
 - **A quality claim this repository withdrew, before publishing it.** It reported **0.4061** on
   ArguAna, above the published 0.3970, and attributed the gap to query-term scoring: the library
   deduplicated query terms, the reference counts them, and counting them was said to be worth
