@@ -48,6 +48,18 @@ below. The other four are conventions, and stay opt-in.
 
 ### Added
 
+- `SynchronizedTextSearchEngine`, an opt-in wrapper that serializes engine writers against readers
+  without serializing readers against each other — the search half of
+  `SynchronizedTextClassifier`. Searches take the read lock, the mutating members the write lock,
+  and `IFacetedSearchEngine`/`IDetailedSearchEngine`/`IExplainableSearchEngine` forward unchanged
+  when the wrapped engine has them. The uncontended read pair is measured, not assumed: 0.984x and
+  1.002x wrapped-to-unwrapped median on two same-session runs, straddling 1.0.
+- `ExpandingTextSearchEngine` now forwards `IFacetedSearchEngine`, `IDetailedSearchEngine` and
+  `IExplainableSearchEngine`, because its results are the inner engine's own against the expanded
+  query — the one decorator where the forwarding is truthful. A wrapped engine without a
+  capability throws by name, per call. `BoostedTextSearchEngine` and `RerankedTextSearchEngine`
+  do not forward and say why in their remarks: they replace scores, and a forwarded facet page or
+  explanation would describe the pre-transform ranking.
 - `SearchOptions.ScoreRounding`, off by default. `ScoreRounding.FourDecimals` reproduces what a system
   that writes its scores down does to them before writing: round every returned score to four decimals,
   then walk down each run of scores within a ten-thousandth by one millionth a position, so that
@@ -253,6 +265,28 @@ below. The other four are conventions, and stay opt-in.
   against a real server in `PostgresExcludedDocumentIdsTests`. **Those integration tests could not be
   run on the machine this was written on — no reachable PostgreSQL — so they are verified by the CI
   jobs that carry `POSTGRES_TEST_CONNECTION`, not by a local run.**
+
+- `RerankedTextSearchEngine`'s trace stage built its candidate map once per page entry, an
+  O(page × candidates) re-fill that the per-stage `??=` only masked at the allocation site; it is
+  built once, before the page loop, and SearchTraceTests still pins the step count.
+
+### Changed
+
+- **`ITextIndex` splits into a read-only view and a write surface.** `IReadOnlyTextIndex` now
+  carries the statistics and per-document lookups, and the scoring seams — `ITextScorer.Score`,
+  `IScoreExplainer.Explain`, an `IQueryPlannableScorer`'s plan — receive that view, so the
+  contract handed to a scorer proves it can only read. `ITextIndex` keeps
+  `Index`/`Add`/`Remove`/`Clear`; `ICandidateIndex` and `IVocabularyIndex` are read capabilities
+  over the read view. The per-field statistics leave `ITextIndex` entirely: `HasFieldStatistics`,
+  `FieldTermFrequency`, `FieldLength`, `AverageFieldLength` and `FieldDocumentFrequency` move to a
+  dedicated `IFieldStatisticsIndex` capability, detected with pattern matching like every other
+  capability — the default-implemented members that threw `NotSupportedException` are gone.
+  A caller that implements `ITextIndex` now implements `IReadOnlyTextIndex` and declares the four
+  writes; a caller that used the per-field members on an `ITextIndex` value checks for
+  `IFieldStatisticsIndex` instead.
+- **`ITextSearchEngine.Remove` returns `bool`** — whether the document was present and removed — to
+  match `ITextIndex.Remove` instead of discarding the answer. Engines forward the result of what
+  they removed from; the SQL backends return whether a row was deleted.
 
 ## [0.7.0]
 
