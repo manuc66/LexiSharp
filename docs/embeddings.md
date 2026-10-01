@@ -35,6 +35,24 @@ reference corpus the `bm25-semantic` lane scores **0.8469** nDCG@5 against plain
 [Comparing two configurations](evaluation.md#comparing-two-configurations-query-by-query)).
 Treat expansion as a tool to measure on your own corpus, not as a default that helps.
 
+**On SciFact, a corpus-derived neighbour set is worse than no neighbour set.** Query-side
+expansion over the BEIR harness scores **0.580 to 0.628** nDCG@10 against plain BM25's
+**0.662**, across five window-density cuts and both neighbour orderings, with recall
+falling in step. Tightening the density cut makes it worse rather than better, and ranking
+neighbours by mutual information instead of co-occurrence count is a better neighbourhood
+and a worse ranking — the specific associates it surfaces (`sp600125` and `p85alpha` for
+*inhibitor kinase*, `t2wmh` and `arteriography` for *cerebral white matter*) retrieve
+nothing the lexical terms did not. Reproduce with
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset scifact --no-tuned \
+    --top-k 10 --expand-density 0.5,0.2,0.1,0.05,0.02 --expand-ranking both
+```
+
+Default analysis, 300 queries, unweighted expansion at the default budget. A co-occurrence
+window measures which terms share a topic, and on a corpus whose vocabulary the query and its
+answer already share, that association is what the lexical terms already carried.
+
 ## In-memory dense retrieval (`InMemoryVectorSearchEngine`, `HashingEmbeddingProvider`)
 
 The dense counterpart of the sparse engine, and the in-process twin of the PostgreSQL
