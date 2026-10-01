@@ -172,9 +172,9 @@ rather than to a bare number.
 
 **Why a small difference can be worth this much.** The gold document is outside the top 10 for
 **39.9 %** of these queries, and the score gap between rank 10 and rank 11 has a tenth percentile of
-**0.118 %** — a fifth of the queries are decided by less than 0.046 %. The 0.033 this page spent a
-session chasing was therefore about 165 documents promoted from outside the top 10 into it, which is
-why no amount of staring at aggregate scores found it.
+**0.118 %** — a fifth of the queries are decided by less than 0.046 %. The 0.033 is therefore about 165
+documents promoted from outside the top 10 into it, which is a difference an aggregate score does not
+surface: the mean moves by the size of the gap, not by how many queries it decided.
 
 **The withdrawn ArguAna figure.** **0.4061** was reported at k1=3.0/b=0.75, above the published
 0.3970, and explained as a scoring rule: the library deduplicated query terms, the reference scores one
@@ -193,8 +193,9 @@ Re-measured on 1,406 queries with the English analysis, at the reference's own k
 
 Three conventions were checked, and the third one is the defect. The linear gain convention returns
 the same 0.271 as the exponential one. Excluding the query document measured as worth +0.0012 while the
-option was inert; it is worth **+0.093** once applied. Neither 0.2902 nor 0.4061 is reproducible, and
-the 0.271 above is measured without the exclusion, as the other two were.
+option was inert, and as **+0.093** with it applied — which is what a reader reproducing these figures
+needs to know, because the flag looks effective and is not. Neither 0.2902 nor 0.4061 is reproducible,
+and the 0.271 above is measured without the exclusion, as the other two were.
 
 The reason the withdrawn figures could not have come from this code is structural. The harness flag fed
 exactly one thing — the `QueryTermWeighting` argument of `new Bm25Scorer(...)` — and that scorer went

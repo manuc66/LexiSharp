@@ -236,10 +236,9 @@ corpus never entered the candidate path.
 
 ### Term-at-a-time scoring
 
-This section replaces an earlier one headed *Measured but not shipped: term-at-a-time scoring*, which
-recorded the same analysis and reached a different conclusion. The work is shipped; the history of
-how the original 20× turned out to be measured in the wrong regime is kept below, because it is the
-reason the benchmark corpus had to change.
+Two numbers on this page need the section at the end of this one to be read honestly: the 20× that
+first justified the work was measured in a regime real queries never enter, and it is why the
+benchmark corpus is a Zipf distribution rather than the 38-word one at the top of the page.
 
 **Host.** Different from the one named at the top of this page, and every number in this section
 comes from it — nothing here is comparable with a table above:
@@ -304,29 +303,29 @@ are the queries the new loop is *not* meant to win, and it does not cost them an
 The `+16 B` on `OneTerm` is the only cost measured anywhere in this section and **its cause is not
 identified**.
 
-**What was re-verified after the query-term fix, and what was not.** The engine was changed to hand
-the query plan the raw term list instead of the deduplicated one, so that a repeated query term
-reaches the scorer (see `QueryTermWeighting`). Every figure in the table above predates that change.
-The `Allocated` column was re-measured afterwards and reproduces **byte for byte** on all six rows —
-848 / 1,152 / 1,208 / 1,224 / 1,272 / 1,320 B — which is what the reasoning predicted:
-`TermDeduplicator.Distinct` returns its input when it can prove there is no duplicate, and none of
-these six queries repeats a term, so the plan receives the same terms in the same order.
+**What is verified about these figures, and what is not.** The query plan receives the raw term list
+rather than the deduplicated one, so that a repeated query term reaches the scorer (see
+`QueryTermWeighting`); every timing in the table above was taken before that change. The `Allocated`
+column reproduces **byte for byte** on all six rows — 848 / 1,152 / 1,208 / 1,224 / 1,272 / 1,320 B —
+which is what the reasoning predicts: `TermDeduplicator.Distinct` returns its input when it can prove
+there is no duplicate, and none of these six queries repeats a term, so the plan receives the same
+terms in the same order.
 
-The **timings were not re-measured, and are not claimed to describe the current build.** A fresh run
-would not validate the numbers above, it would replace them: the drift between two runs of the same
-code on this host is larger than the effect a re-measurement is looking for, so validating an old
-figure requires measuring before and after in one session. What is claimed instead is narrower and
+The **timings are not claimed to describe the current build.** A fresh run would not validate the
+numbers above, it would replace them: the drift between two runs of the same code on this host is
+larger than the effect a re-measurement is looking for, so validating a figure requires measuring
+before and after in one session. What is claimed instead is narrower and
 checked: the scored path is identical, not merely similar. Scoring the same eight queries against the
 two builds — repetitions up to forty — gives **bit-identical** scores in round-trippable form, and
 the golden master is unchanged at 132 rankings with no tie reordering.
 
-**The speedup tracks the cost the old loop already had, not the query's rarity as such.** Per unit
+**The speedup tracks the cost of the per-document loop, not the query's rarity as such.** Per unit
 of work: the document-at-a-time loop costs ~96 ns per document it scores (one `DocumentLength`
 hash plus one `TermFrequency` per query term, each a string hash), and the term-at-a-time pass
 costs ~13 ns per posting entry. That ~7× slope is the mechanism; the ratio reaches 10-15× at the
-head because the new path's fixed cost — clearing a corpus-sized buffer — has stopped mattering by
-then, and is *below* 1× at df = 1 for the same reason. So a query that already took 200 ns does not
-gain, and a query that took 1.6 ms does, which is a different and more useful statement than
+head because the term-at-a-time path's fixed cost — clearing a corpus-sized buffer — has stopped
+mattering by then, and is *below* 1× at df = 1 for the same reason. So a query that takes 200 ns does
+not gain, and a query that takes 1.6 ms does, which is a different and more useful statement than
 « it helps if your traffic has frequent terms ».
 
 **Search, the degenerate corpus** (`SearchBenchmarks`, 38 words, so every row walks 10,000
@@ -543,7 +542,7 @@ microseconds left to win. A three-term tail query there has a `df` sum of 2; a t
 9,628. Parity was *not* the obstacle: the prototype's scores came back bit-identical to the engine's.
 
 So the 20× is a ratio against a baseline that mostly does not occur — the « tuned vs tuned » mistake in
-a different costume, one side measured in a regime the other would never be in. What survived it is
+a different costume, one side measured in a regime the other would never be in. What it establishes is
 that the head terms are where the money is, which the shipped tables above confirm. This is also why
 the accumulation path is gated on a `df` threshold at all: a speedup measured inside the one regime
 that bypasses candidate generation would never have suggested one. See the crossover table.

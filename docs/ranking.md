@@ -277,7 +277,7 @@ quoted for the same harness, which is the cross-check that the title-field chang
 BM25 untouched.
 
 **What tuning shows the rows above were worth.** The rows compare *default* parameters against each
-other, and on the reference corpus tuning shows what that was worth:
+other, and on the reference corpus tuning prices those defaults:
 
 ```
 Config                       nDCG@5      MAP@5      MRR@10        R@5
@@ -395,8 +395,8 @@ penalty as under a 97 % one.
 | proximity, damp s=1 | 0.8583 | 0.302 | 0.653 |
 | proximity, boost s=1 | 0.8751 | 0.308 | 0.662 |
 
-**Damp still loses, but by 0.017 rather than the 0.152 the unbounded version cost** — most of what
-that earlier number reported was the bug, not the idea. Boost stays neutral: it moves scores without
+**Damp loses, by 0.017 — against 0.152 for the unbounded decay this replaced**, so most of what that
+larger penalty measured was the bug rather than the idea. Boost stays neutral: it moves scores without
 moving the ranking, and on NFCorpus it is a hair better on MRR (0.519 vs 0.516) at identical nDCG.
 
 The likely reason neither helps: nDCG@10 here is decided by whether the right document makes the top
