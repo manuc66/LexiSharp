@@ -105,6 +105,8 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `BenchmarkQueryDelta` | record | — | One query's movement between two benchmark runs, with the evidence for it. |
 | `BenchmarkQueryResult` | record | — | The outcome of benchmarking one query: its own metrics, the ids the engine returned, and where the first judged document landed. |
 | `CorpusBenchmark` | class | — | Runs a retrieval benchmark: builds one shared in-memory index over a corpus, evaluates every requested BenchmarkConfig against the same query set, and reports… |
+| `PanelEvaluationResult` | record | — | The outcome of evaluating a live engine against a RetrievalEvaluator's panel: the retrieval metrics averaged over the judged queries, plus the wall-clock time… |
+| `RetrievalEvaluator` | class | — | Evaluates a liveITextSearchEngine against a fixed panel of labeled queries, on demand — the runtime complement to CorpusBenchmark, which builds a fresh index… |
 
 #### `LexiSharp.Classification`
 

@@ -470,6 +470,39 @@ reported mean delta stays raw arithmetic.
 The [reference corpus](https://github.com/manuc66/LexiSharp/blob/main/bench/reference-corpus/README.md) is the corpus the command above was run
 against.
 
+## Evaluating a live engine, on demand
+
+`CorpusBenchmark` evaluates *configurations* over a corpus snapshot it indexes itself. For the
+engine an application is actually serving — with whatever it currently holds, incremented by
+real writes — `RetrievalEvaluator` runs a fixed panel of labeled queries against that live
+engine and reports the metrics at a depth:
+
+```csharp
+using LexiSharp.Benchmarking;
+
+var panel = new[]
+{
+    new BenchmarkQuery("q1", "how do I renew an expired token", ["doc-17", "doc-92"]),
+    new BenchmarkQuery("q2", "refresh policy",            ["doc-17"]),
+};
+
+var evaluator = new RetrievalEvaluator(panel, topK: 10);
+PanelEvaluationResult result = evaluator.Evaluate(engine);
+```
+
+Call it periodically against the same panel and compare successive results: a panel metric
+moving is the relevance half of data-drift observability. `PanelEvaluationResult` carries the
+means (`Metrics`, the same `BenchmarkMetrics` shape a CLI run reports) and the per-query rows
+(`ByQuery`, each with the retrieved ids, scores and the 1-based rank of the first judged
+document), so a movement can be attributed to one query rather than to the mean.
+
+The panel is the app's own: relevance comes from the judgments it pinned, and every query is
+searched with the caller's options except `Limit`, which is pinned to the metric depth — the
+retrieval depth and the evaluation depth stay one number. A query without judgments is loaded
+but excluded from the averages; a panel with none reports zeros, not a measurement. Graded
+judgments keep the library's exponential nDCG convention by default, with
+`NdcgGain.Linear` available for comparing against a linear-convention figure.
+
 ## Performance
 
 Latency and allocation numbers live in [Benchmarks](benchmarks.md): BenchmarkDotNet runs on
