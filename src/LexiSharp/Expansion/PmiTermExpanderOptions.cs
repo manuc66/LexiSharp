@@ -1,6 +1,26 @@
 namespace LexiSharp.Expansion;
 
 /// <summary>
+/// Which statistic orders an input term's candidate neighbours before the expansion budget applies.
+/// </summary>
+/// <remarks>
+/// The two orderings disagree, and the disagreement is the whole of it. A term present in a fifth
+/// of a corpus's windows co-occurs with very nearly every other term, so it has a high count with
+/// each of them and ranks first under <see cref="CoOccurrenceCount"/> while carrying almost no
+/// information about any of them. Ranking by mutual information asks the opposite question — how much
+/// more often does this pair appear than chance — and puts a rare, genuinely associated term above a
+/// common one that merely appears nearby.
+/// </remarks>
+public enum ExpansionRanking
+{
+    /// <summary>Order by raw co-occurrence count, the classic expansion bias. The default.</summary>
+    CoOccurrenceCount,
+
+    /// <summary>Order by positive mutual information, with the count only as a tiebreak.</summary>
+    PositiveMutualInformation,
+}
+
+/// <summary>
 /// Configuration of a <see cref="PmiTermExpander"/>: how the corpus is analyzed and how many
 /// expansion terms each document gets.
 /// </summary>
@@ -41,6 +61,18 @@ public sealed class PmiTermExpanderOptions
     /// candidate, rank is what matters).
     /// </summary>
     public double MinimumPmi { get; set; }
+
+    /// <summary>
+    /// Which statistic orders the candidate neighbours. Default:
+    /// <see cref="ExpansionRanking.CoOccurrenceCount"/>.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="MaxWindowDensity"/> is the filter that keeps function words out of the
+    /// neighbourhood, and it is a threshold: a common enough function word clears it and is then
+    /// promoted to first place by the count. This is the other half — it cannot admit a neighbour
+    /// the filter rejected, but it can decline to put that neighbour first.
+    /// </remarks>
+    public ExpansionRanking Ranking { get; set; } = ExpansionRanking.CoOccurrenceCount;
 
     /// <summary>
     /// How many neighbors, at most, a single input term can contribute. Default: <c>3</c>.

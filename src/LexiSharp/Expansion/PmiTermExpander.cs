@@ -131,8 +131,24 @@ public sealed class PmiTermExpander : ITermExpander
 
         foreach (var list in associations.Values)
         {
+            // Ranking by association is opt-in and the default keeps the count. PPMI is computed for
+            // every candidate precisely because a high count with no association is noise, so
+            // ranking by count and consulting PPMI only to break ties walks into the failure
+            // MaxWindowDensity's own documentation describes: on a corpus whose tokenizer keeps
+            // function words, a term in a fifth of all windows has the highest count with every
+            // input term and reaches the top of the list carrying no information. The count bias is
+            // the classic one and the library ships it; this is the lever to measure the other.
+            bool byPmiFirst = opts.Ranking == ExpansionRanking.PositiveMutualInformation;
+
             list.Sort((x, y) =>
             {
+                if (byPmiFirst)
+                {
+                    int byAssociation = y.Pmi.CompareTo(x.Pmi);
+                    if (byAssociation != 0)
+                        return byAssociation;
+                }
+
                 int byCount = y.Count.CompareTo(x.Count);
                 if (byCount != 0)
                     return byCount;
