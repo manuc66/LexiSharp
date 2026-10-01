@@ -28,6 +28,28 @@ public static class Program
         string? verifyAgainst = null;
         bool writePins = false;
         bool queryFrequency = false;
+        bool scoreRounding = false;
+        bool saturationConstant = true;
+        bool singlePrecision = false;
+        string? runPath = null;
+        int jobs = DefaultJobs();
+        string? indexCache = null;
+
+        // Per-query analysis is opt-in and writes a file rather than printing a table: it is one row
+        // per query per configuration, which is tens of thousands of lines on ArguAna and has no
+        // readable form on a terminal. The baseline defaults to the plain BM25 row because that is
+        // the row every other row in this harness is read against.
+        string? analyzePath = null;
+        string analyzeBaseline = "BM25 (k1=1.5, b=0.75)";
+        string? analyzeCandidate = null;
+
+        // Off by default, because every query in a BEIR corpus is natural language and the published
+        // figures apply no query language to it: the query string goes to the analyzer whole. Left on,
+        // a straight double quote in an argument — 138 of ArguAna's 1,406 test queries, measured —
+        // becomes a phrase delimiter and the query collapses. Stated in the output either way, since
+        // which of the two ran is part of what a number means.
+        bool parseQuerySyntax = false;
+        bool querySyntaxReference = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -78,6 +100,15 @@ public static class Program
                 case "--query-term-frequency":
                     queryFrequency = true;
                     break;
+                case "--reference-score-rounding":
+                    scoreRounding = true;
+                    break;
+                case "--omit-saturation-constant":
+                    saturationConstant = false;
+                    break;
+                case "--single-precision-bm25":
+                    singlePrecision = true;
+                    break;
                 case "--reference-bm25" when i + 1 < args.Length:
                     referenceBm25 = ParseBm25Parameters(args[++i]);
                     break;
@@ -91,6 +122,30 @@ public static class Program
                     break;
                 case "--write":
                     writePins = true;
+                    break;
+                case "--run" when i + 1 < args.Length:
+                    runPath = args[++i];
+                    break;
+                case "--jobs" when i + 1 < args.Length:
+                    jobs = ParsePositive(args[++i], "--jobs");
+                    break;
+                case "--query-syntax":
+                    parseQuerySyntax = true;
+                    break;
+                case "--reference-index-statistics":
+                    querySyntaxReference = true;
+                    break;
+                case "--index-cache" when i + 1 < args.Length:
+                    indexCache = args[++i];
+                    break;
+                case "--analyze" when i + 1 < args.Length:
+                    analyzePath = args[++i];
+                    break;
+                case "--analyze-baseline" when i + 1 < args.Length:
+                    analyzeBaseline = args[++i];
+                    break;
+                case "--analyze-candidate" when i + 1 < args.Length:
+                    analyzeCandidate = args[++i];
                     break;
                 case "--help":
                 case "-h":
@@ -118,7 +173,7 @@ public static class Program
         }
 
         // The one tokenizer every config shares, so the table is comparable within a run.
-        (ITokenizer tokenizer, string analysisDescription) = BuildAnalysis(analyzer, stem);
+        (ITokenizer tokenizer, string analysisDescription, TokenizerOptions tokenizerOptions) = BuildAnalysis(analyzer, stem);
 
         IReadOnlyList<BeirDataset> datasets = datasetArg == "all"
             ? BeirDataset.All
@@ -162,14 +217,31 @@ public static class Program
                 "their queries as documents (ArguAna: 1298 of 1406 test queries); a no-op elsewhere.");
         }
 
+        if (parseQuerySyntax)
+        {
+            Console.WriteLine(
+                "Query syntax ON: \"a phrase\" requires adjacency, term* is a prefix, term~ is fuzzy. " +
+                "The published baselines apply none of this to their queries, so a run with it on is " +
+                "not comparable with them.");
+        }
+        else
+        {
+            Console.WriteLine(
+                "Query syntax OFF: each query is literal text, as in the published baselines. A straight " +
+                "double quote is a separator here, not a phrase delimiter — on ArguAna that is the " +
+                "difference between 9.8% of queries collapsing and none of them doing so.");
+        }
+
         Console.WriteLine();
 
         foreach (BeirDataset dataset in datasets)
         {
             await RunDatasetAsync(
-                dataset, dataBaseDir, topK, limit, tokenizer, analysisDescription, gain,
-                excludeQueryDocument, fingerprintOnly, referenceBm25, queryFrequency, dense, denseSeq,
-                tuned, reranker, rerankCandidates);
+                dataset, dataBaseDir, topK, limit, tokenizer, tokenizerOptions, analysisDescription, gain,
+                excludeQueryDocument, fingerprintOnly, referenceBm25, queryFrequency, scoreRounding,
+                saturationConstant, singlePrecision, dense, denseSeq,
+                tuned, reranker, rerankCandidates, runPath, jobs, indexCache, parseQuerySyntax,
+                querySyntaxReference, analyzePath, analyzeBaseline, analyzeCandidate);
             Console.WriteLine();
         }
 
@@ -177,13 +249,58 @@ public static class Program
     }
 
     /// <summary>
+    /// Queries in flight by default: enough to keep the machine busy, short of taking every core.
+    /// </summary>
+    /// <remarks>
+    /// One core is left free so a sweep does not make the machine unusable, and the ceiling is 8
+    /// because the work is memory-bound rather than compute-bound and more workers stop paying for
+    /// themselves well before a large core count. <c>--jobs</c> overrides it, which the sweep script
+    /// pins so a recorded run states what it was allowed to use.
+    /// </remarks>
+    private static int DefaultJobs() => Math.Clamp(Environment.ProcessorCount - 1, 1, 8);
+
+    /// <summary>
     /// Builds the shared tokenizer for a run, and the description of the analysis it applies.
     /// <c>english</c> is the analysis the published BM25 baselines were produced with — Porter
     /// stemming, a 33-word function-word list, and single-character terms kept — and it is the
     /// only setting under which a LexiSharp number is comparable with those published figures.
     /// </summary>
-    private static (ITokenizer Tokenizer, string Description) BuildAnalysis(string analyzer, bool stem)
+    private static (ITokenizer Tokenizer, string Description, TokenizerOptions Options) BuildAnalysis(string analyzer, bool stem)
     {
+        // The published baselines' word segmentation: the Unicode text-segmentation boundaries, which join
+        // across eight characters the library's own tokenizer treats as separators, and no diacritic
+        // folding. Opt-in and named for the rule it implements, because that rule is a published annex
+        // rather than one implementation's choice. It is here to measure what the difference is worth,
+        // not to become a second default.
+        if (analyzer == "uax29")
+        {
+            TokenizerOptions boundaries = new()
+            {
+                Stemmer = new PorterStemmer(),
+                RemoveStopWords = true,
+                StopWords = StopWords.EnglishFunction,
+                KeepSingleCharTerms = true,
+                FoldDiacritics = false,
+                WordSegmentation = WordSegmentation.UnicodeWordBoundaries,
+                // Before the stop word list, not after: `it's` escapes a list tested on `it's` and only
+                // then becomes `it`, which is how this index came to hold an `it` the reference does not.
+                StripPossessives = true,
+                // The one code point .NET's invariant casing and the reference's disagree on, out of 505
+                // positions whose lowercase differs. Their mapping is the Unicode *simple* one — U+0130 to
+                // U+0069, one character — which is what their index holds: a five-character `celil`.
+                FoldTurkishDottedI = true,
+            };
+
+            return (
+                new Tokenizer(boundaries),
+                "measured separator rules: comma and semicolon between digits, colon between letters, " +
+                "full stop and apostrophes within one class, underscore and soft hyphen anywhere, " +
+                "underscore also at the start of a token; lowercase, no diacritic folding, Porter stemming " +
+                "(PorterStemmer), function-word stop list, single-char terms kept, possessives stripped " +
+                "before the stop list, U+0130 folded by the simple mapping",
+                boundaries);
+        }
+
         TokenizerOptions options = analyzer switch
         {
             "default" when stem => new TokenizerOptions { Stemmer = new PorterStemmer() },
@@ -203,12 +320,12 @@ public static class Program
                 KeepSingleCharTerms = true,
             },
             _ => throw new ArgumentException(
-                $"--analyzer expects 'default', 'porter' or 'english', got '{analyzer}'."),
+                $"--analyzer expects 'default', 'porter', 'english' or 'uax29', got '{analyzer}'."),
         };
 
         // Tokenizer.Default is a shared instance built from TokenizerOptions.Default; naming its
         // configuration by value rather than by identity is what makes the printed line trustworthy.
-        return (new Tokenizer(options), DescribeAnalysis(options));
+        return (new Tokenizer(options), DescribeAnalysis(options), options);
     }
 
     /// <summary>Names the analysis in force, so a recorded number states what produced it.</summary>
@@ -230,10 +347,13 @@ public static class Program
     }
 
     private static async Task RunDatasetAsync(
-        BeirDataset dataset, string dataBaseDir, int topK, int? limit, ITokenizer tokenizer,
+        BeirDataset dataset, string dataBaseDir, int topK, int? limit, ITokenizer tokenizer, TokenizerOptions tokenizerOptions,
         string analysisDescription, NdcgGain gain, bool excludeQueryDocument, bool fingerprintOnly,
-        Bm25Parameters? referenceBm25, bool queryFrequency, bool dense, int denseSeq, bool tuned,
-        IReranker? reranker, int rerankCandidates)
+        Bm25Parameters? referenceBm25, bool queryFrequency, bool scoreRounding, bool saturationConstant,
+        bool singlePrecision, bool dense, int denseSeq, bool tuned,
+        IReranker? reranker, int rerankCandidates, string? runPath, int jobs, string? indexCache,
+        bool parseQuerySyntax, bool referenceIndexStatistics,
+        string? analyzePath, string analyzeBaseline, string? analyzeCandidate)
     {
         Console.WriteLine($"== {dataset.Name} ==");
 
@@ -246,8 +366,32 @@ public static class Program
         // The fingerprint comes first, and independently of every score below: it says whether this
         // run indexed the same thing as the reference, which is the question a percentage gap
         // against a published number cannot answer.
-        var index = new InMemoryTextIndex(tokenizer);
-        index.Index(Evaluation.BuildDocuments(corpus));
+        //
+        // One index, built once and then read by every config. Tokenizing the corpus was the largest
+        // cost in a run before this, and it was being repeated once per row of the table for an
+        // index that came out identical each time. With --index-cache the build is repeated once per
+        // process instead of once per run, which is what a sweep of eighteen stages needs.
+        var index = IndexCache.LoadOrBuild(
+            indexCache, dataset, corpus, tokenizer, analysisDescription,
+            referenceIndexStatistics ? new IndexOptions(
+                // The average is over the EXACT lengths: 969,528 / 8,673 = 111.786925. The reference
+                // index stores 108.372651, the mean of its decoded one-byte lengths, and using that
+                // instead moves every score by 6e-03 — a hundred times the residual being chased — so
+                // its scorer averages the exact lengths while its index stores quantized ones.
+                AverageLengthDivisor.NonEmptyDocuments, DocumentLengthQuantization.OneByte)
+            : null);
+        // Which conventions the run used, on the same footing as the analysis line: a score read
+        // without them is not comparable with one read with them.
+        Console.WriteLine(
+            $"Index conventions — average length over {(index.DocumentLengthQuantization == DocumentLengthQuantization.OneByte ? "quantized lengths" : "exact lengths")}, " +
+            $"{(index.LengthDivisor == AverageLengthDivisor.AllDocuments ? "all documents" : "non-empty documents")}, " +
+            // Two more rules, because a score read without them is not comparable with one read with
+            // them. Between them they were worth 486 of the 487 occurrences by which this index and the
+            // reference index used to differ: a possessive removed after the stop word list is too late,
+            // because the list is consulted on `it's` rather than on `it`.
+            $"{(tokenizerOptions.StripPossessives ? "possessives stripped before the stop list" : "possessives kept")}, " +
+            $"{(tokenizerOptions.FoldDiacritics ? "diacritics folded" : "diacritics kept")}, avgdl {index.AverageDocumentLength:F6}.");
+
         PrintFingerprint(dataset, index, analysisDescription);
 
         if (fingerprintOnly)
@@ -270,8 +414,21 @@ public static class Program
         }
 
         var (results, tunedDescription) = Evaluation.Run(
-            corpus, topK, limit, tokenizer, excludeQueryDocument, gain, referenceBm25,
-            queryFrequency, denseVectors, tuned, reranker, rerankCandidates);
+            corpus, index, topK, limit, tokenizer, excludeQueryDocument, gain, referenceBm25,
+            queryFrequency, scoreRounding, saturationConstant, singlePrecision, denseVectors, tuned, reranker,
+            rerankCandidates,
+            jobs, parseQuerySyntax, captureOutcomes: analyzePath is not null);
+
+        if (analyzePath is not null)
+            WriteQueryAnalysis(analyzePath, analyzeBaseline, analyzeCandidate, corpus, index, tokenizer, results, topK, limit,
+                excludeQueryDocument, parseQuerySyntax);
+
+        if (runPath is not null)
+        {
+            WriteRun(runPath, corpus, index, tokenizer, topK, limit, excludeQueryDocument, queryFrequency, scoreRounding,
+                saturationConstant, singlePrecision,
+                referenceBm25 ?? new Bm25Parameters(0.9, 0.4), parseQuerySyntax);
+        }
 
         PrintTable(results, topK);
         PrintReference(dataset, analysisDescription, gain);
@@ -282,6 +439,133 @@ public static class Program
             "relative ordering of the configs above is meaningful within a run; the comparison to " +
             "the published reference is meaningful only under the analysis the reference used " +
             "(--analyzer english for the published figures).");
+    }
+
+    /// <summary>
+    /// Writes the BM25 run as a TREC run file, so a recorded number can be read back one query at a
+    /// time instead of only in aggregate.
+    /// </summary>
+    /// <remarks>
+    /// The point of the file is attribution: an aggregate says how far off a run is, and a run file
+    /// says which queries and which documents. It is written from the index this run built and the
+    /// query list the table scored, at <c>--top-k</c> depth, which is why depth is stated in the
+    /// console line rather than left implicit. When no <c>--reference-bm25</c> was given, the
+    /// retrieval stack's own defaults are used, since that is the operating point a published
+    /// figure would have been produced at.
+    /// </remarks>
+    private static void WriteRun(
+        string path, BeirCorpus corpus, InMemoryTextIndex index, ITokenizer tokenizer, int topK,
+        int? limit, bool excludeQueryDocument, bool queryFrequency, bool scoreRounding, bool saturationConstant,
+        bool singlePrecision, Bm25Parameters bm25, bool parseQuerySyntax)
+    {
+        List<EvaluatedQuery> queries = Evaluation.BuildQueries(corpus, limit, excludeQueryDocument);
+        var engine = new RankedTextSearchEngine(
+            index,
+            new Bm25Scorer(
+                bm25.K1, bm25.B,
+                queryFrequency ? QueryTermWeighting.QueryFrequency : QueryTermWeighting.Distinct,
+                saturationConstant,
+                singlePrecision ? Bm25Arithmetic.SinglePrecision : Bm25Arithmetic.Double),
+            tokenizer);
+
+        string directory = Path.GetDirectoryName(Path.GetFullPath(path))!;
+        Directory.CreateDirectory(directory);
+
+        using var writer = new StreamWriter(path);
+
+        foreach (EvaluatedQuery evaluated in queries)
+        {
+            IReadOnlyList<SearchResult> results = engine.Search(
+                evaluated.Query.Text,
+                new SearchOptions(
+                    topK,
+                    ExcludedDocumentIds: evaluated.Excluded,
+                    ParseQuerySyntax: parseQuerySyntax,
+                    // The run file is what a recorded score is read back from, so the rounding the
+                    // reference applies before writing one has to be applied here too, or the
+                    // comparison is against a number the reference never wrote down.
+                    ScoreRounding: scoreRounding
+                        ? ScoreRounding.FourDecimals
+                        : ScoreRounding.None));
+
+            for (int rank = 0; rank < results.Count; rank++)
+            {
+                writer.WriteLine(
+                    $"{evaluated.Query.Id} Q0 {results[rank].DocumentId} {rank + 1} "
+                    + $"{results[rank].Score.ToString("R", CultureInfo.InvariantCulture)} LexiSharp");
+            }
+        }
+
+        Console.WriteLine(
+            $"Run file: {Path.GetFullPath(path)} — {queries.Count:N0} queries, BM25 "
+            + $"(k1={bm25.K1.ToString("0.##", CultureInfo.InvariantCulture)}, "
+            + $"b={bm25.B.ToString("0.##", CultureInfo.InvariantCulture)}), depth {topK}, "
+            + $"{(queryFrequency ? "query-term-frequency" : "distinct")} weighting, "
+            + $"{(parseQuerySyntax ? "query syntax on" : "query syntax off")}"
+            // Stated on the run file itself and not only in the conventions line: when this is on, a
+            // score read back from the file is not the scorer's score, and a reader comparing the two
+            // has to know which of the two they are holding.
+            + $", {(scoreRounding ? "four-decimal score rounding" : "raw scores")}.");
+    }
+
+    /// <summary>
+    /// Writes the per-query analysis file and prints the mismatch-band summary.
+    /// </summary>
+    /// <remarks>
+    /// The query list is rebuilt through <see cref="Evaluation.BuildQueries"/> rather than taken from
+    /// the run, so it is the same list the metrics were computed over. Two copies of that list would
+    /// look comparable and not be — the failure mode the reference corpus's own harness already
+    /// documents, and the reason <c>--limit</c> and <c>--exclude-query-doc</c> have to travel with it.
+    /// </remarks>
+    private static void WriteQueryAnalysis(
+        string path,
+        string baseline,
+        string? candidate,
+        BeirCorpus corpus,
+        InMemoryTextIndex index,
+        ITokenizer tokenizer,
+        IReadOnlyList<ConfigResult> results,
+        int topK,
+        int? limit,
+        bool excludeQueryDocument,
+        bool parseQuerySyntax)
+    {
+        var analyzed = results.Where(result => result.Outcomes is not null).ToList();
+
+        if (analyzed.Count != results.Count)
+        {
+            throw new InvalidOperationException(
+                $"{results.Count - analyzed.Count} of {results.Count} configurations reported no per-query " +
+                "detail, so the analysis would be missing rows rather than shorter.");
+        }
+
+        var queries = Evaluation.BuildQueries(corpus, limit, excludeQueryDocument);
+        var coverage = QueryAnalysis.Describe(queries, index, corpus, tokenizer);
+
+        var byConfig = analyzed.ToDictionary(result => result.Name, result => result.Outcomes!);
+
+        var report = new QueryAnalysisReport(queries, coverage, byConfig);
+
+        // The named configuration's name is validated before the file is written, so a typo fails on a
+        // short console message rather than after producing a file with empty delta columns.
+        report.OutcomesOf(baseline);
+
+        QueryAnalysis.Write(path, report, baseline);
+
+        Console.WriteLine();
+        Console.WriteLine($"Per-query analysis: {Path.GetFullPath(path)}");
+        Console.WriteLine(
+            $"  {queries.Count:N0} queries x {byConfig.Count} configurations, measured at depth {MetricDepth.Cutoff} " +
+            $"(retrieval depth {topK}{(parseQuerySyntax ? ", query syntax on" : ", query syntax off")}).");
+        Console.WriteLine($"  Delta columns are against '{baseline}'.");
+
+        // A candidate is named separately because pairing the baseline with itself would print a table
+        // of zeros, which reads as a result and is not one. With no candidate the file still carries
+        // every per-query metric; the band table is the one summary that needs a pair.
+        if (candidate is not null)
+            QueryAnalysis.WriteBandSummary(Console.Out, report, candidate, baseline);
+        else
+            Console.WriteLine("  Pass --analyze-candidate with a configuration name for the mismatch-band summary.");
     }
 
     private static void PrintTable(IReadOnlyList<ConfigResult> results, int topK)
@@ -493,6 +777,37 @@ public static class Program
                                 Add a BM25 row at these parameters, e.g. 0.9,0.4 — the defaults the
                                 published BM25 baselines were produced with, which is neither of the
                                 two rows above. Needed to measure a published operating point.
+              --reference-score-rounding
+                                Round each returned score onto a ten-thousandth grid and walk down
+                                each run of near-equal scores by one millionth a step, which is what
+                                the reference does to the scores it writes to a run file. Measured on
+                                ArguAna against that run: 97.76% of 14,168 paired scores then match on
+                                the raw bits, against 6.18% without it. The rest sit on a rounding
+                                boundary, because its scores are single precision and this library's
+                                are not. It changes no ranking, so the metric columns are unaffected.
+              --omit-saturation-constant
+                                Leave the k1+1 out of BM25's numerator, which is the same ranking
+                                scaled by 1/(k1+1) but not the same score. The reference's BM25 does
+                                not have it, and a score compared against one has to be on the same
+                                scale or it is off by the factor before any rounding is discussed.
+              --single-precision-bm25
+                                Compute each term's contribution in single precision and round the
+                                total once, with the length normalisation read from a single-precision
+                                reciprocal table instead of evaluated per document. Same ranking, one
+                                fewer significant figure, and it is the figure the reference has, so this
+                                is what a raw-score comparison needs.
+              --jobs <n>          Queries scored concurrently, so a run uses more than one core (default: one
+                                fewer than the core count, capped at 8). The totals are summed in
+                                query order either way, so the reported figures do not depend on it.
+              --index-cache <file>
+                                Keep the built index beside the corpus and reload it next time,
+                                instead of tokenizing the corpus once per process. Refuses a cache
+                                written under a different analysis; rebuilds when the corpus file has
+                                changed since.
+              --run <file>      Write the BM25 run as a TREC run file at --top-k depth, so a recorded
+                                number can be read back one query at a time instead of only in
+                                aggregate. Uses the retrieval stack's defaults (k1=0.9, b=0.4) when
+                                --reference-bm25 is not given.
               --verify-reference [<file>]
                                 Replay every configuration in reference/pinned.json and report which
                                 ones drifted. Exits 1 on any drift, so it can gate a build. The file
@@ -512,6 +827,18 @@ public static class Program
                                 ONNX Runtime): re-scores the top-N lexical/dense candidates per query.
                                 First run downloads ~90 MB into data/models/cross-encoder/.
               --rerank-top <n>  Number of candidates fed to the cross-encoder (default: 100).
+              --analyze <file>  Write one row per query per configuration: the query's lexical coverage
+                                of its own judged documents, the metrics, and the per-query deltas
+                                against --analyze-baseline. Off by default — capturing a ranking per
+                                query per configuration is real memory on the larger corpora.
+              --analyze-baseline <name>
+                                Configuration the delta columns are measured against. Names are the
+                                table's display names, in full, e.g. "BM25 (k1=1.5, b=0.75)". An
+                                unknown name lists the ones the run has.
+              --analyze-candidate <name>
+                                Also print the mean deltas per mismatch band, this configuration
+                                against the baseline. Omitted, no band table: pairing the baseline
+                                with itself would print zeros that read as a result.
               --help, -h        Show this help.
             """);
     }

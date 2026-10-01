@@ -259,6 +259,18 @@ public static class RetrievalMetrics
         return idcg;
     }
 
+    /// <summary>
+    /// The ideal DCG over the best <c>k</c> documents of a ranking ordered by descending relevance.
+    /// </summary>
+    /// <remarks>
+    /// Only the documents that can contribute occupy a rank. A document whose level is 0 adds nothing,
+    /// and letting it advance the rank would shrink the ideal — which raises every nDCG computed against
+    /// it, by a different amount per query. The ideal ranking is the one that puts the available relevant
+    /// documents first, so a level of 0 is not in it at any position.
+    /// <para>
+    /// The input is expected ordered, which is what makes "the best k" well defined; the caller sorts.
+    /// </para>
+    /// </remarks>
     private static double IdealDcg(IEnumerable<double> orderedRelevance, int k, NdcgGain gain)
     {
         double idcg = 0;
@@ -270,9 +282,10 @@ public static class RetrievalMetrics
                 break;
 
             if (level > 0)
+            {
                 idcg += GainOf(level, gain) / Math.Log2(rank + 1);
-
-            rank++;
+                rank++;
+            }
         }
 
         return idcg;
