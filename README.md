@@ -105,7 +105,7 @@ is [Scope and limits](docs/reference.md#scope-and-limits).
   harness: `trec_eval` — the standard evaluator, not this repository's code — reads both figures off
   a run this harness writes, and the 15,466 returned scores for the 1,406 queries match the
   reference's own searcher on the raw bits, so the ranking is that ranking rather than a lookalike.
-  The same scores read under the library defaults are **0.308 / 0.662 / 0.289**; that difference is
+  The same scores read under the library defaults are **0.308 / 0.662 / 0.320**; that difference is
   the analyzer, the parameters and one task convention, not the ranking. Corpora are md5-verified on
   download, and the numbers are pinned and re-checked by the `Pinned reference` workflow, which
   replays every pinned configuration and exits non-zero on drift. It runs on a dispatch, on a push

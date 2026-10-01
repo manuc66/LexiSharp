@@ -144,6 +144,51 @@ Runtime, no Python:
   BERT pair); scores are validated against the HuggingFace `CrossEncoder` reference on the
   same query–doc pairs (Spearman ρ ≈ 0.99 on NFCorpus candidates, top-10 overlap ≈ 0.9).
 
+## Per-query analysis
+
+`--analyze <file>` writes one row per query per configuration, so a mean can be decomposed instead
+of believed. A table that gained 0.02 nDCG does not say whether the mechanism found documents or
+reshuffled ones it already had; the two call for opposite follow-ups, so the mean is not a summary
+of the run but a loss of it. Each row carries the query's **lexical coverage of its own judged
+documents** — the share of the query's idf mass its answer set actually says in words — the metrics,
+and the deltas against `--analyze-baseline`:
+
+| column | meaning |
+|---|---|
+| `judged_idf_share`, `band` | the axis the vocabulary-mismatch hypothesis is about: how much of what the query asked for its judged documents say directly. Bands cut on the idf-weighted share, **not on query length** — a three-term query can share every term with its answer and an eight-term one none. |
+| `new_relevant` / `lost_relevant` | judged documents entering and leaving the top `--top-k`, per query. Only judged ids are counted, and both directions: a pure swap reads as `+1/-1`, not as a gain. |
+| `delta_recall` / `delta_ndcg` | per-query metric movement against the baseline. |
+
+`--analyze-candidate <name>` additionally prints the mean deltas per mismatch band, which is the
+question the file was built for — *does the candidate help where the theory says it should, and only
+there*. A band's query count is printed next to its means; a band of three must not be read as a
+trend. The metrics and the new/lost counts are evaluated at the run's retrieval depth (`--top-k`).
+
+## Query-side expansion
+
+`--expand-density <shares>` adds one BM25 row per window-density cut, where each row wraps the
+scorer in the library's `ExpandingTextSearchEngine` and learns its `PmiTermExpander` from this
+run's corpus text — no reindexing, and the BM25 statistics are the same ones the lexical rows read,
+which is the point: `ExpansionTextIndex` is the document-side variant and changes `avgdl`, so a
+comparison against it would be a comparison of two indexes. The share is the fraction of the
+corpus's sliding windows a term may appear in and still be a neighbour:
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
+  --expand-density 0.1,0.3 --expand-ranking both --analyze /tmp/expand.tsv \
+  --analyze-candidate "BM25 + query expansion (density<=0.1, PositiveMutualInformation)"
+```
+
+`--expand-ranking` orders each input term's candidate neighbours before the budget is applied:
+`count` (raw co-occurrence count, the classic expansion bias) or `pmi` (positive mutual
+information, which declines to promote a common term that merely appears nearby); `both` adds one
+row per statistic. Expansion terms carry a weight in `(0, 1]`, but `ExpandingTextSearchEngine`
+ignores it — every term, original and expanded, scores as one occurrence — so these rows measure
+the reach of the neighbourhood at equal weight, and `--query-term-frequency` changes that by
+scoring a repeated term once per occurrence. The empty list is the default; the learning pass is
+the genuinely expensive step in a run (seconds and hundreds of megabytes of pair counts on
+SciFact), which is why nothing is learned unless a cut is asked for.
+
 ## Comparing against a published number
 
 A BM25 figure is only comparable with a run that shares its **analysis**, its **parameters** and its
@@ -170,9 +215,9 @@ query multiplies its weight; this library deduplicates by default, which is the 
 bag of words. Where queries are short the two are identical to four decimals (NFCorpus 0.3215 either
 way, SciFact 0.6788 either way). Where a query *is* a document they are not: ArguAna's every test
 query is a whole ~200-word argument whose content words repeat, and counting them takes nDCG@10
-from **0.219 to 0.271** at k1=0.9/b=0.4, a **+0.052** effect. Reproduce it with
+from **0.240 to 0.301** at k1=0.9/b=0.4, a **+0.061** effect. Reproduce it with
 `--analyzer english --reference-bm25 0.9,0.4 --query-term-frequency`, and the default on the same
-line without the flag. The linear gain convention returns the same 0.271, so this is not an artifact
+line without the flag. The linear gain convention returns the same 0.301, so this is not an artifact
 of the metric convention.
 
 **`--query-term-frequency` reaches the scorer on one path only, so a figure that depends on it
@@ -181,18 +226,16 @@ the `QueryTermWeighting` argument of `new Bm25Scorer(...)` — and that scorer g
 `RankedTextSearchEngine`, which deduplicated the query before the scorer could see a repetition. Any
 claim of the form "this setting is worth X" measured through an engine that deduplicates first is
 measuring nothing, and it will report a positive number while doing so. Measured through the scorer
-directly, the setting is worth **+0.052** on ArguAna at matched parameters.
+directly, the setting is worth **+0.061** on ArguAna at matched parameters.
 
-**`--exclude-query-doc` is worth far less on ArguAna than it looks, and the measurement is in
-`reference/pinned.json`.** 1298 of the 1406 ArguAna test queries have a query id that is a document
-id, and their own document is a near-duplicate that ranks first, so dropping it looks like it should
-be worth a lot. Measured: **0.2852 without, 0.2864 with, i.e. +0.0012.** The reason is that the
-relevant document is already inside the top 10 in every one of the 869 cases where it is retrievable
-at all (median rank 3), and 537 queries have no relevant document in any page. Excluding the
-self-match promotes the gold document by one rank in 810 queries, and the page refills from rank 11,
-which is almost never the gold document. An earlier estimate of +0.095 for this flag was an artifact
-of dropping the self-document from an already-cut 10-document page — leaving a hole rather than
-refilling it — and it was wrong.
+**`--exclude-query-doc` drops the query's own document, which the published figure was produced with.**
+1298 of the 1406 ArguAna test queries have a query id that is a document
+id, and their own document is a near-duplicate that ranks first, so dropping it matters. Measured at
+the pin's configuration (English analysis, k1=1.5/b=0.75 linear): **0.313 without, 0.4180 with, i.e.
++0.105.** The pin `arguana/english+exclude` carries the value with the flag on; the measurement
+without it is the plain row above. An earlier estimate of +0.0012 for this flag was the option doing
+nothing — the exclusion was not applied on the term-at-a-time path — and it was wrong; the fix is what
+made the flag reach its document (see `reference/pinned.json`).
 
 
 `--fingerprint` reports what the index holds — documents, non-empty documents, total terms — next to
@@ -211,7 +254,8 @@ touches the library or this harness, and on a weekly schedule, so a drift is a r
 than a wrong README. The file holds two kinds of number, and they are not interchangeable:
 
 - **Regression pins** — the value this repository must keep producing, at a named configuration
-  (analyzer, gain convention, BM25 parameters, query-document exclusion, query count). The
+  (analyzer, gain convention, BM25 parameters, query-syntax state, query-document exclusion,
+  query count). The
   tolerance is tight (±0.002) because these are the assertions: they catch a change to scoring,
   candidate generation, tokenization or the metric.
 - **Parity figures** — somebody else's published number, with its source and a note on whether the
@@ -382,7 +426,7 @@ corpus (0.3588 for every configuration), so neither tuner had any signal to fit 
 first grid point their tie-break reached. Re-fitted on nDCG@5 — the metric they are reported in —
 BM25F tuned *loses* to BM25 tuned by 0.011. The conclusion is unchanged and better supported.
 
-Which leaves the ArguAna 0.344 as an **untested** claim, not a result: it too is default-vs-default,
+Which leaves the ArguAna 0.379 as an **untested** claim, not a result: it too is default-vs-default,
 and whether it survives a tuned BM25 was not measured, because a grid over 1406 queries did not fit
 the compute available here. Do not quote it as a length-term advantage.
 
@@ -429,48 +473,48 @@ Default tokenizer, **no stemming** — see [Stemming](#stemming) for the same ru
 
 | Config                             | nDCG@10 | MAP@10 | MRR@10 |  R@10 |
 |------------------------------------|--------:|-------:|-------:|------:|
-| BM25 (k1=1.5, b=0.75)              |   0.289 |  0.187 |  0.187 | 0.611 |
-| BM25 (k1=1.2, b=0.75)              |   0.283 |  0.184 |  0.184 | 0.597 |
-| TF-IDF                             |   0.008 |  0.005 |  0.005 | 0.016 |
-| QueryLikelihood (λ=0.2)            |   0.227 |  0.147 |  0.147 | 0.483 |
-| Hybrid BM25+QL (weighted)          |   0.289 |  0.187 |  0.187 | 0.611 |
-| Hybrid BM25+QL (RRF)               |   0.257 |  0.167 |  0.167 | 0.545 |
-| BM25F (unweighted)                 |   0.344 |  0.231 |  0.231 | 0.695 |
-| BM25F (title 2.0)                  |   0.344 |  0.231 |  0.231 | 0.698 |
-| BM25F (title 4.0)                  |   0.340 |  0.227 |  0.227 | 0.696 |
-| BM25+ (delta=1.0)                  |   0.243 |  0.156 |  0.156 | 0.519 |
-| BM25L (delta=0.5)                  |   0.249 |  0.161 |  0.161 | 0.528 |
+| BM25 (k1=1.5, b=0.75)              |   0.320 |  0.207 |  0.207 | 0.679 |
+| BM25 (k1=1.2, b=0.75)              |   0.313 |  0.203 |  0.203 | 0.663 |
+| TF-IDF                             |   0.002 |  0.001 |  0.001 | 0.004 |
+| QueryLikelihood (λ=0.2)            |   0.302 |  0.198 |  0.198 | 0.632 |
+| Hybrid BM25+QL (weighted)          |   0.320 |  0.207 |  0.207 | 0.679 |
+| Hybrid BM25+QL (RRF)               |   0.317 |  0.206 |  0.206 | 0.668 |
+| BM25F (unweighted)                 |   0.379 |  0.254 |  0.254 | 0.773 |
+| BM25F (title 2.0)                  |   0.379 |  0.253 |  0.253 | 0.775 |
+| BM25F (title 4.0)                  |   0.375 |  0.249 |  0.249 | 0.772 |
+| BM25+ (delta=1.0)                  |   0.269 |  0.172 |  0.172 | 0.578 |
+| BM25L (delta=0.5)                  |   0.276 |  0.178 |  0.178 | 0.587 |
 
 **The BM25+ / BM25L rows here are the worst the variants do anywhere, and the one measurement in
 this repository where the missing δ knob is most likely to matter.** At a fixed paper δ they lose
-0.046 and 0.040 against BM25 — roughly 15 % relative, the same order as the 13–17 % that 9bb7c92
+0.051 and 0.044 against BM25 — roughly 15 % relative, the same order as the 13–17 % that 9bb7c92
 retracted, but for a different reason and on a different corpus. That retraction was a
 transcription error on NFCorpus and SciFact; these rows are correctly transcribed and simply lose.
 ArguAna is also the corpus where a δ floor should plausibly do most work and least easily be
 recovered: a 125-point search over 1406 queries whose documents are whole arguments, on a single
 relevant document per query, is hours of compute, so **this run was `--no-tuned` and the variant
-rows are untuned-vs-untuned only.** Whether tuning δ closes a 0.046 gap here is **unmeasured**, and
+rows are untuned-vs-untuned only.** Whether tuning δ closes a 0.051 gap here is **unmeasured**, and
 the NFCorpus/SciFact results do not transfer — SciFact was the one corpus where δ helped at all.
 Do not read these rows as the variants' verdict; read them as untuned, which is all they are.
 
 **The largest BM25F margin anywhere in this harness, and not because of the weighting — but also not
-established as a real gain.** 0.344 against BM25's 0.289 on 1406 queries, both under the library
+established as a real gain.** 0.379 against BM25's 0.320 on 1406 queries, both under the library
 defaults. Hold this one loosely for a second reason as well: the default table is no longer the
 comparable one (see above), so this margin is a default-versus-default comparison in a table whose
 own caveats apply. Two reasons to hold it
 loosely. The three rows say the weighting is not the cause: unweighted, title 2.0 and title 4.0 are
 within 0.004 of each other, and the heaviest weight is the worst. And it is a **default-vs-default**
 comparison — on the reference corpus, tuning moved this kind of gap by 0.011, and on NFCorpus and
-SciFact it closed. Whether a tuned BM25 also reaches 0.344 here is unmeasured.
+SciFact it closed. Whether a tuned BM25 also reaches 0.379 here is unmeasured.
 
 ArguAna is also the corpus least like ordinary search — counter-argument retrieval, very long
 queries, a `title` that is a topic phrase rather than a headline. One more caveat on reading that
-0.344: **each ArguAna test query has exactly one relevant document** (the counter-argument), so
+0.379: **each ArguAna test query has exactly one relevant document** (the counter-argument), so
 Recall is quantized and nDCG is far easier to move than on a corpus with a dozen relevant documents
 per query. A scorer that gets the one right document higher gains a lot; one that reshuffles the
 bottom gains nothing.
 
-BM25 over the full 1406-query test split lands at **0.289 under the library defaults**. Two things
+BM25 over the full 1406-query test split lands at **0.320 under the library defaults**. Two things
 follow from that, and both are about the comparison rather than the scorer. The 0.315 it invites
 comparison against is the 2021 paper's figure, while the current reference for this index is
 **0.3970** — so a default-configured run is not 8 % below anything, it is a different configuration.
@@ -479,15 +523,15 @@ document count, and a metric cutoff.
 
 | configuration | nDCG@10 |
 |---|---:|
-| library defaults (the table above) | 0.289 |
-| + reference analysis, at k1=0.9/b=0.4 | 0.219 |
-| + reference analysis, + query-frequency counting, at k1=0.9/b=0.4 | 0.271 |
-| + reference analysis, + query-frequency counting, at k1=3.0/b=0.75 | 0.331 |
+| library defaults (the table above) | 0.320 |
+| + reference analysis, at k1=0.9/b=0.4 | 0.240 |
+| + reference analysis, + query-frequency counting, at k1=0.9/b=0.4 | 0.301 |
+| + reference analysis, + query-frequency counting, at k1=3.0/b=0.75 | 0.367 |
 | + the parity options, at k1=0.9/b=0.4 | 0.3970 |
 | published reference, at k1=0.9/b=0.4 | 0.3970 |
 
-Read the third and fourth rows together: the setting is worth +0.052 at the reference's own
-parameters and +0.027 at k1=3.0. Those are settings the library exposes; the fifth row is the one
+Read the third and fourth rows together: the setting is worth +0.061 at the reference's own
+parameters and +0.033 at k1=3.0. Those are settings the library exposes; the fifth row is the one
 that reaches the published figure, and it is worth being exact about what it is. It adds the four
 options a bit-for-bit comparison needs — the document count that carries the field rather than every
 indexed document, the reference's scale and precision, its four-decimal rounding, and the query's own
@@ -528,12 +572,12 @@ default, so every table above is the unstemmed baseline. Same corpora, same quer
 
 | Config                    | NFCorpus | +stem | SciFact | +stem | ArguAna | +stem |
 |---------------------------|---------:|------:|--------:|------:|--------:|------:|
-| BM25 (k1=1.5, b=0.75)     |    0.308 | **0.322** |   0.662 | **0.687** |   0.289 | 0.279 |
-| BM25 (k1=1.2, b=0.75)     |    0.306 | **0.321** |   0.660 | **0.687** |   0.283 | 0.272 |
-| TF-IDF                    |    0.248 | **0.257** |   0.345 | **0.362** |   0.008 | 0.007 |
-| QueryLikelihood (λ=0.2)   |    0.288 | **0.298** |   0.622 | **0.648** |   0.227 | 0.212 |
-| Hybrid BM25+QL (weighted)  |    0.308 | **0.322** |   0.662 | **0.687** |   0.289 | 0.279 |
-| Hybrid BM25+QL (RRF)       |    0.300 | **0.310** |   0.644 | **0.669** |   0.257 | 0.244 |
+| BM25 (k1=1.5, b=0.75)     |    0.308 | **0.322** |   0.662 | **0.687** |   0.320 | 0.308 |
+| BM25 (k1=1.2, b=0.75)     |    0.306 | **0.321** |   0.660 | **0.687** |   0.313 | 0.300 |
+| TF-IDF                    |    0.248 | **0.257** |   0.345 | **0.362** |   0.002 | 0.003 |
+| QueryLikelihood (λ=0.2)   |    0.288 | **0.298** |   0.622 | **0.648** |   0.302 | 0.312 |
+| Hybrid BM25+QL (weighted)  |    0.308 | **0.322** |   0.662 | **0.687** |   0.320 | 0.308 |
+| Hybrid BM25+QL (RRF)       |    0.300 | **0.310** |   0.644 | **0.669** |   0.317 | 0.315 |
 | Published reference       |    0.325 |    —    |   0.665 |    —    |   0.315 |   —   |
 
 This table switches the **stemmer only**, which is what makes it readable and also what bounds it: the
@@ -544,11 +588,12 @@ published figures, where this table's best is 0.322 and 0.687. The stemmer's own
 therefore worth about +0.014 on NFCorpus and the stop words another +0.005; on ArguAna both cost
 something, and the gap there is not analysis at all — see `--query-term-frequency` above.
 
-**Stemming helps on two corpora and hurts on the third.** On NFCorpus every config improves and
+**Stemming helps on two corpora and is mixed on the third.** On NFCorpus every config improves and
 BM25 goes 0.308 → 0.322, taking the gap to BEIR's 0.325 from −5.2 % to −0.9 %; on SciFact
-0.662 → 0.687 puts it *above* the 0.665 reference (R@10 0.781 → 0.818). On ArguAna every config
-*loses* ground — BM25 0.289 → 0.279, QL 0.227 → 0.212 — so stemming does not explain that
-corpus's gap, it widens it. MAP@10, MRR@10 and R@10 move with nDCG@10 in all three columns.
+0.662 → 0.687 puts it *above* the 0.665 reference (R@10 0.781 → 0.818). On ArguAna the effect is
+smaller and direction-dependent — BM25 0.320 → 0.308, QL 0.302 → 0.312 — so stemming neither
+explains that corpus's gap nor widens it by much. MAP@10, MRR@10 and R@10 move with nDCG@10 in
+all three columns.
 
 That three-way split is the argument for keeping stemming **opt-in** rather than defaulting it:
 the right choice is corpus-dependent, and this harness cannot say which regime your data is in.
