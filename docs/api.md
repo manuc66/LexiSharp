@@ -32,12 +32,16 @@ are listed first.
 | --- | --- | --- | --- |
 | `ICandidateIndex` | `ITextIndex` | Capability for an index that can enumerate only the documents containing at least one of the given query terms, instead of scanning the whole corpus. | [guide](reference.md) |
 | `IChunkContextEnricher` | — | Augments the searchable text of a SearchDocument before it is indexed — the « contextual retrieval » seam. A chunk that only says "the benefit rose 12%" is… | [guide](reference.md) |
+| `ICompressingSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that can return, alongside the ranked page, each document compressed to its query-relevant content — the surface a… | [guide](reference.md) |
+| `IContextCompressor` | — | Reduces a document's text to the content a query actually cares about — the token-reduction seam between a ranked page and a generation model. LexiSharp never… | [guide](reference.md) |
 | `ICrossEncoderScorer` | — | Scores a (query, document) pair as a single relevance value — the job of a cross-encoder (concatenate query and document into one input) or, more generally, of… | [guide](reference.md) |
 | `IDetailedSearchEngine` | — | Optional capability of an ITextSearchEngine that can return, alongside the merged ranking, the per-source score breakdown that fed it (see Contributions). | [guide](reference.md) |
 | `IEmbeddingProvider` | — | Contract for producing text embeddings. LexiSharp never computes embeddings itself: implementing this interface is up to the consumer — a local ONNX model, an… | [guide](reference.md) |
 | `IExplainableSearchEngine` | — | Optional capability of an ITextSearchEngine that can explain why a document received the score it did for a query, when its scorer is an IScoreExplainer. | [guide](reference.md) |
 | `IFacetedSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that can return, alongside the ranked results, facet counts over Fields. | [guide](reference.md) |
+| `IGraphSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that can return, alongside the ranked page, the knowledge-graph facts connected to the query — the search-side half… | [guide](reference.md) |
 | `IIncrementalTextClassifier` | `ITextClassifier` | Optional capability of an ITextClassifier: add or retract single labelled documents without a retraining pass over the whole corpus. Detected with pattern… | [guide](reference.md) |
+| `IKnowledgeGraphBridge` | — | Contracts for connecting the engines to a knowledge graph — the GraphRAG seam. LexiSharp never runs a model or a graph itself: relation extraction is the model… | [guide](reference.md) |
 | `IListableSearchEngine` | — | Optional capability of a ITextSearchEngine that can enumerate the identifiers of the documents it currently holds, without materializing the full documents. | [guide](reference.md) |
 | `IQueryCostEstimator` | — | Picks which of several engines a RoutedSearchEngine should run a query on. | [guide](reference.md) |
 | `IQueryCostProbe` | — | Optional capability of an ITextSearchEngine that can estimate, cheaply and without running a search, how many documents a query is likely to touch — the signal… | [guide](reference.md) |
@@ -118,6 +122,13 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `NaiveBayesOptions` | record | — | Tunable knobs for NaiveBayesClassifier; the defaults reproduce the classic Laplace-smoothed, unweighted multinomial Naive Bayes. |
 | `SynchronizedTextClassifier` | class | `IDisposable`, `IIncrementalTextClassifier`, `IReinforceableTextClassifier`, `ITextClassifier`, `IWeightedPredictor` | Wraps an IReinforceableTextClassifier so that concurrent prediction and concurrent mutation stop being the caller's problem: any number of Predict and… |
 
+#### `LexiSharp.Compression`
+
+| Type | Kind | Contracts | What it is |
+| --- | --- | --- | --- |
+| `CompressingTextSearchEngine` | class | `ICompressingSearchEngine`, `ITextSearchEngine` | A decorator that adds the ICompressingSearchEngine surface to any engine: searching and writing are forwarded unchanged, and SearchCompressed returns each hit's… |
+| `QueryWindowCompressor` | class | `IContextCompressor` | The model-free IContextCompressor: keeps the windows of words around each occurrence of a query term and drops everything else — the deterministic, offline… |
+
 #### `LexiSharp.Core`
 
 | Type | Kind | Contracts | What it is |
@@ -125,14 +136,19 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `BoostedTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that boosts or damps the matches of an inner engine after ranking. |
 | `CheapestByCandidateCountEstimator` | class | `IQueryCostEstimator` | Picks the engine with the smallest EstimateCandidateCount. Engines that do not implement IQueryCostProbe cannot be costed and are only used when no probed… |
 | `ClassificationResult` | record | — | A category predicted for a piece of text, with its estimated probability. |
+| `CompressedHit` | record | — | One compressed hit of SearchCompressed: the ranked document's id and score, its text reduced to the query-relevant content, and how much of the source that… |
 | `DetailedSearchResult` | record | — | A ranked document whose final score is broken down by the source signal that produced it. |
 | `DocumentHierarchy` | class | — | A validated parent/child forest over searchable document ids — the « hierarchical metadata » seam. Declare the tree your chunks belong to (a chunk under a… |
 | `EmbeddingProviderExtensions` | class | — | Backwards-compatible call shape: embeds text as a Passage. |
 | `EmbeddingUse` | enum | — | The role a piece of text plays when it is embedded. Several models encode queries and documents differently by construction (e.g. E5 prefixes queries with… |
 | `EngineRetrievalMetrics` | record | — | Aggregated measurements for one engine. |
+| `EntityTriplet` | record | — | One fact of a knowledge graph: a subject and an object linked by a predicate — the subject-verb-object shape relation extraction produces (« acme » → « supplies… |
 | `FacetBucket` | record | — | Value counts for one facet field. |
 | `FacetValue` | record | — | A distinct field value and how many counted documents carry it. |
 | `FacetedSearchResult` | record | — | Ranked results plus one bucket per requested facet field. |
+| `GraphAwareSearchEngine` | class | `IGraphSearchEngine`, `ITextSearchEngine` | A decorator that layers a IKnowledgeGraphBridge over an existing engine: searching and writing are forwarded unchanged, and the IGraphSearchEngine surface adds… |
+| `GraphContext` | record | — | The answer a IKnowledgeGraphBridge returns for a sub-graph query around a set of entities: the local facts that touch them, plus the community summaries the… |
+| `GraphHydratedResults` | record | — | The outcome of SearchWithGraphFacts: the ordinary ranked page plus the facts the IKnowledgeGraphBridge returned for the query's entities. |
 | `HierarchicalTextSearchEngine` | class | `IStructureAwareSearchEngine`, `ITextSearchEngine` | A decorator that layers a DocumentHierarchy over an existing engine: searches and writes are forwarded unchanged — flat retrieval still finds the precise node —… |
 | `InMemoryRetrievalMetrics` | class | `IRetrievalMetrics` | The default IRetrievalMetrics: fixed-size counters kept in memory, with no external dependency. Enough to assert on in tests and to back a diagnostics endpoint… |
 | `IndexRetrievalMetrics` | record | — | The latest observed size of one engine's index. |

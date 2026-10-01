@@ -297,6 +297,72 @@ documents nor imposes a shape. An id the hierarchy does not know behaves like a 
 hierarchy validates it and names the defect: self-parenting, a node with two parents, or a cycle
 are each refused at construction.
 
+## Graph-augmented retrieval (GraphRAG)
+
+Text and vectors answer "which documents say this"; a knowledge graph answers "what is
+connected to this". `IKnowledgeGraphBridge` is the seam to the second kind of store — relation
+extraction is your model, the graph (Apache AGE, Neo4j, ...) is your store, and LexiSharp
+runs neither. The contract is two calls with one vocabulary: `ExtractRelationsAsync` mines
+subject-verb-object triplets from a text (a document in your ETL, or the query at search
+time), and `QuerySubGraphAsync` reads the neighbourhood around a set of entities.
+
+```csharp
+using LexiSharp.Core;
+
+IKnowledgeGraphBridge bridge = myAgeBridge; // consumer-provided: extractor + graph store
+
+var engine = new GraphAwareSearchEngine(baseEngine, bridge, maxHops: 2);
+```
+
+Searching and writing are forwarded unchanged — the ranking is untouched. The graph is an
+opt-in surface, detected like the other capabilities:
+
+```csharp
+if (engine is IGraphSearchEngine graphEngine)
+{
+    GraphHydratedResults hydrated = graphEngine.SearchWithGraphFacts("which pumps failed after the upgrade");
+    // hydrated.Results is exactly Search(...)'s page;
+    // hydrated.Facts carries the triplets connected to the query's mined entities.
+}
+```
+
+The query's entities are mined with the bridge's own extractor, so the query is asked in the
+vocabulary the graph was fed. A query that mines no entities skips the graph and carries an
+empty context. The flat `Search` never touches the bridge, so a graph outage degrades nothing
+by default; the facts call that asks for the graph propagates its failure. Persisting the
+triplets extraction returns is the implementation's business (your ETL), not the decorator's.
+
+## Context compression for LLM generation
+
+The page that goes to a generation model should carry the passages that answer the query, not
+the whole documents. `IContextCompressor` is the seam, `CompressingTextSearchEngine` the
+opt-in surface, and `QueryWindowCompressor` the model-free reference — windows of words around
+each query-term occurrence, merged and joined:
+
+```csharp
+using LexiSharp.Compression;
+using LexiSharp.Core;
+
+IContextCompressor compressor = new QueryWindowCompressor(windowRadius: 16); // or your learned one
+
+var engine = new CompressingTextSearchEngine(baseEngine, compressor);
+
+if (engine is ICompressingSearchEngine compressing)
+{
+    IReadOnlyList<CompressedHit> lean = compressing.SearchCompressed("benefit rose 12%");
+    // same ranking (ids and scores) as Search(...); each hit's text is the query-relevant
+    // content, and CompressionRatio says how much of the source it retains.
+}
+```
+
+The contract returns text only; the engine measures the ratio once (`compressed.Length /
+source.Length`, 0 when the source is empty), so every compressor reports the same number. The
+flat `Search` still returns the full text — this surface is what a RAG pipeline calls just
+before handing the context to the model. Extractive by nature here: a document whose text
+contains none of the query terms compresses to nothing, which is the honest reading of "no
+query-relevant content". A learned compressor (perplexity-based, LLM rewrite) is a consumer
+implementation of the same seam, exactly like the model-free one.
+
 ## Putting the stages together
 
 The reranking stage composes with all of it: wrap the hybrid in a

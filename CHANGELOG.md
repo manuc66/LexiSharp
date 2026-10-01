@@ -132,6 +132,24 @@ workflow.
   throws rather than fabricate documents. `SearchDocument` is deliberately untouched — adding
   parent/child to the central record is a breaking change with persistence and backend blast
   radius, and this seam covers the navigation without it.
+- `IKnowledgeGraphBridge` and `GraphAwareSearchEngine`, the GraphRAG seam: a consumer-backed
+  contract between the engines and a knowledge graph — relation extraction (subject-verb-object
+  triplets via `ExtractRelationsAsync`) and neighbourhood reads (`QuerySubGraphAsync`) are the
+  application's model and store (AGE, Neo4j, ...); LexiSharp runs neither. The decorator
+  forwards searching and writing unchanged and adds the `IGraphSearchEngine` surface, where
+  `SearchWithGraphFacts` mines the query's entities through the bridge's own extractor (one
+  vocabulary for corpus and query), asks for the sub-graph, and packages the unchanged page
+  with the connected facts and community summaries. A query that mines no entities skips the
+  graph; the flat `Search` never touches the bridge, so a graph outage degrades nothing by
+  default. Persisting extracted triplets is the implementation's ETL, not the decorator's.
+- `IContextCompressor` and `CompressingTextSearchEngine`, the token-reduction seam between a
+  ranked page and a generation model: `SearchCompressed` returns the same ranking with each
+  hit's text reduced to its query-relevant content, and `CompressionRatio` measured once
+  (`compressed.Length / source.Length`, 0 when the source is empty). The model-free
+  `QueryWindowCompressor` keeps the word windows around query-term occurrences (merged,
+  ellipsis-joined); a learned compressor (perplexity, LLM rewrite) is a consumer implementation
+  of the same seam. The flat `Search` still returns full text — compression is an opt-in
+  second surface, not a mutation of `SearchResult.Document`.
 
 ## [0.8.0] — Unreleased
 
