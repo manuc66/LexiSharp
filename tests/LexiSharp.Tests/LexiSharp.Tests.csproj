@@ -40,6 +40,11 @@
          referenced assembly) pull it into the 60% line gate would make the gate depend on a CLI. -->
     <ProjectReference Include="../../bench/LexiSharp.CodeShape/LexiSharp.CodeShape.csproj" ExcludeFromCodeCoverage="true" />
     <ProjectReference Include="../../bench/LexiSharp.ApiDocs/LexiSharp.ApiDocs.csproj" ExcludeFromCodeCoverage="true" />
+    <!-- The per-query analysis the BEIR harness reports with. Referenced so the slicing it produces
+         is tested rather than trusted: a report that counts the wrong thing produces plausible
+         numbers, and the mistake only surfaces in a conclusion drawn from it. Excluded from
+         coverage, being bench code, whose coverage would flatter the library's own figure. -->
+    <ProjectReference Include="../../bench/LexiSharp.Eval/LexiSharp.Eval.csproj" ExcludeFromCodeCoverage="true" />
   </ItemGroup>
 
 </Project>
