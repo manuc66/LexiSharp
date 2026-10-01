@@ -224,6 +224,45 @@ async (`ValueTask<QueryRoute?>`) because a model-backed router is naturally asyn
 synchronous `Search` blocks on it, like the PostgreSQL engines block on `IEmbeddingProvider`.
 LexiSharp never runs a model itself: you provide the rule, classifier or model.
 
+## Query transformation (pre-retrieval)
+
+Users write bad queries; the seam for fixing them before they touch the index is `IQueryTransformer`.
+It rewrites the raw query into one or more **variants** — a rewrite, the sub-queries of a decomposed
+question, lexical variants, or a HyDE-style hypothetical answer — and `TransformingTextSearchEngine`
+searches every variant against the same inner engine and fuses the rankings:
+
+```csharp
+using LexiSharp.Core;
+using LexiSharp.Expansion;
+
+ITermExpander expander = PmiTermExpander.LearnFrom(corpus);
+IQueryTransformer transformer = new ExpansionQueryTransformer(expander); // model-free reference
+
+ITextSearchEngine engine = new TransformingTextSearchEngine(baseEngine, transformer);
+IReadOnlyList<SearchResult> hits = engine.Search("how do I renew an expired token?");
+```
+
+Every variant runs on the **same** engine and scorer, so one scale compares them all: the fusion
+keeps each document's best score across the variants, then cuts the page (`Offset`/`Limit`) from
+the fused ranking — the window logic of the hybrid engine, applied to query variants. The reference
+implementation returns the query *and* a widened variant (expansion terms appended), which is what
+`ExpandingTextSearchEngine` does as one query, fused instead so a document matching the caller's
+exact terms keeps that tight score rather than being diluted by the expansion terms.
+
+**A broken transformer never breaks a search** — the router rule again: null/empty/blank variants,
+or a `Transform` that throws, fall back to the untransformed query. Variants are deduplicated.
+The model is consumer code, as everywhere: a HyDE generator is `IQueryTransformer` over an LLM call,
+and LexiSharp never runs it. Writes forward unchanged. The decorator does not offer facets, detailed
+results or explanations, whose per-document contracts do not survive a multi-variant fusion.
+
+```csharp
+var index = new LexiSharpIndex<SearchDocument>(o =>
+{
+    o.QueryTransformer = myHydeGenerator;   // IQueryTransformer, consumer-provided
+    o.UseBm25();
+});
+```
+
 ## Putting the stages together
 
 The reranking stage composes with all of it: wrap the hybrid in a

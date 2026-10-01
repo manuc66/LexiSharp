@@ -43,6 +43,7 @@ are listed first.
 | `IQueryCostProbe` | — | Optional capability of an ITextSearchEngine that can estimate, cheaply and without running a search, how many documents a query is likely to touch — the signal… | [guide](reference.md) |
 | `IQueryRouter` | — | Picks which route (engine + optional filters) a RoutingSearchEngine should run a query on — a semantic/intent decision, as opposed to IQueryCostEstimator which… | [guide](reference.md) |
 | `IQuerySyntaxSupport` | — | Declares which QueryFeatures an ITextSearchEngine interprets, so callers can discover the supported query syntax instead of discovering it by getting wrong… | [guide](reference.md) |
+| `IQueryTransformer` | — | Rewrites a raw query into one or more searchable variants before retrieval — the « pre-retrieval transformation » seam. Rewriting, decomposing a question into… | [guide](reference.md) |
 | `IReinforceableTextClassifier` | `ITextClassifier` | Optional capability of an ITextClassifier: adjust a trained model from user feedback, one text-to-category association at a time, without a retraining pass over… | [guide](reference.md) |
 | `IReranker` | — | Contract for re-ordering a list of candidate results after retrieval — the seam for second-stage ranking strategies (diversity preservation, cross-encoders,… | [guide](reference.md) |
 | `IRetrievalMetrics` | — | Receives the measurements a RetrievalTelemetry takes. Implement it to ship numbers to a metrics backend (OpenTelemetry, Prometheus, StatsD, ...). | [guide](reference.md) |
@@ -182,9 +183,11 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | --- | --- | --- | --- |
 | `ExpandedTerm` | record struct | — | A single additional term injected into the index for a document, alongside its source text tokenization. The term is indexed as a regular inverted-list member… |
 | `ExpandingTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that widens the query with related terms before delegating to the inner engine — the query-side counterpart of ExpansionTextIndex, which… |
+| `ExpansionQueryTransformer` | class | `IQueryTransformer` | A model-free IQueryTransformer that returns two variants — the caller's query and the same query widened with the terms an ITermExpander derives — the… |
 | `ExpansionRanking` | enum | — | Which statistic orders an input term's candidate neighbours before the expansion budget applies. |
 | `PmiTermExpander` | class | `ITermExpander` | A corpus-derived ITermExpander: it learns which terms habitually appear in the same context window and expands a document with the top positively associated… |
 | `PmiTermExpanderOptions` | class | — | Configuration of a PmiTermExpander: how the corpus is analyzed and how many expansion terms each document gets. |
+| `TransformingTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that runs an IQueryTransformer on the raw query, searches the inner engine for every variant, and fuses the rankings — the query-side… |
 
 #### `LexiSharp.Highlighting`
 
