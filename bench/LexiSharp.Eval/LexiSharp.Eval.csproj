@@ -14,6 +14,10 @@
   <ItemGroup>
     <ProjectReference Include="../../src/LexiSharp/LexiSharp.csproj" />
     <ProjectReference Include="../../src/LexiSharp.MessagePack/LexiSharp.MessagePack.csproj" />
+    <!-- The pgvector lane. Referenced so the ANN curve can be a command against a real server
+         rather than a script that has to be retyped; a default run still never touches Postgres,
+         and the tests auto-skip without POSTGRES_TEST_CONNECTION. -->
+    <ProjectReference Include="../../src/LexiSharp.Postgres/LexiSharp.Postgres.csproj" />
   </ItemGroup>
 
   <ItemGroup>
