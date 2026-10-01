@@ -203,10 +203,12 @@ this repository's own measurement — a number that was wrong, because the optio
 worth **+0.093** once applied. Neither 0.2902 nor 0.4061 is reproducible, and the 0.271 above is
 measured without the exclusion, as the other two were.
 
-**No release carried either figure.** `QueryTermWeighting` is absent from the `v0.6.0` tag, which
-predates the commit that added it, and 0.4061 is absent from the 0.6.0 documents entirely
-(`git show v0.6.0:docs/evaluation.md | grep -c 0.4061` is 0). So the claim was withdrawn here,
-before 0.7.0, rather than in a release note: no published release ever contained it.
+**No release carried the claim itself; `v0.7.0` carried the withdrawal.** `QueryTermWeighting` is
+absent from the `v0.6.0` tag, which predates the commit that added it, and 0.4061 is absent from the
+0.6.0 documents entirely (`git show v0.6.0:docs/evaluation.md | grep -c 0.4061` is 0). The figure
+appears in the `v0.7.0` documents only inside its own retraction. If you are reading a number and
+want to know whether anything shipped it: check the tag, not this sentence — the claim is
+`git log -S0.4061 --oneline`, and the release that mentions it withdraws it.
 
 The reason is structural, and that is the part worth keeping. The harness flag fed exactly one
 thing - the `QueryTermWeighting` argument of `new Bm25Scorer(...)` - and that scorer went into
