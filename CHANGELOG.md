@@ -87,6 +87,16 @@ workflow.
   statistics describe the enriched corpus. LexiSharp never runs a model itself; enrichment is
   synchronous (a model-backed implementation blocks, like `ICrossEncoderScorer`), and a changed id
   or a thrown enricher fails the `Add`. Reachable through `LexiSharpIndexOptions<>.ContextEnricher`.
+- `IQueryTransformer` and `TransformingTextSearchEngine`, the pre-retrieval query-transformation
+  seam: a raw query is rewritten into one or more variants — a rewrite, the sub-queries of a
+  decomposed question, lexical variants, or a HyDE-style generated answer — each searched against
+  the same inner engine and fused by best score per document, with the usual page cut applied to
+  the fused ranking. Because every variant runs on one scorer's scale, the fusion is a per-document
+  max rather than a rank fusion. A null/empty/blank result or a throwing transformer falls back to
+  the untransformed query (the router rule), and variants are deduplicated. The model-free
+  reference `ExpansionQueryTransformer` returns the query plus a widened variant — the
+  `ExpandingTextSearchEngine` widening, fused instead of joined. Reachable through
+  `LexiSharpIndexOptions<>.QueryTransformer`.
 
 ## [0.8.0] — Unreleased
 
