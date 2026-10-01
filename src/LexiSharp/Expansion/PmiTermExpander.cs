@@ -125,8 +125,8 @@ public sealed class PmiTermExpander : ITermExpander
             if (pmi <= opts.MinimumPmi)
                 continue;
 
-            AddAssociation(associations, a, b, cAb);
-            AddAssociation(associations, b, a, cAb);
+            AddAssociation(associations, a, b, cAb, pmi);
+            AddAssociation(associations, b, a, cAb, pmi);
         }
 
         foreach (var list in associations.Values)
@@ -151,7 +151,18 @@ public sealed class PmiTermExpander : ITermExpander
                 return string.CompareOrdinal(x.Neighbor, y.Neighbor);
             });
 
-            int maxCount = list[0].Count;
+            // The maximum over the list, not over the first entry. Under count ranking those are the
+            // same entry, and reading list[0] was a shortcut; under association ranking the
+            // best-associated neighbour is not the most frequent one, so normalising by it produced
+            // weights above 1 for a value documented as being in (0, 1].
+            int maxCount = 0;
+
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (list[i].Count > maxCount)
+                    maxCount = list[i].Count;
+            }
+
             for (int i = 0; i < list.Count; i++)
             {
                 var entry = list[i];
@@ -209,7 +220,8 @@ public sealed class PmiTermExpander : ITermExpander
         Dictionary<string, List<Association>> associations,
         string from,
         string to,
-        int count)
+        int count,
+        double pmi)
     {
         if (!associations.TryGetValue(from, out var list))
         {
@@ -217,7 +229,11 @@ public sealed class PmiTermExpander : ITermExpander
             associations[from] = list;
         }
 
-        list.Add(new Association(to, count));
+        // The association carries its mutual information. It used not to: the PPMI was computed
+        // here, used as a filter a few lines up, and then dropped on the floor, leaving every
+        // Association.Pmi at its default of 0. That made the tiebreak the sort documentation
+        // describes compare 0 against 0 and never fire, and made the whole statistic unrankable.
+        list.Add(new Association(to, count, pmi));
     }
 
     private readonly record struct Association(string Neighbor, int Count, double Pmi = 0, double Weight = 0);
