@@ -29,8 +29,19 @@ namespace LexiSharp.Expansion;
 /// engine in a <see cref="Hybrid.HybridTextSearchEngine"/> to keep both the precise and the
 /// expanded ranking, merged by their <c>ReciprocalRankFusionMerger</c>.
 /// </para>
+/// <para>
+/// The capability surface is forwarded too, and that forwarding is <i>truthful</i> in a way it
+/// is not for a score-rewriting decorator: this engine returns the inner engine's results 1:1
+/// against the <i>expanded</i> query, so <see cref="IFacetedSearchEngine"/>,
+/// <see cref="IDetailedSearchEngine"/> and <see cref="IExplainableSearchEngine"/> describe the
+/// same result set the expanded search returns — facets count the expanded matches, and an
+/// explanation breaks down the score the expanded search would have produced. The wrapped engine
+/// is the one that actually answers, so a wrapper whose inner lacks a capability throws
+/// <see cref="NotSupportedException"/> naming the wrapped type rather than silently returning
+/// something else.
+/// </para>
 /// </remarks>
-public sealed class ExpandingTextSearchEngine : ITextSearchEngine, IQueryCostProbe
+public sealed class ExpandingTextSearchEngine : ITextSearchEngine, IQueryCostProbe, IFacetedSearchEngine, IDetailedSearchEngine, IExplainableSearchEngine
 {
     private static readonly SearchValues<char> SyntaxCharacters = SearchValues.Create("~*\"");
     private const char Separator = ' ';
@@ -82,6 +93,45 @@ public sealed class ExpandingTextSearchEngine : ITextSearchEngine, IQueryCostPro
         ArgumentNullException.ThrowIfNull(query);
         return _inner.Search(ExpandQuery(query), options);
     }
+
+    /// <inheritdoc />
+    /// <exception cref="NotSupportedException">The wrapped engine does not implement <see cref="IFacetedSearchEngine"/>.</exception>
+    public FacetedSearchResult SearchWithFacets(
+        string query,
+        SearchOptions? options = null,
+        IReadOnlyList<string>? facetFields = null)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        return Faceted().SearchWithFacets(ExpandQuery(query), options, facetFields);
+    }
+
+    /// <inheritdoc />
+    /// <exception cref="NotSupportedException">The wrapped engine does not implement <see cref="IDetailedSearchEngine"/>.</exception>
+    public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        return Detailed().SearchWithDetails(ExpandQuery(query), options);
+    }
+
+    /// <inheritdoc />
+    /// <exception cref="NotSupportedException">The wrapped engine does not implement <see cref="IExplainableSearchEngine"/>.</exception>
+    public ScoreExplanation? Explain(string documentId, string query)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        return Explainable().Explain(documentId, ExpandQuery(query));
+    }
+
+    private IFacetedSearchEngine Faceted() =>
+        _inner as IFacetedSearchEngine
+        ?? throw new NotSupportedException($"{_inner.GetType().Name} does not implement {nameof(IFacetedSearchEngine)}.");
+
+    private IDetailedSearchEngine Detailed() =>
+        _inner as IDetailedSearchEngine
+        ?? throw new NotSupportedException($"{_inner.GetType().Name} does not implement {nameof(IDetailedSearchEngine)}.");
+
+    private IExplainableSearchEngine Explainable() =>
+        _inner as IExplainableSearchEngine
+        ?? throw new NotSupportedException($"{_inner.GetType().Name} does not implement {nameof(IExplainableSearchEngine)}.");
 
     /// <summary>
     /// Estimates the inner engine's candidate count for the <i>expanded</i> query, so the

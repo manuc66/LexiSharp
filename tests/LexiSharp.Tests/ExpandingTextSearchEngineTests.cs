@@ -31,6 +31,52 @@ public class ExpandingTextSearchEngineTests
         }
     }
 
+    private sealed class RecordingDetailedEngine : ITextSearchEngine, IDetailedSearchEngine
+    {
+        public string? LastQuery { get; private set; }
+
+        public void Index(IEnumerable<SearchDocument> documents) { }
+
+        public void Add(SearchDocument document) { }
+
+        public void Remove(string documentId) { }
+
+        public void Clear() { }
+
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+            Array.Empty<SearchResult>();
+
+        public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null)
+        {
+            LastQuery = query;
+            return [new DetailedSearchResult("doc", 5, new SearchDocument("doc", "gamma"), new Dictionary<string, double>())];
+        }
+    }
+
+    private sealed class RecordingExplainEngine : ITextSearchEngine, IExplainableSearchEngine
+    {
+        public string? LastQuery { get; private set; }
+
+        public void Index(IEnumerable<SearchDocument> documents) { }
+
+        public void Add(SearchDocument document) { }
+
+        public void Remove(string documentId) { }
+
+        public void Clear() { }
+
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+            Array.Empty<SearchResult>();
+
+        public ScoreExplanation? Explain(string documentId, string query)
+        {
+            LastQuery = query;
+            return new ScoreExplanation(
+                documentId, "stub", 5, 3, 3, 1, 1,
+                Array.Empty<TermContribution>(), new Dictionary<string, double>());
+        }
+    }
+
     private sealed class RecordingProbeEngine : ITextSearchEngine, IQueryCostProbe
     {
         public string? LastQuery { get; private set; }
@@ -213,6 +259,85 @@ public class ExpandingTextSearchEngineTests
 
         engine.Clear();
         Assert.Equal(0, index.Count);
+    }
+
+    [Fact]
+    public void SearchWithFacets_ForwardsTheExpandedQueryAndItsMatches()
+    {
+        var index = new InMemoryTextIndex();
+        index.Index(new[]
+        {
+            new SearchDocument("gamma-doc", "gamma", Fields: new Dictionary<string, string> { ["kind"] = "g" }),
+            new SearchDocument("unrelated", "delta epsilon", Fields: new Dictionary<string, string> { ["kind"] = "u" }),
+        });
+        var inner = new RankedTextSearchEngine(index, new Bm25Scorer());
+        Assert.IsAssignableFrom<IFacetedSearchEngine>(inner);
+
+        var expander = new MapExpander(new Dictionary<string, ExpandedTerm[]> { ["alpha"] = E("gamma") });
+        var engine = new ExpandingTextSearchEngine(inner, expander);
+
+        var faceted = engine.SearchWithFacets("alpha", facetFields: ["kind"]);
+
+        // The facet counts the *expanded* matches: only gamma-doc, so only the "g" bucket exists.
+        Assert.Contains(faceted.Results, result => result.DocumentId == "gamma-doc");
+        Assert.DoesNotContain(faceted.Results, result => result.DocumentId == "unrelated");
+        var bucket = Assert.Single(faceted.Buckets);
+        Assert.Equal("kind", bucket.Field);
+        var value = Assert.Single(bucket.Values);
+        Assert.Equal("g", value.Value);
+        Assert.Equal(1, value.Count);
+    }
+
+    [Fact]
+    public void SearchWithFacets_InnerWithoutCapability_ThrowsNamingTheWrappedType()
+    {
+        var engine = new ExpandingTextSearchEngine(new RecordingEngine(), new MapExpander(new Dictionary<string, ExpandedTerm[]>()));
+        var exception = Assert.Throws<NotSupportedException>(
+            () => engine.SearchWithFacets("alpha", facetFields: ["kind"]));
+        Assert.Contains(nameof(RecordingEngine), exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SearchWithDetails_ForwardsTheExpandedQuery()
+    {
+        var inner = new RecordingDetailedEngine();
+        var expander = new MapExpander(new Dictionary<string, ExpandedTerm[]> { ["alpha"] = E("gamma") });
+        var engine = new ExpandingTextSearchEngine(inner, expander);
+
+        var details = engine.SearchWithDetails("alpha");
+
+        Assert.Equal("alpha gamma", inner.LastQuery);
+        Assert.Equal("doc", Assert.Single(details).DocumentId);
+    }
+
+    [Fact]
+    public void SearchWithDetails_InnerWithoutCapability_ThrowsNamingTheWrappedType()
+    {
+        var engine = new ExpandingTextSearchEngine(new RecordingEngine(), new MapExpander(new Dictionary<string, ExpandedTerm[]>()));
+        var exception = Assert.Throws<NotSupportedException>(() => engine.SearchWithDetails("alpha"));
+        Assert.Contains(nameof(RecordingEngine), exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Explain_ForwardsTheExpandedQuery()
+    {
+        var inner = new RecordingExplainEngine();
+        var expander = new MapExpander(new Dictionary<string, ExpandedTerm[]> { ["alpha"] = E("gamma") });
+        var engine = new ExpandingTextSearchEngine(inner, expander);
+
+        var explanation = engine.Explain("doc", "alpha");
+
+        Assert.Equal("alpha gamma", inner.LastQuery);
+        Assert.NotNull(explanation);
+        Assert.Equal("doc", explanation.DocumentId);
+    }
+
+    [Fact]
+    public void Explain_InnerWithoutCapability_ThrowsNamingTheWrappedType()
+    {
+        var engine = new ExpandingTextSearchEngine(new RecordingEngine(), new MapExpander(new Dictionary<string, ExpandedTerm[]>()));
+        var exception = Assert.Throws<NotSupportedException>(() => engine.Explain("doc", "alpha"));
+        Assert.Contains(nameof(RecordingEngine), exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
