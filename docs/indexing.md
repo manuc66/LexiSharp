@@ -54,7 +54,7 @@ index.Index(new[]
 
 Two views of the same data, and the distinction is the whole design:
 
-| | `TermFrequency` / `DocumentLength` / `DocumentFrequency` | `FieldTermFrequency` / `FieldLength` / `FieldDocumentFrequency` |
+| | `TermFrequency` / `DocumentLength` / `DocumentFrequency` | `FieldTermFrequency` / `FieldLength` / `FieldDocumentFrequency`, on `IFieldStatisticsIndex` |
 |---|---|---|
 | Sees | the **union** of every field | one named field |
 | Answers | "does this document match, and how long is it" | "how much of the match is in the title" |
@@ -102,12 +102,13 @@ var index = new LexiSharpIndex<Product>(o =>
 // over the very same index instead of a second one you have to keep in step by hand.
 ```
 
-**What this is not.** No field-weighted scorer ships yet: the statistics BM25F needs are here, and
-the scorer that consumes them is not. `HasFieldStatistics` is `false` on an index that does not
-track fields, and the per-field members then throw `NotSupportedException` naming the index — they
-deliberately do not return `0`, which would make a field-weighted ranking quietly wrong with no
-error to show for it. Only `InMemoryTextIndex` and `ExpansionTextIndex` track fields; the PostgreSQL
-and ParadeDB backends implement `ITextSearchEngine` and are unaffected by the `ITextIndex` additions.
+**What this is not.** The per-field statistics are a capability, not a universal surface: an index
+that tracks them implements `IFieldStatisticsIndex`, and a field-weighted scorer
+(`Bm25FScorer`) refuses a corpus that does not, by name — `NotSupportedException` naming the
+index, not a silent `0`, which would make a field-weighted ranking quietly wrong with no error to
+show for it. Only `InMemoryTextIndex` and the index decorators wrapping one
+(`ExpansionTextIndex`, `ContextEnrichingIndex`) track fields; the PostgreSQL and ParadeDB backends
+implement `ITextSearchEngine` and are unaffected by the `ITextIndex` additions.
 
 **A field present but empty still counts.** A document that declares a title tokenizing to nothing
 is included in `AverageFieldLength(title)`, so the average reflects the documents that *have* the
