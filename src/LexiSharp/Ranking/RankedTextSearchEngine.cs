@@ -190,7 +190,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             return Array.Empty<SearchResult>();
         }
 
-        var (parsed, queryTerms) = BuildQuery(query, options.FuzzyOnlyOutOfVocabulary);
+        var (parsed, queryTerms) = BuildQuery(query, options);
 
         if (queryTerms.Count == 0)
         {
@@ -232,7 +232,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         // OrderByDescending(Score).Skip(offset).Take(limit) with equal scores ordered by document id.
         // SearchResult objects are materialized only for the kept entries.
         int window = options.Window;
-        var top = new TopRankedWindow(window);
+        var top = new TopRankedWindow(window, options.TieBreak);
         long ordinal = 0;
 
         // One dictionary lookup per query term, feeding both of the decisions below. They are two
@@ -279,7 +279,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
                 facets?.Count(document);
 
-                top.Add(score, document);
+                top.Add(score, document, ordinal);
                 ordinal++;
             }
         }
@@ -290,6 +290,12 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         int count = top.Count - skip;
         var results = new SearchResult[count];
         top.CopyBestTo(results, skip, count);
+
+        // After the page is cut, and only on the page: the rounding reads the score above each one, so
+        // it is a statement about the set being returned rather than about any document. Applying it
+        // before the cut would move scores by neighbours that are not in the answer.
+        if (options.ScoreRounding == ScoreRounding.FourDecimals)
+            ScoreRoundingStep.Apply(results);
 
         // Tracing happens here, on the cut page, not inside the scoring loop above: the score is
         // already in hand, so a trace costs O(limit) after the fact and nothing per candidate.
@@ -441,7 +447,9 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             {
                 int candidate = accumulator.OrdinalAt(i);
                 var document = index.DocumentAt(candidate)!;
-                double score = accumulator[candidate];
+                // The plan's last step, because this path never calls Score and a score that is narrowed
+                // at the end of the sum has to be narrowed somewhere.
+                double score = accumulating.Finalise(accumulator[candidate]);
 
                 if (double.IsNaN(score) || double.IsInfinity(score) || score == 0 || score < options.MinimumScore)
                     continue;
@@ -451,7 +459,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
                 facets?.Count(document);
 
-                top.Add(score, document);
+                top.Add(score, document, ordinal);
                 ordinal++;
             }
 
@@ -577,10 +585,22 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// resolve synonyms and vocabulary expansions into the concrete scoring terms. The
     /// parsed form still carries the literal phrase constraints for the positional gate.
     /// </summary>
-    private (ParsedQuery Parsed, IReadOnlyList<string> Terms) BuildQuery(ReadOnlySpan<char> query, bool fuzzyOnlyOutOfVocabulary)
+    private (ParsedQuery Parsed, IReadOnlyList<string> Terms) BuildQuery(ReadOnlySpan<char> query, SearchOptions options)
     {
+        // The literal path skips the query language entirely, so the terms are the tokenizer's and a
+        // quotation mark is a separator like any other. Everything downstream reads the same shape.
+        if (!options.ParseQuerySyntax)
+        {
+            var literal = _tokenizer.Tokenize(query);
+            return (new ParsedQuery(
+                literal,
+                Array.Empty<IReadOnlyList<string>>(),
+                literal,
+                Array.Empty<QueryExpansion>()), literal);
+        }
+
         var parsed = QueryParser.Parse(query, _tokenizer);
-        return (parsed, ResolveQueryTerms(parsed, fuzzyOnlyOutOfVocabulary));
+        return (parsed, ResolveQueryTerms(parsed, options.FuzzyOnlyOutOfVocabulary));
     }
 
     /// <summary>
@@ -812,7 +832,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         if (_scorer is not IScoreExplainer explainer || !_index.Contains(documentId))
             return null;
 
-        var (_, terms) = BuildQuery(query, fuzzyOnlyOutOfVocabulary: false);
+        var (_, terms) = BuildQuery(query, SearchOptions.Default);
         return explainer.Explain(documentId, terms, _index);
     }
 

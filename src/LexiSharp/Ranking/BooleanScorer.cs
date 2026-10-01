@@ -90,7 +90,7 @@ public sealed class BooleanScorer : ITermOverlapScorer, IScoreExplainer
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(queryTerms);
 
-        int documentCount = index.Count;
+        int documentCount = index.StatisticDocumentCount;
         int documentLength = index.DocumentLength(documentId);
         double averageLength = index.AverageDocumentLength;
         double lengthRatio = averageLength > 0 ? documentLength / averageLength : 0;

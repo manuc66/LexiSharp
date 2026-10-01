@@ -22,7 +22,7 @@ public sealed class TfIdfScorer : ITermOverlapScorer, IQueryPlannableScorer, ISc
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(queryTerms);
 
-        int documentCount = index.Count;
+        int documentCount = index.StatisticDocumentCount;
 
         if (documentCount == 0)
             return 0;
@@ -70,7 +70,7 @@ public sealed class TfIdfScorer : ITermOverlapScorer, IQueryPlannableScorer, ISc
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(queryTerms);
 
-        int documentCount = index.Count;
+        int documentCount = index.StatisticDocumentCount;
         int documentLength = index.DocumentLength(documentId);
         double averageLength = index.AverageDocumentLength;
         double lengthRatio = averageLength > 0 ? documentLength / averageLength : 0;
@@ -123,7 +123,7 @@ public sealed class TfIdfScorer : ITermOverlapScorer, IQueryPlannableScorer, ISc
             _terms = new string[queryTerms.Count];
             _idf = new double[queryTerms.Count];
 
-            int documentCount = index.Count;
+            int documentCount = index.StatisticDocumentCount;
 
             for (int i = 0; i < queryTerms.Count; i++)
             {

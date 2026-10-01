@@ -152,7 +152,7 @@ public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
         for (int i = 0; i < terms.Count; i++)
         {
             var geometry = Geometry(documentId, terms[i], fields, index, _b);
-            score += Combine(geometry, InverseDocumentFrequency(index.Count, geometry.DocumentFrequency), _k1, _b);
+            score += Combine(geometry, InverseDocumentFrequency(index.StatisticDocumentCount, geometry.DocumentFrequency), _k1, _b);
         }
 
         return score;
@@ -181,7 +181,7 @@ public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(queryTerms);
 
-        int documentCount = index.Count;
+        int documentCount = index.StatisticDocumentCount;
         int documentLength = index.DocumentLength(documentId);
         double averageLength = index.AverageDocumentLength;
         double lengthRatio = averageLength > 0 ? documentLength / averageLength : 0;
@@ -408,9 +408,9 @@ public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
             for (int i = 0; i < terms.Count; i++)
             {
                 _terms[i] = terms[i];
-                _idf[i] = index.Count == 0
+                _idf[i] = index.StatisticDocumentCount == 0
                     ? 0
-                    : InverseDocumentFrequency(index.Count, index.DocumentFrequency(terms[i]));
+                    : InverseDocumentFrequency(index.StatisticDocumentCount, index.DocumentFrequency(terms[i]));
             }
         }
 

@@ -18,6 +18,24 @@ public interface ITextIndex
     /// <summary>Mean number of tokens per document.</summary>
     double AverageDocumentLength { get; }
 
+    /// <summary>
+    /// The document count the corpus statistics are taken over — the <c>N</c> a scorer's inverse
+    /// document frequency is built from.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Count"/> by default. An index whose <c>AverageDocumentLength</c> divides by fewer
+    /// documents than that returns the smaller number here, because the two are one number and not
+    /// two: taking <see cref="Count"/> for the idf while dividing the average by a smaller count is a
+    /// statistic no implementation uses.
+    /// <para>
+    /// It matters only for a corpus holding a document with no term in it — 1 of 8,674 on BEIR
+    /// ArguAna — and the effect is about one part in thirty thousand on a score, which moves no
+    /// ranking and does move the low bits. Exposed through the length divisor rather than as a setting
+    /// of its own so that one choice describes the whole statistic instead of two halves of it.
+    /// </para>
+    /// </remarks>
+    int StatisticDocumentCount => Count;
+
     /// <summary>Number of distinct terms known to the corpus vocabulary.</summary>
     int VocabularySize { get; }
 

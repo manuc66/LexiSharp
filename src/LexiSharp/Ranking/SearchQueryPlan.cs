@@ -65,4 +65,18 @@ internal interface IAccumulatingQueryPlan : ISearchQueryPlan
     /// reset to empty first.
     /// </returns>
     bool TryAccumulate(IAccumulatingIndex index, ScoreAccumulator accumulator);
+
+    /// <summary>
+    /// The last step on a score the accumulator produced, after the accumulation loop is finished.
+    /// </summary>
+    /// <remarks>
+    /// It exists because the accumulation path sums a document's postings without ever calling
+    /// <see cref="ISearchQueryPlan.Score"/>, so anything that belongs at the end of a score and not at
+    /// the end of a sum has to be reachable from here. A scorer whose score is narrowed to a single
+    /// precision at the end needs it; one that does not has nothing to do.
+    /// <para>
+    /// The default returns the sum untouched, so an implementation that has no such step needs nothing.
+    /// </para>
+    /// </remarks>
+    double Finalise(double accumulated) => accumulated;
 }
