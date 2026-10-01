@@ -48,6 +48,11 @@ below. The other four are conventions, and stay opt-in.
 
 ### Added
 
+- `AtomicEngineReference`, the publish point for the « snapshot swap » pattern: build a fresh
+  engine off-lock, `Swap` it in one atomic step, and readers capture the engine once per search
+  through a volatile read — the frequent-writes counterpart of `SynchronizedTextSearchEngine`,
+  with none of the reader-side lock cost and no claimed number attached to it. It displaces no
+  engine: `Swap` returns the previous one, which the caller owns.
 - `SynchronizedTextSearchEngine`, an opt-in wrapper that serializes engine writers against readers
   without serializing readers against each other — the search half of
   `SynchronizedTextClassifier`. Searches take the read lock, the mutating members the write lock,

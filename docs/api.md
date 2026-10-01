@@ -135,6 +135,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
+| `AtomicEngineReference` | class | — | The atomic publish point for the « snapshot swap » concurrency pattern: one thread builds a fresh engine off-lock, then Swap makes it visible to every… |
 | `BoostedTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that boosts or damps the matches of an inner engine after ranking. |
 | `CheapestByCandidateCountEstimator` | class | `IQueryCostEstimator` | Picks the engine with the smallest EstimateCandidateCount. Engines that do not implement IQueryCostProbe cannot be costed and are only used when no probed… |
 | `ClassificationResult` | record | — | A category predicted for a piece of text, with its estimated probability. |

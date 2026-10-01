@@ -13,7 +13,8 @@ namespace LexiSharp.Core;
 /// <see cref="Classification.SynchronizedTextClassifier"/> is: the common shape — one writer, with
 /// readers either single-threaded or pointed at a whole instance that is being swapped — keeps
 /// paying nothing and keeps being free to do what a lock would forbid, such as training a fresh
-/// engine off-lock and publishing it. A caller that wants overlapping mutation and search wraps its
+/// engine off-lock and publishing it (<see cref="AtomicEngineReference"/> is the reader-side-free
+/// swap for exactly that shape). A caller that wants overlapping mutation and search wraps its
 /// engine in this rather than hand-rolling the same lock.
 /// </para>
 /// <para>
