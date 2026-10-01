@@ -55,13 +55,6 @@ namespace LexiSharp.Core;
 /// in, which is what a system that breaks ties as documents are added does; use it to reproduce such a
 /// system, and expect the result to depend on the load order rather than only on the documents.
 /// </param>
-/// <param name="ScoreRounding">
-/// What the engine does to its scores after ranking and before returning them.
-/// <see cref="Ranking.ScoreRounding.None"/> — the default — returns what the ranking arithmetic
-/// produced. <see cref="Ranking.ScoreRounding.FourDecimals"/> reproduces the rounding and tie-walk a
-/// system that writes its scores down applies, which is what a caller comparing raw scores against one
-/// needs; it is lossy by construction, so it is a decision about the comparison and not an improvement.
-/// </param>
 public sealed record SearchOptions(
     int Limit = 10,
     double MinimumScore = double.NegativeInfinity,
@@ -71,9 +64,36 @@ public sealed record SearchOptions(
     IReadOnlySet<string>? ExcludedDocumentIds = null,
     SearchTrace? Trace = null,
     bool ParseQuerySyntax = true,
-    Ranking.TieBreak TieBreak = Ranking.TieBreak.DocumentId,
-    Ranking.ScoreRounding ScoreRounding = Ranking.ScoreRounding.None)
+    Ranking.TieBreak TieBreak = Ranking.TieBreak.DocumentId)
 {
+    /// <summary>
+    /// The rounding a system that writes its scores down applies before it writes them, or
+    /// <see cref="Ranking.ScoreRounding.None"/>.
+    /// </summary>
+    /// <remarks>
+    /// Internal, and reachable through <see cref="WithScoreRounding"/> rather than as a constructor
+    /// parameter. The reason is what it does: it rounds to four decimals and then walks down each run
+    /// of near-equal scores, which is lossy by construction — it merges scores differing by less than
+    /// half a ten-thousandth, and it makes one document's returned score depend on which other
+    /// documents came back beside it, so the same query against the same index reports two different
+    /// scores for it at two different page sizes. A public option named <c>ScoreRounding</c> invites
+    /// a caller to believe it only affects presentation, and it does not: a metric measured on a
+    /// rounded run measures a different ranking function. Only the evaluation harness has a reason to
+    /// want it, and it is the only thing that does.
+    /// </remarks>
+    internal Ranking.ScoreRounding ScoreRounding { get; init; } = Ranking.ScoreRounding.None;
+
+    /// <summary>These options with the write-down rounding applied.</summary>
+    /// <remarks>
+    /// A method rather than a constructor parameter, so that the ordinary call sites cannot pass it by
+    /// accident. Naming the method is the signal that something other than searching is being asked
+    /// for.
+    /// </remarks>
+    internal SearchOptions WithScoreRounding(Ranking.ScoreRounding rounding) => this with
+    {
+        ScoreRounding = rounding,
+    };
+
     /// <summary>The defaults every positional parameter already has: ten hits, no floor, no offset.</summary>
     public static readonly SearchOptions Default = new();
 

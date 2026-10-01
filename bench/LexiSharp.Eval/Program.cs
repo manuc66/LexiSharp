@@ -480,11 +480,11 @@ public static class Program
                 new SearchOptions(
                     topK,
                     ExcludedDocumentIds: evaluated.Excluded,
-                    ParseQuerySyntax: parseQuerySyntax,
+                    ParseQuerySyntax: parseQuerySyntax)
                     // The run file is what a recorded score is read back from, so the rounding the
                     // reference applies before writing one has to be applied here too, or the
                     // comparison is against a number the reference never wrote down.
-                    ScoreRounding: scoreRounding
+                    .WithScoreRounding(scoreRounding
                         ? ScoreRounding.FourDecimals
                         : ScoreRounding.None));
 

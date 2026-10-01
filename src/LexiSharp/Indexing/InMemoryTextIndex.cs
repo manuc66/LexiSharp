@@ -249,18 +249,36 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
     /// caller reproducing a published number needs the one that number used.
     /// </para>
     /// </param>
-    /// <param name="documentLengthQuantization">
-    /// How a document length is stored for scoring. <see cref="DocumentLengthQuantization.Exact"/>
-    /// (the default) keeps the real length; <see cref="DocumentLengthQuantization.OneByte"/> stores it as
-    /// a single byte through the arithmetic encoding one implementation uses, which is what makes two
-    /// documents of 149 and 151 terms score identically under BM25 length normalisation.
+    public InMemoryTextIndex(
+        ITokenizer? tokenizer = null,
+        AverageLengthDivisor averageLengthDivisor = AverageLengthDivisor.AllDocuments)
+    {
+        _tokenizer = tokenizer ?? LexiSharp.Linguistics.Tokenizer.Default;
+        _averageLengthDivisor = averageLengthDivisor;
+        _documentLengthQuantization = DocumentLengthQuantization.Exact;
+    }
+
+    /// <summary>
+    /// An index whose document lengths are quantized. Internal, and reachable only by the evaluation
+    /// harness and the tests.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="documentLengthQuantization"/> chooses how a length is stored for scoring.
+    /// <see cref="DocumentLengthQuantization.Exact"/> keeps the real length.
+    /// <see cref="DocumentLengthQuantization.OneByte"/> stores it as a single byte through the
+    /// arithmetic encoding one implementation uses, which is what makes two documents of 149 and 151
+    /// terms score identically under BM25 length normalisation.
     /// <para>
-    /// Measured on BEIR ArguAna, quantizing made nDCG@10 worse by about 0.006, so this is a device for
-    /// reproducing a published figure and not an improvement: it is here because that figure was produced
-    /// with it, and a comparison against it means nothing unless this matches.
+    /// It is a separate constructor rather than a parameter on the public one because it is not a
+    /// setting but a different account of what a length is. Measured on BEIR ArguAna, quantizing made
+    /// nDCG@10 worse by about 0.006, so it is a device for reproducing a published figure and not an
+    /// improvement — and a caller who reaches for it has almost certainly misunderstood what it does.
     /// </para>
-    /// </param>
-    public InMemoryTextIndex(ITokenizer? tokenizer = null, AverageLengthDivisor averageLengthDivisor = AverageLengthDivisor.AllDocuments, DocumentLengthQuantization documentLengthQuantization = DocumentLengthQuantization.Exact)
+    /// </remarks>
+    internal InMemoryTextIndex(
+        ITokenizer? tokenizer,
+        AverageLengthDivisor averageLengthDivisor,
+        DocumentLengthQuantization documentLengthQuantization)
     {
         _tokenizer = tokenizer ?? LexiSharp.Linguistics.Tokenizer.Default;
         _averageLengthDivisor = averageLengthDivisor;
@@ -270,8 +288,11 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
     /// <summary>The tokenizer used to split documents and queries into terms.</summary>
     public ITokenizer Tokenizer => _tokenizer;
 
-    /// <summary>Whether <see cref="DocumentLength"/> reports exact or byte-quantized lengths.</summary>
-    public DocumentLengthQuantization DocumentLengthQuantization => _documentLengthQuantization;
+    /// <summary>
+    /// Whether <see cref="DocumentLength"/> reports exact or byte-quantized lengths. Internal, for
+    /// the reason on the enumeration: this is a statement about what a length means, not a knob.
+    /// </summary>
+    internal DocumentLengthQuantization DocumentLengthQuantization => _documentLengthQuantization;
 
     /// <summary>Which document count divides the corpus token count in <see cref="AverageDocumentLength"/>.</summary>
     public AverageLengthDivisor LengthDivisor => _averageLengthDivisor;
@@ -1160,7 +1181,15 @@ public enum AverageLengthDivisor
 /// <summary>
 /// How <see cref="InMemoryTextIndex.DocumentLength"/> reports a document's length.
 /// </summary>
-public enum DocumentLengthQuantization
+/// <remarks>
+/// Internal because it is not a setting a caller might reasonably want. <c>OneByte</c> does not
+/// report a length more precisely or less precisely — it reports a <em>different quantity</em>, and
+/// nothing about the call site says which of the two it is comparing against. A public option here
+/// would let a caller depend on a unit whose meaning depends on how an index was built, which is
+/// the kind of dependency that surfaces as a wrong number rather than as a compile error. It stays
+/// reachable from the evaluation harness, which is the only thing that has a reason to want it.
+/// </remarks>
+internal enum DocumentLengthQuantization
 {
     /// <summary>
     /// The length the tokenizer produced, unrounded. The default, and the only one of the two that is

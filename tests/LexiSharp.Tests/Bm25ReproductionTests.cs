@@ -134,7 +134,7 @@ public class Bm25ReproductionTests
         var engine = new RankedTextSearchEngine(index, new Bm25Scorer(0.9, 0.4), tokenizer);
 
         var plain = engine.Search("alpha", new SearchOptions(10));
-        var rounded = engine.Search("alpha", new SearchOptions(10, ScoreRounding: ScoreRounding.FourDecimals));
+        var rounded = engine.Search("alpha", new SearchOptions(10).WithScoreRounding(ScoreRounding.FourDecimals));
 
         Assert.Equal(plain.Count, rounded.Count);
 
@@ -162,7 +162,7 @@ public class Bm25ReproductionTests
 
         var plain = engine.Search("gamma", new SearchOptions(10)).Select(r => r.DocumentId).ToArray();
         var rounded = engine
-            .Search("gamma", new SearchOptions(10, ScoreRounding: ScoreRounding.FourDecimals))
+            .Search("gamma", new SearchOptions(10).WithScoreRounding(ScoreRounding.FourDecimals))
             .Select(r => r.DocumentId)
             .ToArray();
 
@@ -186,7 +186,7 @@ public class Bm25ReproductionTests
         ]);
 
         var engine = new RankedTextSearchEngine(index, new Bm25Scorer(0.9, 0.4), tokenizer);
-        var results = engine.Search("alpha", new SearchOptions(10, ScoreRounding: ScoreRounding.FourDecimals));
+        var results = engine.Search("alpha", new SearchOptions(10).WithScoreRounding(ScoreRounding.FourDecimals));
 
         // Three identical documents score identically, so the walk is what separates them: the first
         // keeps the rounded score and each next one drops by a further millionth.
@@ -249,6 +249,12 @@ public class Bm25ReproductionTests
         }
     }
 
+    /// <summary>
+    /// Every parameter spelled out, and the result identical to <see cref="SearchOptions.Default"/>.
+    /// Nine of them, positionally: the tenth — the write-down rounding — is no longer a parameter,
+    /// because it is internal and reached through a method, and a parameter nobody outside the
+    /// harness should pass is not one this test should be asserting the default of.
+    /// </summary>
     [Fact]
     public void The_Defaults_Change_Nothing()
     {
@@ -265,8 +271,7 @@ public class Bm25ReproductionTests
             null,
             null,
             true,
-            TieBreak.DocumentId,
-            ScoreRounding.None));
+            TieBreak.DocumentId));
 
         Assert.Equal(defaults.Count, spelledOut.Count);
 
