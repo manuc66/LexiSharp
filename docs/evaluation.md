@@ -43,138 +43,128 @@ parameters, the gain convention and the repeated-term rule aligned:
 |---|---:|---:|---:|
 | NFCorpus | 0.3215 at k1=0.9, b=0.4 | 0.3218 | −0.0003 |
 | SciFact | 0.6788 at k1=0.9, b=0.4 | 0.6789 | −0.0001 |
-| ArguAna | 0.364 at k1=0.9, b=0.4 | 0.3970 at k1=0.9, b=0.4 | **−0.033, cause not established** |
+| ArguAna | 0.3970 at k1=0.9, b=0.4 | 0.3970 at k1=0.9, b=0.4 | 0.0000 |
 
-Every row is at the reference's own k1 and b. That matters for what may be concluded from the table,
-and it is worth being explicit about the trap: **at its own defaults this library reads higher on all
-three corpora** — 0.327, 0.692 and 0.444 against 0.3218, 0.6789 and 0.397 — and that is *not* a claim
-that the published figures are beaten. Those two numbers are produced at different operating points,
-and reading the second as the first is the same mistake that put a withdrawn figure in this file. The
-aligned column is the comparison that means anything; the defaults are quoted in each pin's note.
+**ArguAna: the metric is reproduced, and so are the raw scores.** The two are verified by different
+means and the distinction is the point.
 
-At the published operating point, NFCorpus and SciFact reproduce the reference to the fourth
-decimal. The engine was never behind on those two; the comparison was measuring the analyzer.
+The aggregate is verified without this repository's own metric code being involved. `trec_eval` 9.0.8,
+run on a `trec_run` this harness writes at that configuration, reads nDCG@10 **0.3970** and recall@100
+**0.9324** — the two published figures, to four decimals. This harness reads 0.3970 on the same run.
+The metrics are computed differently and agree; where they do not, the difference is 0.0004, confined
+to the 102 of 1,406 queries whose returned scores contain a tie, which is the only circumstance under
+which two evaluators can legitimately read a different order. Which of the two orders produced the
+published figure is not established here, and this page does not claim it.
 
-**ArguAna was measuring a defect.** The table above used to read 0.219 here, a deficit of 0.178, and
-this page said the cause was not established. It was established as soon as somebody asked where the
-number came from: `SearchOptions.ExcludedDocumentIds` was never applied on the term-at-a-time path,
-which is the one this corpus takes. ArguAna queries are documents — 1,298 of the 1,406 test queries
-have their id in the corpus, and the query text is that document's own text — so the document being
-excluded was the lexically closest thing to the query and held rank 1. With the gate applied, at the
-reference's own k1 and b: **0.364 against 0.3970**.
+That 0.0004 was a long way from being found, and the reason it survived several rounds of
+re-measurement is worth recording: this page previously carried 0.4030 for ArguAna and called the
+metric not reproduced. The harness measured its metrics **at the depth the run retrieved** rather than
+at rank 10, and a bit-for-bit reproduction run retrieves one document deeper than it measures — so it
+was reporting nDCG@11 under a heading that read nDCG@10. The 0.006 was the eleventh document. The
+cutoff is now named and independent of `--top-k`. The table below records what was measured when the
+row was first written, and is kept rather than deleted because the sequence is the point of the page:
 
-That also retires a number this page repeated. "+0.0012 for the exclusion" was this repository's own
-measurement of an option that did nothing, which is why it looked negligible. It was worth +0.093.
-
-The remaining 0.033 sits at a parameter choice, and the measurements below say as much — though not
-more than that.
-
-**At the library's own default parameters this corpus is not behind.** With the exclusion applied and
-the repeated-term setting on, 1,406 queries, English analysis, linear gains:
-
-| | k1=0.9, b=0.4 — the reference's operating point | k1=1.5, b=0.75 — this library's default |
-|---|---:|---:|
-| `QueryTermWeighting.Distinct` | 0.290 | 0.381 |
-| `QueryTermWeighting.QueryFrequency` | 0.364 | **0.444** |
-
-against a published 0.397. So the comparison is now true both ways, and neither half alone is the
-story: at the reference's own k1 and b this library reads 0.364 and is 0.033 behind; at its own
-defaults it reads **0.444 and is 0.047 ahead**. ArguAna's score is steep in k1 here — 0.290 to 0.381
-on the repeated-term setting alone, from k1 alone — so 0.397 is a figure produced at a point that
-looks like a poor operating point for this corpus. **Whether the reference would also read higher at
-k1=1.5 is not something this repository can test**, and until it is, the aligned comparison stands as
-the honest one and the deficit at that point is recorded rather than explained away.
-
-**What was ruled out, by measurement.** The stop list: `StopWords.EnglishFunction` is word-for-word
-the reference's 33. The idf: `ln(1 + (N − df + 0.5) / (df + 0.5))` is the reference's formula. The
-title field: indexed, scored, counted in the document length, term frequencies summed — the index is
-equivalent to the concatenation the reference uses. Query or document truncation: there is none.
-
-**The tokenization difference is real, confirmed, and not the cause.** This index holds 1.12 % more
-terms than the reference, and the excess appears on all three corpora — NFCorpus 2.77 %, SciFact
-1.50 % — always in the same direction, always inside the 3 % tolerance. Two rules account for it, both
-seen by inspecting the tokenizer:
-
-- *Contractions.* The reference keeps an apostrophe inside a word, so `don't` is one token; this one
-  produces two, a stem and a single-character fragment, and `it's` yields only the fragment `s`.
-- *Hyphens.* The same for a hyphen between two letters, so `environment-friendly` is one token there
-  and two here. 7,717 hyphenated words in this corpus.
-
-Measured end to end at matched parameters with the exclusion applied: **0.364** as shipped, **0.362**
-with the apostrophes joined, **0.367** with the hyphens joined. Aligning both analyses is worth about
-+0.003 of the 0.033. Both differences are larger than the 0.39 % excess left after the apostrophes,
-so some compensating difference exists that has not been identified. Changing the tokenizer would
-invalidate every recorded baseline here, so it is not done.
-
-**The same conclusion at top-k 100, and a sharper signature.** The reference configuration publishes
-recall as well as nDCG@10, and the harness measures it, so the comparison can be made at both ends of
-the ranking. At k1=0.9, b=0.4 with the exclusion applied, on the same 1,406 queries:
-
-| | LexiSharp | published reference | Δ |
+| | LexiSharp | reference | Δ |
 |---|---:|---:|---:|
-| nDCG@10 | 0.364 | 0.3970 | −0.033 |
-| **R@100** | **0.843** | **0.9324** | **−0.089** |
+| nDCG@10 | 0.3970 | 0.3970 | 0.0000 |
+| nDCG@5 | 0.3445 | 0.3445 | 0.0000 |
+| recall@100 | 0.9324 | 0.9324 | 0.0000 |
+| recall@1000 | 0.9872 | 0.9872 | 0.0000 |
+| MAP@100 | 0.3280 | 0.3280 | 0.0000 |
+| reciprocal rank | 0.3282 | 0.3282 | 0.0000 |
 
-The reference finds the gold document inside the top 100 for 93 % of these queries; this library
-does for 84 %. **The deficit is a retrieval difference, not a ranking one** — it is not documents
-being ordered differently near the cutoff, it is documents not being found at all. And the
-tokenization variants do not close it either: joining hyphens gives R@100 0.841 and joining both
-rules 0.839, against 0.843 as shipped. So the two measures agree, and the answer to "which rule
-differs" is that no rule found so far accounts for it.
+**What is reproduced is the scores, and on the raw bits.** A metric sees an order, and an order can
+agree while every number behind it differs — which is exactly what was happening. Against a run produced
+by the reference implementation's own searcher over its own index, for all 1,406 test queries:
 
-That is the state of it, stated plainly rather than dressed up: the exclusion defect was most of the
-0.126, the parameters are not it, the analyzer is not it by two independent measurements, and 0.089 of
-recall is unexplained. Whoever picks this up should start from which documents are matchable rather
-than from where they land.
+| | paired scores identical on the raw bits |
+|---|---:|
+| index built over every document (as it was) | 0 / 14,168 |
+| inverse document frequency over the documents carrying the field | 876 / 14,168 — 6.18 % |
+| … and the reference's scale, precision and rounding | **14,168 / 14,168 — 100.00 %** |
 
-**The failing queries are not unmatchable, which narrows it further.** Of the 216 queries whose gold
-document does not reach the top 100, **every one shares at least one analysed term** with it. Zero are
-lexically unreachable. So the documents are findable in principle and are not being found. Five of the
-1,406 test qrels point at a document id that is not in the corpus at all, so 1,401 queries are usable
-and nobody can retrieve those five — which does not explain a gap of this size either.
+At the depth the comparison runs, one document deeper than the metric is measured at, the count is
+**15,466 / 15,466** over all 1,406 queries.
 
-**The stemmer is not it, measured three ways.** R@100 with no stemming at all, with this repository's
-`PorterStemmer`, and with a second Porter written from the published algorithm rather than from this
-codebase: 0.842, 0.846, 0.846. The third exists so the comparison does not rest on trusting a
-from-memory reimplementation of the reference's stemmer — if a different Porter moves nothing, the
-stemmer is not the cause whichever one is correct. The b curve is short at every point: 0.790 at b=0,
-0.843 at b=0.4, 0.868 at b=0.75, against 0.9324 published.
+The three differences that got there, each behind an option whose default is unchanged:
 
-**The published figure for this corpus is not one number, and the spread is wider than the gap.** The
-2021 BEIR paper reports BM25 on ArguAna at **0.315**, indexing *"the title (if available) and passage
-of each document as separate text fields"* through Elasticsearch's defaults. Anserini's regression
-reports **0.3970** for the same corpus, indexing *"in a 'flat' manner, by concatenating the title and
-text into the contents field"* — which is what this harness does, checked against the reproduction's
-own docgen template. Same corpus, same metric, same k1 and b, and **0.082 apart**, because a flat
-index and separate fields are not the same index. This library's aligned 0.364 falls between the two:
-0.049 above the 2021 figure, 0.033 below the regression. A claim about matching "the published
-ArguAna number" therefore depends on which one is meant; the table above states the comparison this
-harness can actually support.
+| difference | option | default | what it is |
+|---|---|---|---|
+| idf over 8,674 documents instead of 8,673 | `ITextIndex.StatisticDocumentCount` | every document | the corpus holds one document with no term; worth 2.6e-05 on every score |
+| no `k1 + 1` in the numerator | `Bm25Scorer(saturationConstant: false)` | `true` | the reference's BM25 has no saturation constant; same ranking, factor of 1.9 off |
+| single precision, reciprocal table, total rounded once | `Bm25Scorer(arithmetic: SinglePrecision)` | `Double` | same formula, different arithmetic; worth about one part in 10⁷ |
+| scores rounded to four decimals, ties walked down | `SearchOptions.ScoreRounding` | `None` | what the reference does to a score before writing it down; worth up to 5e-06 |
 
-**What would close it, and why it was not done here.** Attributing the remainder needs the
-reference's own run file — the trec_run ranking all 1,406 queries — and the reproduction publishes no
-results directory, only commands, configs and docgen. Without it the gap can be bounded and
-characterised, as above, and not attributed.
+The last of the four is the one a reader is most likely to think is a fudge, so it is worth being plain
+about: it is a post-processing step, not scoring, and it is lossy — it merges scores that differ by less
+than half a ten-thousandth and then separates them again by rank, so the same document reports two
+different scores at two different page sizes. It is here because a run file contains those numbers and
+not the scorer's, and reproducing the arithmetic without reproducing what is written down reproduces
+nothing anybody can check.
 
-**And the honest answer to whether the remainder is a defect: the published figure for this corpus is
-not one number.** Gathering what has actually been published for BM25 on ArguAna, each with the
-construction that produced it:
+That measurement was nDCG@10 identical to the last digit on **all 1,406 queries, one by one**: paired
+difference 0.00000000, standard deviation 0.00000000, 95 % interval [0.00000000, 0.00000000]. The two
+indexes agree **term for term**: 23,895 distinct terms and 969,528 occurrences on each side, zero terms differing
+in document frequency, zero in term frequency, and zero terms present in one index and not the other.
 
-| value | source | index construction |
-|---:|---|---|
-| 0.315 | the 2021 BEIR paper | title and body as separate fields, Elasticsearch |
-| 0.3970 | Anserini's flat regression | title and text concatenated into one field |
-| 0.414 | the official BEIR leaderboard paper | Anserini multi-field, `--fields contents=1.0 title=1.0` |
-| **0.364** | **this library, flat** | **same as the 0.3970 row, verified** |
-| **0.370** | **this library, multi-field, equal weights** | **same construction as the 0.414 row** |
+The comparison runs against the reference's own index, read out of it rather than re-derived from an
+assumption about its analyzer, and against its own evaluation binary.
 
-Two things follow, and the second is why this stops here. First, matching a construction does not match
-the number: this library's multi-field measurement reaches 0.370 where the leaderboard paper reports
-0.414 for the same construction, so the 0.044 between them is not an indexing difference. Second — and
-this is the part worth remembering — **the spread among published values for the same corpus and the
-same metric is 0.099, and the gap this page spent a session chasing is 0.033.** There is no single
-number to close that gap *to*. A deficit measured against one published value is not evidence of a
-defect while other published values for the same quantity sit on both sides of it.
+**What the 0.033 was.** Not a parameter choice and not the corpus — four rules, each measured by asking
+the reference implementation rather than by reasoning about it, and each behind an option whose default
+is unchanged:
+
+| rule | option | default | measured effect |
+|---|---|---|---|
+| phrase syntax on prose | `SearchOptions.ParseQuerySyntax` | `true` | 138 of 1,406 queries returned 0–1 results at any depth |
+| repeated query terms | `QueryTermWeighting.QueryFrequency` | `Distinct` | +0.074 |
+| word boundaries | `TokenizerOptions.WordSegmentation` | `Flat` | 18 separators × digit/letter on both sides |
+| possessive, before the stop list | `TokenizerOptions.StripPossessives` | `false` | `it` 3,501 → 3,134; `that` and `there` removed |
+| diacritics kept | `TokenizerOptions.FoldDiacritics` | `true` | ±0.003 |
+| U+0130 folded | `TokenizerOptions.FoldTurkishDottedI` | `false` | one term in 23,895 |
+| one-byte lengths | `InMemoryTextIndex.DocumentLengthQuantization` | `Exact` | −0.006, kept as a reproduction device |
+| idf over the documents carrying the field | `ITextIndex.StatisticDocumentCount` | every document | 2.6e-05 on every score, no effect on any ranking |
+
+Three findings here were counter-intuitive enough to be worth stating, because each is the kind of
+thing that gets "fixed" the wrong way:
+
+- **The possessive rule has to run before the stop word list, not inside the stemmer.** Trimming inside
+  the stemmer is too late: the list has been tested on `it's` rather than on `it`, so `it's` survives as
+  a stop word and only then becomes `it`. On this corpus that was an `it` 3,501 times against the
+  reference's 3,134, plus a `that` (83) and a `there` (36) the reference has not got at all — 486 of
+  the 487 occurrences by which the two indexes differed. The reference's `it` comes from `its`, which
+  is not a possessive and is not on the list.
+- **An unconditional joiner belongs to the token even at its start.** `_630888` indexes whole and
+  `__alpha` as `__alpha`, while `-alpha` is just `alpha` — so it is the underscore's rule, not a rule
+  about any separator, and a run of underscores alone is not a token.
+- **A combining mark ended the word it followed.** `celi\u0307l` split into `celi` and `l` into two
+  tokens. A mark modifies the character it follows, so it extends a word and cannot open one — measured
+  across all four positions: `a\u0307b` and `a\u0307` are each one token, `\u0307ab` is just `ab`, a lone
+  mark is nothing. ArguAna holds no combining mark, so it moved no number here; NFCorpus holds four
+  characters out of 5,779,318.
+- **The stemmer was refusing every term containing a non-ASCII character.** The algorithm is defined
+  over characters, not scripts: everything outside `aeiou` is a consonant. Asking the reference's own
+  stemmer settled it — `they’re` → `they’r`, `naïve` → `naïv`, `façade` → `façad` — and its answers are
+  now this library's. That same stemmer does **not** remove possessives: asked directly, it answers
+  `adam'`, which is what first showed the possessive removal to be a separate stage.
+
+**No difference remains.** The last one was `celİl` against `celil`, and pinning it down turned out to be
+worth more than closing it. Of the 505 code points whose lowercase differs from themselves over the ranges
+a European corpus contains, U+0130 is the *only* one where .NET's invariant casing and the reference
+disagree — so it is a single character, not a difference of strategy. And the fold is the Unicode **simple**
+mapping, U+0069, rather than the full one that appends U+0307: their index holds a five-character `celil`,
+and handing their analyzer a six-character `celi\u0307l` returns the dot intact, which means their
+pipeline never produced one. Implementing the full mapping first, on the assumption that "fold it to i"
+meant the complete Unicode answer, is what the measurement argued against.
+
+Leaving the character alone is still defensible — it is the right answer for a Turkish index, where `İ`
+and `i` are different letters and folding them merges two words — which is why it is an option and why the
+default is unchanged.
+
+**What the earlier reading of the tokenization gap got wrong.** This page reported a systematic 1.12 %
+excess over the reference index, appearing on all three corpora in the same direction, and attributed
+it to contractions producing stray fragments. The direction and the systematicity were right; the cause
+was not. Aligning the analysis closes the excess entirely rather than narrowing it.
 
 Both constructions were measured here rather than reasoned about: the multi-field run scores the title
 and the body as separate fields with their own document frequencies and their own length, then sums
@@ -188,8 +178,9 @@ rather than to a bare number.
 
 **Why a small difference can be worth this much.** The gold document is outside the top 10 for
 **39.9 %** of these queries, and the score gap between rank 10 and rank 11 has a tenth percentile of
-**0.118 %** — a fifth of the queries are decided by less than 0.046 %. Moving 0.033 of nDCG is roughly
-165 documents promoted from outside the top 10 into it.
+**0.118 %** — a fifth of the queries are decided by less than 0.046 %. The 0.033 this page spent a
+session chasing was therefore about 165 documents promoted from outside the top 10 into it, which is
+why no amount of staring at aggregate scores found it.
 
 **ArguAna: this page said the gap was closed, and that was wrong.** It reported **0.4061** at
 k1=3.0/b=0.75, above the published 0.3970, and explained the difference as a scoring rule: the
@@ -223,14 +214,11 @@ two settings could not have produced different rankings, so those figures could 
 the code that published them. The engine now hands the scorer the raw term list, the setting is
 observable through `Search`, and `QueryTermWeightingTests` fails if it ever stops being.
 
-**What is left on ArguAna is 0.033, and it is not accounted for.** At matched parameters this
-library reads 0.364 where the reference publishes 0.3970. The query-frequency setting is part of that
-column and the excluded-ids fix is most of the rest; what remains is measured to be a difference in
-how the two analyses tokenize, described above, and it has not been shown to be the cause of the
-score difference — only that the two indexes differ by 1.12 % in terms and 3.4 % in single-character
-tokens. ArguAna's k1 sensitivity also runs opposite to the other two corpora, so comparing this
-library at k1=1.5/b=0.75 against a reference figure produced at k1=0.9/b=0.4 is not a comparison at
-all, which is how a flattering number got in.
+**There is nothing left on ArguAna.** At matched parameters this library reads 0.3970 where the
+reference publishes 0.3970, identically on all 1,406 queries. The analysis rules that accounted for it
+are set out above, and each is behind an option whose default is unchanged — so `--analyzer english`
+alone still reads 0.3806, and that remaining 0.016 is a difference of analysis convention rather than
+of ranking.
 
 The reference is also **newer than the table it is first compared against**: a current per-corpus
 regression for this exact index puts ArguAna at 0.3970, not the 0.315 of the 2021 paper.
