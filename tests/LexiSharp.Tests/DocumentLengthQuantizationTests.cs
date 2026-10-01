@@ -98,7 +98,11 @@ public class DocumentLengthQuantizationTests
         var exact = new InMemoryTextIndex();
         exact.Index(documents);
 
+        // The quantized constructor is internal: a public option here would change what a length means
+        // rather than how precisely it is reported, and nothing at a call site would say so.
         var quantized = new InMemoryTextIndex(
+            tokenizer: null,
+            averageLengthDivisor: AverageLengthDivisor.AllDocuments,
             documentLengthQuantization: DocumentLengthQuantization.OneByte);
         quantized.Index(documents);
 

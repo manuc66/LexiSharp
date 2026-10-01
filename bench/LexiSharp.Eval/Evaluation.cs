@@ -325,10 +325,10 @@ internal static class Evaluation
                     new SearchOptions(
                         topK,
                         ExcludedDocumentIds: evaluated.Excluded,
-                        ParseQuerySyntax: parseQuerySyntax,
-                        ScoreRounding: scoreRounding
-                            ? ScoreRounding.FourDecimals
-                            : ScoreRounding.None))
+                        ParseQuerySyntax: parseQuerySyntax)
+                    .WithScoreRounding(scoreRounding
+                        ? ScoreRounding.FourDecimals
+                        : ScoreRounding.None))
                 .Select(result => result.DocumentId)
                 .ToArray();
 

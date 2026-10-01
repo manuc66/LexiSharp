@@ -214,7 +214,6 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
 | `AverageLengthDivisor` | enum | — | Which document count divides the corpus token count when AverageDocumentLength is computed. |
-| `DocumentLengthQuantization` | enum | — | How DocumentLength reports a document's length. |
 | `ExpansionTextIndex` | class | `ICandidateIndex`, `ITextIndex`, `IVocabularyIndex` | An InMemoryTextIndex whose documents are additionally indexed under the weak terms returned by an ITermExpander — the « semantic lexical index ». The search… |
 | `InMemoryTextIndex` | class | `ICandidateIndex`, `ITextIndex`, `IVocabularyIndex` | In-memory inverted index: for each term, the documents containing it and the positions within each document. Exposes the corpus statistics required by scorers. |
 | `InMemoryVectorSearchEngine` | class | `IQueryCostProbe`, `IQuerySyntaxSupport`, `ITextSearchEngine` | In-memory dense (vector) search engine: embeds documents with an IEmbeddingProvider and answers queries by cosine similarity over the whole corpus — a linear… |
@@ -277,7 +276,6 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `RetrievalMetrics` | class | — | Standard top-k retrieval metrics over a ranked list of document ids, used to evaluate (and tune) ranking quality against a validation set. |
 | `ScoreConfidence` | class | — | Maps an ordered result set's raw scores into calibrated confidences in [0,1] — the "is this really the answer?" gauge that raw lexical scores (BM25, TF-IDF,… |
 | `ScoreConfidenceMethod` | enum | — | How an ordered result set's raw scores are mapped into a calibrated per-result confidence in [0,1]. |
-| `ScoreRounding` | enum | — | What a search does to its scores after ranking, before returning them. |
 | `TfIdfScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | Classic TF-IDF relevance. A document matches when it contains at least one query term; rare terms are weighted more than common ones. |
 | `TieBreak` | enum | — | How the engines order candidates whose scores are exactly equal. |
 | `TuningMetric` | enum | — | The quality metric a Bm25ParameterTuner maximizes over its validation set. |

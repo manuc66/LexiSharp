@@ -41,6 +41,15 @@
   -->
   <ItemGroup>
     <InternalsVisibleTo Include="LexiSharp.Cli" />
+    <!-- The evaluation harness, and only it, needs the reproduction switches. They are internal
+         because two of them are not settings: DocumentLengthQuantization changes what a length IS
+         rather than how precisely it is reported, and ScoreRounding reorders documents that score
+         exactly equal while claiming only to round. A public option is a debt — it forecloses a
+         third case and a rename — and a caller has no reason to depend on either. The behaviour is
+         reachable from the shipped assembly by a caller who names the assembly, which is the
+         ordinary trade, and the public surface keeps only the switches a caller might reasonably
+         want. -->
+    <InternalsVisibleTo Include="LexiSharp.Eval" />
     <InternalsVisibleTo Include="LexiSharp.Tests" />
   </ItemGroup>
 

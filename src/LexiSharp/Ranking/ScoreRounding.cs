@@ -18,7 +18,7 @@ namespace LexiSharp.Ranking;
 /// it on is a decision about the comparison being made, not an improvement.
 /// </para>
 /// </remarks>
-public enum ScoreRounding
+internal enum ScoreRounding
 {
     /// <summary>Return the score the ranking arithmetic produced. The default.</summary>
     None = 0,
