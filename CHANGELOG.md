@@ -16,30 +16,35 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --verify-reference
 on every push that touches the library or the harness, and weekly by the `Pinned reference`
 workflow.
 
-## Unreleased
+## [0.8.0] — Unreleased
 
-### Fixed
+The version number is not settled. Nothing here changes an existing default, but two fixes change
+observable behaviour for callers who rely on the old results, and a patch release would understate
+that. Whichever number is chosen, the reason is here.
 
-- **The pinned reference replayed query syntax the table does not use.** `ReferenceVerifier` built
-  its `SearchOptions` without naming `ParseQuerySyntax`, so every pin inherited the library default —
-  a `"` is a phrase delimiter — while the table each row is compared against runs literal-text
-  queries. On ArguAna, 146 of 1,406 test queries carry a straight `"`, so the whole ArguAna default
-  family measured ~0.030 nDCG below the table's own figures while the gate stayed green: the pin
-  family was being replayed by a path the table does not take. The four ArguAna pins are re-recorded
-  to the table's convention with the syntax named in their configuration (`"querySyntax": false`):
-  `arguana/default` 0.289 → 0.3195, `arguana/english+qtf` 0.271 → 0.3010, `arguana/english+qtf
-  at k1=3.0` 0.331 → 0.3674, `arguana/english+exclude` 0.3806 → 0.4180. The parity figure 0.3970 is
-  unaffected — it is measured on a run the table itself wrote under the same convention — and
-  NFCorpus/SciFact pins are unchanged, their queries carrying too few quotes for the syntax to matter.
+### Reproduced
 
-- **BM25's inverse document frequency was built over the wrong document count.** It used every indexed
-  document; it should use the documents carrying the field. The difference is one document on any corpus
-  holding one with no term in it — 1 of 8,674 on BEIR ArguAna — and it moved every score by about three
-  parts in a hundred thousand, which is invisible in a ranking and decided the last digit of a score.
-  Measured against a run produced by the reference implementation's own searcher: the median relative
-  gap falls from 2.6e-05 to 3.3e-07. `ITextIndex.StatisticDocumentCount` is the new member, and the
-  count it returns is the one `AverageDocumentLength` already divided by, so the two cannot drift apart;
-  under the default divisor it is `Count` and nothing changes.
+**The ArguAna figure published by the independent BEIR regression — nDCG@10 0.3970 — is now
+reproduced exactly, on all 1,406 queries, one by one.** Paired difference 0.00000000, 95 % interval
+[0.00000000, 0.00000000]. Recall@100 (0.9324), recall@1000 (0.9872), nDCG@5 (0.3445), MAP@100 (0.3280)
+and reciprocal rank (0.3282) all match as well. The two indexes agree **term for term**: 23,895 distinct terms
+and 969,528 occurrences on each side, zero terms differing in document frequency, zero in term
+frequency, and zero terms present in one index and not the other.
+
+The deficit was never a ranking question. Four analysis rules accounted for it, each measured rather
+than assumed, and each shipped as an option whose default is unchanged:
+
+| option | default | what it aligns |
+|---|---|---|
+| `SearchOptions.ParseQuerySyntax` | `true` | a query language's `"` against prose's, 138 of 1,406 queries |
+| `QueryTermWeighting.QueryFrequency` | `Distinct` | one boost per occurrence of a repeated query term |
+| `TokenizerOptions.WordSegmentation` | `Flat` | 18 separators tested across digit and letter on both sides |
+| `TokenizerOptions.StripPossessives` | `false` | possessive removal **before** the stop word list |
+| `TokenizerOptions.FoldDiacritics` | `true` | diacritics kept |
+| `InMemoryTextIndex.DocumentLengthQuantization` | `Exact` | lengths stored as one byte |
+
+Two of these were defects in this library rather than differences of convention, and are fixed outright
+below. The other four are conventions, and stay opt-in.
 
 ### Added
 
@@ -151,37 +156,28 @@ workflow.
   of the same seam. The flat `Search` still returns full text — compression is an opt-in
   second surface, not a mutation of `SearchResult.Document`.
 
-## [0.8.0] — Unreleased
-
-The version number is not settled. Nothing here changes an existing default, but two fixes change
-observable behaviour for callers who rely on the old results, and a patch release would understate
-that. Whichever number is chosen, the reason is here.
-
-### Reproduced
-
-**The ArguAna figure published by the independent BEIR regression — nDCG@10 0.3970 — is now
-reproduced exactly, on all 1,406 queries, one by one.** Paired difference 0.00000000, 95 % interval
-[0.00000000, 0.00000000]. Recall@100 (0.9324), recall@1000 (0.9872), nDCG@5 (0.3445), MAP@100 (0.3280)
-and reciprocal rank (0.3282) all match as well. The two indexes agree **term for term**: 23,895 distinct terms
-and 969,528 occurrences on each side, zero terms differing in document frequency, zero in term
-frequency, and zero terms present in one index and not the other.
-
-The deficit was never a ranking question. Four analysis rules accounted for it, each measured rather
-than assumed, and each shipped as an option whose default is unchanged:
-
-| option | default | what it aligns |
-|---|---|---|
-| `SearchOptions.ParseQuerySyntax` | `true` | a query language's `"` against prose's, 138 of 1,406 queries |
-| `QueryTermWeighting.QueryFrequency` | `Distinct` | one boost per occurrence of a repeated query term |
-| `TokenizerOptions.WordSegmentation` | `Flat` | 18 separators tested across digit and letter on both sides |
-| `TokenizerOptions.StripPossessives` | `false` | possessive removal **before** the stop word list |
-| `TokenizerOptions.FoldDiacritics` | `true` | diacritics kept |
-| `InMemoryTextIndex.DocumentLengthQuantization` | `Exact` | lengths stored as one byte |
-
-Two of these were defects in this library rather than differences of convention, and are fixed outright
-below. The other four are conventions, and stay opt-in.
-
 ### Fixed
+
+- **The pinned reference replayed query syntax the table does not use.** `ReferenceVerifier` built
+  its `SearchOptions` without naming `ParseQuerySyntax`, so every pin inherited the library default —
+  a `"` is a phrase delimiter — while the table each row is compared against runs literal-text
+  queries. On ArguAna, 146 of 1,406 test queries carry a straight `"`, so the whole ArguAna default
+  family measured ~0.030 nDCG below the table's own figures while the gate stayed green: the pin
+  family was being replayed by a path the table does not take. The four ArguAna pins are re-recorded
+  to the table's convention with the syntax named in their configuration (`"querySyntax": false`):
+  `arguana/default` 0.289 → 0.3195, `arguana/english+qtf` 0.271 → 0.3010, `arguana/english+qtf
+  at k1=3.0` 0.331 → 0.3674, `arguana/english+exclude` 0.3806 → 0.4180. The parity figure 0.3970 is
+  unaffected — it is measured on a run the table itself wrote under the same convention — and
+  NFCorpus/SciFact pins are unchanged, their queries carrying too few quotes for the syntax to matter.
+
+- **BM25's inverse document frequency was built over the wrong document count.** It used every indexed
+  document; it should use the documents carrying the field. The difference is one document on any corpus
+  holding one with no term in it — 1 of 8,674 on BEIR ArguAna — and it moved every score by about three
+  parts in a hundred thousand, which is invisible in a ranking and decided the last digit of a score.
+  Measured against a run produced by the reference implementation's own searcher: the median relative
+  gap falls from 2.6e-05 to 3.3e-07. `ITextIndex.StatisticDocumentCount` is the new member, and the
+  count it returns is the one `AverageDocumentLength` already divided by, so the two cannot drift apart;
+  under the default divisor it is `Count` and nothing changes.
 
 - **A combining mark ended the word it followed.** `celi\u0307l` was split into `celi` and `l` into two
   tokens, because the scanner accepted letters and digits and nothing else. A mark modifies the character
