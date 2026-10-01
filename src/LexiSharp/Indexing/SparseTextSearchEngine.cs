@@ -108,12 +108,12 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
     }
 
     /// <inheritdoc />
-    public void Remove(string documentId)
+    public bool Remove(string documentId)
     {
         ArgumentNullException.ThrowIfNull(documentId);
 
         if (!_documents.Remove(documentId))
-            return;
+            return false;
 
         if (_vectorsByDocument.Remove(documentId, out var vector))
         {
@@ -126,6 +126,8 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
                 }
             }
         }
+
+        return true;
     }
 
     /// <inheritdoc />

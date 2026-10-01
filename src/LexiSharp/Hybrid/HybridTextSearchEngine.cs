@@ -113,10 +113,14 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
     }
 
     /// <inheritdoc />
-    public void Remove(string documentId)
+    public bool Remove(string documentId)
     {
+        bool removed = false;
+
         foreach (var engine in _engines)
-            engine.Remove(documentId);
+            removed |= engine.Remove(documentId);
+
+        return removed;
     }
 
     /// <inheritdoc />

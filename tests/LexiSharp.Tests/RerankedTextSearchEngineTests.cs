@@ -32,7 +32,7 @@ public class RerankedTextSearchEngineTests
 
         public void Index(IEnumerable<SearchDocument> documents) => IndexCalls++;
         public void Add(SearchDocument document) => AddCalls++;
-        public void Remove(string documentId) => RemoveCalls++;
+        public bool Remove(string documentId) { RemoveCalls++; return true; }
         public void Clear() => ClearCalls++;
 
         public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)

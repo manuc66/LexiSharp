@@ -139,12 +139,12 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
     }
 
     /// <inheritdoc />
-    public void Remove(string documentId)
+    public bool Remove(string documentId)
     {
         ArgumentNullException.ThrowIfNull(documentId);
 
         if (!_slotById.Remove(documentId, out int slot))
-            return;
+            return false;
 
         _documents.Remove(documentId);
 
@@ -152,6 +152,7 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
         // clearing because nothing reads a slot that is not in _slotCount and occupied.
         _slotDocument[slot] = null;
         _freeSlots.Add(slot);
+        return true;
     }
 
     /// <inheritdoc />

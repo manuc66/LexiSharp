@@ -128,7 +128,7 @@ public sealed class RoutingSearchEngine : ITextSearchEngine
 
     /// <inheritdoc />
     /// <exception cref="NotSupportedException">The router never writes; populate the route engines directly.</exception>
-    public void Remove(string documentId) => throw new NotSupportedException(WriteMessage);
+    public bool Remove(string documentId) => throw new NotSupportedException(WriteMessage);
 
     /// <inheritdoc />
     /// <exception cref="NotSupportedException">The router never writes; populate the route engines directly.</exception>

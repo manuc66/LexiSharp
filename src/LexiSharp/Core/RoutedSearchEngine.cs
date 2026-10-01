@@ -81,7 +81,7 @@ public sealed class RoutedSearchEngine : IFacetedSearchEngine, IQueryCostProbe, 
 
     /// <inheritdoc />
     /// <exception cref="NotSupportedException">The router never writes; populate the engines directly.</exception>
-    public void Remove(string documentId) => throw new NotSupportedException(WriteMessage);
+    public bool Remove(string documentId) => throw new NotSupportedException(WriteMessage);
 
     /// <inheritdoc />
     /// <exception cref="NotSupportedException">The router never writes; populate the engines directly.</exception>

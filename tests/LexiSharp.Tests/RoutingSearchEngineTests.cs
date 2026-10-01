@@ -26,7 +26,7 @@ public class RoutingSearchEngineTests
 
         public void Add(SearchDocument document) { }
 
-        public void Remove(string documentId) { }
+        public bool Remove(string documentId) => false;
 
         public void Clear() { }
 

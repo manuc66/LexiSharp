@@ -66,7 +66,7 @@ public sealed class HierarchicalTextSearchEngine : IStructureAwareSearchEngine
     }
 
     /// <inheritdoc />
-    public void Remove(string documentId) => _inner.Remove(documentId);
+    public bool Remove(string documentId) => _inner.Remove(documentId);
 
     /// <inheritdoc />
     public void Clear() => _inner.Clear();

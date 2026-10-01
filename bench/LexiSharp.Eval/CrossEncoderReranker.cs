@@ -318,7 +318,7 @@ internal sealed class RerankTextSearchEngine(
     public void Add(SearchDocument document) =>
         throw new NotSupportedException("RerankTextSearchEngine delegates to its base engine.");
 
-    public void Remove(string documentId) =>
+    public bool Remove(string documentId) =>
         throw new NotSupportedException("RerankTextSearchEngine delegates to its base engine.");
 
     public void Clear() =>
