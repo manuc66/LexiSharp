@@ -96,12 +96,9 @@ twice. Every figure below is reproducible with a command on the
   0.308 / 0.662 / 0.289; that difference is the configuration, not the ranking. The corpora are md5-verified on download, the harness ships no
   licence over them, and every number here is pinned and re-checked by the `Pinned reference`
   workflow.
-- **A claim withdrawn before it was published.** This page reported **0.4061** on ArguAna, above
-  the published figure, on the grounds that the reference counts a repeated query term and the
-  library deduplicated it. Re-measured, the setting is worth +0.052 at matched parameters, not the
-  +0.0705 claimed, and 0.4061 is not reproducible by any code path in this repository. No published
-  release ever presented the figure: it is absent from the `v0.6.0` documents, and where this
-  release mentions it, it is to withdraw it. See [evaluation](evaluation.md).
+- **A claim withdrawn before it was published.** An earlier figure on ArguAna is not reproducible by
+  any code path in this repository, and no release carried it; the measurement behind the withdrawal is
+  in [evaluation](evaluation.md), the provenance in the [changelog](../CHANGELOG.md#withdrawn).
 - **Where the composed stack pays off.** On NFCorpus — the one corpus where every lane is
   measured — a dense retriever alone lands at BM25 level (0.304), BM25+dense RRF fusion
   reaches **0.333**, and adding a cross-encoder rerank **0.346**, about 2.1 points above
