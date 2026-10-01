@@ -236,10 +236,19 @@ through exactly the regression it exists to catch.
 
 **A pin must name everything that changes the number.** Anything it leaves unnamed is a setting it
 inherits, and an inherited setting is invisible to it — change that default and every pin moves
-together while the gate reports success. Name the analyzer, the BM25 parameters, the gain convention,
-the query-document exclusion, the query count, the query syntax, the tie-break, and the score
-rounding. The test for each: *could a reader reproduce this number from what the file says?* If a
-setting would have to be guessed, it belongs in the file.
+together while the gate reports success. The test is not "which `SearchOptions` fields are there",
+and it is not an enumeration: an enumeration is a list of what somebody remembered this time, and the
+next hole will be whatever the list did not mention. The test is *trace every value the number is
+computed from, and name each one.* That reaches past search options into how the index was built —
+the average-length divisor and the document-length quantization, which on ArguAna move every score
+by 6e-03, a hundred times the residual they exist to protect, and which no search-time option can
+express at all. A value that would have to be guessed in order to reproduce the figure belongs in the
+file, whether it is a token, a number, or a property of the index.
+
+The corollary: a configuration that cannot be written down is not a pin that can be added later. The
+schema today cannot express the analyzer whose separator rules reach the published ArguAna figure,
+and it cannot express the index statistics that figure needs. Both are holes in the type, not
+policies about what is worth pinning.
 
 The distinction that keeps those two from colliding, because it is not obvious from either:
 **sharing a definition is safe when the pin names it, and inheriting one is not.** The tokenizer a
@@ -248,6 +257,20 @@ and gets the wrong `uax29` is a real defect, and two copies of that table drifti
 happens. A default the pin does not mention is not a definition it shares, it is a value it is
 taking on trust, and no amount of sharing fixes it. So: one construction per definition, referenced
 by name; every setting a number depends on, written down.
+
+**A shared definition carries a version, and a pin records the one it was recorded against.**
+Building the analyzer table in one place removes the second copy that could drift; it introduces a
+different hazard, which is that a *change* to that table silently changes what every pin's name
+means. `"analyzer": "uax29"` recorded against one table and replayed against another produces the
+same word and a different analysis, and no delta appears until the run drifts. So a definition that
+pins reference by name is versioned — the index cache here already stamps `version=2` and the dense
+cache `CacheVersion = 3`, for exactly this reason — and a pin stores the version it was recorded
+under, and says so when it no longer matches. An edit to a shared definition is then reviewed as
+what it is, a change of semantics, rather than landing as a refactor.
+
+This is the same failure as an unnamed default, one level up: there, a value the pin did not name
+changed under it; here, a value the pin *did* name points somewhere else. Naming a thing is not the
+same as pinning it, and the difference is only a version field.
 
 Where a rule can be made structural, make it structural rather than written: a configuration whose
 fields are all required cannot forget to name one. The rule exists to say why that is wanted; the
