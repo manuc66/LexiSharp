@@ -17,6 +17,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The per-query analysis is internal to this harness and the test project is the only caller
+         that should see it. Widening it to public would make it API this repository then has to keep. -->
+    <InternalsVisibleTo Include="LexiSharp.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The per-query analysis is internal, and the test project is the only caller that should see
          it. Internals are not widened to make a type public: nothing in this harness is API. -->
     <InternalsVisibleTo Include="LexiSharp.Tests" />
