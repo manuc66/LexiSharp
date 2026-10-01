@@ -97,6 +97,17 @@ workflow.
   reference `ExpansionQueryTransformer` returns the query plus a widened variant — the
   `ExpandingTextSearchEngine` widening, fused instead of joined. Reachable through
   `LexiSharpIndexOptions<>.QueryTransformer`.
+- `RetrievalEvaluator`, the runtime complement to `CorpusBenchmark`: it evaluates a <b>live</b>
+  `ITextSearchEngine` — the engine an application actually serves, with whatever it currently
+  holds — against a fixed panel of `BenchmarkQuery`s on demand, and reports the mean
+  nDCG/MAP/MRR/recall/precision/F1 at a depth plus a per-query breakdown (retrieved ids, scores,
+  rank of the first judged document). Calling it periodically and comparing successive results is
+  the relevance side of data-drift observability. `CorpusBenchmark` builds its own fresh index
+  from a document snapshot and compares configurations; this one measures the engine that is
+  already running. The metrics are `RetrievalMetrics`'; a query without judgments is loaded but
+  excluded from the averages; the caller's options pass through except `Limit`, pinned to the
+  metric depth; graded judgments keep the exponential nDCG convention by default, with
+  `NdcgGain.Linear` available.
 
 ## [0.8.0] — Unreleased
 
