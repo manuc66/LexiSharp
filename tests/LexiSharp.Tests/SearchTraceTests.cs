@@ -253,6 +253,25 @@ public class SearchTraceTests
         => Assert.Throws<ArgumentOutOfRangeException>(() => new SearchTrace(capacity: 0));
 
     [Fact]
+    public void StageCountsBucketsTheRecordedStepsByStage()
+    {
+        var trace = new SearchTrace();
+        trace.Record(new TraceStep(TraceStage.Score, "d0", 1, 1, "BM25"));
+        trace.Record(new TraceStep(TraceStage.Score, "d1", 1, 1, "BM25"));
+        trace.Record(new TraceStep(TraceStage.Merge, "d0", 1, 1, "rrf"));
+
+        var counts = trace.StageCounts();
+
+        Assert.Equal(2, counts[TraceStage.Score]);
+        Assert.Equal(1, counts[TraceStage.Merge]);
+        Assert.Equal(2, counts.Count);
+
+        // A stage that never ran stays absent: StageCounts counts recorded steps, it does not
+        // fabricate zeros for stages the pipeline did not reach.
+        Assert.False(counts.ContainsKey(TraceStage.Route));
+    }
+
+    [Fact]
     public void ATruncatedPipelineTraceStillReportsItself()
     {
         // Capacity smaller than the pipeline needs: the trace must flag that it is partial rather
