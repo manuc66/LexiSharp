@@ -46,6 +46,9 @@ internal sealed record PinnedReference
                 pin.TryGetProperty("note", out var note) ? note.GetString() : null)
             {
                 QueryTermFrequency = pin.TryGetProperty("queryTermFrequency", out var qtf) && qtf.GetBoolean(),
+                // False unless the file says true: the table's convention, and the value every pin
+                // predating this field was in fact measured under once the table ran that way.
+                QuerySyntax = pin.TryGetProperty("querySyntax", out var syntax) && syntax.GetBoolean(),
             }),
             IndexFingerprints = ReadArray(root, "indexFingerprints", pin => new IndexPin(
                 pin.GetProperty("corpus").GetString()!,
@@ -125,6 +128,23 @@ internal sealed record PinnedReference
         /// number moves.
         /// </remarks>
         public bool QueryTermFrequency { get; init; }
+
+        /// <summary>
+        /// Whether queries are read as query syntax (<c>"a phrase"</c>, <c>term*</c>, <c>term~</c>)
+        /// rather than as literal text. Optional and false by default, matching the table's
+        /// convention: every BEIR query here is natural language and a double quote in prose is
+        /// ordinary text, so query syntax on collapses 146 of ArguAna's 1,406 test queries.
+        /// </summary>
+        /// <remarks>
+        /// This field exists because a pin that leaves the syntax unnamed inherits the library
+        /// default (<c>ParseQuerySyntax = true</c>) while the table it is compared against passes
+        /// <c>false</c> — a configuration that drifts apart and stays green, because the gate
+        /// replays the pin by a path the table does not take. The old « default » ArguAna pin
+        /// (0.289) was measured with the syntax on; replayed the way the table runs (off) it reads
+        /// ~0.320. The pin is replayed with the table's convention; this field is what that pin
+        /// says so.
+        /// </remarks>
+        public bool QuerySyntax { get; init; }
 
         /// <summary>Whether the measured value stays inside the band.</summary>
         public bool Accepts(double measured) => Math.Abs(measured - ExpectedNdcg) <= Tolerance;
