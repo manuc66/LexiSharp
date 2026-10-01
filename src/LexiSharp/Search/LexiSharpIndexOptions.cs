@@ -1,5 +1,6 @@
 using LexiSharp.Core;
 using LexiSharp.Expansion;
+using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
 
@@ -75,6 +76,16 @@ public sealed class LexiSharpIndexOptions<TDocument>
     /// index stays a plain inverted structure. Default: <c>null</c> (no expansion).
     /// </summary>
     public ITermExpander? TermExpander { get; set; }
+
+    /// <summary>
+    /// Optional index-time context enrichment: every document's searchable text passes through
+    /// this enricher before it is tokenized (see <see cref="ContextEnrichingIndex"/>), so the
+    /// corpus that is scored can carry context the document does not spell out — a chunk saying
+    /// "the benefit rose 12%" is reworded with the company and year its fields or an LLM
+    /// provide. The caller's original document stays the one results highlight and display.
+    /// Default: <c>null</c> (no enrichment).
+    /// </summary>
+    public IChunkContextEnricher? ContextEnricher { get; set; }
 
     /// <summary>Optional synonym edges applied to free query terms.</summary>
     public SynonymMap? Synonyms { get; set; }

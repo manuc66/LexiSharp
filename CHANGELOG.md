@@ -79,6 +79,14 @@ workflow.
   is why it went unnoticed until it was looked for: the symptom is a wrong score occasionally rather
   than a failure. Covered by a test that compares a shared scorer's answers under 64 threads with its
   own answers serially, on the raw bits.
+- `IChunkContextEnricher` and `ContextEnrichingIndex`, the index-time context-enrichment seam: a
+  document's searchable text is rewritten before it is tokenized — the caller's LLM-injected
+  summary, or the model-free `FieldPrefixContextEnricher` that prefixes named `Fields` values — so
+  the corpus that is scored can carry context the text does not spell out. The caller's original
+  document stays the one `Documents`, `TryGetDocument` and every search result display, while
+  statistics describe the enriched corpus. LexiSharp never runs a model itself; enrichment is
+  synchronous (a model-backed implementation blocks, like `ICrossEncoderScorer`), and a changed id
+  or a thrown enricher fails the `Add`. Reachable through `LexiSharpIndexOptions<>.ContextEnricher`.
 
 ## [0.8.0] — Unreleased
 

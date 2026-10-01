@@ -31,6 +31,7 @@ are listed first.
 | Contract | Extends | What it is | Guide |
 | --- | --- | --- | --- |
 | `ICandidateIndex` | `ITextIndex` | Capability for an index that can enumerate only the documents containing at least one of the given query terms, instead of scanning the whole corpus. | [guide](reference.md) |
+| `IChunkContextEnricher` | — | Augments the searchable text of a SearchDocument before it is indexed — the « contextual retrieval » seam. A chunk that only says "the benefit rose 12%" is… | [guide](reference.md) |
 | `ICrossEncoderScorer` | — | Scores a (query, document) pair as a single relevance value — the job of a cross-encoder (concatenate query and document into one input) or, more generally, of… | [guide](reference.md) |
 | `IDetailedSearchEngine` | — | Optional capability of an ITextSearchEngine that can return, alongside the merged ranking, the per-source score breakdown that fed it (see Contributions). | [guide](reference.md) |
 | `IEmbeddingProvider` | — | Contract for producing text embeddings. LexiSharp never computes embeddings itself: implementing this interface is up to the consumer — a local ONNX model, an… | [guide](reference.md) |
@@ -215,7 +216,9 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
 | `AverageLengthDivisor` | enum | — | Which document count divides the corpus token count when AverageDocumentLength is computed. |
+| `ContextEnrichingIndex` | class | `ICandidateIndex`, `ITextIndex`, `IVocabularyIndex` | An ITextIndex whose documents first pass through an IChunkContextEnricher: the enriched text is what gets tokenized and scored, while the original document the… |
 | `ExpansionTextIndex` | class | `ICandidateIndex`, `ITextIndex`, `IVocabularyIndex` | An InMemoryTextIndex whose documents are additionally indexed under the weak terms returned by an ITermExpander — the « semantic lexical index ». The search… |
+| `FieldPrefixContextEnricher` | class | `IChunkContextEnricher` | A model-free IChunkContextEnricher that prefixes a document's text with the values of named Fields — the deterministic, offline cousin of a context-injection… |
 | `InMemoryTextIndex` | class | `ICandidateIndex`, `ITextIndex`, `IVocabularyIndex` | In-memory inverted index: for each term, the documents containing it and the positions within each document. Exposes the corpus statistics required by scorers. |
 | `InMemoryVectorSearchEngine` | class | `IQueryCostProbe`, `IQuerySyntaxSupport`, `ITextSearchEngine` | In-memory dense (vector) search engine: embeds documents with an IEmbeddingProvider and answers queries by cosine similarity over the whole corpus — a linear… |
 | `SparseIndexEntry` | record | — | A document together with its stored sparse vector — the atomic unit of Export and Import, and what a persistence backend serializes to reload a corpus without… |
