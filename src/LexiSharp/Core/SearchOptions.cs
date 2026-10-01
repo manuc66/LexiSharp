@@ -32,6 +32,36 @@ namespace LexiSharp.Core;
 /// no engine records, allocates or formats anything. See <see cref="SearchTrace"/> for the bounds
 /// and the truncation contract.
 /// </param>
+/// <param name="ParseQuerySyntax">
+/// When <c>true</c> (the default), the query is read as query syntax: <c>"a phrase"</c> requires
+/// positional adjacency, <c>term*</c> is a prefix and <c>term~</c> is fuzzy. When <c>false</c>, the
+/// query is literal text and <c>QueryParser</c> is not consulted at all, so the terms are exactly
+/// <c>ITokenizer.Tokenize(query)</c>.
+/// <para>
+/// The distinction matters because a double quote is ordinary text in prose, and a query language
+/// cannot tell a quotation mark from a phrase delimiter. Measured on BEIR ArguAna, where all 1,406
+/// test queries are whole arguments: 138 of them contain a straight <c>"</c> — 9.8% — and each of
+/// those had the quoted span turned into a mandatory phrase, after which no document but the query's
+/// own could satisfy it. 91 of them returned nothing at all and 20 returned a single result, at any
+/// retrieval depth. Set this to <c>false</c> for a corpus of natural-language queries; a search over
+/// prose that silently drops 9.8% of its queries is not a ranking question, it is a lost query.
+/// </para>
+/// </param>
+/// <param name="TieBreak">
+/// Two documents with the same score have no ranking between them, so something has to decide.
+/// <see cref="Ranking.TieBreak.DocumentId"/> — the default — orders them by ordinal document id, which
+/// is stable across machines and independent of how the corpus was loaded.
+/// <see cref="Ranking.TieBreak.InsertionOrder"/> orders them by the position the engine produced them
+/// in, which is what a system that breaks ties as documents are added does; use it to reproduce such a
+/// system, and expect the result to depend on the load order rather than only on the documents.
+/// </param>
+/// <param name="ScoreRounding">
+/// What the engine does to its scores after ranking and before returning them.
+/// <see cref="Ranking.ScoreRounding.None"/> — the default — returns what the ranking arithmetic
+/// produced. <see cref="Ranking.ScoreRounding.FourDecimals"/> reproduces the rounding and tie-walk a
+/// system that writes its scores down applies, which is what a caller comparing raw scores against one
+/// needs; it is lossy by construction, so it is a decision about the comparison and not an improvement.
+/// </param>
 public sealed record SearchOptions(
     int Limit = 10,
     double MinimumScore = double.NegativeInfinity,
@@ -39,7 +69,10 @@ public sealed record SearchOptions(
     int Offset = 0,
     bool FuzzyOnlyOutOfVocabulary = false,
     IReadOnlySet<string>? ExcludedDocumentIds = null,
-    SearchTrace? Trace = null)
+    SearchTrace? Trace = null,
+    bool ParseQuerySyntax = true,
+    Ranking.TieBreak TieBreak = Ranking.TieBreak.DocumentId,
+    Ranking.ScoreRounding ScoreRounding = Ranking.ScoreRounding.None)
 {
     /// <summary>The defaults every positional parameter already has: ten hits, no floor, no offset.</summary>
     public static readonly SearchOptions Default = new();

@@ -102,7 +102,7 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(queryTerms);
 
-        int documentCount = index.Count;
+        int documentCount = index.StatisticDocumentCount;
         int documentLength = index.DocumentLength(documentId);
         double averageLength = index.AverageDocumentLength;
 
@@ -146,7 +146,7 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(queryTerms);
 
-        int documentCount = index.Count;
+        int documentCount = index.StatisticDocumentCount;
         int documentLength = index.DocumentLength(documentId);
         double averageLength = index.AverageDocumentLength;
         double lengthRatio = averageLength > 0 ? documentLength / averageLength : 0;
@@ -217,7 +217,7 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
             _delta = delta;
             _avgLength = index.AverageDocumentLength;
 
-            int documentCount = index.Count;
+            int documentCount = index.StatisticDocumentCount;
             _terms = new string[queryTerms.Count];
             _idf = new double[queryTerms.Count];
 

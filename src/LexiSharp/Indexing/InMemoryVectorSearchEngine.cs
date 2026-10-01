@@ -255,6 +255,9 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
 
         // Bounded window rather than materializing and sorting every document that scores above
         // zero: a dense scan routinely matches most of the corpus, and the page is `Window` rows.
+        // The slot is not the insertion order: slots are vacated by Remove and reused, so a slot number
+// orders by where a vector happens to sit now. Tie-breaking on that would be neither stable nor
+// meaningful, so this engine keeps the default and passes no ordinal.
         var top = new TopRankedWindow(options.Window);
         int stride = _stride;
         var data = _vectorData;

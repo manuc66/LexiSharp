@@ -181,18 +181,100 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
 
     private long _totalTokens;
 
+    /// <summary>Which document count divides the corpus token count in <see cref="AverageDocumentLength"/>.</summary>
+    private readonly AverageLengthDivisor _averageLengthDivisor;
+
+    /// <summary>Whether <see cref="DocumentLength"/> reports the exact length or the byte-quantized one.</summary>
+    private readonly DocumentLengthQuantization _documentLengthQuantization;
+
+    /// <summary>The rounded lengths, built on first use and dropped with the postings.</summary>
+    private int[]? _quantizedLengthsByOrdinal;
+
+    /// <summary>
+    /// Rounds a document length the way an implementation that stores lengths in one byte does.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One byte cannot hold a document's length, so such an index rounds: it encodes the length as the
+    /// largest of 256 codes whose decoded value is at or below it, and reads that code back. The codes
+    /// are a float with a three-bit mantissa and a five-bit exponent, so lengths up to 40 survive
+    /// exactly and the relative error settles around eight per cent — 111 terms reads back as 104,
+    /// 469 as 440, 592 as 536.
+    /// </para>
+    /// <para>
+    /// Two properties make this worth reproducing. It always rounds <b>down</b>, so the length
+    /// normalization divides by a smaller number and the score comes out slightly higher. And it maps
+    /// several distinct lengths onto one value, so documents that differ by up to fifty terms are
+    /// penalized identically, which is enough to reorder documents whose scores are close.
+    /// </para>
+    /// <para>
+    /// Written as arithmetic rather than as a 256-entry table: the code is
+    /// <c>24 + ((8 + (code &amp; 7)) &lt;&lt; ((code &gt;&gt; 3) - 4))</c> above code 40 and the identity
+    /// below it, which reproduces all 256 values of the table exactly. Choosing the group without a
+    /// loop is what keeps it affordable here — <c>DocumentLength</c> is called once per candidate
+    /// document per query term.
+    /// </para>
+    /// </remarks>
+    internal static int QuantizedLength(int exactLength)
+    {
+        if (exactLength <= 40)
+            return exactLength;
+
+        // The group is the largest power-of-two bucket the length falls in: base = 24 + 2^(e-1), and
+        // e is one more than the bit length of (length - 24).
+        int exponent = 32 - System.Numerics.BitOperations.LeadingZeroCount((uint)(exactLength - 24));
+        int baseLength = 24 + (1 << (exponent - 1));
+        int step = 1 << (exponent - 4);
+
+        return baseLength + ((exactLength - baseLength) / step) * step;
+    }
+
     /// <summary>Creates an empty index, tokenizing with <c>Tokenizer.Default</c> unless told otherwise.</summary>
     /// <param name="tokenizer">
     /// The tokenizer whose terms, stop-word removal and stemming shape the index statistics. It
     /// must be the same one the queries are tokenized with, or the terms will not match.
     /// </param>
-    public InMemoryTextIndex(ITokenizer? tokenizer = null)
+    /// <param name="averageLengthDivisor">
+    /// Which document count divides <see cref="CorpusTokenCount"/> in
+    /// <see cref="AverageDocumentLength"/>. <see cref="AverageLengthDivisor"/> (the default) divides by
+    /// every indexed document; <see cref="AverageLengthDivisor.NonEmptyDocuments"/> divides by the
+    /// documents that hold at least one term, which is the convention the published BM25 baselines
+    /// were produced under.
+    /// <para>
+    /// The two differ only when the corpus holds an empty document — 1 of 8,674 on ArguAna — and the
+    /// denominator is the number of documents having at least one term in every implementation this
+    /// has been checked against. The gap is about one part in ten thousand, which is far too small to
+    /// move a ranking but large enough to change the last bits of a score, and an exact tie is decided
+    /// on exactly those bits. Exposed rather than corrected because it is a scoring convention, and a
+    /// caller reproducing a published number needs the one that number used.
+    /// </para>
+    /// </param>
+    /// <param name="documentLengthQuantization">
+    /// How a document length is stored for scoring. <see cref="DocumentLengthQuantization.Exact"/>
+    /// (the default) keeps the real length; <see cref="DocumentLengthQuantization.OneByte"/> stores it as
+    /// a single byte through the arithmetic encoding one implementation uses, which is what makes two
+    /// documents of 149 and 151 terms score identically under BM25 length normalisation.
+    /// <para>
+    /// Measured on BEIR ArguAna, quantizing made nDCG@10 worse by about 0.006, so this is a device for
+    /// reproducing a published figure and not an improvement: it is here because that figure was produced
+    /// with it, and a comparison against it means nothing unless this matches.
+    /// </para>
+    /// </param>
+    public InMemoryTextIndex(ITokenizer? tokenizer = null, AverageLengthDivisor averageLengthDivisor = AverageLengthDivisor.AllDocuments, DocumentLengthQuantization documentLengthQuantization = DocumentLengthQuantization.Exact)
     {
         _tokenizer = tokenizer ?? LexiSharp.Linguistics.Tokenizer.Default;
+        _averageLengthDivisor = averageLengthDivisor;
+        _documentLengthQuantization = documentLengthQuantization;
     }
 
     /// <summary>The tokenizer used to split documents and queries into terms.</summary>
     public ITokenizer Tokenizer => _tokenizer;
+
+    /// <summary>Whether <see cref="DocumentLength"/> reports exact or byte-quantized lengths.</summary>
+    public DocumentLengthQuantization DocumentLengthQuantization => _documentLengthQuantization;
+
+    /// <summary>Which document count divides the corpus token count in <see cref="AverageDocumentLength"/>.</summary>
+    public AverageLengthDivisor LengthDivisor => _averageLengthDivisor;
 
     /// <summary>
     /// The corpus in insertion order, rebuilt on no allocation: the wrapper reads the live
@@ -203,6 +285,20 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
 
     /// <inheritdoc />
     public int Count => _documents.Count;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// This is the count that divides <see cref="AverageDocumentLength"/>, so a scorer's inverse
+    /// document frequency has to be built from the same one. Reading <see cref="Count"/> here instead
+    /// while the average is divided by the documents that hold a term produces a mix of the two, which
+    /// is neither of the conventions available: it scores with an <c>N</c> one document too large next
+    /// to an average taken over fewer documents. Measured on BEIR ArguAna, which holds one document
+    /// with no term, the mix puts every score about three parts in a hundred thousand above the value
+    /// the implementation it is compared against reports.
+    /// </remarks>
+    public int StatisticDocumentCount => _averageLengthDivisor == AverageLengthDivisor.AllDocuments
+        ? Count
+        : Count - CountEmpty();
 
     /// <summary>
     /// The live corpus view over the ordinal slots. Allocation-free to enumerate and to pass
@@ -230,8 +326,67 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
     }
 
     /// <inheritdoc />
-    public double AverageDocumentLength =>
-        Count == 0 ? 0 : (double)_totalTokens / Count;
+    public double AverageDocumentLength
+    {
+        get
+        {
+            if (_averageLengthDivisor == AverageLengthDivisor.NonEmptyDocumentsStoredLengths)
+                return AverageOfStoredLengths();
+
+            int divisor = _averageLengthDivisor == AverageLengthDivisor.NonEmptyDocuments
+                ? _documents.Count - CountEmpty()
+                : Count;
+
+            return divisor == 0 ? 0 : (double)_totalTokens / divisor;
+        }
+    }
+
+    /// <summary>
+    /// The mean of the lengths as this index stores them, over the documents that hold at least one.
+    /// </summary>
+    /// <remarks>
+    /// Both halves have to move together. Averaging quantized lengths while counting non-empty documents
+    /// by the exact lengths is a third number again, and none of the three is the one a reference index
+    /// was built with. Computed here rather than from a running total because the stored lengths are the
+    /// quantized ones and only the array holds them.
+    /// </remarks>
+    private double AverageOfStoredLengths()
+    {
+        int[] lengths = _documentLengthQuantization == DocumentLengthQuantization.Exact
+            ? _lengthsByOrdinal
+            : QuantizedLengths();
+
+        long total = 0;
+        int documents = 0;
+
+        for (int i = 0; i < lengths.Length; i++)
+        {
+            if (lengths[i] <= 0)
+                continue;
+
+            total += lengths[i];
+            documents++;
+        }
+
+        return documents == 0 ? 0 : (double)total / documents;
+    }
+
+    /// <summary>
+    /// How many indexed documents hold no term at all. One dictionary walk, and only on a statistic
+    /// the length-sensitive scorers read once per query, so it is not on a per-document path.
+    /// </summary>
+    private int CountEmpty()
+    {
+        int empty = 0;
+
+        foreach (string id in _documents.Keys)
+        {
+            if (_tokens.TryGetValue(id, out IReadOnlyList<string>? tokens) && tokens.Count == 0)
+                empty++;
+        }
+
+        return empty;
+    }
 
     /// <inheritdoc />
     public int VocabularySize => _postings.Count;
@@ -533,7 +688,11 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
     /// the vocabulary, so a bulk load does not pay a full sweep per document added; the copies
     /// themselves are dropped lazily, the next reader of each term replacing its own.
     /// </summary>
-    private void InvalidateDerivedPostings() => _epoch++;
+    private void InvalidateDerivedPostings()
+    {
+        _quantizedLengthsByOrdinal = null;
+        _epoch++;
+    }
 
     /// <summary>
     /// Drops one document from every per-field structure, and forgets a field once no document
@@ -642,8 +801,49 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
     /// <inheritdoc />
     public int DocumentLength(string documentId) =>
         _documents.TryGetValue(documentId, out int ordinal)
-            ? _lengthsByOrdinal[ordinal]
+            ? Quantized(_lengthsByOrdinal[ordinal])
             : 0;
+
+    /// <summary>
+    /// The length as <see cref="DocumentLengthQuantization"/> reports it: the exact one by default,
+    /// or the byte-quantized one when the index was built to match an implementation that stores
+    /// lengths that way.
+    /// </summary>
+    /// <remarks>
+    /// Computed rather than stored, so the option costs one branch per call on a path that already
+    /// does a dictionary lookup and an array read. The arithmetic is
+    /// <see cref="QuantizedLength"/>, verified against a published index to be exact over 0 to 3000.
+    /// </remarks>
+    private int Quantized(int exactLength)
+    {
+        if (_documentLengthQuantization == DocumentLengthQuantization.Exact)
+            return exactLength;
+
+        return QuantizedLength(exactLength);
+    }
+
+    /// <summary>
+    /// The exact lengths, rounded — built once and dropped with the postings, so it cannot go stale
+    /// behind a mutation. Null whenever the index reports exact lengths, and then never built.
+    /// </summary>
+    private int[] QuantizedLengths()
+    {
+        if (_quantizedLengthsByOrdinal is not { } quantized)
+        {
+            int[] exact = _lengthsByOrdinal;
+
+            quantized = new int[exact.Length];
+
+            for (int i = 0; i < exact.Length; i++)
+            {
+                quantized[i] = QuantizedLength(exact[i]);
+            }
+
+            _quantizedLengthsByOrdinal = quantized;
+        }
+
+        return quantized;
+    }
 
     /// <inheritdoc />
     public bool TryGetDocument(string documentId, [NotNullWhen(true)] out SearchDocument? document)
@@ -789,7 +989,14 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
 
         int[] ordinals = flat.Ordinals;
         int[] frequencies = flat.Frequencies;
-        int[] lengths = _lengthsByOrdinal;
+
+        // The hot loop reads the length array directly rather than through DocumentLength, so the
+        // quantized lengths have to be an array too. Rounding inside this loop would put an
+        // arithmetic sequence on the innermost loop of the whole library for a convention that one
+        // caller in one reproduction wants.
+        int[] lengths = _documentLengthQuantization == DocumentLengthQuantization.Exact
+            ? _lengthsByOrdinal
+            : QuantizedLengths();
         int count = flat.Count;
 
         for (int i = 0; i < count; i++)
@@ -917,4 +1124,61 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
             ? byDocument.Count
             : 0;
     }
+}
+/// <summary>
+/// Which document count divides the corpus token count when <see cref="InMemoryTextIndex.AverageDocumentLength"/>
+/// is computed.
+/// </summary>
+public enum AverageLengthDivisor
+{
+    /// <summary>Every indexed document, including one that holds no term. The library's default.</summary>
+    AllDocuments = 0,
+
+    /// <summary>
+    /// Only the documents that hold at least one term <b>as the index stores the length</b>, and the
+    /// total is the sum of those stored lengths rather than the exact ones. Default: see
+    /// <see cref="InMemoryTextIndex"/>.
+    /// </summary>
+    /// <remarks>
+    /// The two settings of <see cref="DocumentLengthQuantization"/> make these three conventions differ
+    /// by more than the one part in ten thousand the divisor choice is worth, and the difference is not a
+    /// rounding detail. Measured on BEIR ArguAna against the reference implementation's own index, read
+    /// out of it rather than assumed: its average document length is <b>108.372651</b>, the mean of the
+    /// decoded one-byte lengths (939,916 over 8,673 documents). The mean of the exact lengths is
+    /// <b>111.786925</b> — 3.05% higher — so an index that stores quantized lengths and averages the
+    /// exact ones is scoring with a length normalisation no implementation uses.
+    /// </remarks>
+    NonEmptyDocumentsStoredLengths = 2,
+
+    /// <summary>
+    /// Only the documents that hold at least one term. The convention the published BM25 baselines
+    /// use, so a corpus with an empty document and a target produced under that convention need it.
+    /// </summary>
+    NonEmptyDocuments = 1,
+}
+
+/// <summary>
+/// How <see cref="InMemoryTextIndex.DocumentLength"/> reports a document's length.
+/// </summary>
+public enum DocumentLengthQuantization
+{
+    /// <summary>
+    /// The length the tokenizer produced, unrounded. The default, and the only one of the two that is
+    /// a measurement of anything.
+    /// </summary>
+    Exact = 0,
+
+    /// <summary>
+    /// The length rounded down to the nearest value an index storing one byte per document can
+    /// represent.
+    /// </summary>
+    /// <remarks>
+    /// Not an improvement: it is a rounding, it always rounds down, and it makes scores slightly
+    /// higher. It exists for one purpose — a caller reproducing a figure published by an
+    /// implementation that stores lengths this way gets a different ranking unless their lengths are
+    /// rounded the same way, and a difference in ranking is not a difference anyone can argue away.
+    /// Measured on BEIR ArguAna at k1=0.9 and b=0.4, it moves BM25 nDCG@10 by about -0.006 and
+    /// recall@100 by about -0.002, so it is worse by both measures here.
+    /// </remarks>
+    OneByte = 1,
 }

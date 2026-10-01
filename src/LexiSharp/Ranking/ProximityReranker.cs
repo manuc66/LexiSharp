@@ -217,12 +217,12 @@ public sealed class ProximityReranker : IReranker
         // Boost needs the proximity term on its own scale, so it sums the query terms' idf once.
         double idfSum = 0;
 
-        if (_mode == ProximityMode.Boost && _index.Count > 0)
+        if (_mode == ProximityMode.Boost && _index.StatisticDocumentCount > 0)
         {
             foreach (string term in terms)
             {
                 int df = _index.DocumentFrequency(term);
-                idfSum += Math.Log(1.0 + (_index.Count - df + 0.5) / (df + 0.5));
+                idfSum += Math.Log(1.0 + (_index.StatisticDocumentCount - df + 0.5) / (df + 0.5));
             }
         }
 
