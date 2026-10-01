@@ -281,4 +281,93 @@ public class Bm25ReproductionTests
             Assert.Equal(defaults[i].Score, spelledOut[i].Score);
         }
     }
+
+    [Fact]
+    public void Single_Precision_Score_Caches_The_Reciprocal_Table_By_Average_Length()
+    {
+        var tokenizer = new Tokenizer(new TokenizerOptions { Stemmer = new PorterStemmer() });
+        var index = new InMemoryTextIndex(tokenizer);
+        index.Index([new SearchDocument("a", "alpha beta")]);
+
+        var scorer = new Bm25Scorer(0.9, 0.4, arithmetic: Bm25Arithmetic.SinglePrecision);
+
+        // The direct Score path builds the reciprocal table on first use and serves later scores from
+        // the cache. Two identical calls must agree, and a fresh scorer must agree too. Then the
+        // corpus grows: the average length moves, and a table keyed on the old average would serve a
+        // score that is not this corpus's — so the rebuilt result must match a scorer that never
+        // cached anything.
+        double first = scorer.Score("a", ["alpha"], index);
+        Assert.Equal(first, scorer.Score("a", ["alpha"], index));
+        Assert.Equal(
+            first,
+            new Bm25Scorer(0.9, 0.4, arithmetic: Bm25Arithmetic.SinglePrecision).Score("a", ["alpha"], index));
+
+        index.Add(new SearchDocument("big", "alpha " + new string('x', 100)));
+
+        double moved = scorer.Score("a", ["alpha"], index);
+        double fresh = new Bm25Scorer(0.9, 0.4, arithmetic: Bm25Arithmetic.SinglePrecision)
+            .Score("a", ["alpha"], index);
+
+        Assert.Equal(moved, fresh);
+        Assert.NotEqual(first, moved);
+        Assert.Equal((float)moved, moved);
+    }
+
+    [Fact]
+    public async Task Single_Precision_Score_Publishes_The_Table_Once_Under_Concurrency()
+    {
+        var index = Index(out _);
+        var scorer = new Bm25Scorer(0.9, 0.4, arithmetic: Bm25Arithmetic.SinglePrecision);
+
+        // The reciprocal table is built on first use and cached on the scorer, and the direct Score
+        // path is public — a consumer sharing one scorer across threads calls this, not the engine's
+        // plan. All 64 threads race the first build; each must be served the same completed table. A
+        // table read half-finished would be wrong by an arbitrary amount, not by a rounding, so every
+        // thread must come back with the same value a fresh build produces.
+        var observed = new System.Collections.Concurrent.ConcurrentBag<double>();
+
+        await Task.WhenAll(Enumerable.Range(0, 64).Select(_ => Task.Run(() =>
+            observed.Add(scorer.Score("a", ["alpha"], index)))));
+
+        double expected = new Bm25Scorer(0.9, 0.4, arithmetic: Bm25Arithmetic.SinglePrecision)
+            .Score("a", ["alpha"], index);
+
+        Assert.All(observed, score => Assert.Equal(expected, score));
+    }
+
+    [Fact]
+    public void Single_Precision_Folds_A_Repeated_Term_Into_Its_Weight_To_The_Ulp()
+    {
+        var index = Index(out var tokenizer);
+        var scorer = new Bm25Scorer(
+            0.9, 0.4, QueryTermWeighting.QueryFrequency, arithmetic: Bm25Arithmetic.SinglePrecision);
+
+        // The engine hands the plan the raw terms, and in single precision the plan folds a repeated
+        // term into one clause with the count in the weight *before* the contribution is rounded.
+        // Calling Score directly with the same two terms takes the per-occurrence route, where each
+        // already-rounded contribution is summed. The documented difference between the two is a unit
+        // in the last place — the fold exists to reproduce the reference's rounding, not to change the
+        // answer.
+        double folded = new RankedTextSearchEngine(index, scorer, tokenizer)
+            .Search("alpha alpha", new SearchOptions(10))[0].Score;
+        double perOccurrence = scorer.Score("a", ["alpha", "alpha"], index);
+
+        Assert.Equal(folded, perOccurrence, 6);
+    }
+
+    [Fact]
+    public void Double_Precision_Does_Not_Fold_And_The_Two_Routes_Agree_Bit_For_Bit()
+    {
+        var index = Index(out var tokenizer);
+        var scorer = new Bm25Scorer(0.9, 0.4, QueryTermWeighting.QueryFrequency);
+
+        // In double precision the fold is not taken — the reciprocal table is null, so the plan keeps
+        // one clause per occurrence and Score sums the same two clauses. The two must be the same sum
+        // exactly, because the terms are identical and the doubles are exact.
+        double folded = new RankedTextSearchEngine(index, scorer, tokenizer)
+            .Search("alpha alpha", new SearchOptions(10))[0].Score;
+        double perOccurrence = scorer.Score("a", ["alpha", "alpha"], index);
+
+        Assert.Equal(folded, perOccurrence);
+    }
 }

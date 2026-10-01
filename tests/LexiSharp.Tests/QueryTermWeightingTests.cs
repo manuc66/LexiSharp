@@ -85,6 +85,27 @@ public class QueryTermWeightingTests
     }
 
     /// <summary>
+    /// The engine keeps a deduplicated list, then hands the scorer a <c>DistinctTermList</c> marker
+    /// so the scorer does not re-deduplicate per document. The marker is a list like any other, and
+    /// both of its enumerators must work: the generic one is what every consumer uses, the explicit
+    /// non-generic one is what a caller boxing the list to <c>IEnumerable</c> gets.
+    /// </summary>
+    [Fact]
+    public void TheDistinctMarker_EnumeratesThroughBothInterfaces()
+    {
+        var marker = DistinctTermList.Wrap(["quick", "brown"]);
+
+        Assert.Equal(new[] { "quick", "brown" }, marker.ToList());
+
+        var viaNonGeneric = new List<string>();
+        var enumerator = ((System.Collections.IEnumerable)marker).GetEnumerator();
+        while (enumerator.MoveNext())
+            viaNonGeneric.Add((string)enumerator.Current!);
+
+        Assert.Equal(new[] { "quick", "brown" }, viaNonGeneric);
+    }
+
+    /// <summary>
     /// A query that repeats a term heavily must still return the same documents, in the same order,
     /// as the deduplicated query, under the default. This is the user-visible half of the
     /// invariant: the engine's own reach calculation counts each term once, so repetition must not
