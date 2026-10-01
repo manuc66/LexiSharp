@@ -133,6 +133,15 @@ public sealed class SynchronizedTextSearchEngine
     /// straddling 1.0, so the uncontended read lock costs nothing a caller can resolve at this
     /// scale. Do not extrapolate that to a contended lock or to another engine: it is one host, one
     /// corpus, uncontended, and the two runs differ more between themselves than the lock does.
+    /// <para>
+    /// Under write contention the cost stops being nothing — the honest half of the caveat,
+    /// measured in the same session: one writer toggling <c>Add</c>/<c>Remove</c> as fast as it can
+    /// while the same eight readers searched, the readers' combined throughput fell to
+    /// <b>0.15x</b> the uncontended rate over a 3-second window, with no reader starved to zero
+    /// (the least-loaded one still completed 455 searches). Same host, one corpus, one window each
+    /// — a ratio, not a contract, and a reason to keep write-heavy workloads on the unwrapped
+    /// engine rather than expect a number from this one.
+    /// </para>
     /// </remarks>
     public IReadOnlyList<SearchResult> Search(ReadOnlySpan<char> query, SearchOptions? options = null)
     {
