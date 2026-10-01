@@ -112,6 +112,90 @@ public class SemanticLexicalIndexTests
     }
 
     [Fact]
+    public void ExpansionTextIndex_WithANoOpExpander_IsInterchangeableWithThePlainIndex()
+    {
+        // An expander that injects nothing turns the facade into a pure forwarder, and that is the
+        // contract to pin: every member of every interface needs to agree with the plain index on
+        // the same documents, because the semantic varnish must change what is *matched*, not how
+        // the index behaves. The empty document also covers the both expansion guards (no terms to
+        // expand, and nothing to inject).
+        var documents = new[]
+        {
+            new SearchDocument("empty", ""),
+            new SearchDocument("a", "alpha beta gamma"),
+            new SearchDocument("b", "alpha gamma gamma delta"),
+        };
+
+        var plain = new InMemoryTextIndex();
+        plain.Index(documents);
+        var semantic = new ExpansionTextIndex(new NoOpExpander());
+        semantic.Index(documents);
+
+        Assert.Equal(plain.Count, semantic.Count);
+        Assert.Equal(plain.Documents.Select(d => d.Id), semantic.Documents.Select(d => d.Id));
+        Assert.Equal(plain.AverageDocumentLength, semantic.AverageDocumentLength);
+        Assert.Equal(plain.VocabularySize, semantic.VocabularySize);
+        Assert.Equal(plain.CorpusTokenCount, semantic.CorpusTokenCount);
+        Assert.Equal(plain.Vocabulary.OrderBy(term => term), semantic.Vocabulary.OrderBy(term => term));
+        Assert.Equal(
+            plain.Tokenizer.Tokenize("alpha beta gamma"),
+            semantic.Tokenizer.Tokenize("alpha beta gamma"));
+        Assert.Equal(plain.Fields, semantic.Fields);
+        Assert.Equal(plain.HasFieldStatistics, semantic.HasFieldStatistics);
+
+        foreach (string id in new[] { "empty", "a", "b" })
+        {
+            Assert.Equal(plain.Contains(id), semantic.Contains(id));
+            Assert.Equal(plain.DocumentLength(id), semantic.DocumentLength(id));
+            Assert.Equal(plain.GetTerms(id), semantic.GetTerms(id));
+            Assert.Equal(
+                plain.TryGetDocument(id, out var plainDoc),
+                semantic.TryGetDocument(id, out var semanticDoc));
+            Assert.Equal(plainDoc?.Text, semanticDoc?.Text);
+        }
+
+        foreach (string term in new[] { "alpha", "gamma", "delta", "absent" })
+        {
+            Assert.Equal(plain.DocumentFrequency(term), semantic.DocumentFrequency(term));
+            Assert.Equal(plain.CorpusFrequency(term), semantic.CorpusFrequency(term));
+            Assert.Equal(
+                plain.FieldDocumentFrequency(TextFields.Default, term),
+                semantic.FieldDocumentFrequency(TextFields.Default, term));
+
+            foreach (string id in new[] { "a", "b" })
+            {
+                Assert.Equal(plain.TermFrequency(id, term), semantic.TermFrequency(id, term));
+                Assert.Equal(plain.GetTermPositions(id, term), semantic.GetTermPositions(id, term));
+                Assert.Equal(
+                    plain.FieldTermFrequency(id, TextFields.Default, term),
+                    semantic.FieldTermFrequency(id, TextFields.Default, term));
+                Assert.Equal(
+                    plain.FieldLength(id, TextFields.Default),
+                    semantic.FieldLength(id, TextFields.Default));
+            }
+        }
+
+        Assert.Equal(
+            plain.AverageFieldLength(TextFields.Default),
+            semantic.AverageFieldLength(TextFields.Default));
+
+        // Mutation forwards too: removing a document on either side leaves the other in the same
+        // state, because the two indexes were built from the same corpus.
+        Assert.True(semantic.Remove("b"));
+        Assert.False(semantic.Contains("b"));
+        Assert.True(plain.Remove("b"));
+        Assert.False(plain.Contains("b"));
+        Assert.Equal(plain.Count, semantic.Count);
+    }
+
+    /// <summary>An expander that never injects anything, so the facade has nothing to add.</summary>
+    private sealed class NoOpExpander : ITermExpander
+    {
+        public IReadOnlyCollection<ExpandedTerm> Expand(IReadOnlyList<string> terms) =>
+            Array.Empty<ExpandedTerm>();
+    }
+
+    [Fact]
     public void Engine_WithSemanticExpansion_MatchesConceptuallyRelatedDocuments()
     {
         var baseIndex = new InMemoryTextIndex();

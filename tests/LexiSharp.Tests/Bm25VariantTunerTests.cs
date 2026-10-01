@@ -250,6 +250,10 @@ public class Bm25VariantTunerTests
         // against and the tuner cannot report whether δ earned its place.
         Assert.Contains(plus.Grid, g => g.Delta == 0);
         Assert.Contains(l.Grid, g => g.Delta == 0);
+
+        Assert.Equal(TuningMetric.F1, l.Metric);
+        Assert.Equal(10, l.TopK);
+        Assert.Contains(l.Grid, g => g.K1 == 1.5 && g.B == 0.75 && g.Delta == 1.0);
     }
 
     [Fact]

@@ -298,6 +298,10 @@ public class Bm25FScorerTests
             () => new Bm25FScorer(fieldWeights: new Dictionary<string, double> { [" "] = 1 }));
         Assert.Throws<ArgumentOutOfRangeException>(
             () => new Bm25FScorer(new Bm25FParameters(double.NaN, 0.5)));
+
+        foreach (double bad in new[] { -1.0, double.NaN, double.PositiveInfinity })
+            Assert.Throws<ArgumentOutOfRangeException>(
+                () => Bm25FParameters.Balanced.WithWeight("title", bad));
     }
 
     [Fact]
