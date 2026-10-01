@@ -181,6 +181,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | --- | --- | --- | --- |
 | `ExpandedTerm` | record struct | — | A single additional term injected into the index for a document, alongside its source text tokenization. The term is indexed as a regular inverted-list member… |
 | `ExpandingTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that widens the query with related terms before delegating to the inner engine — the query-side counterpart of ExpansionTextIndex, which… |
+| `ExpansionRanking` | enum | — | Which statistic orders an input term's candidate neighbours before the expansion budget applies. |
 | `PmiTermExpander` | class | `ITermExpander` | A corpus-derived ITermExpander: it learns which terms habitually appear in the same context window and expands a document with the top positively associated… |
 | `PmiTermExpanderOptions` | class | — | Configuration of a PmiTermExpander: how the corpus is analyzed and how many expansion terms each document gets. |
 
