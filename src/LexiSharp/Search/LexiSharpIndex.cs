@@ -80,9 +80,15 @@ public sealed class LexiSharpIndex<TDocument>
         _spanTokenizer = tokenizer as ISpanTokenizer;
         _tokenizer = tokenizer;
 
-        _index = options.TermExpander is null
+        // Index-time document transformation composes in layers: expansion (index-time
+        // widening) is applied first, inside the enriching index, so the enricher's own text
+        // is what the expander sees — the two never fight over the same document.
+        ITextIndex baseIndex = options.TermExpander is null
             ? new InMemoryTextIndex(tokenizer)
             : new ExpansionTextIndex(options.TermExpander, tokenizer);
+        _index = options.ContextEnricher is null
+            ? baseIndex
+            : new ContextEnrichingIndex(baseIndex, options.ContextEnricher);
         _baseEngine = new RankedTextSearchEngine(
             _index, options.Scorer, tokenizer, options.Synonyms, options.Telemetry);
         _engine = options.Reranker is null
