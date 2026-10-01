@@ -182,7 +182,7 @@ public class BenchmarkingTests
 
         public void Add(SearchDocument document) => throw new NotSupportedException();
 
-        public void Remove(string documentId) => throw new NotSupportedException();
+        public bool Remove(string documentId) => throw new NotSupportedException();
 
         public void Clear() => throw new NotSupportedException();
     }

@@ -119,10 +119,11 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     }
 
     /// <inheritdoc />
-    public void Remove(string documentId)
+    public bool Remove(string documentId)
     {
-        _index.Remove(documentId);
+        bool removed = _index.Remove(documentId);
         _telemetry.IndexChanged(EngineName, _index);
+        return removed;
     }
 
     /// <inheritdoc />

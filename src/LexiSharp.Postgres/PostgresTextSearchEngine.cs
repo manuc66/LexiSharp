@@ -144,7 +144,7 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable, I
     }
 
     /// <inheritdoc />
-    public void Remove(string documentId)
+    public bool Remove(string documentId)
     {
         ArgumentNullException.ThrowIfNull(documentId);
 
@@ -153,7 +153,7 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable, I
         using var command = connection.CreateCommand();
         command.CommandText = $"DELETE FROM {_options.QualifiedTableName} WHERE id = @id"; // NOSONAR:S2077 (identifiers only; id is parameterized)
         command.Parameters.AddWithValue("id", documentId);
-        command.ExecuteNonQuery();
+        return command.ExecuteNonQuery() > 0;
     }
 
     /// <inheritdoc />

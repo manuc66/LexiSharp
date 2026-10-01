@@ -360,10 +360,8 @@ internal sealed class DenseTextSearchEngine : ITextSearchEngine
         throw new NotSupportedException("DenseTextSearchEngine is read-only (precomputed embeddings).");
     }
 
-    public void Remove(string documentId)
-    {
+    public bool Remove(string documentId) =>
         throw new NotSupportedException("DenseTextSearchEngine is read-only (precomputed embeddings).");
-    }
 
     public void Clear()
     {

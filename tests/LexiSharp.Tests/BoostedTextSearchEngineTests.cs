@@ -57,9 +57,10 @@ public class BoostedTextSearchEngineTests
             Results.Add(new SearchResult(document.Id, 1.0, document));
         }
 
-        public void Remove(string documentId)
+        public bool Remove(string documentId)
         {
             RemoveCalls++;
+            return true;
         }
 
         public void Clear()
