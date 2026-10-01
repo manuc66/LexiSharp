@@ -128,6 +128,64 @@ searchable. On the reference corpus this is worth a lot to plain BM25: nDCG@5 go
 0.8751**, because before this a markdown document's title was not indexed at all. The committed
 golden master was re-recorded in the same change, and `verify` fails loudly without it.
 
+## Context enrichment
+
+A chunk that only says *"the benefit rose 12%"* does not say of which company or which year — and
+a search engine only matches the words it is given. `IChunkContextEnricher` is the seam for
+rewriting a document's **searchable text before it is indexed** so the corpus that is scored can
+carry context the document does not spell out, while the caller's original document stays what
+results, highlighting and facets display:
+
+```csharp
+using LexiSharp.Core;
+using LexiSharp.Indexing;
+
+IChunkContextEnricher enricher = new FieldPrefixContextEnricher(["title", "year"]);
+
+var index = new ContextEnrichingIndex(new InMemoryTextIndex(), enricher);
+
+index.Add(new SearchDocument(
+    Id: "1",
+    Text: "the benefit rose 12%",
+    Fields: new Dictionary<string, string> { ["title"] = "acme annual report", ["year"] = "2024" }));
+```
+
+`ContextEnrichingIndex` keeps **two texts per document**. What is *scored* is the enriched text:
+the postings, term/document frequencies, document lengths and vocabulary below it all describe
+`"acme annual report 2024 the benefit rose 12%"`. What is *displayed* is the caller's original:
+`Documents`, `TryGetDocument` and every `SearchResult.Document` carry `"the benefit rose 12%"`
+untouched. A search for `acme` reaches the chunk while the result still shows the source text.
+
+The enricher is a consumer-provided seam, like `IEmbeddingProvider` and `ICrossEncoderScorer`:
+`FieldPrefixContextEnricher` (above) is the deterministic, model-free case, and a context-injection
+LLM is the other one. LexiSharp never runs such a model itself, and `Enrich` is synchronous — a
+model-backed implementation blocks on its async work, the same trade-off the PostgreSQL engines
+make. Enrichment runs once per `Add`/`Index`, never at search time; a failing enricher fails the
+index operation, because indexing the raw text when enrichment was asked for would change what is
+scored silently. An enricher that changes the document id is rejected.
+
+On the typed facade, set it on the options:
+
+```csharp
+var index = new LexiSharpIndex<Product>(o =>
+{
+    o.Id = p => p.Sku;
+    o.Text = p => p.Description;
+    o.ContextEnricher = new FieldPrefixContextEnricher(["tags"]);
+});
+```
+
+**What this is not.** It does not chunk: a `SearchDocument` is the unit of indexed text, and the
+enricher rewrites each unit rather than splitting it. It does not change what is displayed: the
+raw document is what highlighting runs over, so a term that exists only in the enriched text is
+searchable but not highlighted. And it does not reach the embedding-backed engines
+(`PostgresVectorSearchEngine`, the in-memory dense engine), which read `SearchDocument` directly
+and do not share the `ITextIndex` this decorator wraps — enriching those corpora is the caller's
+job at the embedding call site.
+
+`ContextEnrichingIndex` composes with `ExpansionTextIndex`: wrapping one in the other applies
+enrichment first and expansion second, so the expander sees the text the enricher produced.
+
 ## Tokenizer customization
 
 ```csharp
