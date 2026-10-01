@@ -236,9 +236,9 @@ corpus never entered the candidate path.
 
 ### Term-at-a-time scoring
 
-Two numbers on this page need the section at the end of this one to be read honestly: the 20× that
-first justified the work was measured in a regime real queries never enter, and it is why the
-benchmark corpus is a Zipf distribution rather than the 38-word one at the top of the page.
+The 20× in the last subsection of this section — a 2-term query over the 38-word corpus — sits in a
+regime real queries never enter, which is why the corpus here is a Zipf distribution rather than the
+38-word one at the top of the page. The ratio itself is real.
 
 **Host.** Different from the one named at the top of this page, and every number in this section
 comes from it — nothing here is comparable with a table above:
@@ -530,16 +530,16 @@ and rebuilt when the corpus changes, so a read-only index pays the build once wh
 mutated between every query pays an O(df·log df) build per query. The dictionary stays
 authoritative; the flat copy is derived and can be dropped at any time.
 
-#### The 20× was real, and measured in a regime real queries never enter
+#### The 20× is real, and it sits in a regime real queries never enter
 
-The failure is not obvious, so it is worth stating. A CSR-posting-list prototype into a score
-accumulator indexed by integer document ordinal measures **0.097 ms against 2.00 ms** for a 2-term
-query over 10,000 documents. That 20× is real *and* it is measured in the one regime where the engine
-deliberately does not use candidate generation: the 38-word benchmark corpus puts every term in ~74 %
-of documents, so `sum(df)/Count < 0.5` fails and the engine full-scans. On a Zipf corpus — where the
-candidate path is the one real queries take — the engine was already at 0.001–0.013 ms, and there were
-microseconds left to win. A three-term tail query there has a `df` sum of 2; a three-term head query has
-9,628. Parity was *not* the obstacle: the prototype's scores came back bit-identical to the engine's.
+A CSR-posting-list prototype into a score accumulator indexed by integer document ordinal measures
+**0.097 ms against 2.00 ms** for a 2-term query over 10,000 documents. That ratio holds in the one
+regime where the engine deliberately does not use candidate generation: the 38-word benchmark corpus
+puts every term in ~74 % of documents, so `sum(df)/Count < 0.5` fails and the engine full-scans. On a
+Zipf corpus — where the candidate path is the one real queries take — the engine sits at
+0.001–0.013 ms, and there are microseconds left to win. A three-term tail query there has a `df` sum
+of 2; a three-term head query has 9,628. Parity is not the obstacle: the prototype's scores come back
+bit-identical to the engine's.
 
 So the 20× is a ratio against a baseline that mostly does not occur — the « tuned vs tuned » mistake in
 a different costume, one side measured in a regime the other would never be in. What it establishes is
