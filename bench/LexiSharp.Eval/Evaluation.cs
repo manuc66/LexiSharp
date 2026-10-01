@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using LexiSharp.Core;
+using LexiSharp.Expansion;
 using LexiSharp.Hybrid;
 using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
@@ -98,7 +99,8 @@ internal static class Evaluation
         bool singlePrecision = false,
         DenseVectors? dense = null,
         bool tuned = true, IReranker? reranker = null, int rerankCandidates = 100, int jobs = 1,
-        bool parseQuerySyntax = false, bool captureOutcomes = false)
+        bool parseQuerySyntax = false, bool captureOutcomes = false,
+        IReadOnlyList<(string Name, ITermExpander Expander)>? queryExpansions = null)
     {
         // Excluding a query's own document id is a no-op unless the corpus numbers its queries as
         // documents, so the check needs no corpus-specific configuration. One membership test per
@@ -201,6 +203,18 @@ internal static class Evaluation
             .ToArray();
 
         var buildersList = builders.ToList();
+
+        // Query-side expansion, one row per learned expander. The index is untouched and the corpus
+        // statistics BM25 reads are therefore the ones the lexical rows above read, which is the
+        // whole point: ExpansionTextIndex is the document-side variant and changes avgdl, so a
+        // comparison between it and these rows would be a comparison of two indexes.
+        foreach (var (name, expander) in queryExpansions ?? [])
+        {
+            buildersList.Add((name, () => new ExpandingTextSearchEngine(
+                Ranked(index, new Bm25Scorer(1.5, 0.75, queryTerms), tokenizer),
+                expander,
+                tokenizer)));
+        }
 
         if (dense is not null)
         {

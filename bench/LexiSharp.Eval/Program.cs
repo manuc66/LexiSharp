@@ -1,5 +1,6 @@
 using System.Globalization;
 using LexiSharp.Core;
+using LexiSharp.Expansion;
 using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
@@ -42,6 +43,12 @@ public static class Program
         string? analyzePath = null;
         string analyzeBaseline = "BM25 (k1=1.5, b=0.75)";
         string? analyzeCandidate = null;
+
+        // Query-side expansion sweep. Empty means off, so a default run learns nothing and pays
+        // nothing: the expander's learning pass is the one genuinely expensive step in a run, at
+        // seconds and hundreds of megabytes per learned model on SciFact.
+        var expandDensities = new List<double>();
+        var expandRankings = new List<ExpansionRanking>();
 
         // Off by default, because every query in a BEIR corpus is natural language and the published
         // figures apply no query language to it: the query string goes to the analyzer whole. Left on,
@@ -147,6 +154,12 @@ public static class Program
                 case "--analyze-candidate" when i + 1 < args.Length:
                     analyzeCandidate = args[++i];
                     break;
+                case "--expand-density" when i + 1 < args.Length:
+                    expandDensities.AddRange(ParseDensities(args[++i]));
+                    break;
+                case "--expand-ranking" when i + 1 < args.Length:
+                    expandRankings.AddRange(ParseRanking(args[++i]));
+                    break;
                 case "--help":
                 case "-h":
                     PrintHelp();
@@ -241,7 +254,8 @@ public static class Program
                 excludeQueryDocument, fingerprintOnly, referenceBm25, queryFrequency, scoreRounding,
                 saturationConstant, singlePrecision, dense, denseSeq,
                 tuned, reranker, rerankCandidates, runPath, jobs, indexCache, parseQuerySyntax,
-                querySyntaxReference, analyzePath, analyzeBaseline, analyzeCandidate);
+                querySyntaxReference, analyzePath, analyzeBaseline, analyzeCandidate,
+                expandDensities, expandRankings);
             Console.WriteLine();
         }
 
@@ -353,7 +367,8 @@ public static class Program
         bool singlePrecision, bool dense, int denseSeq, bool tuned,
         IReranker? reranker, int rerankCandidates, string? runPath, int jobs, string? indexCache,
         bool parseQuerySyntax, bool referenceIndexStatistics,
-        string? analyzePath, string analyzeBaseline, string? analyzeCandidate)
+        string? analyzePath, string analyzeBaseline, string? analyzeCandidate,
+        IReadOnlyList<double> expandDensities, IReadOnlyList<ExpansionRanking> expandRankings)
     {
         Console.WriteLine($"== {dataset.Name} ==");
 
@@ -413,11 +428,36 @@ public static class Program
             Console.WriteLine("Dense configs disabled — re-run with --dense to add multilingual-e5-small (CPU, first run downloads the model and encodes the corpus). Re-run with --rerank to add a cross-encoder second stage.");
         }
 
+        var queryExpansions = new List<(string, ITermExpander)>();
+
+        // Learned from the corpus text as the loader read it — title included in the indexed field
+        // but not in the window counts, because PmiTermExpander reads SearchDocument.Text. Stated
+        // because it is a real asymmetry between what the graph learns and what it is matched
+        // against, not a rounding detail.
+        var learningCorpus = Evaluation.BuildDocuments(corpus);
+
+        foreach (double density in expandDensities.Distinct().OrderByDescending(value => value))
+        foreach (var ranking in expandRankings.Distinct())
+        {
+            var options = new PmiTermExpanderOptions { MaxWindowDensity = density, Ranking = ranking };
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var learned = PmiTermExpander.LearnFrom(learningCorpus, tokenizer, options);
+            sw.Stop();
+
+            string name =
+                $"BM25 + query expansion (density<={density.ToString("0.####", CultureInfo.InvariantCulture)}, {ranking})";
+
+            Console.WriteLine($"Learned {name} in {sw.Elapsed.TotalSeconds:0.0}s.");
+
+            queryExpansions.Add((name, learned));
+        }
+
         var (results, tunedDescription) = Evaluation.Run(
             corpus, index, topK, limit, tokenizer, excludeQueryDocument, gain, referenceBm25,
             queryFrequency, scoreRounding, saturationConstant, singlePrecision, denseVectors, tuned, reranker,
             rerankCandidates,
-            jobs, parseQuerySyntax, captureOutcomes: analyzePath is not null);
+            jobs, parseQuerySyntax, captureOutcomes: analyzePath is not null, queryExpansions: queryExpansions);
 
         if (analyzePath is not null)
             WriteQueryAnalysis(analyzePath, analyzeBaseline, analyzeCandidate, corpus, index, tokenizer, results, topK, limit,
@@ -567,6 +607,39 @@ public static class Program
         else
             Console.WriteLine("  Pass --analyze-candidate with a configuration name for the mismatch-band summary.");
     }
+
+    /// <summary>
+    /// Parses a comma-separated list of window-density cuts.
+    /// </summary>
+    /// <remarks>
+    /// The value is a share of the corpus's sliding windows, so 0 means no term is ever excluded as
+    /// too common and 1 excludes nothing below the whole corpus. Accepting the bare list rather than
+    /// a repeated flag keeps a sweep to one argument, and a bad value is refused here rather than
+    /// silently becoming a run whose neighbour sets are not what the command line said.
+    /// </remarks>
+    private static IEnumerable<double> ParseDensities(string value)
+    {
+        foreach (string part in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!double.TryParse(part, NumberStyles.Float, CultureInfo.InvariantCulture, out double density)
+                || density is < 0 or > 1)
+            {
+                throw new ArgumentException(
+                    $"--expand-density expects a comma-separated list of shares in [0, 1], got '{part}'.");
+            }
+
+            yield return density;
+        }
+    }
+
+    private static IEnumerable<ExpansionRanking> ParseRanking(string value) => value switch
+    {
+        "count" => [ExpansionRanking.CoOccurrenceCount],
+        "pmi" => [ExpansionRanking.PositiveMutualInformation],
+        "both" => Enum.GetValues<ExpansionRanking>(),
+        _ => throw new ArgumentException(
+            $"--expand-ranking expects 'count', 'pmi' or 'both', got '{value}'."),
+    };
 
     private static void PrintTable(IReadOnlyList<ConfigResult> results, int topK)
     {
@@ -839,6 +912,18 @@ public static class Program
                                 Also print the mean deltas per mismatch band, this configuration
                                 against the baseline. Omitted, no band table: pairing the baseline
                                 with itself would print zeros that read as a result.
+              --expand-density <shares>
+                                Add a query-side expansion row per window-density cut, e.g. 0.05,0.1,
+                                along with its --analyze rows if --analyze is set. The share is the
+                                fraction of the corpus's sliding windows a term may appear in and
+                                still be a neighbour; 0 keeps every term, 1 excludes only terms in
+                                every window. The expander is learned from the corpus text of this
+                                run, matching the tokenizer and analysis in effect.
+              --expand-ranking <stat>
+                                Which statistic orders an input term's candidate neighbours before
+                                the budget is applied: 'count' (co-occurrence count, the classic
+                                bias) or 'pmi' (positive mutual information). 'both' adds one row
+                                per statistic.
               --help, -h        Show this help.
             """);
     }
