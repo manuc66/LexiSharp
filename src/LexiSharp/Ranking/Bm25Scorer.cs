@@ -206,15 +206,15 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
         NormInverseTable? current = Volatile.Read(ref _normInverse);
 
-        if (Serves(current, averageLength))
-            return current.Entries;
+        if (TableFor(current, averageLength) is { } served)
+            return served.Entries;
 
         lock (_normInverseLock)
         {
             current = _normInverse;
 
-            if (Serves(current, averageLength))
-                return current.Entries;
+            if (TableFor(current, averageLength) is { } rechecked)
+                return rechecked.Entries;
 
             var built = new NormInverseTable(averageLength, BuildNormInverseTable(_k1, _b, averageLength));
 
@@ -230,13 +230,13 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
     private sealed record NormInverseTable(double For, float[] Entries);
 
     /// <summary>
-    /// Whether the cached table, if any, was built for exactly this average document length. Bitwise
-    /// equality on purpose: the table is a function of the average, not an approximation of it, so the
-    /// cache is keyed on the exact value the table was built for. An epsilon here would serve a table
-    /// built for a different average to scores that claim the new one.
+    /// The table built for exactly this average document length, or null. Bitwise equality on
+    /// purpose: the table is a function of the average, not an approximation of it, so the cache is
+    /// keyed on the exact value the table was built for. An epsilon here would serve a table built
+    /// for a different average to scores that claim the new one.
     /// </summary>
-    private static bool Serves(NormInverseTable? table, double averageLength) =>
-        table is not null && table.For == averageLength; // NOSONAR:S1244
+    private static NormInverseTable? TableFor(NormInverseTable? table, double averageLength) =>
+        table is not null && table.For == averageLength ? table : null; // NOSONAR:S1244
 
     /// <summary>
     /// The single-precision reciprocal table, one entry per stored length, each entry built by the same
