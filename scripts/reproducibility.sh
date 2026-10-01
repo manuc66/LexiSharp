@@ -62,10 +62,19 @@ JOBS="${LEXISHARP_EVAL_JOBS:-8}"
 # The scores a reference run recorded, tab-separated as "query id, document id, score" — the third
 # column at the precision the run file carries. The ArguAna stage compares against it pair by pair,
 # which is the only comparison that can tell two implementations apart: a metric sees an order, and an
-# order can agree while every score behind it differs. It is a path rather than a download because it is
-# 130 MB and a stage that fetches 130 MB is a stage nobody runs. Without it the stage still measures the
-# metric and says so.
-REFERENCE_SCORES="${LEXISHARP_REFERENCE_SCORES:-bench/reference-corpus/golden/arguana-reference-scores.tsv}"
+# order can agree while every score behind it differs.
+#
+# Under artifacts/, which .gitignore already covers, and deliberately not in the repository. These
+# bytes come from running the reference's own searcher over its own index; they are evidence, not
+# source, and a reader who wants to re-derive them should be able to. Committing them would make the
+# 15,466-of-15,466 claim verifiable on a machine that never ran anything, which is not the same claim.
+# Point LEXISHARP_REFERENCE_SCORES elsewhere to compare against a different run.
+#
+# The qrels travel the same way, for the same reason, and are needed by the independent evaluator the
+# ArguAna stage runs. Without either file the stage still measures the metric and says plainly that
+# the bit-level half did not run.
+REFERENCE_SCORES="${LEXISHARP_REFERENCE_SCORES:-artifacts/reference/arguana-reference-scores.tsv}"
+ARGUANA_QRELS_DEFAULT="artifacts/reference/arguana-qrels.trec"
 
 # stage <name> <must-be-stable: yes|no> <description>; body reads stdin.
 declare -a ROWS=()
@@ -246,9 +255,10 @@ arguana_parity() {
   # this stage just wrote, so trec_eval is asked to read it when it is on the machine. Measured with
   # trec_eval 9.0.8: ndcg_cut_10 0.3970 and recall_100 0.9324, against 0.3970 and 0.9324 published.
   local evaluator="${TREC_EVAL:-trec_eval}"
-  if command -v "$evaluator" >/dev/null 2>&1 && [ -s "${ARGUANA_QRELS:-}" ]; then
+  local qrels="${ARGUANA_QRELS:-$ARGUANA_QRELS_DEFAULT}"
+  if command -v "$evaluator" >/dev/null 2>&1 && [ -s "$qrels" ]; then
     echo "  $evaluator on the run file above:"
-    "$evaluator" -m ndcg_cut.10 -m recall.100 "$ARGUANA_QRELS" "$run" | sed 's/^/    /'
+    "$evaluator" -m ndcg_cut.10 -m recall.100 "$qrels" "$run" | sed 's/^/    /'
   else
     echo "  $evaluator indisponible ou qrels absents : l'egalite au bit ci-dessus reste verifiee,"
     echo "  le nDCG@10 affiche au-dessus est mesure par ce harnais et n'est pas confirme a l'exterieur."
