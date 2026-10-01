@@ -47,7 +47,7 @@ namespace LexiSharp.Ranking;
 /// variant, not <see cref="Bm25Scorer"/> itself.
 /// </para>
 /// <para>
-/// Requires an index that tracks per-field statistics (<see cref="ITextIndex.HasFieldStatistics"/>).
+/// Requires an index that tracks per-field statistics (<see cref="IFieldStatisticsIndex"/>).
 /// Scoring against one that does not throws <see cref="NotSupportedException"/> naming the index,
 /// rather than quietly ranking on zeros.
 /// </para>
@@ -136,7 +136,7 @@ public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
     public string Name => "BM25F";
 
     /// <inheritdoc />
-    public double Score(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index)
+    public double Score(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
     {
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(queryTerms);
@@ -144,21 +144,22 @@ public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
         if (index.Count == 0)
             return 0;
 
-        var fields = ResolveFields(index);
+        var fieldsIndex = RequireFieldStatistics(index);
+        var fields = ResolveFields(fieldsIndex);
         var terms = queryTerms is DistinctTermList ? queryTerms : TermDeduplicator.Distinct(queryTerms);
 
         double score = 0;
 
         for (int i = 0; i < terms.Count; i++)
         {
-            var geometry = Geometry(documentId, terms[i], fields, index, _b);
+            var geometry = Geometry(documentId, terms[i], fields, fieldsIndex, _b);
             score += Combine(geometry, InverseDocumentFrequency(index.StatisticDocumentCount, geometry.DocumentFrequency), _k1, _b);
         }
 
         return score;
     }
 
-    ISearchQueryPlan IQueryPlannableScorer.CreatePlan(IReadOnlyList<string> queryTerms, ITextIndex index)
+    ISearchQueryPlan IQueryPlannableScorer.CreatePlan(IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
     {
         ArgumentNullException.ThrowIfNull(queryTerms);
         ArgumentNullException.ThrowIfNull(index);
@@ -176,7 +177,7 @@ public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
     /// <i>that</i> term — so it is not the exact divisor of every term. The reported
     /// <see cref="ScoreExplanation.TotalScore"/> always equals <see cref="Score"/>.
     /// </remarks>
-    public ScoreExplanation Explain(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index)
+    public ScoreExplanation Explain(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
     {
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(queryTerms);
@@ -191,12 +192,13 @@ public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
 
         if (documentCount > 0 && documentLength > 0)
         {
-            var fields = ResolveFields(index);
+            var fieldsIndex = RequireFieldStatistics(index);
+            var fields = ResolveFields(fieldsIndex);
             var terms = queryTerms is DistinctTermList ? queryTerms : TermDeduplicator.Distinct(queryTerms);
 
             for (int i = 0; i < terms.Count; i++)
             {
-                var geometry = Geometry(documentId, terms[i], fields, index, _b);
+                var geometry = Geometry(documentId, terms[i], fields, fieldsIndex, _b);
 
                 // A term in no field of this document contributes nothing and is omitted, as in the
                 // other explainers.
@@ -238,10 +240,8 @@ public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
     /// Resolves the fields the scorer reads, in the index's own stable order, each carrying its
     /// weight and corpus average length. Done once per call so the per-term loop is pure lookups.
     /// </summary>
-    private List<FieldStats> ResolveFields(ITextIndex index)
+    private List<FieldStats> ResolveFields(IFieldStatisticsIndex index)
     {
-        RequireFieldStatistics(index);
-
         var fields = new List<FieldStats>();
 
         foreach (string field in index.Fields)
@@ -288,7 +288,7 @@ public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
         string documentId,
         string term,
         List<FieldStats> fields,
-        ITextIndex index,
+        IFieldStatisticsIndex index,
         double b)
     {
         double normalizedFrequency = 0;
@@ -347,10 +347,10 @@ public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
     private static double InverseDocumentFrequency(int documentCount, int documentFrequency) =>
         Math.Log(1.0 + (documentCount - documentFrequency + 0.5) / (documentFrequency + 0.5));
 
-    private static void RequireFieldStatistics(ITextIndex index)
+    private static IFieldStatisticsIndex RequireFieldStatistics(IReadOnlyTextIndex index)
     {
-        if (index.HasFieldStatistics)
-            return;
+        if (index is IFieldStatisticsIndex fields)
+            return fields;
 
         throw new NotSupportedException(
             $"BM25F needs per-field statistics, and {index.GetType().Name} has none, so no field " +
@@ -365,7 +365,8 @@ public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
     /// </summary>
     private sealed class Bm25FQueryPlan : ISearchQueryPlan
     {
-        private readonly ITextIndex _index;
+        private readonly IReadOnlyTextIndex _index;
+        private readonly IFieldStatisticsIndex _fieldsIndex;
         private readonly string[] _terms;
         private readonly double[] _idf;
         private readonly List<FieldStats> _fields;
@@ -374,12 +375,16 @@ public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
 
         public Bm25FQueryPlan(
             IReadOnlyList<string> queryTerms,
-            ITextIndex index,
+            IReadOnlyTextIndex index,
             double k1,
             double b,
             IReadOnlyDictionary<string, double> weights)
         {
             _index = index;
+            // Refused once, at plan creation, so a field-blind corpus cannot produce a plan that
+            // reads a silent zero later. The field-capable view rides alongside the read view: the
+            // plan reads the flat statistics through _index and the field geometry through _fieldsIndex.
+            _fieldsIndex = RequireFieldStatistics(index);
             _k1 = k1;
             _b = b;
 
@@ -394,12 +399,10 @@ public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
 
             if (index.Count > 0)
             {
-                RequireFieldStatistics(index);
-
-                foreach (string field in index.Fields)
+                foreach (string field in _fieldsIndex.Fields)
                 {
                     double weight = weights.TryGetValue(field, out double configured) ? configured : 1.0;
-                    fields.Add(new FieldStats(field, weight, index.AverageFieldLength(field)));
+                    fields.Add(new FieldStats(field, weight, _fieldsIndex.AverageFieldLength(field)));
                 }
             }
 
@@ -425,7 +428,7 @@ public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
             for (int i = 0; i < _terms.Length; i++)
             {
                 score += Combine(
-                    Geometry(documentId, _terms[i], _fields, _index, _b),
+                    Geometry(documentId, _terms[i], _fields, _fieldsIndex, _b),
                     _idf[i],
                     _k1,
                     _b);

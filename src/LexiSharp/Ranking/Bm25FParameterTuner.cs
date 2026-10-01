@@ -122,7 +122,7 @@ public sealed class Bm25FParameterTuner
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(validationQueries);
 
-        if (!index.HasFieldStatistics)
+        if (index is not IFieldStatisticsIndex)
         {
             throw new NotSupportedException(
                 $"BM25F tuning needs per-field statistics, and {index.GetType().Name} has none. " +

@@ -56,8 +56,9 @@ public class LexiSharpIndexTests
 
         // Per-field statistics are available through the facade's own index...
         Assert.Equal([TextFields.Default, "title"], index.TextIndex.Fields);
-        Assert.Equal(1, index.TextIndex.FieldTermFrequency("1", "title", "ranking"));
-        Assert.Equal(2, index.TextIndex.FieldLength("1", "title"));
+        IFieldStatisticsIndex fieldStats = Assert.IsAssignableFrom<IFieldStatisticsIndex>(index.TextIndex);
+        Assert.Equal(1, fieldStats.FieldTermFrequency("1", "title", "ranking"));
+        Assert.Equal(2, fieldStats.FieldLength("1", "title"));
 
         // ...and a field-only term is still findable by a plain query, because the flat view is
         // the union of the fields.
@@ -78,7 +79,8 @@ public class LexiSharpIndexTests
             "the article body",
             TextFields: new Dictionary<string, string> { ["title"] = "search ranking" }));
 
-        Assert.Equal(1, index.TextIndex.FieldTermFrequency("1", "title", "ranking"));
+        IFieldStatisticsIndex fieldStats = Assert.IsAssignableFrom<IFieldStatisticsIndex>(index.TextIndex);
+        Assert.Equal(1, fieldStats.FieldTermFrequency("1", "title", "ranking"));
     }
 
     [Fact]
