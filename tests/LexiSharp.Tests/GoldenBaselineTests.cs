@@ -330,6 +330,72 @@ public class GoldenBaselineTests
     }
 
     [Fact]
+    public void TheReportListsChangesDesyncAndTies()
+    {
+        // The read order is changes first, then desync in both directions, then ties. The desync
+        // entries carry synthetic "Changed" verdicts with a human explanation, so a reader scanning
+        // the report sees one block of problems rather than three kinds of event to interpret. Each
+        // verdict's fields are read here too, which is the surface the CLI prints from.
+        var baseline = BaselineOf(
+            Result("BM25", [3, 2, 1, 2, 1], ("q1", ["alpha", "beta"]), ("q2", ["beta", "gamma"])));
+        var run = new BenchmarkConfigResult("BM25", new BenchmarkMetrics(0.5, 0.5, 1.0, 0.5, 0.25, 0.4), 0, 0, 2)
+        {
+            PerQuery =
+            [
+                // Same membership, distinct scores, reversed: a real re-ordering.
+                new BenchmarkQueryResult("q1", "text of q1", new BenchmarkMetrics(0.5, 0.5, 1.0, 0.5, 0.25, 0.4), ["beta", "alpha"], 1, [2, 3]),
+                // Present in the run, absent from the baseline.
+                new BenchmarkQueryResult("q3", "text of q3", new BenchmarkMetrics(0.5, 0.5, 1.0, 0.5, 0.25, 0.4), ["alpha"], 1, [3]),
+            ],
+        };
+
+        var comparison = baseline.Compare([run]);
+        var report = comparison.Report.ToArray();
+
+        Assert.Equal(3, report.Length);
+        Assert.All(report, verdict => Assert.Equal(GoldenVerdict.Changed, verdict.Verdict));
+
+        // The re-ordering belongs to a known configuration and keeps its real query id; the two
+        // desyncs cannot know which configuration the orphan query belonged to, so they carry "?"
+        // as the configuration and the combined key as the id.
+        Assert.Equal("BM25", Assert.Single(report, verdict => verdict.QueryId == "q1").Configuration);
+        Assert.Equal(2, Assert.Single(report, verdict => verdict.QueryId == "q1").Expected.Count);
+        Assert.Equal(2, Assert.Single(report, verdict => verdict.QueryId == "q1").Actual.Count);
+
+        Assert.Equal("?", Assert.Single(report, verdict => verdict.QueryId == "BM25 / q2").Configuration);
+        Assert.Contains("absent from the run", Assert.Single(report, verdict => verdict.QueryId == "BM25 / q2").Detail!, StringComparison.Ordinal);
+        Assert.Equal("?", Assert.Single(report, verdict => verdict.QueryId == "BM25 / q3").Configuration);
+        Assert.Contains("absent from the baseline", Assert.Single(report, verdict => verdict.QueryId == "BM25 / q3").Detail!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FoldScoresReturnsADashWhenThereIsNothingToFold()
+    {
+        // A no-score channel records "-" instead of a token: the fingerprint column is optional and
+        // a baseline that predates it must parse.
+        Assert.Equal("-", GoldenBaseline.FoldScores(["alpha", "beta"], null));
+        Assert.Equal("-", GoldenBaseline.FoldScores(["alpha", "beta"], [3]));
+    }
+
+    [Fact]
+    public void ADifferentPageSizeIsAChange()
+    {
+        var baseline = BaselineOf(Result("BM25", [3, 2, 1], ("q1", ["alpha", "beta"])));
+        var shorter = new BenchmarkConfigResult("BM25", new BenchmarkMetrics(0.5, 0.5, 1.0, 0.5, 0.25, 0.4), 0, 0, 1)
+        {
+            PerQuery =
+            [
+                new BenchmarkQueryResult("q1", "text of q1", new BenchmarkMetrics(0.5, 0.5, 1.0, 0.5, 0.25, 0.4), ["alpha"], 1, [3]),
+            ],
+        };
+
+        var comparison = baseline.Compare([shorter]);
+
+        Assert.Single(comparison.Changes);
+        Assert.Contains("page size", comparison.Changes[0].Detail!, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ABaselineFromAnotherFormatVersionIsRejectedLoudly()
     {
         // Better to refuse than to skip lines it cannot read and report a clean run.
@@ -362,6 +428,68 @@ public class GoldenBaselineTests
         var text = "# version: 1\n# topK: 5\n# corpusDocuments: 3\n\n[BM25]\nq1 | alpha | ndcg 1.0 map\n";
 
         Assert.Throws<FormatException>(() => GoldenBaseline.Parse(text));
+    }
+
+    [Fact]
+    public void AQueryLineBeforeAnyConfigurationHeaderIsRejected()
+    {
+        var text = "# version: 2\n# topK: 5\n# corpusDocuments: 3\nq1 | alpha | ndcg 1.0 map 1.0 mrr 1.0 r 1.0 p 1.0 f1 1.0\n";
+
+        var error = Assert.Throws<FormatException>(() => GoldenBaseline.Parse(text));
+        Assert.Contains("before any [configuration]", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AWrongNumberOfColumnsIsRejected()
+    {
+        var text = "# version: 2\n# topK: 5\n# corpusDocuments: 3\n\n[BM25]\nq1 | alpha\n";
+
+        var error = Assert.Throws<FormatException>(() => GoldenBaseline.Parse(text));
+        Assert.Contains("expected 'queryId | docIds | metrics", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnInvalidFingerprintIsRejected()
+    {
+        var text = "# version: 2\n# topK: 5\n# corpusDocuments: 3\n\n[BM25]\nq1 | alpha | ndcg 1.0 map 1.0 mrr 1.0 r 1.0 p 1.0 f1 1.0 | scores 12AB\n";
+
+        var error = Assert.Throws<FormatException>(() => GoldenBaseline.Parse(text));
+        Assert.Contains("16 hexadecimal digits", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ARecordedDashFingerprintRoundTripsAsADash()
+    {
+        // A version-2 line with "-" in the scores column — a run that recorded no scores — parses
+        // to a "-" entry and survives a round trip. Null is reserved for baselines written before
+        // version 2, which never carried the column at all; the dash is the column's own way of
+        // saying there is nothing to fold.
+        var text = "# version: 2\n# topK: 5\n# corpusDocuments: 3\n\n[BM25]\nq1 | alpha | ndcg 1.0 map 1.0 mrr 1.0 r 1.0 p 1.0 f1 1.0 | scores -\n";
+
+        var baseline = GoldenBaseline.Parse(text);
+
+        Assert.Equal("-", Assert.Single(baseline.Entries).ScoreFingerprint);
+        Assert.Equal("-", Assert.Single(GoldenBaseline.Parse(baseline.ToText()).Entries).ScoreFingerprint);
+    }
+
+    [Fact]
+    public void AMissingMetricIsRejected()
+    {
+        var text = "# version: 2\n# topK: 5\n# corpusDocuments: 3\n\n[BM25]\nq1 | alpha | ndcg 1.0 map 1.0 mrr 1.0 r 1.0 p 1.0\n";
+
+        var error = Assert.Throws<FormatException>(() => GoldenBaseline.Parse(text));
+        Assert.Contains("missing metric 'f1'", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnUpToDateFormatWithoutADepthHeaderIsRejected()
+    {
+        // A depth of zero is unusable whether it was written as "0" or never written at all, and a
+        // format that predates the header is refused the same way.
+        var text = "# version: 2\n# corpusDocuments: 3\n\n[BM25]\nq1 | alpha | ndcg 1.0 map 1.0 mrr 1.0 r 1.0 p 1.0 f1 1.0\n";
+
+        var error = Assert.Throws<FormatException>(() => GoldenBaseline.Parse(text));
+        Assert.Contains("topK", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
