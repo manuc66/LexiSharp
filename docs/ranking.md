@@ -55,10 +55,28 @@ implementation keeps compiling and keeps its current behaviour. It matters for t
 that build an idf — `Bm25Scorer`, `Bm25PlusScorer`, `Bm25LScorer`, `Bm25FScorer`, `TfIdfScorer`,
 `BooleanScorer` and `ProximityReranker` all read it.
 
-`SearchOptions.ScoreRounding` is a fourth, and it is not arithmetic at all: it rounds what is
-returned to four decimals and walks down each run of near-equal scores by a millionth, which is
-what one reference does before writing a run file. It changes the scores and can change the order
-within a tie, so a metric measured on a rounded run measures a different ranking function.
+### Two more, which are not on the table
+
+Two switches a bit-for-bit comparison needs are **internal**, reachable by the evaluation harness
+and nothing else, and they are absent from the table above on purpose. Both are things a public
+option should not be, for different reasons.
+
+`DocumentLengthQuantization` does not report a length more or less precisely — it reports a
+*different quantity*. `OneByte` stores a length the way an index storing one byte per document
+does, which is what makes a 149-term and a 151-term document score identically under BM25 length
+normalization. Nothing at a call site says which of the two quantities it is comparing against, so
+a public option here would let a caller build a dependency on a unit whose meaning depends on how
+the index was constructed. That surfaces as a wrong number rather than as a compile error.
+
+`ScoreRounding` is not arithmetic at all: it rounds returned scores to four decimals and walks down
+each run of near-equal scores by a millionth, which is what one reference does before writing a run
+file. It is lossy by construction — it merges scores differing by less than half a ten-thousandth,
+and it makes one document's returned score depend on which others came back beside it, so the same
+query against the same index reports two different scores at two different page sizes. An option
+named `ScoreRounding` invites the belief that it affects presentation; it does not, because a metric
+measured on a rounded run measures a different ranking function. It is reached through a method
+rather than a constructor parameter for the same reason: naming the call is the signal that
+something other than searching is being asked for.
 
 With `saturationConstant: false`, single precision, reference statistics and the rounding, this
 library's raw scores match one reference implementation's on the raw bits for all 15,466

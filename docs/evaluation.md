@@ -52,17 +52,18 @@ The aggregate is verified without this repository's own metric code being involv
 run on a `trec_run` this harness writes at that configuration, reads nDCG@10 **0.3970** and recall@100
 **0.9324** — the two published figures, to four decimals. This harness reads 0.3970 on the same run.
 The metrics are computed differently and agree; where they do not, the difference is 0.0004, confined
-to the 102 of 1,406 queries whose returned scores contain a tie, which is the only circumstance under
-which two evaluators can legitimately read a different order. Which of the two orders produced the
-published figure is not established here, and this page does not claim it.
+to the 102 of 1,406 queries whose returned scores contain a tie. A tie is the plausible mechanism,
+being the only property those 102 queries share, and it is not established: neither the order written
+in the run file, nor document id, nor a reversal of the tied group reproduces `trec_eval`'s reading.
+Which order produced the published figure is not established either.
 
-That 0.0004 was a long way from being found, and the reason it survived several rounds of
-re-measurement is worth recording: this page previously carried 0.4030 for ArguAna and called the
-metric not reproduced. The harness measured its metrics **at the depth the run retrieved** rather than
-at rank 10, and a bit-for-bit reproduction run retrieves one document deeper than it measures — so it
-was reporting nDCG@11 under a heading that read nDCG@10. The 0.006 was the eleventh document. The
-cutoff is now named and independent of `--top-k`. The table below records what was measured when the
-row was first written, and is kept rather than deleted because the sequence is the point of the page:
+One thing is worth knowing about reading a metric from this harness, because it changed a number
+that looked like a ranking result. The harness measures at **rank 10**, not at the depth the run
+retrieved, and the two being the same value is a coincidence of the default: a bit-for-bit
+reproduction run retrieves one document deeper than it measures, so measuring at the retrieval depth
+reported nDCG@11 under a heading reading nDCG@10. Retrieval depth and evaluation depth are different
+things, and the cutoff is now named (`MetricDepth`) and independent of `--top-k`. The table below
+holds the full set of figures the published config produces, at the cutoff:
 
 | | LexiSharp | reference | Δ |
 |---|---:|---:|---:|

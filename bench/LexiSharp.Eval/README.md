@@ -175,14 +175,13 @@ from **0.219 to 0.271** at k1=0.9/b=0.4, a **+0.052** effect. Reproduce it with
 line without the flag. The linear gain convention returns the same 0.271, so this is not an artifact
 of the metric convention.
 
-**This section previously said the effect was +0.0705 and that it closed the whole 0.11 deficit.
-Both were wrong, and the reason is structural rather than numerical.** `--query-term-frequency` fed
-exactly one thing - the `QueryTermWeighting` argument of `new Bm25Scorer(...)` - and that scorer went
-into `RankedTextSearchEngine`, which deduplicated the query before the scorer could see a
-repetition. The two settings could not have produced different rankings, so the 0.2902 and 0.4061
-this harness was said to produce could not have come from this harness. What is left on ArguAna at
-matched parameters is a 0.178 deficit that nothing measured here accounts for, of which this
-setting closes 0.052.
+**`--query-term-frequency` reaches the scorer on one path only, so a figure that depends on it
+being effective is a figure about a code path, not about BM25.** The flag feeds exactly one thing —
+the `QueryTermWeighting` argument of `new Bm25Scorer(...)` — and that scorer goes into
+`RankedTextSearchEngine`, which deduplicated the query before the scorer could see a repetition. Any
+claim of the form "this setting is worth X" measured through an engine that deduplicates first is
+measuring nothing, and it will report a positive number while doing so. Measured through the scorer
+directly, the setting is worth **+0.052** on ArguAna at matched parameters.
 
 **`--exclude-query-doc` is worth far less on ArguAna than it looks, and the measurement is in
 `reference/pinned.json`.** 1298 of the 1406 ArguAna test queries have a query id that is a document
@@ -293,9 +292,9 @@ tables.
 
 **The BM25+ / BM25L rows are the tuned-vs-tuned comparison, and the numbers do not flatter the
 variants.** Each `δ` is now fitted by `Bm25PlusParameterTuner` / `Bm25LParameterTuner` over the full
-`k1 × b × δ` product (125 points) on the same queries, on nDCG, as `BM25 tuned` — previously the
-variants sat at a fixed paper `δ` while BM25's `(k1, b)` were fitted, which is not a comparison of
-the formulas.
+`k1 × b × δ` product (125 points) on the same queries, on nDCG, as `BM25 tuned`. Both sides must be
+fitted the same way for this to compare formulas: a variant at a fixed paper `δ` against a BM25
+whose `(k1, b)` were fitted is not a comparison of anything.
 
 | Corpus | `BM25 tuned` | `BM25+ tuned` | `BM25L tuned` | unfloored baseline | `DeltaHelped` |
 |---|---|---|---|---|---|
@@ -421,10 +420,12 @@ Recall is quantized and nDCG is far easier to move than on a corpus with a dozen
 per query. A scorer that gets the one right document higher gains a lot; one that reshuffles the
 bottom gains nothing.
 
-BM25 over the full 1406-query test split lands at **0.289 under the library defaults**, and this
-section used to call that "8 % below the reference" and leave it there. It is not 8 % below: the
-0.315 it was compared against is the 2021 paper's figure, the current reference for this index is
-**0.3970**, and the deficit has a cause that was measurable and was not a parameter.
+BM25 over the full 1406-query test split lands at **0.289 under the library defaults**. Two things
+follow from that, and both are about the comparison rather than the scorer. The 0.315 it invites
+comparison against is the 2021 paper's figure, while the current reference for this index is
+**0.3970** — so a default-configured run is not 8 % below anything, it is a different configuration.
+And the gap between the two configurations is not a parameter: it is four analysis rules, one
+document count, and a metric cutoff.
 
 | configuration | nDCG@10 |
 |---|---:|
@@ -450,17 +451,16 @@ the metric code above. A residual of 0.0004 against `trec_eval` remains, confine
 queries whose returned scores contain a tie; the mechanism is not established and the sweep records
 it as measured rather than explained.
 
-The fourth row used to be quoted as 0.4061, above the reference, which would have meant this library
-beat it on ArguAna. It did not, and the number was not reproducible by any code path. A like-for-like
-ArguAna comparison at the reference's own parameters is no longer unmeasured: it is the fifth row,
-and the k1/b grid that section once called expensive is not what was needed after all — the deficit
-was four analysis rules, one document count, and a metric that was measuring rank 11.
+An earlier figure published for this corpus was withdrawn; it is not reproducible by any code path in
+this repository. See the [changelog](https://github.com/manuc66/LexiSharp/blob/main/CHANGELOG.md). The
+like-for-like comparison at the reference's own parameters is the fifth row. A parameter grid is not what
+separates the two configurations: the difference is four analysis rules, one document count, and a
+metric cutoff.
 
-Correction that stands: the ArguAna row here used to read 0.320 and was described as "slightly
-above the reference". That number is not reproducible — `--limit 50`, which evaluates only the
-first 50 test queries, produces 0.321, so the row looked like a subset run labelled as a full-split
-one. The table above is the full 6-config, full-split run the section describes; reproduce it with
-`dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset arguana --no-tuned`.
+The table above is the full 6-config, full-split run. Reproduce it with
+`dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset arguana --no-tuned`. Note that
+`--limit` evaluates only the first N test queries and reports a figure over those, so a partial run
+is not comparable with a full-split one.
 
 ArguAna queries are whole argument texts (~200+ tokens), which makes every query score a large
 share of the 8674 single-claim documents. In the run above BM25 takes 117 s for 1406 queries
@@ -486,9 +486,9 @@ default, so every table above is the unstemmed baseline. Same corpora, same quer
 | Hybrid BM25+QL (RRF)       |    0.300 | **0.310** |   0.644 | **0.669** |   0.257 | 0.244 |
 | Published reference       |    0.325 |    —    |   0.665 |    —    |   0.315 |   —   |
 
-This table switches the **stemmer only**, which is what makes it readable, and it is also the reason
-the stemming section used to look like the whole story: the analysis a published measurement was
-produced with is a stemmer *and* a stop word list, and only the first half is in this table.
+This table switches the **stemmer only**, which is what makes it readable and also what bounds it: the
+analysis a published measurement was produced with is a stemmer *and* a stop word list, and only the
+first half is isolated here.
 `--analyzer english` turns on both, and reaches 0.327 on NFCorpus and 0.692 on SciFact — above the
 published figures, where this table's best is 0.322 and 0.687. The stemmer's own contribution is
 therefore worth about +0.014 on NFCorpus and the stop words another +0.005; on ArguAna both cost
