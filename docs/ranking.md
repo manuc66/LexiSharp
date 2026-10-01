@@ -36,6 +36,36 @@ BM25F has **no** measured case of beating a tuned BM25, and its tuner reports
 strength and negative at full strength. On these corpora, fitting parameters is worth more than
 adding a scorer — see [Evaluation](evaluation.md).
 
+## Conventions, not mathematics
+
+`Bm25Scorer`'s constructor takes three arguments that are not part of the formula. Each exists
+because a published figure or a recorded run was produced under one of them and not the other, so
+each is an option and each defaults to this library's own convention. Passing one is how you
+reproduce a *specific* figure, not how you get a better one — and none of them is recommended for
+ordinary use.
+
+| | default | what it changes |
+|---|---|---|
+| `saturationConstant: false` | `true` | whether the numerator carries `k1 + 1` or 1. It scales every score of a query by the same factor, so it cannot change a ranking — but a score is what gets compared. |
+| `arithmetic: Bm25Arithmetic.SinglePrecision` | `Double` | computes per-term contributions and a reciprocal table in `float` rather than `double`. Narrower, and slower: the table is 256 entries rebuilt whenever the corpus's average length moves. |
+| `ITextIndex.StatisticDocumentCount` | `Count` | which documents the `N` of the idf counts. Default is every indexed document; the value is the number carrying the field, which is what the reference implementation uses. On ArguAna they differ by one — the corpus holds a document with no term at all — and that one document made every idf on the corpus wrong. |
+
+`StatisticDocumentCount` is a default-implemented member of `ITextIndex`, so an existing index
+implementation keeps compiling and keeps its current behaviour. It matters for the four scorers
+that build an idf — `Bm25Scorer`, `Bm25PlusScorer`, `Bm25LScorer`, `Bm25FScorer`, `TfIdfScorer`,
+`BooleanScorer` and `ProximityReranker` all read it.
+
+`SearchOptions.ScoreRounding` is a fourth, and it is not arithmetic at all: it rounds what is
+returned to four decimals and walks down each run of near-equal scores by a millionth, which is
+what one reference does before writing a run file. It changes the scores and can change the order
+within a tie, so a metric measured on a rounded run measures a different ranking function.
+
+With `saturationConstant: false`, single precision, reference statistics and the rounding, this
+library's raw scores match one reference implementation's on the raw bits for all 15,466
+(query, document) pairs of the ArguAna test split, and the aggregate reaches its published nDCG@10
+and recall@100 to the fourth decimal — the latter confirmed by `trec_eval` rather than by this
+repository's own metric code. See [Evaluation](evaluation.md).
+
 ## BM25 variants
 
 Two published single-field variants of BM25, both behind the same `ITextSearchEngine` contract, both
