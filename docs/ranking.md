@@ -189,8 +189,8 @@ same 300 queries, best-of-125. A 0.004 lead under those conditions is an upper b
 « δ was not obviously harmful here », not as evidence the formula helps.
 
 **ArguAna is the exception, and it is the row this page does not have.** It is also where the
-untuned variants do worst anywhere: at a fixed paper δ, BM25+ scores 0.243 and BM25L 0.249 against
-BM25's 0.289 — about 15 % relative, the same order as the figure 9bb7c92 retracted, but on a
+untuned variants do worst anywhere: at a fixed paper δ, BM25+ scores 0.269 and BM25L 0.276 against
+BM25's 0.320 — about 15 % relative, the same order as the figure 9bb7c92 retracted, but on a
 different corpus and with nothing mis-transcribed. ArguAna was run `--no-tuned`: a 125-point search
 over 1406 queries of whole arguments is hours of compute, so **there is no δ-tuned ArguAna row and
 the gap's fate under tuning is unmeasured.** Given that SciFact was the only corpus where δ helped
@@ -264,11 +264,11 @@ tables in [the eval harness README](https://github.com/manuc66/LexiSharp/blob/ma
 
 | Config | NFCorpus | SciFact | ArguAna |
 |---|---|---|---|
-| BM25 (k1=1.5, b=0.75) | 0.308 | 0.662 | 0.289 |
+| BM25 (k1=1.5, b=0.75) | 0.308 | 0.662 | 0.320 |
 | BM25 (tuned in-sample, oracle) | 0.311 | 0.664 | — |
-| BM25F (unweighted) | 0.296 | 0.662 | **0.344** |
-| BM25F (title 2.0) | 0.296 | **0.665** | **0.344** |
-| BM25F (title 4.0) | 0.296 | 0.664 | 0.340 |
+| BM25F (unweighted) | 0.296 | 0.662 | **0.379** |
+| BM25F (title 2.0) | 0.296 | **0.665** | **0.379** |
+| BM25F (title 4.0) | 0.296 | 0.664 | 0.375 |
 | BEIR's published BM25 | 0.325 | 0.665 | 0.315 |
 
 ArguAna was run with `--no-tuned` (its grid search is the dominant cost); NFCorpus 323 judged
@@ -296,7 +296,7 @@ un-tuned gap was BM25F's defaults (k1=1.2) being a worse fit for a 42-document c
 nDCG@5: fitting on **F1@5**, which is flat on this corpus (0.3588 for every configuration), leaves the
 tuner no signal to fit and hands both the first grid point, which puts them equal at 0.8812 and hides
 the loss. So the comparison stands on the nDCG-fitted rows: no measured case where BM25F beats BM25
-after both are tuned. The ArguAna 0.344 stands as an
+after both are tuned. The ArguAna 0.379 stands as an
 **un-tuned** comparison: whether it survives a tuned BM25 is untested, and running that grid on 1406
 queries was not affordable here.
 

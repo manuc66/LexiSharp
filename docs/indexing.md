@@ -212,9 +212,10 @@ English or Porter2 stemmer", and it over-stems by design (`relate` and `relation
 |---|---|---|---|
 | NFCorpus (323 queries)              | 0.308 | **0.322** | 0.325 |
 | SciFact (300 queries)               | 0.662 | **0.687** | 0.665 |
-| ArguAna (1406 queries)              | 0.289 | 0.279 | 0.315 |
+| ArguAna (1406 queries)              | 0.320 | 0.308 | 0.315 |
 
-It helps on two corpora and **hurts on the third**, so it stays opt-in: ArguAna's whole-argument
+It helps on two corpora and is mixed on the third (ArguAna: BM25 0.320 → 0.308, QL 0.302 → 0.312),
+so it stays opt-in: ArguAna's whole-argument
 queries are nearly all content words, the case where over-stemming has most to lose. Full tables
 for every config are in
 [the eval harness README](https://github.com/manuc66/LexiSharp/blob/main/bench/LexiSharp.Eval/README.md); reproduce with

@@ -33,7 +33,7 @@ comparison. nDCG@10:
 |---|---|---:|---:|---:|
 | NFCorpus | defaults: `Tokenizer.Default`, k1=1.5, b=0.75 | 0.308 | 0.325 | −5.2 % |
 | SciFact | defaults | 0.662 | 0.665 | −0.5 % |
-| ArguAna | defaults | 0.289 | 0.315 | −8.3 % |
+| ArguAna | defaults | 0.320 | 0.315 | +1.6 % |
 | NFCorpus | aligned: English analysis, k1=0.9, b=0.4 | 0.3215 | 0.3218 | −0.0003 |
 | SciFact | aligned | 0.6788 | 0.6789 | −0.0001 |
 | ArguAna | aligned | 0.3970 | 0.3970 at k1=0.9, b=0.4 | 0.0000 |
@@ -187,15 +187,17 @@ Re-measured on 1,406 queries with the English analysis, at the reference's own k
 
 | setting | nDCG@10 |
 |---|---:|
-| `QueryTermWeighting.Distinct` (the default) | 0.219 |
-| `QueryTermWeighting.QueryFrequency` | 0.271 |
-| **effect of the setting** | **+0.052** |
+| `QueryTermWeighting.Distinct` (the default) | 0.240 |
+| `QueryTermWeighting.QueryFrequency` | 0.301 |
+| **effect of the setting** | **+0.061** |
 
 Three conventions were checked, and the third one is the defect. The linear gain convention returns
-the same 0.271 as the exponential one. Excluding the query document measured as worth +0.0012 while the
-option was inert, and as **+0.093** with it applied — which is what a reader reproducing these figures
-needs to know, because the flag looks effective and is not. Neither 0.2902 nor 0.4061 is reproducible,
-and the 0.271 above is measured without the exclusion, as the other two were.
+the same 0.301 as the exponential one. Excluding the query document is measured separately, at the
+pin's own configuration (English analysis, k1=1.5/b=0.75, linear): **0.313 without, 0.4180 with, i.e.
++0.105** — the pin value is recorded with the flag on. An earlier reading of +0.0012 measured the
+option doing nothing (the exclusion was not applied on the term-at-a-time path); the fix is what made
+it reach its document. Neither 0.2902 nor 0.4061 is reproducible, and the 0.301 above is measured
+without the exclusion.
 
 The reason the withdrawn figures could not have come from this code is structural. The harness flag fed
 exactly one thing — the `QueryTermWeighting` argument of `new Bm25Scorer(...)` — and that scorer went
@@ -207,8 +209,8 @@ being.
 **There is nothing left on ArguAna.** At matched parameters this library reads 0.3970 where the
 reference publishes 0.3970, identically on all 1,406 queries. The analysis rules that accounted for it
 are set out above, and each is behind an option whose default is unchanged — so `--analyzer english`
-alone still reads 0.3806, and that remaining 0.016 is a difference of analysis convention rather than
-of ranking.
+with the query document excluded reads 0.4180, and the gap above the 0.3970 parity is a difference of
+analysis convention rather than of ranking.
 
 The reference is also **newer than the table it is first compared against**: a current per-corpus
 regression for this exact index puts ArguAna at 0.3970, not the 0.315 of the 2021 paper.
@@ -259,11 +261,11 @@ What it does **not** say:
   to the harness, not to the library. SciFact and ArguAna have no dense or cross-encoder
   rows at all, so the full stack is measured on **one** of the three corpora, not three;
 - stemming is not settled either: `--stem porter` takes NFCorpus 0.308 → 0.322 and SciFact
-  0.662 → 0.687, and *hurts* ArguAna 0.289 → 0.279. That is why it stays opt-in — see
+  0.662 → 0.687, and is mixed on ArguAna 0.320 → 0.308 (BM25) / 0.302 → 0.312 (QL). That is why it stays opt-in — see
   [Tokenizer customization](indexing.md#tokenizer-customization). What that comparison leaves out is
   the stop word list, which is the larger half of the analysis: `--analyzer english` (Porter plus
   the conventional 33 words) takes SciFact to 0.692 and NFCorpus to 0.327;
-- ArguAna's BM25F 0.344 is **untested, not a result**: it is default-vs-default, and a tuned
+- ArguAna's BM25F 0.379 is **untested, not a result**: it is default-vs-default, and a tuned
   BM25 over its 1406 queries did not fit the compute available here.
 
 ## Metrics
