@@ -52,8 +52,24 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
     /// <summary>
     /// Bumped by every corpus mutation. The derived per-term posting copies carry the epoch they
     /// were built from, so a stale copy is recognised and rebuilt rather than silently used.
+    /// <para>
+    /// <c>_epoch++</c> is deliberately non-atomic and the scoring pass reads this field plainly:
+    /// that is sound only because the documented contract is one writer with no write overlapping a
+    /// read. The memory model is not what protects this — the contract is — so if the single-writer
+    /// assumption ever changes, the first casualty is this counter, not the volatile postings.
+    /// </para>
     /// </summary>
     private int _epoch;
+
+    /// <summary>
+    /// Cached quantization of <see cref="_lengthsByOrdinal"/>, published with a volatile write for
+    /// the same reason <see cref="PostingList.Flat"/> is: two concurrent readers can miss and both
+    /// build. They build identical arrays from an unchanged <see cref="_lengthsByOrdinal"/> and the
+    /// reference assignments are atomic, so the loser is wasted work — but the volatile keeps the
+    /// array's contents visible to a reader that observed the publication, exactly as the flat
+    /// posting copies' immutability does for them.
+    /// </summary>
+    private int[]? _quantizedLengthsByOrdinal;
 
     /// <summary>
     /// One term's inverted list, and the single string instance the whole index uses for that term.
@@ -186,9 +202,6 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
 
     /// <summary>Whether <see cref="DocumentLength"/> reports the exact length or the byte-quantized one.</summary>
     private readonly DocumentLengthQuantization _documentLengthQuantization;
-
-    /// <summary>The rounded lengths, built on first use and dropped with the postings.</summary>
-    private int[]? _quantizedLengthsByOrdinal;
 
     /// <summary>
     /// Rounds a document length the way an implementation that stores lengths in one byte does.
@@ -711,7 +724,7 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
     /// </summary>
     private void InvalidateDerivedPostings()
     {
-        _quantizedLengthsByOrdinal = null;
+        Volatile.Write(ref _quantizedLengthsByOrdinal, null);
         _epoch++;
     }
 
@@ -846,10 +859,14 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
     /// <summary>
     /// The exact lengths, rounded — built once and dropped with the postings, so it cannot go stale
     /// behind a mutation. Null whenever the index reports exact lengths, and then never built.
+    /// Published with a volatile write so a reader that observes the publication also observes the
+    /// array's contents, the same guarantee <see cref="PostingList.Flat"/> gives its immutable copy.
     /// </summary>
     private int[] QuantizedLengths()
     {
-        if (_quantizedLengthsByOrdinal is not { } quantized)
+        int[]? quantized = Volatile.Read(ref _quantizedLengthsByOrdinal);
+
+        if (quantized is null)
         {
             int[] exact = _lengthsByOrdinal;
 
@@ -860,7 +877,9 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
                 quantized[i] = QuantizedLength(exact[i]);
             }
 
-            _quantizedLengthsByOrdinal = quantized;
+            // Two readers can miss and both build; they build identical arrays from an unchanged
+            // _lengthsByOrdinal, so the loser is wasted work, never a wrong length.
+            Volatile.Write(ref _quantizedLengthsByOrdinal, quantized);
         }
 
         return quantized;
