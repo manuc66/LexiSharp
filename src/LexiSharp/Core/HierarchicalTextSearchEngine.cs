@@ -16,8 +16,8 @@ namespace LexiSharp.Core;
 /// </para>
 /// <para>
 /// Resolving ancestor ids to <see cref="SearchDocument"/>s needs the caller's ledger, because
-/// no <see cref="ITextSearchEngine"/> contract returns a document by id. Pass
-/// <paramref name="resolveDocument"/> when the documents should be resolvable; without one,
+/// no <see cref="ITextSearchEngine"/> contract returns a document by id. Pass a document
+/// resolver when the documents should be resolvable; without one,
 /// <see cref="GetAncestors"/> throws rather than returning stubs, and
 /// <see cref="GetAncestorIds"/> remains available.
 /// </para>
