@@ -108,6 +108,18 @@ workflow.
   excluded from the averages; the caller's options pass through except `Limit`, pinned to the
   metric depth; graded judgments keep the exponential nDCG convention by default, with
   `NdcgGain.Linear` available.
+- `DocumentHierarchy` and `HierarchicalTextSearchEngine`, the structure-aware slice of
+  hierarchical retrieval, scoped to the application side of the split: the parent/child forest
+  is declared over the ids a caller already indexes (a chunk under a section, a section under a
+  book), built from a child→parent or parent→children map, and validated at construction —
+  self-parenting, a node with two parents, and cycles are each refused by name. The decorator
+  forwards searching and writing unchanged, and adds the `IStructureAwareSearchEngine`
+  capability: `GetAncestorIds`/`GetAncestors` walk a hit's chain from its leaf up toward the
+  overview, and `GetDescendants` drills the other way in breadth-first declared order. Ancestor
+  ids resolve to documents through a caller-supplied ledger; without one, `GetAncestors`
+  throws rather than fabricate documents. `SearchDocument` is deliberately untouched — adding
+  parent/child to the central record is a breaking change with persistence and backend blast
+  radius, and this seam covers the navigation without it.
 
 ## [0.8.0] — Unreleased
 

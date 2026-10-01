@@ -49,6 +49,7 @@ are listed first.
 | `IRetrievalMetrics` | — | Receives the measurements a RetrievalTelemetry takes. Implement it to ship numbers to a metrics backend (OpenTelemetry, Prometheus, StatsD, ...). | [guide](reference.md) |
 | `IScoreExplainer` | `ITextScorer` | Optional capability of an ITextScorer that can justify its scores: it produces a ScoreExplanation decomposing the contribution of every matched query term. | [guide](reference.md) |
 | `ISparseEmbeddingProvider` | — | Contract for producing sparse text embeddings — e.g. SPLADE/SPLADE-v2, uniCOIL, or any learned sparse model. Sparse embeddings map vocabulary terms to weights,… | [guide](reference.md) |
+| `IStructureAwareSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that knows the hierarchical structure its documents live in — the « structure-aware retriever » seam. Flat retrieval… | [guide](reference.md) |
 | `ITermOverlapScorer` | `ITextScorer` | Capability for a scorer whose score is exactly 0 for every document sharing no query term with the query, which lets the search engine skip such documents… | [guide](reference.md) |
 | `ITextClassifier` | — | Supervised text classifier trained on labelled documents. | [guide](reference.md) |
 | `ITextIndex` | — | An index of tokenized documents exposing the statistics needed by text scorers and classifiers (term frequency, document frequency, document length, ...). | [guide](reference.md) |
@@ -125,12 +126,14 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `CheapestByCandidateCountEstimator` | class | `IQueryCostEstimator` | Picks the engine with the smallest EstimateCandidateCount. Engines that do not implement IQueryCostProbe cannot be costed and are only used when no probed… |
 | `ClassificationResult` | record | — | A category predicted for a piece of text, with its estimated probability. |
 | `DetailedSearchResult` | record | — | A ranked document whose final score is broken down by the source signal that produced it. |
+| `DocumentHierarchy` | class | — | A validated parent/child forest over searchable document ids — the « hierarchical metadata » seam. Declare the tree your chunks belong to (a chunk under a… |
 | `EmbeddingProviderExtensions` | class | — | Backwards-compatible call shape: embeds text as a Passage. |
 | `EmbeddingUse` | enum | — | The role a piece of text plays when it is embedded. Several models encode queries and documents differently by construction (e.g. E5 prefixes queries with… |
 | `EngineRetrievalMetrics` | record | — | Aggregated measurements for one engine. |
 | `FacetBucket` | record | — | Value counts for one facet field. |
 | `FacetValue` | record | — | A distinct field value and how many counted documents carry it. |
 | `FacetedSearchResult` | record | — | Ranked results plus one bucket per requested facet field. |
+| `HierarchicalTextSearchEngine` | class | `IStructureAwareSearchEngine`, `ITextSearchEngine` | A decorator that layers a DocumentHierarchy over an existing engine: searches and writes are forwarded unchanged — flat retrieval still finds the precise node —… |
 | `InMemoryRetrievalMetrics` | class | `IRetrievalMetrics` | The default IRetrievalMetrics: fixed-size counters kept in memory, with no external dependency. Enough to assert on in tests and to back a diagnostics endpoint… |
 | `IndexRetrievalMetrics` | record | — | The latest observed size of one engine's index. |
 | `MetadataFilter` | record | — | A declarative, single-field predicate over Fields — the raw material of structured filtering (e.g. category = article, year &gt; 2023, tags containing nlp). |

@@ -263,6 +263,40 @@ var index = new LexiSharpIndex<SearchDocument>(o =>
 });
 ```
 
+## Structure-aware retrieval
+
+Documents from the real world live in trees — a chunk under a section, a section under a chapter,
+a chapter under a book — and flat retrieval loses that. `DocumentHierarchy` is the structure, and
+`HierarchicalTextSearchEngine` the navigation surface on top of a flat engine:
+
+```csharp
+using LexiSharp.Core;
+
+var tree = DocumentHierarchy.FromChildToParent(new Dictionary<string, string>
+{
+    ["chunk-17"] = "sec-3",
+    ["sec-3"] = "ch-2",
+    ["ch-2"] = "book-1",
+});
+
+var engine = new HierarchicalTextSearchEngine(
+    baseEngine,                       // any ITextSearchEngine — flat retrieval unchanged
+    tree,
+    id => ledger.GetValueOrDefault(id)); // your document store, for resolving ancestors
+```
+
+Searching still finds the precise node — the ranking is untouched. What the wrapper adds is the
+second surface: `engine is IStructureAwareSearchEngine`, and on it `GetAncestorIds(hitId)` walk
+from the hit's leaf up toward the overview (`sec-3`, `ch-2`, `book-1`) and `GetAncestors(hitId)`
+resolve those ids to documents through the ledger you supplied, omitting any the ledger cannot
+produce. Descendants go the other way (`sec-3` → `chunk-17`), breadth-first in declared order,
+for an "overview to precise nodes" drill-down.
+
+The hierarchy is app-declared over the units you already index — the library neither chunks
+documents nor imposes a shape. An id the hierarchy does not know behaves like a root. Building a
+hierarchy validates it and names the defect: self-parenting, a node with two parents, or a cycle
+are each refused at construction.
+
 ## Putting the stages together
 
 The reranking stage composes with all of it: wrap the hybrid in a
