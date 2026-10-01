@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using LexiSharp.Linguistics;
 using Xunit;
@@ -55,6 +56,11 @@ public class TokenizerParityTests
         }
     }
 
+    private static bool IsCombiningMark(Rune rune) =>
+        Rune.GetUnicodeCategory(rune) is UnicodeCategory.NonSpacingMark
+            or UnicodeCategory.SpacingCombiningMark
+            or UnicodeCategory.EnclosingMark;
+
     private static List<string> ReferenceTokenize(string text, TokenizerOptions? options)
     {
         options ??= TokenizerOptions.Default;
@@ -66,6 +72,13 @@ public class TokenizerParityTests
         {
             if (Rune.IsLetterOrDigit(rune))
                 word.Append(rune);
+            else if (word.Length > 0 && IsCombiningMark(rune))
+            {
+                // A mark continues the word it follows, and cannot open one. Written out here rather than
+                // folded into the letter-or-digit test because this is the scalar reference: if it agrees
+                // with the tokenizer by agreeing with the same rule, the two implementations of the rule
+                // are still independent. See CombiningMarkTests for the measurement behind it.
+            }
             else if (word.Length > 0)
             {
                 if (word.Length >= 2 || options.KeepSingleCharTerms)
