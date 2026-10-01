@@ -167,8 +167,17 @@ internal static class ReferenceVerifier
                 ? new HashSet<string>(StringComparer.Ordinal) { query.Id }
                 : null;
 
+            // The query syntax is a named setting of the pin, not something inherited. A pin that
+            // left it unnamed would replay the library default (ParseQuerySyntax = true, a double
+            // quote is a phrase delimiter) against a table that runs literal-text queries, because
+            // on BEIR queries a straight quote is ordinary prose and a query language collapses it
+            // (146 of ArguAna's 1,406 test queries carry one). The field exists so the pin says
+            // which of the two it was recorded under.
             var retrieved = engine
-                .Search(query.Text, new SearchOptions(10, ExcludedDocumentIds: excluded))
+                .Search(query.Text, new SearchOptions(
+                    10,
+                    ExcludedDocumentIds: excluded,
+                    ParseQuerySyntax: pin.QuerySyntax))
                 .Select(result => result.DocumentId)
                 .ToArray();
 
