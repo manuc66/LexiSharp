@@ -19,5 +19,5 @@ public interface IScoreExplainer : ITextScorer
     /// <param name="documentId">Id of the document to explain.</param>
     /// <param name="queryTerms">Terms of the query, already tokenized.</param>
     /// <param name="index">The shared index holding corpus statistics.</param>
-    ScoreExplanation Explain(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index);
+    ScoreExplanation Explain(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index);
 }

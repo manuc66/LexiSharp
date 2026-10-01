@@ -14,7 +14,7 @@ namespace LexiSharp.Indexing;
 /// single thread (or synchronize externally). Read-only queries hold no shared mutable state and
 /// may run concurrently with one another.
 /// </remarks>
-public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateIndex, IVocabularyIndex, IAccumulatingIndex
+public sealed class InMemoryTextIndex : ITextIndex, ICandidateIndex, IUnorderedCandidateIndex, IVocabularyIndex, IAccumulatingIndex, IFieldStatisticsIndex
 {
     private readonly ITokenizer _tokenizer;
 
@@ -1112,10 +1112,9 @@ public sealed class InMemoryTextIndex : ICandidateIndex, IUnorderedCandidateInde
         }
     }
 
-    /// <inheritdoc />
-    public bool HasFieldStatistics => true;
-
-    /// <inheritdoc />
+    /// <summary>
+    /// Implements <see cref="IFieldStatisticsIndex"/>: this index always tracks per-field statistics.
+    /// </summary>
     public int FieldTermFrequency(string documentId, string field, string term)
     {
         ArgumentException.ThrowIfNullOrEmpty(documentId);

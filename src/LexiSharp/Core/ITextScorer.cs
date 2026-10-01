@@ -2,11 +2,12 @@ namespace LexiSharp.Core;
 
 /// <summary>
 /// Computes how relevant a single document is with respect to a tokenized query,
-/// given a shared <see cref="ITextIndex"/> for corpus statistics.
+/// given a shared <see cref="IReadOnlyTextIndex"/> for corpus statistics.
 /// </summary>
 /// <remarks>
 /// A scorer is a pure strategy: it reads statistics from the index and never mutates it,
-/// which makes swapping ranking algorithms (BM25, TF-IDF, boolean, ...) trivial.
+/// which makes swapping ranking algorithms (BM25, TF-IDF, boolean, ...) trivial. The index
+/// arrives as the read-only view, so the seam itself proves the scorer cannot write.
 /// </remarks>
 public interface ITextScorer
 {
@@ -19,5 +20,5 @@ public interface ITextScorer
     /// <param name="documentId">Id of the document to score.</param>
     /// <param name="queryTerms">Terms of the query, already tokenized.</param>
     /// <param name="index">The shared index holding corpus statistics.</param>
-    double Score(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index);
+    double Score(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index);
 }

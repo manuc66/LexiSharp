@@ -17,7 +17,7 @@ namespace LexiSharp.Core;
 /// falls back to iterating <see cref="ITextIndex.Documents"/>.
 /// </para>
 /// </remarks>
-public interface ICandidateIndex : ITextIndex
+public interface ICandidateIndex : IReadOnlyTextIndex
 {
     /// <summary>
     /// Union of the documents containing at least one of the given terms, each document

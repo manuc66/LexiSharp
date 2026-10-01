@@ -156,7 +156,7 @@ public class MultiFieldIndexTests
         var index = Create(new SearchDocument("1", "red blue"));
 
         Assert.Equal([TextFields.Default], index.Fields);
-        Assert.True(index.HasFieldStatistics);
+        Assert.IsAssignableFrom<IFieldStatisticsIndex>(index);
     }
 
     [Fact]
@@ -369,13 +369,11 @@ public class MultiFieldIndexTests
     {
         ITextIndex index = new NoFieldStatisticsIndex();
 
-        Assert.False(index.HasFieldStatistics);
+        // A field-blind index is not an IFieldStatisticsIndex, so a field-aware scorer refuses it
+        // by name (see Bm25FScorerTests / Bm25FParameterTunerTests) instead of reading a silent
+        // zero — a zero here would make a field-weighted ranking quietly wrong.
+        Assert.IsNotAssignableFrom<IFieldStatisticsIndex>(index);
         Assert.Equal([TextFields.Default], index.Fields);
-
-        // A silent 0 here would make a field-weighted ranking quietly wrong, so the default
-        // members must refuse rather than invent a number.
-        var exception = Assert.Throws<NotSupportedException>(() => index.FieldLength("1", "title"));
-        Assert.Contains(nameof(NoFieldStatisticsIndex), exception.Message, StringComparison.Ordinal);
     }
 
     private sealed class NoFieldStatisticsIndex : ITextIndex

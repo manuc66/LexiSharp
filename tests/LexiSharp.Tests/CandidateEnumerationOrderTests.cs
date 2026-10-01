@@ -212,7 +212,7 @@ public class CandidateEnumerationOrderTests
     /// Wraps a real index, counts which candidate path the engine chose, and hands back the
     /// unordered candidates in whichever direction <see cref="CandidateOrder"/> asks for.
     /// </summary>
-    private sealed class CountingUnorderedIndex(InMemoryTextIndex inner) : IUnorderedCandidateIndex
+    private sealed class CountingUnorderedIndex(InMemoryTextIndex inner) : IUnorderedCandidateIndex, ITextIndex
     {
         public int UnorderedCalls { get; private set; }
 
@@ -276,7 +276,7 @@ public class CandidateEnumerationOrderTests
     }
 
     /// <summary>The same index without the capability, i.e. what a third-party index looks like.</summary>
-    private sealed class OrderedOnlyIndex(InMemoryTextIndex inner) : ICandidateIndex
+    private sealed class OrderedOnlyIndex(InMemoryTextIndex inner) : ICandidateIndex, ITextIndex
     {
         public int OrderedCalls { get; private set; }
 

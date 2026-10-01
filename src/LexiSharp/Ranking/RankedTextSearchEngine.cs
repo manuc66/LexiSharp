@@ -480,7 +480,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// documents, and the unit both the accumulation threshold and the candidate-or-scan choice
     /// below are written in.
     /// </summary>
-    private static int SumDocumentFrequencies(ITextIndex index, IReadOnlyList<string> queryTerms)
+    private static int SumDocumentFrequencies(IReadOnlyTextIndex index, IReadOnlyList<string> queryTerms)
     {
         if (index.Count == 0)
             return 0;

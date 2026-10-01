@@ -15,7 +15,7 @@ namespace LexiSharp.Core;
 /// falls back to the atom's literal base term (the behavior of a query without operators).
 /// </para>
 /// </remarks>
-public interface IVocabularyIndex : ITextIndex
+public interface IVocabularyIndex : IReadOnlyTextIndex
 {
     /// <summary>All distinct terms known to the index, in arbitrary order.</summary>
     IEnumerable<string> Vocabulary { get; }

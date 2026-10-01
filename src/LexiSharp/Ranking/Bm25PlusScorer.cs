@@ -97,7 +97,7 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
     public string Name => "BM25+";
 
     /// <inheritdoc />
-    public double Score(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index)
+    public double Score(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
     {
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(queryTerms);
@@ -132,7 +132,7 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
         return score;
     }
 
-    ISearchQueryPlan IQueryPlannableScorer.CreatePlan(IReadOnlyList<string> queryTerms, ITextIndex index)
+    ISearchQueryPlan IQueryPlannableScorer.CreatePlan(IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
     {
         ArgumentNullException.ThrowIfNull(queryTerms);
         ArgumentNullException.ThrowIfNull(index);
@@ -141,7 +141,7 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
     }
 
     /// <inheritdoc />
-    public ScoreExplanation Explain(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index)
+    public ScoreExplanation Explain(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
     {
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(queryTerms);
@@ -196,7 +196,7 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
 
     private sealed class Bm25PlusQueryPlan : IAccumulatingQueryPlan
     {
-        private readonly ITextIndex _index;
+        private readonly IReadOnlyTextIndex _index;
         private readonly string[] _terms;
         private readonly double[] _idf;
         private readonly double _avgLength;
@@ -206,7 +206,7 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
 
         public Bm25PlusQueryPlan(
             IReadOnlyList<string> queryTerms,
-            ITextIndex index,
+            IReadOnlyTextIndex index,
             double k1,
             double b,
             double delta)

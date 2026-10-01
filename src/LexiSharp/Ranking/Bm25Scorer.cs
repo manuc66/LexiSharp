@@ -16,7 +16,7 @@ namespace LexiSharp.Ranking;
 /// <para>
 /// Three of its inputs are conventions rather than mathematics, and each is an option because a
 /// published figure or a recorded run was produced under one of them and not the other:
-/// <see cref="ITextIndex.StatisticDocumentCount"/> fixes which documents the <c>N</c> of the idf counts,
+/// <see cref="IReadOnlyTextIndex.StatisticDocumentCount"/> fixes which documents the <c>N</c> of the idf counts,
 /// <c>saturationConstant</c> fixes whether the numerator carries <c>k1 + 1</c>, and
 /// <c>arithmetic</c> fixes the precision. All three default to this library's own conventions.
 /// </para>
@@ -122,7 +122,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
     public string Name => "BM25";
 
     /// <inheritdoc />
-    public double Score(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index)
+    public double Score(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
     {
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(queryTerms);
@@ -171,7 +171,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
             ? queryTerms
             : queryTerms is DistinctTermList ? queryTerms : TermDeduplicator.Distinct(queryTerms);
 
-    ISearchQueryPlan IQueryPlannableScorer.CreatePlan(IReadOnlyList<string> queryTerms, ITextIndex index)
+    ISearchQueryPlan IQueryPlannableScorer.CreatePlan(IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
     {
         ArgumentNullException.ThrowIfNull(queryTerms);
         ArgumentNullException.ThrowIfNull(index);
@@ -307,7 +307,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
     /// </summary>
     private sealed class Bm25QueryPlan : IAccumulatingQueryPlan
     {
-        private readonly ITextIndex _index;
+        private readonly IReadOnlyTextIndex _index;
         private readonly float[]? _normInverse;
         private readonly double _avgLength;
         private readonly double _k1;
@@ -318,7 +318,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
         private double[] _idf;
 
         public Bm25QueryPlan(
-            IReadOnlyList<string> queryTerms, ITextIndex index, double k1, double b, double saturation,
+            IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index, double k1, double b, double saturation,
             float[]? normInverse)
         {
             ArgumentNullException.ThrowIfNull(queryTerms);
@@ -494,7 +494,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
     /// <see cref="ScoreExplanation.TotalScore"/> always equals <see cref="Score"/> for the
     /// same inputs.
     /// </remarks>
-    public ScoreExplanation Explain(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index)
+    public ScoreExplanation Explain(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
     {
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(queryTerms);

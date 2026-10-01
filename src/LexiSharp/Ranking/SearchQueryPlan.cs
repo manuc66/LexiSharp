@@ -28,7 +28,7 @@ internal interface ISearchQueryPlan
 internal interface IQueryPlannableScorer : ITextScorer
 {
     /// <summary>Builds a reusable plan for the given tokenized query against the corpus.</summary>
-    ISearchQueryPlan CreatePlan(IReadOnlyList<string> queryTerms, ITextIndex index);
+    ISearchQueryPlan CreatePlan(IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index);
 }
 
 /// <summary>

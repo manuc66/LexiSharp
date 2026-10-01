@@ -30,7 +30,7 @@ are listed first.
 
 | Contract | Extends | What it is | Guide |
 | --- | --- | --- | --- |
-| `ICandidateIndex` | `ITextIndex` | Capability for an index that can enumerate only the documents containing at least one of the given query terms, instead of scanning the whole corpus. | [guide](reference.md) |
+| `ICandidateIndex` | `IReadOnlyTextIndex` | Capability for an index that can enumerate only the documents containing at least one of the given query terms, instead of scanning the whole corpus. | [guide](reference.md) |
 | `IChunkContextEnricher` | — | Augments the searchable text of a SearchDocument before it is indexed — the « contextual retrieval » seam. A chunk that only says "the benefit rose 12%" is… | [guide](reference.md) |
 | `ICompressingSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that can return, alongside the ranked page, each document compressed to its query-relevant content — the surface a… | [guide](reference.md) |
 | `IContextCompressor` | — | Reduces a document's text to the content a query actually cares about — the token-reduction seam between a ranked page and a generation model. LexiSharp never… | [guide](reference.md) |
@@ -39,6 +39,7 @@ are listed first.
 | `IEmbeddingProvider` | — | Contract for producing text embeddings. LexiSharp never computes embeddings itself: implementing this interface is up to the consumer — a local ONNX model, an… | [guide](reference.md) |
 | `IExplainableSearchEngine` | — | Optional capability of an ITextSearchEngine that can explain why a document received the score it did for a query, when its scorer is an IScoreExplainer. | [guide](reference.md) |
 | `IFacetedSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that can return, alongside the ranked results, facet counts over Fields. | [guide](reference.md) |
+| `IFieldStatisticsIndex` | `IReadOnlyTextIndex` | Capability for an index that tracks per-field statistics: how many times a term occurs in one field of one document, how long each field is, and the corpus… | [guide](reference.md) |
 | `IGraphSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that can return, alongside the ranked page, the knowledge-graph facts connected to the query — the search-side half… | [guide](reference.md) |
 | `IIncrementalTextClassifier` | `ITextClassifier` | Optional capability of an ITextClassifier: add or retract single labelled documents without a retraining pass over the whole corpus. Detected with pattern… | [guide](reference.md) |
 | `IKnowledgeGraphBridge` | — | Contracts for connecting the engines to a knowledge graph — the GraphRAG seam. LexiSharp never runs a model or a graph itself: relation extraction is the model… | [guide](reference.md) |
@@ -48,6 +49,7 @@ are listed first.
 | `IQueryRouter` | — | Picks which route (engine + optional filters) a RoutingSearchEngine should run a query on — a semantic/intent decision, as opposed to IQueryCostEstimator which… | [guide](reference.md) |
 | `IQuerySyntaxSupport` | — | Declares which QueryFeatures an ITextSearchEngine interprets, so callers can discover the supported query syntax instead of discovering it by getting wrong… | [guide](reference.md) |
 | `IQueryTransformer` | — | Rewrites a raw query into one or more searchable variants before retrieval — the « pre-retrieval transformation » seam. Rewriting, decomposing a question into… | [guide](reference.md) |
+| `IReadOnlyTextIndex` | — | The read-only view of an ITextIndex: the corpus statistics and per-document lookups a scorer, a reranker or an extractor needs, with none of the mutation… | [guide](reference.md) |
 | `IReinforceableTextClassifier` | `ITextClassifier` | Optional capability of an ITextClassifier: adjust a trained model from user feedback, one text-to-category association at a time, without a retraining pass over… | [guide](reference.md) |
 | `IReranker` | — | Contract for re-ordering a list of candidate results after retrieval — the seam for second-stage ranking strategies (diversity preservation, cross-encoders,… | [guide](reference.md) |
 | `IRetrievalMetrics` | — | Receives the measurements a RetrievalTelemetry takes. Implement it to ship numbers to a metrics backend (OpenTelemetry, Prometheus, StatsD, ...). | [guide](reference.md) |
@@ -56,11 +58,11 @@ are listed first.
 | `IStructureAwareSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that knows the hierarchical structure its documents live in — the « structure-aware retriever » seam. Flat retrieval… | [guide](reference.md) |
 | `ITermOverlapScorer` | `ITextScorer` | Capability for a scorer whose score is exactly 0 for every document sharing no query term with the query, which lets the search engine skip such documents… | [guide](reference.md) |
 | `ITextClassifier` | — | Supervised text classifier trained on labelled documents. | [guide](reference.md) |
-| `ITextIndex` | — | An index of tokenized documents exposing the statistics needed by text scorers and classifiers (term frequency, document frequency, document length, ...). | [guide](reference.md) |
-| `ITextScorer` | — | Computes how relevant a single document is with respect to a tokenized query, given a shared ITextIndex for corpus statistics. | [guide](reference.md) |
+| `ITextIndex` | `IReadOnlyTextIndex` | A write-capable index: the read surface of IReadOnlyTextIndex plus the mutations a caller that owns the corpus performs (Index/Add/Remove/Clear). | [guide](reference.md) |
+| `ITextScorer` | — | Computes how relevant a single document is with respect to a tokenized query, given a shared IReadOnlyTextIndex for corpus statistics. | [guide](reference.md) |
 | `ITextSearchEngine` | — | The public search surface of the library: index documents and rank them against a query. | [guide](reference.md) |
 | `ITokenEmbeddingProvider` | — | Produces a sequence of token-level embeddings for a text — the building block of late interaction (ColBERT-style) ranking, where a query is matched to a… | [guide](reference.md) |
-| `IVocabularyIndex` | `ITextIndex` | Capability for an index that can enumerate its vocabulary — the seam prefix/fuzzy query expansion reads at search time. | [guide](reference.md) |
+| `IVocabularyIndex` | `IReadOnlyTextIndex` | Capability for an index that can enumerate its vocabulary — the seam prefix/fuzzy query expansion reads at search time. | [guide](reference.md) |
 | `IWeightedPredictor` | — | Optional capability of a ITextClassifier that accepts WeightedTokens instead of raw text, bypassing internal tokenization. Detected with pattern matching… | [guide](reference.md) |
 | `ITermExpander` | — | Derives the additional terms to index for a document from its own tokenization. | [guide](embeddings.md) |
 | `IResultMerger` | — | Strategy that turns several ranked result lists — one per source engine — into a single coherent, de-duplicated, ordered list. | [guide](pipelines.md) |
@@ -240,10 +242,10 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
 | `AverageLengthDivisor` | enum | — | Which document count divides the corpus token count when AverageDocumentLength is computed. |
-| `ContextEnrichingIndex` | class | `ICandidateIndex`, `ITextIndex`, `IVocabularyIndex` | An ITextIndex whose documents first pass through an IChunkContextEnricher: the enriched text is what gets tokenized and scored, while the original document the… |
-| `ExpansionTextIndex` | class | `ICandidateIndex`, `ITextIndex`, `IVocabularyIndex` | An InMemoryTextIndex whose documents are additionally indexed under the weak terms returned by an ITermExpander — the « semantic lexical index ». The search… |
+| `ContextEnrichingIndex` | class | `ICandidateIndex`, `IFieldStatisticsIndex`, `IReadOnlyTextIndex`, `ITextIndex`, `IVocabularyIndex` | An ITextIndex whose documents first pass through an IChunkContextEnricher: the enriched text is what gets tokenized and scored, while the original document the… |
+| `ExpansionTextIndex` | class | `ICandidateIndex`, `IFieldStatisticsIndex`, `IReadOnlyTextIndex`, `ITextIndex`, `IVocabularyIndex` | An InMemoryTextIndex whose documents are additionally indexed under the weak terms returned by an ITermExpander — the « semantic lexical index ». The search… |
 | `FieldPrefixContextEnricher` | class | `IChunkContextEnricher` | A model-free IChunkContextEnricher that prefixes a document's text with the values of named Fields — the deterministic, offline cousin of a context-injection… |
-| `InMemoryTextIndex` | class | `ICandidateIndex`, `ITextIndex`, `IVocabularyIndex` | In-memory inverted index: for each term, the documents containing it and the positions within each document. Exposes the corpus statistics required by scorers. |
+| `InMemoryTextIndex` | class | `ICandidateIndex`, `IFieldStatisticsIndex`, `IReadOnlyTextIndex`, `ITextIndex`, `IVocabularyIndex` | In-memory inverted index: for each term, the documents containing it and the positions within each document. Exposes the corpus statistics required by scorers. |
 | `InMemoryVectorSearchEngine` | class | `IQueryCostProbe`, `IQuerySyntaxSupport`, `ITextSearchEngine` | In-memory dense (vector) search engine: embeds documents with an IEmbeddingProvider and answers queries by cosine similarity over the whole corpus — a linear… |
 | `SparseIndexEntry` | record | — | A document together with its stored sparse vector — the atomic unit of Export and Import, and what a persistence backend serializes to reload a corpus without… |
 | `SparseTextSearchEngine` | class | `IQuerySyntaxSupport`, `ITextSearchEngine` | In-memory sparse search engine: indexes documents as their sparse learned embeddings (SPLADE, uniCOIL, ...) and answers queries by dot-product scoring. |

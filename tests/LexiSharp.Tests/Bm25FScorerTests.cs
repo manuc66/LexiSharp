@@ -277,8 +277,8 @@ public class Bm25FScorerTests
         var index = new InMemoryTextIndex();
         index.Index(new[] { new SearchDocument("1", "a plain single-field document") });
 
-        // InMemoryTextIndex always tracks fields, so the refusal is asserted through the interface's
-        // own default: a scorer handed an index whose HasFieldStatistics is false.
+        // InMemoryTextIndex always tracks fields, so the refusal is asserted through an index that does
+        // not implement IFieldStatisticsIndex — the shape a hand-written flat index takes.
         var flat = new NoFieldStatisticsAdapter(index);
         var exception = Assert.Throws<NotSupportedException>(
             () => new Bm25FScorer().Score("1", ["plain"], flat));
