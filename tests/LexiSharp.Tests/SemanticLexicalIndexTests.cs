@@ -178,4 +178,61 @@ public class SemanticLexicalIndexTests
         Assert.Equal(2, config.JudgedQueries);
         Assert.True(config.Metrics.RecallAtK > 0);
     }
+
+    /// <summary>
+    /// Two candidates with the same co-occurrence count are ordered by mutual information.
+    /// </summary>
+    /// <remarks>
+    /// The mutual information was computed, used as a filter, and then dropped, so every stored
+    /// score was zero and the tiebreak the sort documents compared zero with zero: it could never
+    /// decide anything. A count tie is the only place the tiebreak is reachable, so this is the one
+    /// construction that reaches it. "rare" co-occurs with the seed term and nowhere else, so its
+    /// association is strong; "common" co-occurs with the seed term the same number of times but
+    /// also appears in windows that do not contain it, so its association is weaker. The counts tie,
+    /// and the stronger association is the one that has to come first.
+    /// </remarks>
+    [Fact]
+    public void Expand_BreaksACountTieByMutualInformation()
+    {
+        var corpus = new List<SearchDocument>();
+        int index = 0;
+
+        // Eight tokens a document, so the window of eight covers all of it and the corpus holds one
+        // window per document. The filler tokens are unique per document, and that is what keeps the
+        // test to two candidates: a filler shared across documents co-occurs with the seed term
+        // exactly as often as "rare" does, carries the same mutual information, and wins the
+        // alphabetical tiebreak that ends the ordering.
+        for (int i = 0; i < 3; i++)
+            corpus.Add(new SearchDocument($"r{index++}", $"a{i} b{i} seed rare c{i} d{i} e{i} f{i}"));
+
+        // Three where the seed term sits beside "common": the same co-occurrence count.
+        for (int i = 0; i < 3; i++)
+            corpus.Add(new SearchDocument($"c{index++}", $"g{i} h{i} seed common i{i} j{i} k{i} l{i}"));
+
+        // Two more windows with "common" and no seed term, which is what starts to separate the two
+        // candidates' mutual information.
+        for (int i = 0; i < 2; i++)
+            corpus.Add(new SearchDocument($"m{index++}", $"m{i} n{i} common o{i} p{i} q{i} r{i} s{i}"));
+
+        // Four windows containing neither, and they are load-bearing rather than padding. A
+        // candidate's association is log(count x windows / seedWindows x candidateWindows), so
+        // "common" has a positive association only while the corpus holds more than twice its own
+        // window count; without these four it is either cut as too common or scores zero mutual
+        // information, and the tie this test needs never happens.
+        for (int i = 0; i < 4; i++)
+            corpus.Add(new SearchDocument($"n{index++}", $"t{i} u{i} v{i} w{i} x{i} y{i} z{i} aa{i}"));
+
+        var expander = PmiTermExpander.LearnFrom(corpus, options: new PmiTermExpanderOptions
+        {
+            MaxTermsPerInputTerm = 2,
+            MaxTotalTerms = 2,
+        });
+
+        var expanded = expander.Expand(["seed"]).ToList();
+
+        Assert.Equal(2, expanded.Count);
+        Assert.Equal("rare", expanded[0].Term);
+        Assert.Equal("common", expanded[1].Term);
+    }
+
 }
