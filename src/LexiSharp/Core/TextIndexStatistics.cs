@@ -21,9 +21,9 @@ public sealed record TextIndexStatistics(
     double VocabularyRichness)
 {
     /// <summary>
-    /// Derives the statistics from any <see cref="ITextIndex"/> implementation.
+    /// Derives the statistics from any <see cref="IReadOnlyTextIndex"/> implementation.
     /// </summary>
-    public static TextIndexStatistics From(ITextIndex index)
+    public static TextIndexStatistics From(IReadOnlyTextIndex index)
     {
         ArgumentNullException.ThrowIfNull(index);
 

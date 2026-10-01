@@ -141,7 +141,7 @@ public class SonarS1244SemanticsTests
     {
         public string Name => "TwoDocument";
 
-        public double Score(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index) =>
+        public double Score(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index) =>
             documentId == "zulu" ? zuluScore : 1.0;
     }
 }

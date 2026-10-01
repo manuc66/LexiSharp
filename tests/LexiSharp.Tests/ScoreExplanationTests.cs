@@ -312,6 +312,6 @@ public class ScoreExplanationTests
     {
         public string Name => "Plain";
 
-        public double Score(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index) => 0;
+        public double Score(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index) => 0;
     }
 }

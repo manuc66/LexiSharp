@@ -97,7 +97,7 @@ public sealed class Bm25LScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
     public string Name => "BM25L";
 
     /// <inheritdoc />
-    public double Score(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index)
+    public double Score(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
     {
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(queryTerms);
@@ -131,7 +131,7 @@ public sealed class Bm25LScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
         return score;
     }
 
-    ISearchQueryPlan IQueryPlannableScorer.CreatePlan(IReadOnlyList<string> queryTerms, ITextIndex index)
+    ISearchQueryPlan IQueryPlannableScorer.CreatePlan(IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
     {
         ArgumentNullException.ThrowIfNull(queryTerms);
         ArgumentNullException.ThrowIfNull(index);
@@ -140,7 +140,7 @@ public sealed class Bm25LScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
     }
 
     /// <inheritdoc />
-    public ScoreExplanation Explain(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index)
+    public ScoreExplanation Explain(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
     {
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(queryTerms);
@@ -196,7 +196,7 @@ public sealed class Bm25LScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
 
     private sealed class Bm25LQueryPlan : IAccumulatingQueryPlan
     {
-        private readonly ITextIndex _index;
+        private readonly IReadOnlyTextIndex _index;
         private readonly string[] _terms;
         private readonly double[] _idf;
         private readonly double _avgLength;
@@ -206,7 +206,7 @@ public sealed class Bm25LScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
 
         public Bm25LQueryPlan(
             IReadOnlyList<string> queryTerms,
-            ITextIndex index,
+            IReadOnlyTextIndex index,
             double k1,
             double b,
             double delta)

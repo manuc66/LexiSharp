@@ -31,7 +31,7 @@ public sealed class QueryLikelihoodScorer : ITermOverlapScorer, IQueryPlannableS
     public string Name => "QueryLikelihood";
 
     /// <inheritdoc />
-    public double Score(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index)
+    public double Score(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
     {
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(queryTerms);
@@ -73,7 +73,7 @@ public sealed class QueryLikelihoodScorer : ITermOverlapScorer, IQueryPlannableS
         return sharesTerm ? score : 0;
     }
 
-    ISearchQueryPlan IQueryPlannableScorer.CreatePlan(IReadOnlyList<string> queryTerms, ITextIndex index)
+    ISearchQueryPlan IQueryPlannableScorer.CreatePlan(IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
     {
         ArgumentNullException.ThrowIfNull(queryTerms);
         ArgumentNullException.ThrowIfNull(index);
@@ -91,7 +91,7 @@ public sealed class QueryLikelihoodScorer : ITermOverlapScorer, IQueryPlannableS
     /// normalization beyond <c>P(t | d)</c>, so <see cref="ScoreExplanation.LengthNormalization"/>
     /// is <c>1</c>.
     /// </remarks>
-    public ScoreExplanation Explain(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index)
+    public ScoreExplanation Explain(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
     {
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(queryTerms);
@@ -148,12 +148,12 @@ public sealed class QueryLikelihoodScorer : ITermOverlapScorer, IQueryPlannableS
 
     private sealed class QueryLikelihoodQueryPlan : ISearchQueryPlan
     {
-        private readonly ITextIndex _index;
+        private readonly IReadOnlyTextIndex _index;
         private readonly string[] _terms;
         private readonly double[] _collectionProbability;
         private readonly double _lambda;
 
-        public QueryLikelihoodQueryPlan(IReadOnlyList<string> queryTerms, ITextIndex index, double lambda)
+        public QueryLikelihoodQueryPlan(IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index, double lambda)
         {
             _index = index;
             _lambda = lambda;

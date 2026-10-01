@@ -35,7 +35,7 @@ public sealed class BooleanScorer : ITermOverlapScorer, IScoreExplainer
     public string Name => _match == BooleanMatch.AllTerms ? "Boolean (AND)" : "Boolean (OR)";
 
     /// <inheritdoc />
-    public double Score(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index)
+    public double Score(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
     {
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(queryTerms);
@@ -50,7 +50,7 @@ public sealed class BooleanScorer : ITermOverlapScorer, IScoreExplainer
         return matches ? 1 : 0;
     }
 
-    private static bool MatchAll(string documentId, IReadOnlyList<string> terms, ITextIndex index)
+    private static bool MatchAll(string documentId, IReadOnlyList<string> terms, IReadOnlyTextIndex index)
     {
         // Per-document hot path, run once for every candidate document. Iterating by index
         // avoids the boxed enumerator a foreach over the IReadOnlyList<string> interface
@@ -64,7 +64,7 @@ public sealed class BooleanScorer : ITermOverlapScorer, IScoreExplainer
         return true;
     }
 
-    private static bool MatchAny(string documentId, IReadOnlyList<string> terms, ITextIndex index)
+    private static bool MatchAny(string documentId, IReadOnlyList<string> terms, IReadOnlyTextIndex index)
     {
         // Same reasoning as MatchAll: keep the allocation-free indexed loop.
         for (int i = 0; i < terms.Count; i++)
@@ -85,7 +85,7 @@ public sealed class BooleanScorer : ITermOverlapScorer, IScoreExplainer
     /// <param name="documentId">Id of the document to explain.</param>
     /// <param name="queryTerms">Terms of the query, already tokenized and distinct.</param>
     /// <param name="index">The shared index holding corpus statistics.</param>
-    public ScoreExplanation Explain(string documentId, IReadOnlyList<string> queryTerms, ITextIndex index)
+    public ScoreExplanation Explain(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
     {
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(queryTerms);

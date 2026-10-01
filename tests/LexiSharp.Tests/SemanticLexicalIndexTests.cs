@@ -141,7 +141,7 @@ public class SemanticLexicalIndexTests
             plain.Tokenizer.Tokenize("alpha beta gamma"),
             semantic.Tokenizer.Tokenize("alpha beta gamma"));
         Assert.Equal(plain.Fields, semantic.Fields);
-        Assert.Equal(plain.HasFieldStatistics, semantic.HasFieldStatistics);
+        Assert.Equal(plain is IFieldStatisticsIndex, semantic is IFieldStatisticsIndex);
 
         foreach (string id in new[] { "empty", "a", "b" })
         {
