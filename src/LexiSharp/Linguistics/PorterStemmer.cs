@@ -54,11 +54,18 @@ public sealed class PorterStemmer : IStemmer
     public static PorterStemmer Default { get; } = new();
 
     /// <inheritdoc />
+    /// <remarks>
+    /// A possessive is <b>not</b> removed here. The published algorithm removes one as its first step,
+    /// but where that removal happens decides what else sees the word: <see cref="TokenizerOptions.StripPossessives"/>
+    /// does it, and it has to, because a stop word list is tested between this stage and the tokenizer.
+    /// A term that reached this method as <c>Adam's</c> becomes <c>Adam'</c>, which is a word no query
+    /// will ever contain.
+    /// </remarks>
     public string Stem(string term)
     {
         ArgumentNullException.ThrowIfNull(term);
 
-        if (term.Length < MinimumLength || !Ascii.IsValid(term))
+        if (term.Length < MinimumLength)
             return term;
 
         char[] buffer = ArrayPool<char>.Shared.Rent(term.Length);

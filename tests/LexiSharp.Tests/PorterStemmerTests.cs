@@ -104,9 +104,8 @@ public class PorterStemmerTests
     [InlineData("")]        // nothing to strip
     [InlineData("a")]       // one letter: left alone
     [InlineData("is")]      // two letters: left alone, unlike the published paper
-    [InlineData("café")]   // non-ASCII: the tokenizer removes diacritics before this point
-    [InlineData("naïve")]
-    [InlineData("中文")]
+    [InlineData("café")]   // m = 1 and not *o, so the trailing e stays
+    [InlineData("中文")]   // two characters: below the minimum length, whatever they are
     [InlineData("aaron")]   // no suffix to strip: returned unchanged
     [InlineData("search")]  // ... including words that merely end in a letter the steps test for
     [InlineData("index")]   // ... and words that look like stop words
@@ -204,4 +203,24 @@ public class PorterStemmerTests
         for (int i = 0; i < words.Length; i++)
             Assert.Equal(expected[i], results[i % 4][i]);
     }
+
+    /// <summary>
+    /// Terms that are not ASCII reach this stemmer whenever the tokenizer is configured not to fold
+    /// diacritics, and they are stemmed like any other term: the algorithm tests characters, not
+    /// scripts, and everything outside <c>aeiou</c> — accent, apostrophe, ligature — is a consonant.
+    /// </summary>
+    /// <remarks>
+    /// Refusing them made this a no-op on a whole class of words rather than a faithful
+    /// implementation, and left them unmatchable against anything indexed with a stemmer that does
+    /// process them. The expectations are the reference implementation's, measured by asking it.
+    /// </remarks>
+    [Theory]
+    [InlineData("naïve", "naïv")]
+    [InlineData("façade", "façad")]
+    [InlineData("exposés", "exposé")]
+    [InlineData("télévisions", "télévision")]
+    [InlineData("türkiye", "türkiy")]
+    [InlineData("œuvres", "œuvr")]
+    public void Stem_TreatsNonAsciiAsConsonantsAndStemsThem(string term, string expected) =>
+        Assert.Equal(expected, PorterStemmer.Default.Stem(term));
 }
