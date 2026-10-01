@@ -20,6 +20,18 @@ workflow.
 
 ### Fixed
 
+- **The pinned reference replayed query syntax the table does not use.** `ReferenceVerifier` built
+  its `SearchOptions` without naming `ParseQuerySyntax`, so every pin inherited the library default —
+  a `"` is a phrase delimiter — while the table each row is compared against runs literal-text
+  queries. On ArguAna, 146 of 1,406 test queries carry a straight `"`, so the whole ArguAna default
+  family measured ~0.030 nDCG below the table's own figures while the gate stayed green: the pin
+  family was being replayed by a path the table does not take. The four ArguAna pins are re-recorded
+  to the table's convention with the syntax named in their configuration (`"querySyntax": false`):
+  `arguana/default` 0.289 → 0.3195, `arguana/english+qtf` 0.271 → 0.3010, `arguana/english+qtf
+  at k1=3.0` 0.331 → 0.3674, `arguana/english+exclude` 0.3806 → 0.4180. The parity figure 0.3970 is
+  unaffected — it is measured on a run the table itself wrote under the same convention — and
+  NFCorpus/SciFact pins are unchanged, their queries carrying too few quotes for the syntax to matter.
+
 - **BM25's inverse document frequency was built over the wrong document count.** It used every indexed
   document; it should use the documents carrying the field. The difference is one document on any corpus
   holding one with no term in it — 1 of 8,674 on BEIR ArguAna — and it moved every score by about three
