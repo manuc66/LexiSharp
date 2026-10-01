@@ -186,6 +186,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `SearchTrace` | class | — | Collects a TraceStep per document per stage, so a ranking can be explained end to end: which engine scored a document, what each merger contributed, what the… |
 | `SparseEmbeddingProviderExtensions` | class | — | Backwards-compatible call shape: embeds text as a Passage. |
 | `StageRetrievalMetrics` | record | — | Aggregated measurements for one pipeline stage of one engine. |
+| `SynchronizedTextSearchEngine` | class | `IDetailedSearchEngine`, `IDisposable`, `IExplainableSearchEngine`, `IFacetedSearchEngine`, `ITextSearchEngine` | Wraps an ITextSearchEngine so that concurrent searches and concurrent mutation stop being the caller's problem: any number of Search (and the capability calls… |
 | `TermContribution` | record | — | The contribution of a single query term to a document's score, as broken down by an IScoreExplainer. |
 | `TextFields` | class | — | Field naming rules shared by the index and the field-aware scorers. |
 | `TextIndexStatistics` | record | — | A read-only snapshot of the corpus statistics of an ITextIndex — useful for observability, dashboards and corpus introspection. |
