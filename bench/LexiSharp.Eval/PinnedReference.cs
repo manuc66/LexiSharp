@@ -63,7 +63,10 @@ internal sealed record PinnedReference
                 row.GetProperty("referenceParameters").GetProperty("k1").GetDouble(),
                 row.GetProperty("referenceParameters").GetProperty("b").GetDouble(),
                 row.GetProperty("alignedParameters").GetBoolean(),
-                row.TryGetProperty("note", out var note) ? note.GetString() : null)),
+                row.TryGetProperty("note", out var note) ? note.GetString() : null,
+                row.TryGetProperty("reproducibilityStatus", out var status) ? status.GetString() : null,
+                row.TryGetProperty("lexisharpNdcgMeasured", out var measured) ? measured.GetDouble() : null,
+                row.TryGetProperty("variants", out var variants) ? variants.GetString() : null)),
         };
 
         if (self.SchemaVersion != CurrentSchemaVersion)
@@ -159,8 +162,25 @@ internal sealed record PinnedReference
         double ReferenceK1,
         double ReferenceB,
         bool AlignedParameters,
-        string? Note)
+        string? Note,
+        string? ReproducibilityStatus = null,
+        double? LexisharpNdcgMeasured = null,
+        string? Variants = null)
     {
         public double Difference => LexisharpNdcg - ReferenceNdcg;
+
+        /// <summary>
+        /// True when the recorded figure is not what this harness produces, and the measured one is known.
+        /// </summary>
+        /// <remarks>
+        /// The recorded figure stays: re-recording a baseline is a reviewed act, not something a flag
+        /// does. What changes is that the report stops printing a difference computed from a figure it
+        /// cannot currently reproduce, because a difference of zero against a number nobody gets is not
+        /// evidence of anything.
+        /// </remarks>
+        public bool NotReproduced =>
+            ReproducibilityStatus is not null &&
+            LexisharpNdcgMeasured.HasValue &&
+            !LexisharpNdcgMeasured.Value.Equals(LexisharpNdcg);
     }
 }

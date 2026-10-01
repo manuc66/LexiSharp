@@ -92,14 +92,26 @@ internal static class ReferenceVerifier
         Console.WriteLine("Parity against the published BM25 baselines (evidence, not assertions)");
         foreach (var row in pinned.Parity)
         {
+            // A row whose recorded figure the harness no longer produces prints the measured one and
+            // says so. Printing the difference against a figure that cannot be reproduced would read as
+            // a parity result, and it is not one.
+            string ours = (row.NotReproduced ? row.LexisharpNdcgMeasured!.Value : row.LexisharpNdcg)
+                .ToString("0.0000", CultureInfo.InvariantCulture);
+            double difference = (row.NotReproduced ? row.LexisharpNdcgMeasured!.Value : row.LexisharpNdcg)
+                - row.ReferenceNdcg;
+
             Console.WriteLine(
-                $"  {row.Corpus,-40} LexiSharp {row.LexisharpNdcg.ToString("0.0000", CultureInfo.InvariantCulture)}"
+                $"  {row.Corpus,-40} LexiSharp {ours}"
+                + (row.NotReproduced ? " (measured today, not the recorded figure)" : string.Empty)
                 + $"  reference {row.ReferenceNdcg.ToString("0.0000", CultureInfo.InvariantCulture)}"
-                + $"  difference {row.Difference:+0.0000;-0.0000;+0.0000}"
+                + $"  difference {difference:+0.0000;-0.0000;+0.0000}"
                 + (row.AlignedParameters
                     ? "  (same BM25 parameters)"
                     : $"  (reference at k1={row.ReferenceK1.ToString("0.##", CultureInfo.InvariantCulture)},"
                       + $" b={row.ReferenceB.ToString("0.##", CultureInfo.InvariantCulture)} — not the parameters measured here)"));
+
+            if (row.NotReproduced && !string.IsNullOrWhiteSpace(row.Variants))
+                Console.WriteLine("      measured across the reachable configurations: " + row.Variants);
 
             if (!string.IsNullOrWhiteSpace(row.Note))
                 Console.WriteLine("      " + row.Note);

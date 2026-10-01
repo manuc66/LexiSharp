@@ -144,6 +144,33 @@ public class RetrievalMetricsTests
     }
 
     [Fact]
+    public void GradedNdcg_Judged_Zero_Documents_Do_Not_Take_A_Rank_In_The_Ideal()
+    {
+        // A level of 0 contributes nothing, so it must not occupy a position in the ideal ranking
+        // either. Here the ideal is one relevant document at rank 1 and nothing else; if the two
+        // zero-level documents were allowed to advance the rank, the ideal would be computed over
+        // three positions with two of them empty and every nDCG against it would come out too high.
+        var graded = new Dictionary<string, double> { ["a"] = 1, ["j"] = 0, ["k"] = 0 };
+
+        // "a" is first in Retrieved, so this is the ideal ranking and the score must be exactly 1.
+        Assert.Equal(1, RetrievalMetrics.NdcgAtK(Retrieved, graded, 3, NdcgGain.Linear), 12);
+    }
+
+    [Fact]
+    public void GradedNdcg_A_Zero_Level_Between_Relevant_Documents_Shifts_The_Ideal()
+    {
+        // Ordered descending, the levels are [1, 0, 1]: the ideal ranking puts both relevant documents
+        // at ranks 1 and 2, because a document that can contribute nothing is not in the ideal at any
+        // position. The retrieved list has the first relevant document at rank 1 and the second at
+        // rank 3, so the score is (1/1 + 0) / (1/1 + 1/log2(3)) — not a divisor of three positions.
+        var graded = new Dictionary<string, double> { ["a"] = 1, ["j"] = 0, ["z"] = 1 };
+
+        double expected = 1.0 / (1.0 / Math.Log2(2) + 1.0 / Math.Log2(3));
+
+        Assert.Equal(expected, RetrievalMetrics.NdcgAtK(Retrieved, graded, 3, NdcgGain.Linear), 12);
+    }
+
+    [Fact]
     public void GradedNdcg_EmptyOrInvalidGains()
     {
         Assert.Equal(0, RetrievalMetrics.NdcgAtK(Retrieved, new Dictionary<string, double>(), 3), 12);
