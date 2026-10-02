@@ -64,7 +64,7 @@ internal static class DenseEmbedder
             Console.WriteLine($"Loading cached multilingual-e5-small embeddings ({docCount}+{queryCount} vectors).");
             return new DenseVectors(
                 ReadMatrix(docCache, docCount),
-                ReadMatrixAsQueryMap(queryCache, corpus.Queries.Count(), corpus),
+                ReadMatrixAsQueryMap(queryCache, corpus.Queries.Count, corpus),
                 HiddenDim);
         }
 

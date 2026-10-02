@@ -53,7 +53,7 @@ public class IndexBenchmarks
                 return term[..^3];
             if (term.EndsWith("ed", StringComparison.Ordinal))
                 return term[..^2];
-            if (term.EndsWith("s", StringComparison.Ordinal))
+            if (term.EndsWith('s'))
                 return term[..^1];
             return term;
         }
