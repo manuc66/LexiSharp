@@ -142,6 +142,60 @@ public class VectorAnnPlanTests
         Assert.Equal("?", VectorAnnBenchmark.PlanNode(Plan("""{ "Plan": { "Node Type": "Gather", "Plans": [] } }""")));
     }
 
+    /// <summary>
+    /// Every column of a row sits under the heading that names it. A width added to one and not the
+    /// other does not fail a run — it prints a table whose numbers no longer line up with their
+    /// labels, which is exactly the reader error the plan column was added to prevent.
+    /// </summary>
+    [Fact]
+    public void APointsColumnsSitUnderTheHeadingThatNamesThem()
+    {
+        string heading = VectorAnnBenchmark.Heading(10);
+        string row = new VectorAnnBenchmark.AnnPoint(10, 0.7579, 1.08, "index").ToString();
+
+        Assert.Equal(heading.Length, row.Length);
+
+        // The three numbers are right-aligned in their column, so a column agrees when it ends in
+        // the same place.
+        AssertRightEdgesAgree(heading, "ef_search", row, "10");
+        AssertRightEdgesAgree(heading, "recall@10", row, "0.7579");
+        AssertRightEdgesAgree(heading, "latency", row, "1.08 ms");
+
+        // The plan is a word, so it starts under its heading rather than ending under it.
+        AssertLeftEdgesAgree(heading, "plan", row, "index");
+    }
+
+    /// <summary>
+    /// A plan name longer than its column widens the row rather than being cut. Truncating the node
+    /// would be the wrong repair: the column's whole purpose is to name what answered, and a
+    /// truncated name reads as one of the names it was cut from. Everything from the recall column on
+    /// is unaffected, so a widened row still reads as columns.
+    /// </summary>
+    [Fact]
+    public void AnOverlongPlanNameIsPrintedInFullAndWidensOnlyItsOwnColumn()
+    {
+        const string Name = "a-plan-node-name-longer-than-ten-characters";
+        string sized = new VectorAnnBenchmark.AnnPoint(10, 0.7579, 1.08, "index").ToString();
+        string widened = new VectorAnnBenchmark.AnnPoint(10, 0.7579, 1.08, Name).ToString();
+
+        Assert.Contains(Name, widened, StringComparison.Ordinal);
+        Assert.True(widened.Length > sized.Length);
+        Assert.EndsWith(
+            sized[sized.IndexOf("0.7579", StringComparison.Ordinal)..],
+            widened,
+            StringComparison.Ordinal);
+    }
+
+    private static void AssertLeftEdgesAgree(string left, string leftWord, string right, string rightWord) =>
+        Assert.Equal(
+            left.IndexOf(leftWord, StringComparison.Ordinal),
+            right.IndexOf(rightWord, StringComparison.Ordinal));
+
+    private static void AssertRightEdgesAgree(string left, string leftWord, string right, string rightWord) =>
+        Assert.Equal(
+            left.IndexOf(leftWord, StringComparison.Ordinal) + leftWord.Length,
+            right.IndexOf(rightWord, StringComparison.Ordinal) + rightWord.Length);
+
     /// <summary>Wraps a plan fragment in the <c>EXPLAIN (FORMAT JSON)</c> envelope, as returned.</summary>
     private static string Plan(string planFragment) => $"[\n{planFragment}\n]\n";
 
