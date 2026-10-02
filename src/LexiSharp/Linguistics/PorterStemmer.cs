@@ -247,21 +247,45 @@ public sealed class PorterStemmer : IStemmer
     }
 
     /// <summary>Steps 1a and 1b: plurals, then <c>-ed</c> and <c>-ing</c>.</summary>
+    /// <remarks>
+    /// Two rules with nothing in common, run in order: 1a shortens a plural and 1b shortens a verb
+    /// ending. Each is its own method because a change to one has no business touching the other,
+    /// and because as one method the two rules were a single nested block whose nesting said they
+    /// were conditional on each other when they are merely ordered.
+    /// <para>
+    /// <paramref name="j"/> is threaded between them as the reference threads it, and is dead
+    /// afterwards — step 2 overwrites it before reading, and the stem length returned is <c>k + 1</c>.
+    /// </para>
+    /// </remarks>
     private static void Step1ab(Span<char> word, ref int k, ref int j)
     {
-        // 1a: -sses -> -ss, -ies -> -i, and a final -s that is not the second of a doubled pair.
-        if (word[k] == 's')
-        {
-            if (Ends(word, k, "sses", out j))
-                k -= 2;
-            else if (Ends(word, k, "ies", out j))
-                SetTo(word, ref k, j, "i");
-            else if (word[k - 1] != 's')
-                k--;
-        }
+        Step1a(word, ref k, out j);
+        Step1b(word, ref k, out j);
+    }
 
-        // 1b: -eed only shortens when something is left of the stem (-feed stays -feed,
-        // -agreed becomes -agre); -ed and -ing only go when a vowel precedes them.
+    /// <summary>Step 1a: <c>-sses</c> → <c>-ss</c>, <c>-ies</c> → <c>-i</c>, and a final <c>-s</c> that is not the second of a doubled pair.</summary>
+    private static void Step1a(Span<char> word, ref int k, out int j)
+    {
+        j = 0;
+
+        if (word[k] != 's')
+            return;
+
+        if (Ends(word, k, "sses", out j))
+            k -= 2;
+        else if (Ends(word, k, "ies", out j))
+            SetTo(word, ref k, j, "i");
+        else if (word[k - 1] != 's')
+            k--;
+    }
+
+    /// <summary>
+    /// Step 1b: <c>-eed</c> only shortens when something is left of the stem (<c>-feed</c> stays
+    /// <c>-feed</c>, <c>-agreed</c> becomes <c>-agre</c>); <c>-ed</c> and <c>-ing</c> only go when a
+    /// vowel precedes them.
+    /// </summary>
+    private static void Step1b(Span<char> word, ref int k, out int j)
+    {
         if (Ends(word, k, "eed", out j))
         {
             if (Measure(word, j) > 0)
@@ -377,71 +401,59 @@ public sealed class PorterStemmer : IStemmer
     }
 
     /// <summary>Step 4: <c>-ant</c>, <c>-ence</c>, <c>-ent</c> and friends, only past a measure of 1.</summary>
+    /// <remarks>
+    /// Two questions, and they are not the same one: <see cref="Step4Suffix"/> decides which suffix
+    /// this word ends with, and the two lines below decide whether dropping it is allowed. Held
+    /// together, the suffix table was the tail of a <c>switch</c> whose every arm ended in the same
+    /// shape — match, or leave the word alone — and the measure test that follows was easy to read
+    /// as part of a rule rather than as the gate every rule shares.
+    /// </remarks>
     private static void Step4(Span<char> word, ref int k, ref int j)
+    {
+        // No suffix, no step. j is dead afterwards: step 5 either overwrites it before reading or is
+        // the last to run, and the stem length returned is k + 1.
+        if (!Step4Suffix(word, k, out j))
+            return;
+
+        if (Measure(word, j) > 1)
+            k = j;
+    }
+
+    /// <summary>
+    /// The start of the step-4 suffix this word ends with, if any.
+    /// </summary>
+    /// <remarks>
+    /// The switch on the second-to-last letter is the reference's speed-up and part of its
+    /// semantics: only suffixes sharing that letter are considered, and the first that matches is
+    /// the one dropped.
+    /// </remarks>
+    private static bool Step4Suffix(Span<char> word, int k, out int j)
     {
         switch (word[k - 1])
         {
-            case 'a':
-                if (!Ends(word, k, "al", out j))
-                    return;
-                break;
-            case 'c':
-                if (!Ends(word, k, "ance", out j) && !Ends(word, k, "ence", out j))
-                    return;
-                break;
-            case 'e':
-                if (!Ends(word, k, "er", out j))
-                    return;
-                break;
-            case 'i':
-                if (!Ends(word, k, "ic", out j))
-                    return;
-                break;
-            case 'l':
-                if (!Ends(word, k, "able", out j) && !Ends(word, k, "ible", out j))
-                    return;
-                break;
-            case 'n':
-                if (!Ends(word, k, "ant", out j) && !Ends(word, k, "ement", out j) &&
-                    !Ends(word, k, "ment", out j) && !Ends(word, k, "ent", out j))
-                    return;
-                break;
+            case 'a': return Ends(word, k, "al", out j);
+            case 'c': return Ends(word, k, "ance", out j) || Ends(word, k, "ence", out j);
+            case 'e': return Ends(word, k, "er", out j);
+            case 'i': return Ends(word, k, "ic", out j);
+            case 'l': return Ends(word, k, "able", out j) || Ends(word, k, "ible", out j);
+            case 'n': return Ends(word, k, "ant", out j) || Ends(word, k, "ement", out j)
+                              || Ends(word, k, "ment", out j) || Ends(word, k, "ent", out j);
             case 'o':
                 // "-sion" and "-tion" keep their s or t: only a stem of measure > 1 that ends in
                 // s or t loses "-ion". The j >= 0 guard is the reference's fix for a word "ion".
                 if (Ends(word, k, "ion", out j) && j >= 0 && word[j] is 's' or 't')
-                    break;
+                    return true;
 
-                if (!Ends(word, k, "ou", out j))
-                    return;
-
-                break;
-            case 's':
-                if (!Ends(word, k, "ism", out j))
-                    return;
-                break;
-            case 't':
-                if (!Ends(word, k, "ate", out j) && !Ends(word, k, "iti", out j))
-                    return;
-                break;
-            case 'u':
-                if (!Ends(word, k, "ous", out j))
-                    return;
-                break;
-            case 'v':
-                if (!Ends(word, k, "ive", out j))
-                    return;
-                break;
-            case 'z':
-                if (!Ends(word, k, "ize", out j))
-                    return;
-                break;
+                return Ends(word, k, "ou", out j);
+            case 's': return Ends(word, k, "ism", out j);
+            case 't': return Ends(word, k, "ate", out j) || Ends(word, k, "iti", out j);
+            case 'u': return Ends(word, k, "ous", out j);
+            case 'v': return Ends(word, k, "ive", out j);
+            case 'z': return Ends(word, k, "ize", out j);
             default:
-                return;
+                j = 0;
+                return false;
         }
-
-        if (Measure(word, j) > 1)
-            k = j;
     }
 
     /// <summary>Step 5: drop a final <c>-e</c> that is not holding a short syllable, and <c>-ll</c> to <c>-l</c>.</summary>
