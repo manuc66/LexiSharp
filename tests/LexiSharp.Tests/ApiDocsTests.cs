@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.RegularExpressions;
 using LexiSharp.ApiDocs;
 using Xunit;
 
@@ -13,8 +14,16 @@ namespace LexiSharp.Tests;
 /// cleanly and describes the wrong thing, which is what a regression in the reader produces.
 /// Each one names a way the output was wrong at some point during its writing.
 /// </remarks>
-public class ApiDocsTests
+public partial class ApiDocsTests
 {
+    /// <summary>
+    /// An unescaped pipe — the column separator a well-formed row carries four times. Generated at
+    /// compile time because the pattern is constant and the two call sites run it over every row of
+    /// the rendered page.
+    /// </summary>
+    [GeneratedRegex(@"(?<!\\)\|")]
+    private static partial Regex UnescapedPipe();
+
     /// <summary>The core assembly as the test host sees it, XML documentation and all.</summary>
     private static string CoreAssembly => typeof(Core.SearchDocument).Assembly.Location;
 
@@ -61,10 +70,10 @@ public class ApiDocsTests
         {
             // Anchored to the start of a row, so a type named in another row's Contracts or
             // What-it-is column is not counted as a row of its own.
-            int occurrences = System.Text.RegularExpressions.Regex.Matches(
+            int occurrences = System.Text.RegularExpressions.Regex.Count(
                 page,
                 $@"^\| `{System.Text.RegularExpressions.Regex.Escape(type.Name)}` \|",
-                System.Text.RegularExpressions.RegexOptions.Multiline).Count;
+                System.Text.RegularExpressions.RegexOptions.Multiline);
 
             Assert.True(occurrences == 1, $"{type.Name} appears in {occurrences} row(s), expected exactly one");
         }
@@ -147,7 +156,7 @@ public class ApiDocsTests
 
         foreach (string line in page.Split('\n').Where(line => line.StartsWith("| ", StringComparison.Ordinal)))
         {
-            Assert.Equal(5, System.Text.RegularExpressions.Regex.Matches(line, @"(?<!\\)\|").Count);
+            Assert.Equal(5, UnescapedPipe().Count(line));
         }
     }
 
