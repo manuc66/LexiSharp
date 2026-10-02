@@ -150,9 +150,7 @@ public static class BenchmarkComparer
             }
 
             double delta = after.Metrics.NdcgAtK - before.Metrics.NdcgAtK;
-            var verdict = Math.Abs(delta) <= epsilon
-                ? BenchmarkDeltaVerdict.Unchanged
-                : delta > 0 ? BenchmarkDeltaVerdict.Improved : BenchmarkDeltaVerdict.Degraded;
+            BenchmarkDeltaVerdict verdict = Classify(delta, epsilon);
 
             var entry = new BenchmarkQueryDelta(
                 before.QueryId,
@@ -192,5 +190,22 @@ public static class BenchmarkComparer
             degraded,
             unchanged,
             deltas.Count == 0 ? 0 : deltas.Sum(entry => entry.Delta) / deltas.Count);
+    }
+
+    /// <summary>
+    /// Whether a per-query nDCG@K delta counts as movement, and which way.
+    /// </summary>
+    /// <remarks>
+    /// A delta within <paramref name="epsilon"/> of zero is unchanged rather than a tiny improvement
+    /// or a tiny regression: on a metric that runs to a handful of decimal places, reporting a move
+    /// of 1e-9 as one would fill the improved and degraded lists with noise and bury the queries
+    /// that actually moved.
+    /// </remarks>
+    private static BenchmarkDeltaVerdict Classify(double delta, double epsilon)
+    {
+        if (Math.Abs(delta) <= epsilon)
+            return BenchmarkDeltaVerdict.Unchanged;
+
+        return delta > 0 ? BenchmarkDeltaVerdict.Improved : BenchmarkDeltaVerdict.Degraded;
     }
 }

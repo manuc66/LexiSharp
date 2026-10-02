@@ -166,10 +166,15 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
     /// The query terms as this scorer reads them: deduplicated, or kept whole so a repeated term is
     /// scored once per occurrence.
     /// </summary>
-    private IReadOnlyList<string> Terms(IReadOnlyList<string> queryTerms) =>
-        _queryTerms == QueryTermWeighting.QueryFrequency
-            ? queryTerms
-            : queryTerms is DistinctTermList ? queryTerms : TermDeduplicator.Distinct(queryTerms);
+    private IReadOnlyList<string> Terms(IReadOnlyList<string> queryTerms)
+    {
+        if (_queryTerms == QueryTermWeighting.QueryFrequency)
+            return queryTerms;
+
+        // The engine already deduplicated, and DistinctTermList is the marker saying so. Deduplicating
+        // again would hash every term to arrive at the list this was handed.
+        return queryTerms is DistinctTermList ? queryTerms : TermDeduplicator.Distinct(queryTerms);
+    }
 
     ISearchQueryPlan IQueryPlannableScorer.CreatePlan(IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
     {
