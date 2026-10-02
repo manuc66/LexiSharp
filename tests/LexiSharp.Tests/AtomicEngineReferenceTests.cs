@@ -51,7 +51,7 @@ public class AtomicEngineReferenceTests
     /// holder reads the last engine committed.
     /// </summary>
     [Fact]
-    public void ConcurrentReaders_ObserveOnlyCommittedEngines()
+    public async Task ConcurrentReaders_ObserveOnlyCommittedEngines()
     {
         const int engineCount = 100;
         var engines = Enumerable.Range(0, engineCount).Select(tag => new StubEngine(tag)).ToArray();
@@ -86,7 +86,7 @@ public class AtomicEngineReferenceTests
             }
         })).ToArray();
 
-        Task.WaitAll([writer, .. readers]);
+        await Task.WhenAll([writer, .. readers]);
         Assert.All(observed, tag => Assert.InRange(tag, 0, engineCount - 1));
         Assert.Equal(engineCount - 1, ((StubEngine)reference.Current).Tag);
     }

@@ -62,7 +62,7 @@ public class SynchronizedTextSearchEngineTests
     }
 
     [Fact]
-    public void WritesAndReadsOverlap_WithoutThrowingOrCorruptingAPage()
+    public async Task WritesAndReadsOverlap_WithoutThrowingOrCorruptingAPage()
     {
         var index = Index();
         var plain = new RankedTextSearchEngine(index, new Bm25Scorer(0.9, 0.4));
@@ -105,7 +105,7 @@ public class SynchronizedTextSearchEngineTests
         });
 
         writerStop.Cancel();
-        writer.Wait();
+        await writer;
         Assert.Empty(exceptions);
     }
 
