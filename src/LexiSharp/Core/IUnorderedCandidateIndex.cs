@@ -10,7 +10,7 @@ namespace LexiSharp.Core;
 /// <remarks>
 /// <para>
 /// <see cref="ICandidateIndex.GetCandidateDocuments"/> documents that its result appears in the
-/// same relative order as <see cref="ITextIndex.Documents"/>, and that is a real contract its
+/// same relative order as <see cref="IReadOnlyTextIndex.Documents"/>, and that is a real contract its
 /// callers may rely on. Restoring that order means re-walking the whole corpus after the union
 /// of the posting lists, which costs O(corpus) no matter how few documents actually matched:
 /// measured on a 10,000-document index, 0.001 ms for the union against 0.242 ms for the union

@@ -10,7 +10,7 @@ namespace LexiSharp.Compression;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Each occurrence of every query term opens a window of <see cref="WindowRadius"/> words on
+/// Each occurrence of every query term opens a window of <c>windowRadius</c> words on
 /// either side; adjacent or overlapping windows merge into one passage; passages join with an
 /// ellipsis separator. A document whose text contains none of the query terms compresses to
 /// nothing — there is no query-relevant window to keep.

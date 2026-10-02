@@ -5,12 +5,12 @@ namespace LexiSharp.Core;
 /// subject-verb-object shape relation extraction produces (« acme » → « supplies » →
 /// « pumps »).
 /// </summary>
-/// <param name="Subject">The entity or concept the relation starts from.</param>
-/// <param name="Predicate">The relation itself.</param>
-/// <param name="Object">The entity or concept the relation points to.</param>
 public sealed record EntityTriplet
 {
     /// <summary>Creates a triplet; every component must be non-blank.</summary>
+    /// <param name="subject">The entity or concept the relation starts from.</param>
+    /// <param name="predicate">The relation itself.</param>
+    /// <param name="object">The entity or concept the relation points to.</param>
     /// <exception cref="ArgumentException">A blank component.</exception>
     public EntityTriplet(string subject, string predicate, string @object)
     {

@@ -10,7 +10,7 @@ namespace LexiSharp.Core;
 /// <remarks>
 /// <para>
 /// This is what the scoring seams receive (<see cref="ITextScorer.Score"/>,
-/// <see cref="IScoreExplainer.Explain"/> and an <see cref="IQueryPlannableScorer"/>'s plan), so
+/// <see cref="IScoreExplainer.Explain"/> and an <c>IQueryPlannableScorer</c>'s plan), so
 /// the contract a scorer is handed proves it can only read. The write members
 /// (<c>Index</c>/<c>Add</c>/<c>Remove</c>/<c>Clear</c>) live only on <see cref="ITextIndex"/>,
 /// which a caller holds when it owns the corpus; an engine that forwards writes keeps that wider

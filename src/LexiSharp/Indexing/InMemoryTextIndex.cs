@@ -95,8 +95,8 @@ public sealed class InMemoryTextIndex : ITextIndex, ICandidateIndex, IUnorderedC
         /// Document id → where the term sits in that document: its ordinal and its positions.
         /// </summary>
         /// <remarks>
-        /// Keyed on the id, so <see cref="ITextIndex.TermFrequency"/> and
-        /// <see cref="ITextIndex.GetTermPositions"/> stay at the two string lookups they have always
+        /// Keyed on the id, so <see cref="IReadOnlyTextIndex.TermFrequency"/> and
+        /// <see cref="IReadOnlyTextIndex.GetTermPositions"/> stay at the two string lookups they have always
         /// cost — one to resolve the term, one to resolve the document inside its list. Keying on
         /// an object instead saves nothing there and costs a third lookup to recover the id, which
         /// is a measured 0.63x on <c>SearchBenchmarks.BooleanSearch</c>.
