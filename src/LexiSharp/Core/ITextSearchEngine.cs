@@ -19,8 +19,12 @@ public interface ITextSearchEngine
     /// <summary>Adds a single document to the engine.</summary>
     void Add(SearchDocument document);
 
-    /// <summary>Removes the document with the given id, if present.</summary>
-    void Remove(string documentId);
+    /// <summary>
+    /// Removes the document with the given id; returns <c>true</c> when the document was present
+    /// and has been removed, <c>false</c> when the id was unknown — the same « if present »
+    /// answer <see cref="ITextIndex.Remove"/> gives, so a caller can tell a removal from a miss.
+    /// </summary>
+    bool Remove(string documentId);
 
     /// <summary>Drops every document from the engine.</summary>
     void Clear();
