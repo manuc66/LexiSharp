@@ -277,7 +277,7 @@ public class ContextEnrichingIndexTests
         Assert.Equal(plain.CorpusTokenCount, enriched.CorpusTokenCount);
         Assert.Equal(plain.Vocabulary.OrderBy(term => term), enriched.Vocabulary.OrderBy(term => term));
         Assert.Equal(plain.Fields, enriched.Fields);
-        Assert.Equal(plain.HasFieldStatistics, enriched.HasFieldStatistics);
+        Assert.Equal(plain is IFieldStatisticsIndex, enriched is IFieldStatisticsIndex);
 
         foreach (string id in new[] { "empty", "a", "b" })
         {

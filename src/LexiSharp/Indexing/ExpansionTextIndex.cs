@@ -29,7 +29,7 @@ namespace LexiSharp.Indexing;
 /// real token stream for the purposes of length statistics and candidate generation.
 /// </para>
 /// </remarks>
-public sealed class ExpansionTextIndex : ITextIndex, ICandidateIndex, IUnorderedCandidateIndex, IVocabularyIndex, IAccumulatingIndex
+public sealed class ExpansionTextIndex : ITextIndex, ICandidateIndex, IUnorderedCandidateIndex, IVocabularyIndex, IAccumulatingIndex, IFieldStatisticsIndex
 {
     private readonly InMemoryTextIndex _inner;
     private readonly ITermExpander _expander;
@@ -167,21 +167,31 @@ public sealed class ExpansionTextIndex : ITextIndex, ICandidateIndex, IUnordered
     public IReadOnlyCollection<string> Fields => _inner.Fields;
 
     /// <inheritdoc />
-    public bool HasFieldStatistics => _inner.HasFieldStatistics;
-
-    /// <inheritdoc />
+    /// <exception cref="NotSupportedException">The wrapped index does not implement <see cref="IFieldStatisticsIndex"/>.</exception>
     public int FieldTermFrequency(string documentId, string field, string term) =>
-        _inner.FieldTermFrequency(documentId, field, term);
+        FieldStatistics().FieldTermFrequency(documentId, field, term);
 
     /// <inheritdoc />
-    public int FieldLength(string documentId, string field) => _inner.FieldLength(documentId, field);
+    /// <exception cref="NotSupportedException">The wrapped index does not implement <see cref="IFieldStatisticsIndex"/>.</exception>
+    public int FieldLength(string documentId, string field) => FieldStatistics().FieldLength(documentId, field);
 
     /// <inheritdoc />
-    public double AverageFieldLength(string field) => _inner.AverageFieldLength(field);
+    /// <exception cref="NotSupportedException">The wrapped index does not implement <see cref="IFieldStatisticsIndex"/>.</exception>
+    public double AverageFieldLength(string field) => FieldStatistics().AverageFieldLength(field);
 
     /// <inheritdoc />
+    /// <exception cref="NotSupportedException">The wrapped index does not implement <see cref="IFieldStatisticsIndex"/>.</exception>
     public int FieldDocumentFrequency(string field, string term) =>
-        _inner.FieldDocumentFrequency(field, term);
+        FieldStatistics().FieldDocumentFrequency(field, term);
+
+    /// <summary>
+    /// The wrapped index's field statistics, refused by name when it has none — the same per-call
+    /// rule the capability-forwarding engines use, because C# has no way to implement an interface
+    /// conditionally and a silent zero would make a field-weighted ranking wrong.
+    /// </summary>
+    private IFieldStatisticsIndex FieldStatistics() =>
+        _inner as IFieldStatisticsIndex
+        ?? throw new NotSupportedException($"{_inner.GetType().Name} does not implement {nameof(IFieldStatisticsIndex)}.");
 
     /// <inheritdoc />
     public IEnumerable<SearchDocument> GetCandidateDocuments(IReadOnlyList<string> terms)
