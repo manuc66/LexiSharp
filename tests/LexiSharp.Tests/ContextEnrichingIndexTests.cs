@@ -331,6 +331,24 @@ public class ContextEnrichingIndexTests
             () => new ContextEnrichingIndex(new BareIndex(), new NoOpEnricher()));
     }
 
+    [Fact]
+    public void CandidateEnumeration_RejectsNullTermsAtTheCall_NotAtTheFirstMoveNext()
+    {
+        var index = new ContextEnrichingIndex(
+            new InMemoryTextIndex(),
+            new NoOpEnricher());
+
+        index.Add(new SearchDocument("a", "alpha beta"));
+
+        // Both are iterators, and a yield method's body does not run until MoveNext. Asserting only
+        // that the sequence throws would pass against a lazy check that had done nothing wrong on
+        // this line, so the sequence is deliberately not enumerated: the exception has to be
+        // observable from the call alone.
+        Assert.Throws<ArgumentNullException>(() => index.GetCandidateDocuments(null!));
+        Assert.Throws<ArgumentNullException>(
+            () => ((IUnorderedCandidateIndex)index).GetCandidatesUnordered(null!));
+    }
+
     /// <summary>An enricher that re-ids the document — which the index must reject.</summary>
     private sealed class IdSwappingEnricher : IChunkContextEnricher
     {
