@@ -391,8 +391,8 @@ Two things it deliberately reports rather than hides:
 Reuse the same `Bm25ValidationQuery` input as `Bm25ParameterTuner` — a single validation type for
 both, deliberately.
 
-**Without a field-aware index it refuses, by name.** Scoring against an index whose
-`HasFieldStatistics` is `false` throws `NotSupportedException` naming the index rather than ranking
+**Without a field-aware index it refuses, by name.** Scoring against an index that is not an
+`IFieldStatisticsIndex` throws `NotSupportedException` naming the index rather than ranking
 on zeros:
 
 ```csharp
