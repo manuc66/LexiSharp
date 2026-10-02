@@ -49,17 +49,14 @@ public sealed class Tokenizer : ISpanTokenizer
     /// </remarks>
     private readonly ulong? _asciiJoiners;
 
-    /// <summary>True when <c>_asciiJoiners</c> holds any ASCII joiner.</summary>
-    private bool _hasAsciiJoiners => _asciiJoiners is { } mask && mask != 0;
-
     /// <summary>True when the tokenizer joins on at least one non-ASCII character.</summary>
-    private HashSet<char>? _nonAsciiJoiners;
+    private readonly HashSet<char>? _nonAsciiJoiners;
 
     /// <summary>
     /// True when a separator's decision depends on the characters either side of it, which is the
     /// whole content of <see cref="WordSegmentation.UnicodeWordBoundaries"/>.
     /// </summary>
-    private bool _conditionalJoins;
+    private readonly bool _conditionalJoins;
 
     /// <summary>A shared tokenizer with default options.</summary>
     public static Tokenizer Default { get; } = new();
@@ -403,7 +400,7 @@ public sealed class Tokenizer : ISpanTokenizer
             or UnicodeCategory.EnclosingMark;
 
     /// <summary>Whether a word starts at <paramref name="position"/>. A joiner never starts one.</summary>
-    private bool StartsWordAt(ReadOnlySpan<char> text, int position)
+    private static bool StartsWordAt(ReadOnlySpan<char> text, int position)
     {
         char c = text[position];
 
@@ -680,14 +677,6 @@ public sealed class Tokenizer : ISpanTokenizer
         // Folding off: lowercase only. Still lowercased — an index has to be case-insensitive to be
         // an index — but the diacritics stay, so `café` and `cafe` are two terms.
         return Ascii.IsValid(term) ? NormalizeAscii(term) : Lower(term.ToString());
-    }
-
-    private string NormalizeToken(string term)
-    {
-        if (_options.FoldDiacritics)
-            return Normalize(term);
-
-        return Lower(term);
     }
 
     /// <summary>

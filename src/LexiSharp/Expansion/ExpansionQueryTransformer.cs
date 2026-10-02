@@ -74,7 +74,7 @@ public sealed class ExpansionQueryTransformer : IQueryTransformer
     /// same shape <see cref="ExpandingTextSearchEngine"/> builds, so the vocabulary it produces
     /// is comparable with that engine's.
     /// </summary>
-    private string Widened(
+    private static string Widened(
         string query,
         IReadOnlyList<string> terms,
         IReadOnlyCollection<Expansion.ExpandedTerm> expansion)

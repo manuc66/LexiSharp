@@ -1056,7 +1056,7 @@ public sealed class InMemoryTextIndex : ITextIndex, ICandidateIndex, IUnorderedC
     /// across it. The sort also means the touched-ordinal list a search produces is ascending, so
     /// two runs over the same corpus visit the same documents in the same order.
     /// </remarks>
-    private FlatPosting BuildFlatPosting(PostingList posting, int epoch)
+    private static FlatPosting BuildFlatPosting(PostingList posting, int epoch)
     {
         int count = posting.ByDocument.Count;
         var ordinals = new int[count];
