@@ -56,4 +56,24 @@
     <Version>0.7.0</Version>
   </PropertyGroup>
 
+  <!--
+    A warning fails the build. Nothing else here treats one as a failure: `dotnet build` fails on
+    errors only, and the SonarCloud job that imports analyzer output into its own issues is skipped
+    unless SONAR_TOKEN is configured, so on a repository without that secret the only reader of a
+    CS1591 with no `<summary>` or of a CA rule newly enabled by an SDK bump is a person scanning a
+    log. Measured when this was set, over the eleven projects in both configurations: zero warnings
+    in Release, zero in Debug, so nothing had to be fixed to turn it on.
+
+    What arrives afterwards is fixed rather than suppressed. .editorconfig records the two CA rules
+    this repository refuses and why, and that file is the only place where a diagnostic is allowed
+    to stop.
+
+    NU1903, a dependency carrying a published advisory, is an error here like any other, and it
+    fires when the advisory data is refreshed rather than when the source changes. That is the
+    point: nothing in a commit can be expected to notice a vulnerability in a transitive package.
+  -->
+  <PropertyGroup>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
 </Project>

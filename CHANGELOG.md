@@ -301,6 +301,15 @@ below. The other four are conventions, and stay opt-in.
 - **`ITextSearchEngine.Remove` returns `bool`** — whether the document was present and removed — to
   match `ITextIndex.Remove` instead of discarding the answer. Engines forward the result of what
   they removed from; the SQL backends return whether a row was deleted.
+- **A warning fails the build.** `TreatWarningsAsErrors` applies to every project, and the eleven of
+  them compile with zero warnings in Release and in Debug, so nothing had to be fixed to turn it on.
+  Nothing else was reading them: `dotnet build` fails on errors only, and the SonarCloud job that
+  imports analyzer output into its own issues is skipped unless `SONAR_TOKEN` is configured, so a
+  missing `<summary>` or a CA rule an SDK bump newly enables used to enter the tree unremarked.
+  `BuildWarningGateTests` holds the property declared once, in `Directory.Build.props`. NU1903 — a
+  dependency carrying a published advisory — is an error like any other, and fires when the advisory
+  data is refreshed rather than when the source changes, which is what a vulnerability in a
+  transitive package needs: no commit can be expected to notice it.
 
 ## [0.7.0]
 
