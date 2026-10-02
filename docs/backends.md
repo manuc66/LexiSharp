@@ -88,6 +88,20 @@ cluster lists, so the index is created on the first `EnsureSchema()` call **afte
 first inserts. ANN results are approximate: combine with `HybridTextSearchEngine` + RRF to
 trade recall for speed — exact cosine behavior is verified in the integration suite.
 
+**When PostgreSQL stops using the index.** `hnsw.ef_search` feeds pgvector's planner hook,
+which grows the ANN index's estimated *startup* cost with it. Past a threshold set by your
+corpus's size and statistics, the planner answers the search with a sequential scan and an
+exact top-k instead: the same rows, exact rather than approximate, and on a corpus the index
+was never needed, markedly slower. Measured on NFCorpus (3,633 documents, 384d, `m = 16`, table
+analyzed), the index answers up to `ef_search = 60` and a scan takes over from 80 — at
+`ef_search = 160` the scan's median query is 14.39 ms against the index's 1.90 ms, over the
+dataset's 323 test queries, and the extra exactness is 0.991 recall against 1.000. At 50,862
+documents the index answers at every `ef_search` measured (10 to 640), and there an exact scan
+costs 82-89 ms against the index's 0.43 ms at `ef_search = 10`. So the setting is yours to keep
+inside the regime where the index wins, and `EXPLAIN (ANALYZE)` is how you read back which one
+answered: they differ in latency severalfold while their recall differs by a point or two, so
+latency alone cannot tell an index from a scan.
+
 The embedding seam is role-aware: `PostgresVectorSearchEngine` embeds indexed documents with
 `EmbeddingUse.Passage` and queries with `EmbeddingUse.Query`, so asymmetric models (E5 prefixes
 and friends) work through the same single provider method. Finer knobs live in the options
