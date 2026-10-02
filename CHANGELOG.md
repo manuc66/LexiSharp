@@ -280,6 +280,12 @@ below. The other four are conventions, and stay opt-in.
 
 ### Changed
 
+- **`QueryFeature` is renamed `QueryFeatures`.** The enumeration's own members are `None`,
+  `Phrases` and `Expansions` — a set of flags, plural on every name but the type. The rename
+  makes `QueryFeatures.Phrases` the sentence the rest of the API already reads like. It is a
+  source-level break: a caller writing `QueryFeature.Phrases` or naming the type in a signature
+  changes the identifier, and nothing else — the underlying type, the flag values and the
+  wire representation are untouched.
 - **`ITextIndex` splits into a read-only view and a write surface.** `IReadOnlyTextIndex` now
   carries the statistics and per-document lookups, and the scoring seams — `ITextScorer.Score`,
   `IScoreExplainer.Explain`, an `IQueryPlannableScorer`'s plan — receive that view, so the

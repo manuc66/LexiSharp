@@ -39,7 +39,7 @@ namespace LexiSharp.ParadeDB;
 public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, IQuerySyntaxSupport
 {
     /// <inheritdoc />
-    public QueryFeature SupportedQueryFeatures => QueryFeature.Phrases;
+    public QueryFeatures SupportedQueryFeatures => QueryFeatures.Phrases;
 
     private readonly NpgsqlDataSource _dataSource;
     private readonly ParadeDBOptions _options;

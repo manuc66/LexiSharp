@@ -172,7 +172,7 @@ public abstract class SearchEngineConformanceTests
         {
             engine.Index(Corpus);
 
-            if (!Supports(engine, QueryFeature.Phrases))
+            if (!Supports(engine, QueryFeatures.Phrases))
             {
                 // Unsupported syntax must fail fast, never be silently treated as plain text.
                 Assert.Throws<NotSupportedException>(() => engine.Search("neural \"machine learning\"", All));
@@ -202,7 +202,7 @@ public abstract class SearchEngineConformanceTests
         {
             engine.Index(Corpus);
 
-            if (!Supports(engine, QueryFeature.Expansions))
+            if (!Supports(engine, QueryFeatures.Expansions))
             {
                 Assert.Throws<NotSupportedException>(() => engine.Search("learn*", All));
                 return;
@@ -219,6 +219,6 @@ public abstract class SearchEngineConformanceTests
         }
     }
 
-    private static bool Supports(ITextSearchEngine engine, QueryFeature feature) =>
+    private static bool Supports(ITextSearchEngine engine, QueryFeatures feature) =>
         engine is IQuerySyntaxSupport support && (support.SupportedQueryFeatures & feature) == feature;
 }
