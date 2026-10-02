@@ -8,7 +8,6 @@ public class PostgresTextSearchEngineConformanceTests : SearchEngineConformanceT
     private static string? ConnectionString =>
         Environment.GetEnvironmentVariable("POSTGRES_TEST_CONNECTION");
 
-
     protected override bool IsUnavailable => ConnectionString is null;
 
     protected override string UnavailableReason => "POSTGRES_TEST_CONNECTION not set.";
