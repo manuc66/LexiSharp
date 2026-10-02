@@ -70,7 +70,13 @@
     border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px;
   }
   .hit-text { color: #c3cdda; font-size: 12.5px; }
-  .hit-text em { background: rgba(110,168,254,.22); color: #cfe1ff; font-style: normal; border-radius: 3px; padding: 0 2px; }
+  /* The highlight is the rgba(110,168,254,.22) overlay composited onto --panel-2, written solid.
+     A translucent background cannot be contrast-checked: the ratio depends on whatever is behind
+     it, so an analyzer either skips the rule or reads the overlay as opaque — and 110,168,254 at
+     full strength against this text is 1.82:1, against the 8.03:1 the page actually renders. Solid,
+     the number is a property of the declaration and can be checked: 8.03:1 on #2d3f5c, past the
+     4.5:1 normal text needs. The cost is that it no longer follows --panel-2 if that changes. */
+  .hit-text em { background: #2d3f5c; color: #cfe1ff; font-style: normal; border-radius: 3px; padding: 0 2px; }
   .sources { margin-top: 7px; display: flex; gap: 6px; flex-wrap: wrap; }
   .source { font-size: 11px; color: var(--muted); background: #0f141c; border: 1px solid var(--border); border-radius: 6px; padding: 1px 7px; }
   .empty { color: var(--muted); padding: 16px 6px; font-size: 12.5px; }
@@ -145,7 +151,7 @@
   <div id="panel-body" class="panel-body"></div>
 </aside>
 
-<script>
+<script type="module">
 const laneColors = { lexical: "var(--accent)", semantic: "var(--accent-2)", dense: "var(--accent-4)", hybrid: "var(--accent-3)", rerank: "#f2789f" };
 const $ = (id) => document.getElementById(id);
 
@@ -180,10 +186,18 @@ async function loadMeta() {
   }
 }
 
+// Its own function so hitCard's template holds one interpolation instead of a nested literal: the
+// per-source span used to be written inside the sources wrapper, which is two template literals in
+// each other, and a reader has to hold both to see which braces belong to which.
+function sourceChips(sources) {
+  if (!sources) return "";
+  const chips = Object.entries(sources)
+    .map(([key, value]) => `<span class="source">${esc(key)} ${fmt(value)}</span>`)
+    .join("");
+  return `<div class="sources">${chips}</div>`;
+}
+
 function hitCard(hit, laneKey) {
-  const sources = hit.sources
-    ? `<div class="sources">${Object.entries(hit.sources).map(([k, v]) => `<span class="source">${esc(k)} ${fmt(v)}</span>`).join("")}</div>`
-    : "";
   return `<div class="hit" data-lane="${esc(laneKey)}" data-id="${esc(hit.id)}">
     <div class="hit-top">
       <span class="hit-title">${esc(hit.title)}</span>
@@ -191,7 +205,7 @@ function hitCard(hit, laneKey) {
     </div>
     <span class="hit-cat">${esc(hit.category)}</span>
     <div class="hit-text">${hit.highlighted}</div>
-    ${sources}
+    ${sourceChips(hit.sources)}
   </div>`;
 }
 
@@ -268,8 +282,15 @@ function chainExplanation(data) {
     const delta = Number.isFinite(s.before) && Number.isFinite(s.after)
       ? (s.after - s.before)
       : null;
-    const deltaText = delta === null ? ""
-      : ` <span class="stage-delta ${delta >= 0 ? "up" : "down"}">${delta >= 0 ? "+" : ""}${fmt(delta, 3)}</span>`;
+    // An if rather than a ternary holding two more ternaries, so the two of them are computed only
+    // when there is a delta: `null >= 0` is true in JavaScript, which would have labelled an absent
+    // delta as an increase had it been evaluated for the markup below.
+    let deltaText = "";
+    if (delta !== null) {
+      const direction = delta >= 0 ? "up" : "down";
+      const sign = delta >= 0 ? "+" : "";
+      deltaText = ` <span class="stage-delta ${direction}">${sign}${fmt(delta, 3)}</span>`;
+    }
     return `<div class="stage">
       <div class="stage-top">
         <span class="stage-name">${esc(s.stage)}</span>
@@ -337,9 +358,13 @@ $("q").addEventListener("keydown", (event) => { if (event.key === "Enter") runSe
 $("clear").addEventListener("click", () => { $("q").value = ""; $("lanes").innerHTML = ""; $("error").textContent = ""; });
 $("panel-close").addEventListener("click", () => { $("panel").classList.remove("open"); $("panel").setAttribute("aria-hidden", "true"); });
 
-loadMeta();
+// Awaited rather than fired: the search runs against the query box, and awaiting the metadata first
+// is what makes that ordering the one the reader sees. Module scope is what makes top-level await
+// available; the page has no inline event handlers, so nothing was reaching for these names as
+// globals.
+await loadMeta();
 $("q").value = "refresh token";
-runSearch();
+await runSearch();
 </script>
 </body>
 </html>
