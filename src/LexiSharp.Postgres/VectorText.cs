@@ -12,7 +12,7 @@ internal static class VectorText
         if (vector.IsEmpty)
             throw new ArgumentException("Cannot serialize an empty vector.", nameof(vector));
 
-        var builder = new StringBuilder(vector.Length * 8 + 2);
+        var builder = new StringBuilder((vector.Length * 8) + 2);
         builder.Append('[');
 
         for (int i = 0; i < vector.Length; i++)

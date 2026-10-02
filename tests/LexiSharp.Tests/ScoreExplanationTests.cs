@@ -34,7 +34,7 @@ public class ScoreExplanationTests
         Assert.Equal(3, explanation.DocumentLength);
         Assert.Equal(2.5, explanation.AverageDocumentLength);
         Assert.Equal(1.2, explanation.LengthRatio, 12);
-        Assert.Equal(1.0 - 0.75 + 0.75 * 1.2, explanation.LengthNormalization, 12);
+        Assert.Equal((1.0 - 0.75) + (0.75 * 1.2), explanation.LengthNormalization, 12);
         Assert.Equal(1.5, explanation.Parameters["k1"]);
         Assert.Equal(0.75, explanation.Parameters["b"]);
         Assert.Equal("BM25", explanation.Algorithm);
@@ -49,7 +49,7 @@ public class ScoreExplanationTests
         var beta = Assert.Single(explanation.Terms, t => t.Term == "beta");
         Assert.Equal(1, beta.TermFrequency);
         Assert.Equal(2, beta.DocumentFrequency);
-        Assert.Equal(Math.Log(1.0 + 0.5 / 2.5), beta.InverseDocumentFrequency, 12);
+        Assert.Equal(Math.Log(1.0 + (0.5 / 2.5)), beta.InverseDocumentFrequency, 12);
 
         Assert.Equal(alpha.Score + beta.Score, explanation.TotalScore, 12);
         Assert.Equal(scorer.Score(doc1.Id, query, index), explanation.TotalScore, 12);
@@ -122,10 +122,10 @@ public class ScoreExplanationTests
         Assert.Equal(2, explanation.Terms.Count);
 
         var alpha = Assert.Single(explanation.Terms, t => t.Term == "alpha");
-        double expectedAlpha = Math.Log(0.8 * (2.0 / 3.0) + 0.2 * (2.0 / 5.0));
+        double expectedAlpha = Math.Log((0.8 * (2.0 / 3.0)) + (0.2 * (2.0 / 5.0)));
         Assert.Equal(expectedAlpha, alpha.Score, 12);
 
-        double expectedBeta = Math.Log(0.8 * (1.0 / 3.0) + 0.2 * (2.0 / 5.0));
+        double expectedBeta = Math.Log((0.8 * (1.0 / 3.0)) + (0.2 * (2.0 / 5.0)));
         Assert.Equal(expectedBeta, Assert.Single(explanation.Terms, t => t.Term == "beta").Score, 12);
 
         Assert.Equal(alpha.Score + expectedBeta, explanation.TotalScore, 12);

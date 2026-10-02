@@ -109,7 +109,7 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
         if (documentCount == 0 || documentLength == 0 || averageLength <= 0)
             return 0;
 
-        double normalization = 1.0 - _b + _b * documentLength / averageLength;
+        double normalization = 1.0 - _b + (_b * documentLength / averageLength);
         var terms = Terms(queryTerms);
 
         double score = 0;
@@ -124,9 +124,9 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
                 continue;
 
             int df = index.DocumentFrequency(terms[i]);
-            double idf = Math.Log(1.0 + (documentCount - df + 0.5) / (df + 0.5));
+            double idf = Math.Log(1.0 + ((documentCount - df + 0.5) / (df + 0.5)));
 
-            score += idf * (tf * (_k1 + 1.0) / (tf + _k1 * normalization) + _delta);
+            score += idf * ((tf * (_k1 + 1.0) / (tf + (_k1 * normalization))) + _delta);
         }
 
         return score;
@@ -150,7 +150,7 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
         int documentLength = index.DocumentLength(documentId);
         double averageLength = index.AverageDocumentLength;
         double lengthRatio = averageLength > 0 ? documentLength / averageLength : 0;
-        double normalization = 1.0 - _b + _b * lengthRatio;
+        double normalization = 1.0 - _b + (_b * lengthRatio);
 
         var contributions = new List<TermContribution>();
         double total = 0;
@@ -167,8 +167,8 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
                     continue;
 
                 int df = index.DocumentFrequency(terms[i]);
-                double idf = Math.Log(1.0 + (documentCount - df + 0.5) / (df + 0.5));
-                double termScore = idf * (tf * (_k1 + 1.0) / (tf + _k1 * normalization) + _delta);
+                double idf = Math.Log(1.0 + ((documentCount - df + 0.5) / (df + 0.5)));
+                double termScore = idf * ((tf * (_k1 + 1.0) / (tf + (_k1 * normalization))) + _delta);
 
                 contributions.Add(new TermContribution(terms[i], tf, df, idf, termScore));
                 total += termScore;
@@ -230,7 +230,7 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
                     continue;
 
                 int df = index.DocumentFrequency(term);
-                _idf[i] = Math.Log(1.0 + (documentCount - df + 0.5) / (df + 0.5));
+                _idf[i] = Math.Log(1.0 + ((documentCount - df + 0.5) / (df + 0.5)));
             }
         }
 
@@ -242,7 +242,7 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
             if (documentLength == 0 || _avgLength <= 0)
                 return 0;
 
-            double normalization = 1.0 - _b + _b * documentLength / _avgLength;
+            double normalization = 1.0 - _b + (_b * documentLength / _avgLength);
             double score = 0;
 
             for (int i = 0; i < _terms.Length; i++)
@@ -252,7 +252,7 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
                 if (tf == 0)
                     continue;
 
-                score += _idf[i] * (tf * (_k1 + 1.0) / (tf + _k1 * normalization) + _delta);
+                score += _idf[i] * ((tf * (_k1 + 1.0) / (tf + (_k1 * normalization))) + _delta);
             }
 
             return score;
@@ -283,7 +283,7 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
         public string Term => term;
 
         public double Weight(int termFrequency, int documentLength) =>
-            idf * (termFrequency * (k1 + 1.0)
-                / (termFrequency + k1 * (1.0 - b + b * documentLength / averageLength)) + delta);
+            idf * ((termFrequency * (k1 + 1.0)
+                / (termFrequency + (k1 * (1.0 - b + (b * documentLength / averageLength))))) + delta);
     }
 }

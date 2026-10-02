@@ -65,7 +65,7 @@ internal static class ScoreRoundingStep
         for (int i = 0; i < results.Length; i++)
         {
             var result = results[i];
-            var score = (float)(Math.Floor(result.Score * scale + 0.5) / scale);
+            var score = (float)(Math.Floor((result.Score * scale) + 0.5) / scale);
 
             if (i == 0)
             {

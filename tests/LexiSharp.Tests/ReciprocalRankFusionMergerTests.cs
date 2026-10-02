@@ -47,7 +47,7 @@ public class ReciprocalRankFusionMergerTests
         var results = hybrid.Search("query");
 
         Assert.Equal(ExpectedIdsYxz, results.Select(r => r.DocumentId).ToArray());
-        Assert.Equal(1.0 / 61.0 + 1.0 / 62.0, results[0].Score, 9);
+        Assert.Equal((1.0 / 61.0) + (1.0 / 62.0), results[0].Score, 9);
         Assert.Equal(1.0 / 61.0, results[1].Score, 9);
         Assert.Equal(1.0 / 62.0, results[2].Score, 9);
     }

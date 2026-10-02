@@ -225,7 +225,7 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
             foreach (var (documentId, documentWeight) in postings)
             {
                 scores[documentId] = scores.GetValueOrDefault(documentId)
-                                     + (double)queryWeight * documentWeight;
+                                     + ((double)queryWeight * documentWeight);
             }
         }
 

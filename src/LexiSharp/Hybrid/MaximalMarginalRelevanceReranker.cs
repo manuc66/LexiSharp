@@ -115,7 +115,7 @@ public sealed class MaximalMarginalRelevanceReranker : IReranker
                 ? 0
                 : MaxSimilarity(pool[i], selectedVectors);
 
-            double mmr = _lambda * relevance - (1 - _lambda) * redundancy;
+            double mmr = (_lambda * relevance) - ((1 - _lambda) * redundancy);
 
             // Strictly greater keeps the earliest candidate in the incoming order on ties.
             if (mmr > bestMmr)

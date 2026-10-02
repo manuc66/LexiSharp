@@ -268,7 +268,7 @@ internal sealed class CrossEncoderReranker : IReranker
             {
                 for (int j = 0; j < pairs[i].Ids.Length; j++)
                 {
-                    int at = i * seq + j;
+                    int at = (i * seq) + j;
                     inputIds[at] = pairs[i].Ids[j];
                     attentionMask[at] = 1;
                     tokenTypes[at] = pairs[i].Types[j];

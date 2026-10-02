@@ -65,7 +65,7 @@ public sealed class QueryLikelihoodScorer : ITermOverlapScorer, IQueryPlannableS
             double documentProbability = (double)tf / documentLength;
             double collectionProbability = (double)cf / collectionTokens;
 
-            double probability = (1.0 - _lambda) * documentProbability + _lambda * collectionProbability;
+            double probability = ((1.0 - _lambda) * documentProbability) + (_lambda * collectionProbability);
             score += Math.Log(probability);
         }
 
@@ -125,7 +125,7 @@ public sealed class QueryLikelihoodScorer : ITermOverlapScorer, IQueryPlannableS
 
                 double documentProbability = (double)tf / documentLength;
                 double collectionProbability = (double)cf / collectionTokens;
-                double probability = (1.0 - _lambda) * documentProbability + _lambda * collectionProbability;
+                double probability = ((1.0 - _lambda) * documentProbability) + (_lambda * collectionProbability);
                 double contribution = Math.Log(probability);
 
                 contributions.Add(new TermContribution(
@@ -206,7 +206,7 @@ public sealed class QueryLikelihoodScorer : ITermOverlapScorer, IQueryPlannableS
 
                 double documentProbability = (double)tf / documentLength;
                 double probability =
-                    (1.0 - _lambda) * documentProbability + _lambda * _collectionProbability[i];
+                    ((1.0 - _lambda) * documentProbability) + (_lambda * _collectionProbability[i]);
                 score += Math.Log(probability);
             }
 

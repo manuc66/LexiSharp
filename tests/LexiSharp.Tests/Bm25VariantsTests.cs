@@ -77,7 +77,7 @@ public class Bm25VariantsTests
         const double k1 = 1.5, b = 0.75, delta = 0.5;
         var scorer = new Bm25LScorer(k1, b, delta);
 
-        double norm = 1.0 - b + b * index.DocumentLength("1") / index.AverageDocumentLength;
+        double norm = 1.0 - b + (b * index.DocumentLength("1") / index.AverageDocumentLength);
 
         // Both query terms match document "1", so the score is the sum over them.
         double Expected(bool compressedDenominator)
@@ -89,11 +89,11 @@ public class Bm25VariantsTests
                 double tf = index.TermFrequency("1", term);
                 double ctd = tf / norm;
                 int df = index.DocumentFrequency(term);
-                double idf = Math.Log(1.0 + (index.Count - df + 0.5) / (df + 0.5));
+                double idf = Math.Log(1.0 + ((index.Count - df + 0.5) / (df + 0.5)));
 
                 double bottom = compressedDenominator
                     ? k1 + ctd + delta   // the published form
-                    : k1 * norm + tf;    // BM25's denominator, i.e. the mis-transcription
+                    : (k1 * norm) + tf;    // BM25's denominator, i.e. the mis-transcription
 
                 total += idf * (k1 + 1) * (ctd + delta) / bottom;
             }
@@ -123,7 +123,7 @@ public class Bm25VariantsTests
         const double k1 = 1.5, b = 0.75, delta = 1.0;
         var scorer = new Bm25PlusScorer(k1, b, delta);
 
-        double norm = 1.0 - b + b * index.DocumentLength("1") / index.AverageDocumentLength;
+        double norm = 1.0 - b + (b * index.DocumentLength("1") / index.AverageDocumentLength);
 
         double Expected(bool deltaOutside)
         {
@@ -133,11 +133,11 @@ public class Bm25VariantsTests
             {
                 double tf = index.TermFrequency("1", term);
                 int df = index.DocumentFrequency(term);
-                double idf = Math.Log(1.0 + (index.Count - df + 0.5) / (df + 0.5));
+                double idf = Math.Log(1.0 + ((index.Count - df + 0.5) / (df + 0.5)));
 
                 total += deltaOutside
-                    ? idf * (tf * (k1 + 1) / (tf + k1 * norm) + delta)
-                    : idf * (k1 + 1) * (tf + delta) / (k1 * norm + tf + delta);
+                    ? idf * ((tf * (k1 + 1) / (tf + (k1 * norm))) + delta)
+                    : idf * (k1 + 1) * (tf + delta) / ((k1 * norm) + tf + delta);
             }
 
             return total;
@@ -176,12 +176,12 @@ public class Bm25VariantsTests
                 if (index.TermFrequency(documentId, term) > 0)
                 {
                     int df = index.DocumentFrequency(term);
-                    idfSum += Math.Log(1.0 + (index.Count - df + 0.5) / (df + 0.5));
+                    idfSum += Math.Log(1.0 + ((index.Count - df + 0.5) / (df + 0.5)));
                 }
             }
 
             Assert.Equal(
-                bm25.Score(documentId, terms, index) + idfSum * delta,
+                (bm25.Score(documentId, terms, index)) + (idfSum * delta),
                 plus.Score(documentId, terms, index),
                 12);
         }

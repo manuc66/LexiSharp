@@ -152,9 +152,9 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
             int df = index.DocumentFrequency(term);
 
-            double idf = Math.Log(1.0 + (documentCount - df + 0.5) / (df + 0.5));
+            double idf = Math.Log(1.0 + ((documentCount - df + 0.5) / (df + 0.5)));
 
-            double normalization = 1.0 - _b + _b * documentLength / averageLength;
+            double normalization = 1.0 - _b + (_b * documentLength / averageLength);
             score += Contribution(
                 idf, tf, documentLength, normalization, averageLength, _k1, _b, _saturation, table);
         }
@@ -277,18 +277,18 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
         double k1, double b, double saturation, float[]? normInverse)
     {
         if (normInverse is null)
-            return idf * termFrequency * saturation / (termFrequency + k1 * normalization);
+            return idf * termFrequency * saturation / (termFrequency + (k1 * normalization));
 
         float entry = documentLength <= MaxStoredLength
             ? normInverse[documentLength]
-            : 1f / ((float)k1 * (1f - (float)b + (float)b * documentLength / (float)averageLength));
+            : 1f / ((float)k1 * (1f - (float)b + ((float)b * documentLength / (float)averageLength)));
 
         // weight - weight / (1 + tf·normInverse), which is what the reference's scorer evaluates. The
         // algebraically equal form — weight·tf / (tf + k1·normInverse) — divides by a different quantity
         // and rounds differently, and the rounding is the thing being reproduced here.
         float weight = (float)idf * (float)saturation;
 
-        return weight - weight / (1f + termFrequency * entry);
+        return weight - (weight / (1f + (termFrequency * entry)));
     }
 
     /// <summary>The total, narrowed once when the scorer was built for single precision.</summary>
@@ -343,7 +343,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
                     continue;
 
                 int df = index.DocumentFrequency(term);
-                _idf[i] = Math.Log(1.0 + (documentCount - df + 0.5) / (df + 0.5));
+                _idf[i] = Math.Log(1.0 + ((documentCount - df + 0.5) / (df + 0.5)));
             }
 
             if (normInverse is not null)
@@ -419,7 +419,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
             if (documentLength == 0 || _avgLength <= 0)
                 return 0;
 
-            double normalization = 1.0 - _b + _b * documentLength / _avgLength;
+            double normalization = 1.0 - _b + (_b * documentLength / _avgLength);
             double score = 0;
 
             for (int i = 0; i < _terms.Length; i++)
@@ -479,7 +479,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
             // The length normalisation is spelled out here rather than taken from the caller: the
             // accumulating index hands this one posting entry at a time and has nowhere to keep it, and
             // recomputing it costs a divide the caller would otherwise have done once per document.
-            double normalization = 1.0 - b + b * documentLength / averageLength;
+            double normalization = 1.0 - b + (b * documentLength / averageLength);
 
             return Contribution(
                 idf, termFrequency, documentLength, normalization, averageLength,
@@ -504,7 +504,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
         double averageLength = index.AverageDocumentLength;
 
         double lengthRatio = averageLength > 0 ? documentLength / averageLength : 0;
-        double normalization = 1.0 - _b + _b * lengthRatio;
+        double normalization = 1.0 - _b + (_b * lengthRatio);
 
         float[]? table = Table(averageLength);
         var contributions = new List<TermContribution>();
@@ -523,7 +523,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
                     continue;
 
                 int df = index.DocumentFrequency(term);
-                double idf = Math.Log(1.0 + (documentCount - df + 0.5) / (df + 0.5));
+                double idf = Math.Log(1.0 + ((documentCount - df + 0.5) / (df + 0.5)));
                 double termScore = Contribution(
                     idf, tf, documentLength, normalization, averageLength,
                     _k1, _b, _saturation, table);

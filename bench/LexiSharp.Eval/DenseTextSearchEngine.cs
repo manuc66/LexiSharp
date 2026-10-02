@@ -159,13 +159,13 @@ File.WriteAllText(metaCache, JsonSerializer.Serialize(new
                 int[] tokens = allTokens[start + i];
 
                 for (int t = 0; t < tokens.Length; t++)
-                    inputIds[i * seq + t] = tokens[t];
+                    inputIds[(i * seq) + t] = tokens[t];
 
                 for (int t = tokens.Length; t < seq; t++)
-                    inputIds[i * seq + t] = PadTokenId;
+                    inputIds[(i * seq) + t] = PadTokenId;
 
                 for (int t = 0; t < tokens.Length; t++)
-                    attentionMask[i * seq + t] = 1;
+                    attentionMask[(i * seq) + t] = 1;
             }
 
             using var ids = OrtValue.CreateTensorValueFromMemory<long>(inputIds, new long[] { count, seq });
@@ -198,13 +198,13 @@ File.WriteAllText(metaCache, JsonSerializer.Serialize(new
 
                 for (int t = 0; t < seq; t++)
                 {
-                    if (attentionMask[i * seq + t] == 0)
+                    if (attentionMask[(i * seq) + t] == 0)
                         continue;
 
                     weight += 1;
 
                     for (int h = 0; h < HiddenDim; h++)
-                        sums[h] += hidden[(i * seq + t) * HiddenDim + h];
+                        sums[h] += hidden[(((i * seq) + t) * HiddenDim) + h];
                 }
 
                 float scale = weight > 0 ? 1f / weight : 0f;

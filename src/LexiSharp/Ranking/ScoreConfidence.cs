@@ -131,7 +131,7 @@ public static class ScoreConfidence
                 continue;
             }
 
-            double value = 1 - next / current;
+            double value = 1 - (next / current);
 
             if (value < 0)
                 continue;

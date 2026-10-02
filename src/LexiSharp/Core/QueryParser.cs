@@ -308,7 +308,7 @@ public static class QueryParser
 
         while (i < segment.Length && char.IsAsciiDigit(segment[i]))
         {
-            edits = edits * 10 + (segment[i] - '0');
+            edits = (edits * 10) + (segment[i] - '0');
 
             if (edits > 2)
                 edits = 2;
