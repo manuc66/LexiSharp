@@ -8,21 +8,21 @@ namespace LexiSharp.Tests;
 public class QuerySyntaxTests
 {
     [Theory]
-    [InlineData("machine learning", QueryFeature.None)]
-    [InlineData("a*", QueryFeature.None)] // base "a" is a dropped single char: plain text
-    [InlineData("learn*", QueryFeature.Expansions)]
-    [InlineData("catt~2", QueryFeature.Expansions)]
-    [InlineData("\"machine learning\"", QueryFeature.Phrases)]
-    [InlineData("neural \"machine learning\"", QueryFeature.Phrases)]
-    [InlineData("\"machine learning\" learn*", QueryFeature.Phrases | QueryFeature.Expansions)]
-    public void Detect_ClassifiesQueryFeatures(string query, QueryFeature expected) =>
+    [InlineData("machine learning", QueryFeatures.None)]
+    [InlineData("a*", QueryFeatures.None)] // base "a" is a dropped single char: plain text
+    [InlineData("learn*", QueryFeatures.Expansions)]
+    [InlineData("catt~2", QueryFeatures.Expansions)]
+    [InlineData("\"machine learning\"", QueryFeatures.Phrases)]
+    [InlineData("neural \"machine learning\"", QueryFeatures.Phrases)]
+    [InlineData("\"machine learning\" learn*", QueryFeatures.Phrases | QueryFeatures.Expansions)]
+    public void Detect_ClassifiesQueryFeatures(string query, QueryFeatures expected) =>
         Assert.Equal(expected, QuerySyntax.Detect(query));
 
     [Fact]
     public void EnsureSupported_ThrowsOnUnsupportedFeature()
     {
         var exception = Assert.Throws<NotSupportedException>(() =>
-            QuerySyntax.EnsureSupported("learn*", QueryFeature.Phrases, "FakeEngine"));
+            QuerySyntax.EnsureSupported("learn*", QueryFeatures.Phrases, "FakeEngine"));
 
         Assert.Contains("FakeEngine", exception.Message);
         Assert.Contains("prefix/fuzzy", exception.Message);
@@ -34,17 +34,17 @@ public class QuerySyntaxTests
         // Nothing is returned and nothing is recorded, so "did not throw" *is* the property under
         // test. Asserted rather than left implicit, because three bare calls read as a test that
         // cannot fail -- and would still pass if EnsureSupported had an empty body.
-        static void Accepts(string query, QueryFeature supported) =>
+        static void Accepts(string query, QueryFeatures supported) =>
             Assert.Null(Record.Exception(() => QuerySyntax.EnsureSupported(query, supported, "FakeEngine")));
 
-        Accepts("learn*", QueryFeature.Phrases | QueryFeature.Expansions);
-        Accepts("plain words", QueryFeature.None);
-        Accepts("\"a phrase\"", QueryFeature.Phrases);
+        Accepts("learn*", QueryFeatures.Phrases | QueryFeatures.Expansions);
+        Accepts("plain words", QueryFeatures.None);
+        Accepts("\"a phrase\"", QueryFeatures.Phrases);
     }
 
     [Fact]
     public void EnsureSupported_NullQuery_Throws() =>
-        Assert.Throws<ArgumentNullException>(() => QuerySyntax.EnsureSupported(null!, QueryFeature.None, "FakeEngine"));
+        Assert.Throws<ArgumentNullException>(() => QuerySyntax.EnsureSupported(null!, QueryFeatures.None, "FakeEngine"));
 
     [Fact]
     public void Detect_NullQuery_Throws() =>
@@ -58,7 +58,7 @@ public class QuerySyntaxTests
         Assert.True(engine is IQuerySyntaxSupport);
 
         Assert.Equal(
-            QueryFeature.Phrases | QueryFeature.Expansions,
+            QueryFeatures.Phrases | QueryFeatures.Expansions,
             ((IQuerySyntaxSupport)engine).SupportedQueryFeatures);
     }
 }

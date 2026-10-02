@@ -43,7 +43,7 @@ public sealed record VectorIndexEntry(SearchDocument Document, ReadOnlyMemory<fl
 public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntaxSupport, IQueryCostProbe
 {
     /// <inheritdoc />
-    public QueryFeature SupportedQueryFeatures => QueryFeature.None;
+    public QueryFeatures SupportedQueryFeatures => QueryFeatures.None;
 
     private readonly IEmbeddingProvider _embeddings;
     private readonly Dictionary<string, SearchDocument> _documents = new(StringComparer.Ordinal);

@@ -39,7 +39,7 @@ namespace LexiSharp.Postgres;
 public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable, IQuerySyntaxSupport
 {
     /// <inheritdoc />
-    public QueryFeature SupportedQueryFeatures => QueryFeature.Phrases;
+    public QueryFeatures SupportedQueryFeatures => QueryFeatures.Phrases;
 
     private readonly NpgsqlDataSource _dataSource;
     private readonly PostgresIndexOptions _options;

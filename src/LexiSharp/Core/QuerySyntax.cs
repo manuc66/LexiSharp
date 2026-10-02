@@ -14,18 +14,18 @@ namespace LexiSharp.Core;
 public static class QuerySyntax
 {
     /// <summary>The features <paramref name="query"/> uses, as <see cref="QueryParser"/> would parse it.</summary>
-    public static QueryFeature Detect(string query)
+    public static QueryFeatures Detect(string query)
     {
         ArgumentNullException.ThrowIfNull(query);
 
         var parsed = QueryParser.Parse(query, Tokenizer.Default);
-        var features = QueryFeature.None;
+        var features = QueryFeatures.None;
 
         if (parsed.HasPhrases)
-            features |= QueryFeature.Phrases;
+            features |= QueryFeatures.Phrases;
 
         if (parsed.HasExpansions)
-            features |= QueryFeature.Expansions;
+            features |= QueryFeatures.Expansions;
 
         return features;
     }
@@ -37,13 +37,13 @@ public static class QuerySyntax
     /// <param name="query">The raw query about to be searched.</param>
     /// <param name="supported">The features the target engine honors.</param>
     /// <param name="engineName">Engine name used in the error message.</param>
-    public static void EnsureSupported(string query, QueryFeature supported, string engineName)
+    public static void EnsureSupported(string query, QueryFeatures supported, string engineName)
     {
         ArgumentNullException.ThrowIfNull(query);
 
         var unsupported = Detect(query) & ~supported;
 
-        if (unsupported != QueryFeature.None)
+        if (unsupported != QueryFeatures.None)
         {
             throw new NotSupportedException(
                 $"{engineName} does not support {Describe(unsupported)} (it supports {Describe(supported)}). " +
@@ -51,17 +51,17 @@ public static class QuerySyntax
         }
     }
 
-    private static string Describe(QueryFeature feature)
+    private static string Describe(QueryFeatures feature)
     {
-        if (feature == QueryFeature.None)
+        if (feature == QueryFeatures.None)
             return "plain queries only";
 
         var parts = new List<string>(2);
 
-        if ((feature & QueryFeature.Phrases) != 0)
+        if ((feature & QueryFeatures.Phrases) != 0)
             parts.Add("phrase queries");
 
-        if ((feature & QueryFeature.Expansions) != 0)
+        if ((feature & QueryFeatures.Expansions) != 0)
             parts.Add("prefix/fuzzy operators");
 
         return string.Join(" and ", parts);

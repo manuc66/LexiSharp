@@ -185,7 +185,7 @@ public class InMemoryVectorSearchEngineTests
         var engine = NewEngine(out _);
         engine.Index(Corpus);
 
-        Assert.Equal(QueryFeature.None, engine.SupportedQueryFeatures);
+        Assert.Equal(QueryFeatures.None, engine.SupportedQueryFeatures);
         Assert.Throws<NotSupportedException>(() => engine.Search("token*"));
     }
 

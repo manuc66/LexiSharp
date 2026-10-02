@@ -5,7 +5,7 @@ namespace LexiSharp.Core;
 /// ones they interpret; using an unsupported one is a hard error rather than silent drift.
 /// </summary>
 [Flags]
-public enum QueryFeature
+public enum QueryFeatures
 {
     /// <summary>A plain query: free terms only, no special syntax.</summary>
     None = 0,

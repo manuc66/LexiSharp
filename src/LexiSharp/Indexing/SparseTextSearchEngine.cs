@@ -51,7 +51,7 @@ public sealed record SparseIndexEntry(
 public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupport
 {
     /// <inheritdoc />
-    public QueryFeature SupportedQueryFeatures => QueryFeature.None;
+    public QueryFeatures SupportedQueryFeatures => QueryFeatures.None;
 
     private readonly ISparseEmbeddingProvider _embeddings;
 

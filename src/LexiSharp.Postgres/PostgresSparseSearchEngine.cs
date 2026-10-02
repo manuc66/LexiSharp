@@ -33,7 +33,7 @@ namespace LexiSharp.Postgres;
 public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable, IQuerySyntaxSupport
 {
     /// <inheritdoc />
-    public QueryFeature SupportedQueryFeatures => QueryFeature.None;
+    public QueryFeatures SupportedQueryFeatures => QueryFeatures.None;
 
     private readonly NpgsqlDataSource _dataSource;
     private readonly ISparseEmbeddingProvider _embeddings;

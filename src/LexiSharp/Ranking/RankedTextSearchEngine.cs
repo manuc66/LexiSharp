@@ -60,7 +60,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     public const string EngineName = "RankedTextSearchEngine";
 
     /// <inheritdoc />
-    public QueryFeature SupportedQueryFeatures => QueryFeature.Phrases | QueryFeature.Expansions;
+    public QueryFeatures SupportedQueryFeatures => QueryFeatures.Phrases | QueryFeatures.Expansions;
 
     private readonly ITextIndex _index;
     private readonly ITextScorer _scorer;
