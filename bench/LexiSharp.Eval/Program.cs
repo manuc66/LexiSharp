@@ -50,6 +50,11 @@ public static class Program
         var expandDensities = new List<double>();
         var expandRankings = new List<ExpansionRanking>();
 
+        // The ANN curve is a separate lane from the metrics table: it reports a recall/latency curve
+        // over the pgvector index, and it needs a live server, so it is opt-in on both counts.
+        var annEfValues = new List<int>();
+        string? annConnection = null;
+
         // Off by default, because every query in a BEIR corpus is natural language and the published
         // figures apply no query language to it: the query string goes to the analyzer whole. Left on,
         // a straight double quote in an argument — 138 of ArguAna's 1,406 test queries, measured —
@@ -154,6 +159,12 @@ public static class Program
                 case "--analyze-candidate" when i + 1 < args.Length:
                     analyzeCandidate = args[++i];
                     break;
+                case "--ann-ef" when i + 1 < args.Length:
+                    annEfValues.AddRange(ParsePositiveInts(args[++i], "--ann-ef"));
+                    break;
+                case "--ann-connection" when i + 1 < args.Length:
+                    annConnection = args[++i];
+                    break;
                 case "--expand-density" when i + 1 < args.Length:
                     expandDensities.AddRange(ParseDensities(args[++i]));
                     break;
@@ -255,7 +266,7 @@ public static class Program
                 saturationConstant, singlePrecision, dense, denseSeq,
                 tuned, reranker, rerankCandidates, runPath, jobs, indexCache, parseQuerySyntax,
                 querySyntaxReference, analyzePath, analyzeBaseline, analyzeCandidate,
-                expandDensities, expandRankings);
+                expandDensities, expandRankings, annEfValues, annConnection);
             Console.WriteLine();
         }
 
@@ -368,7 +379,8 @@ public static class Program
         IReranker? reranker, int rerankCandidates, string? runPath, int jobs, string? indexCache,
         bool parseQuerySyntax, bool referenceIndexStatistics,
         string? analyzePath, string analyzeBaseline, string? analyzeCandidate,
-        IReadOnlyList<double> expandDensities, IReadOnlyList<ExpansionRanking> expandRankings)
+        IReadOnlyList<double> expandDensities, IReadOnlyList<ExpansionRanking> expandRankings,
+        IReadOnlyList<int> annEfValues, string? annConnection)
     {
         Console.WriteLine($"== {dataset.Name} ==");
 
@@ -427,6 +439,9 @@ public static class Program
         {
             Console.WriteLine("Dense configs disabled — re-run with --dense to add multilingual-e5-small (CPU, first run downloads the model and encodes the corpus). Re-run with --rerank to add a cross-encoder second stage.");
         }
+
+        if (annEfValues.Count > 0)
+            await RunAnnCurveAsync(annEfValues, annConnection, denseVectors, corpus, dataset, dataBaseDir, topK, limit);
 
         var queryExpansions = new List<(string, ITermExpander)>();
 
@@ -609,6 +624,67 @@ public static class Program
     }
 
     /// <summary>
+    /// Measures the pgvector ANN curve: recall of the index against an exact in-process top-k, and
+    /// the latency each candidate-list size costs.
+    /// </summary>
+    /// <remarks>
+    /// Needs a live server and the dense cache. The vectors are read from the same cache the
+    /// in-memory dense lane uses, so the curve is a property of the index and not of the encoder.
+    /// </remarks>
+    private static async Task RunAnnCurveAsync(
+        IReadOnlyList<int> efValues,
+        string? connection,
+        DenseVectors? dense,
+        BeirCorpus corpus,
+        BeirDataset dataset,
+        string dataBaseDir,
+        int topK,
+        int? limit)
+    {
+        if (connection is null)
+        {
+            Console.Error.WriteLine("--ann-ef needs --ann-connection (Npgsql connection string).");
+            return;
+        }
+
+        if (dense is null)
+        {
+            Console.Error.WriteLine("--ann-ef needs --dense: the curve is measured over the cached embeddings.");
+            return;
+        }
+
+        var documents = Evaluation.BuildDocuments(corpus);
+        var queries = corpus.Queries
+            .Where(query => corpus.TestRelevance.ContainsKey(query.Id))
+            .OrderBy(query => query.Id, StringComparer.Ordinal)
+            .Select(query => (Text: query.Text, Vector: Lookup(dense, query.Text)))
+            .ToList();
+
+        // The dense lane keys its vectors by text; a query the cache never saw cannot be measured
+        // and must not be measured as a zero.
+        static float[] Lookup(DenseVectors vectors, string text)
+        {
+            if (vectors.QueryEmbeddings.TryGetValue(text, out float[]? vector))
+                return vector;
+
+            throw new InvalidOperationException(
+                "A query has no cached embedding, so the ANN curve cannot be computed for it.");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"== pgvector ANN curve ({dataset.Name}, {documents.Count} documents, {queries.Count} queries) ==");
+
+        var points = VectorAnnBenchmark.Measure(
+            connection, documents, dense.DocumentVectors, queries, efValues, topK);
+
+        Console.WriteLine($"{"ef_search",8}{"recall@" + topK,12}{"latency",16}");
+        Console.WriteLine(new string('-', 36));
+
+        foreach (var point in points)
+            Console.WriteLine(point.ToString());
+    }
+
+    /// <summary>
     /// Parses a comma-separated list of window-density cuts.
     /// </summary>
     /// <remarks>
@@ -617,6 +693,17 @@ public static class Program
     /// a repeated flag keeps a sweep to one argument, and a bad value is refused here rather than
     /// silently becoming a run whose neighbour sets are not what the command line said.
     /// </remarks>
+    private static IEnumerable<int> ParsePositiveInts(string value, string flag)
+    {
+        foreach (string part in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!int.TryParse(part, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) || parsed <= 0)
+                throw new ArgumentException($"{flag} expects a comma-separated list of positive integers, got '{part}'.");
+
+            yield return parsed;
+        }
+    }
+
     private static IEnumerable<double> ParseDensities(string value)
     {
         foreach (string part in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
@@ -900,6 +987,15 @@ public static class Program
                                 ONNX Runtime): re-scores the top-N lexical/dense candidates per query.
                                 First run downloads ~90 MB into data/models/cross-encoder/.
               --rerank-top <n>  Number of candidates fed to the cross-encoder (default: 100).
+              --ann-ef <list>  Measure the pgvector HNSW candidate-list curve over these ef_search
+                                values (comma-separated, e.g. 10,40,160,320): the recall of the
+                                index against an exact in-process top-k, and the latency each size
+                                costs. Needs --dense (it reads the cached embeddings) and
+                                --ann-connection. One table is dropped and rebuilt per value.
+              --ann-connection <s>
+                                Npgsql connection string for --ann-ef, e.g.
+                                "Host=localhost;Port=5432;Username=...;Password=...;Database=...".
+                                The target database needs the vector extension.
               --analyze <file>  Write one row per query per configuration: the query's lexical coverage
                                 of its own judged documents, the metrics, and the per-query deltas
                                 against --analyze-baseline. Off by default — capturing a ranking per
