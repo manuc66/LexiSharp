@@ -111,11 +111,11 @@ public sealed class DocumentHierarchy
                     throw new ArgumentException(
                         $"Document '{child}' cannot be its own parent.", nameof(parentToChildren));
 
-                if (parentOf.ContainsKey(child))
+                if (parentOf.TryGetValue(child, out string? existingParent))
                 {
                     throw new ArgumentException(
                         $"Document '{child}' is listed under more than one parent " +
-                        $"('{parentOf[child]}' and '{parent}').", nameof(parentToChildren));
+                        $"('{existingParent}' and '{parent}').", nameof(parentToChildren));
                 }
 
                 if (placed.Contains(child, StringComparer.Ordinal))
@@ -239,13 +239,7 @@ public sealed class DocumentHierarchy
         foreach ((string parent, List<string> children) in childrenOf)
             immutableChildren[parent] = children;
 
-        var roots = new List<string>();
-
-        foreach (string node in nodes)
-        {
-            if (!parentOf.ContainsKey(node))
-                roots.Add(node);
-        }
+        List<string> roots = [.. nodes.Where(node => !parentOf.ContainsKey(node))];
 
         return new DocumentHierarchy(parentOf, immutableChildren, nodes, roots);
     }

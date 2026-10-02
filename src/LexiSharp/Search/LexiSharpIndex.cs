@@ -367,6 +367,7 @@ public sealed class LexiSharpIndex<TDocument>
         return static document => ((SearchDocument)(object)document).TextFields;
     }
 
+    // NOSONAR:S1172 -- both parameters are fixed by the Func<TDocument, ...> these are assigned to.
     private static string? NoCategory(TDocument _) => null;
 
     private static IReadOnlyDictionary<string, string>? NoFields(TDocument _) => null;

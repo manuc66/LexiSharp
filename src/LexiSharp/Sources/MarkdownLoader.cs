@@ -53,6 +53,13 @@ public static class MarkdownLoader
     private const string NoFileId = "document";
 
     /// <summary>
+    /// The front-matter key the title comes from, and the field it is stored under. One constant
+    /// because a loader that read <c>title</c> and stored it under a different name would report a
+    /// title as absent while carrying one.
+    /// </summary>
+    private const string TitleKey = "title";
+
+    /// <summary>
     /// Parses a markdown string with no file context; the returned document id is
     /// <c>"document"</c>.
     /// </summary>
@@ -106,12 +113,12 @@ public static class MarkdownLoader
 
         var fields = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        if (options.FirstHeadingAsTitle && !entries.ContainsKey("title"))
+        if (options.FirstHeadingAsTitle && !entries.ContainsKey(TitleKey))
         {
             var heading = FirstHeading(body);
 
             if (heading is not null)
-                fields["title"] = heading;
+                fields[TitleKey] = heading;
         }
 
         foreach (var (key, value) in entries)
@@ -194,8 +201,8 @@ public static class MarkdownLoader
         {
             switch (key)
             {
-                case "title":
-                    fields["title"] = value;
+                case TitleKey:
+                    fields[TitleKey] = value;
                     break;
                 case "category":
                     category = value;

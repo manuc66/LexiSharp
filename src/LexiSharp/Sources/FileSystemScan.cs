@@ -56,7 +56,7 @@ internal static class FileSystemScan
         // is a coincidence of the overload set rather than something the call states. The result is
         // unchanged: on Unix the two constants are the same character, so nothing here is
         // observable on the host these tests run on -- it is the Windows path that has two.
-        foreach (var part in relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]))
+        foreach (var part in relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar])) // NOSONAR:S3878
         {
             if (part.Length > 0 && part[0] == '.')
                 return false;
