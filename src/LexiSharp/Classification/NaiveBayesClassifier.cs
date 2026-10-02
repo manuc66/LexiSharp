@@ -42,7 +42,7 @@ namespace LexiSharp.Classification;
 /// prediction genuinely overlap.
 /// </remarks>
 public sealed class NaiveBayesClassifier
-    : ITextClassifier, IWeightedPredictor, IIncrementalTextClassifier, IReinforceableTextClassifier
+    : IWeightedPredictor, IIncrementalTextClassifier, IReinforceableTextClassifier
 {
     private readonly ITokenizer _tokenizer;
     private readonly NaiveBayesOptions _options;

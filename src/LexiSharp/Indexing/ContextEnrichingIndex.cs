@@ -46,7 +46,7 @@ namespace LexiSharp.Indexing;
 /// as on a plain index.
 /// </para>
 /// </remarks>
-public sealed class ContextEnrichingIndex : ITextIndex, ICandidateIndex, IUnorderedCandidateIndex, IVocabularyIndex, IAccumulatingIndex, IFieldStatisticsIndex
+public sealed class ContextEnrichingIndex : ITextIndex, IUnorderedCandidateIndex, IVocabularyIndex, IAccumulatingIndex, IFieldStatisticsIndex
 {
     private readonly ITextIndex _inner;
     private readonly IChunkContextEnricher _enricher;
@@ -260,8 +260,7 @@ public sealed class ContextEnrichingIndex : ITextIndex, ICandidateIndex, IUnorde
     {
         ArgumentNullException.ThrowIfNull(terms);
 
-        foreach (var document in ((ICandidateIndex)_inner).GetCandidateDocuments(terms))
-            yield return Resolve(document);
+        return ResolveAll(((ICandidateIndex)_inner).GetCandidateDocuments(terms));
     }
 
     /// <inheritdoc />
@@ -269,7 +268,22 @@ public sealed class ContextEnrichingIndex : ITextIndex, ICandidateIndex, IUnorde
     {
         ArgumentNullException.ThrowIfNull(terms);
 
-        foreach (var document in ((IUnorderedCandidateIndex)_inner).GetCandidatesUnordered(terms))
+        return ResolveAll(((IUnorderedCandidateIndex)_inner).GetCandidatesUnordered(terms));
+    }
+
+    /// <summary>
+    /// The inner candidates resolved to the caller's originals.
+    /// </summary>
+    /// <remarks>
+    /// A separate iterator so that <see cref="GetCandidateDocuments"/> keeps its
+    /// <c>ArgumentNullException</c> eager: the body of a <c>yield</c> method does not run until the
+    /// first <c>MoveNext</c>, so a null check written in one fires when the caller starts
+    /// enumerating, not when it calls — and a caller who passed null and never enumerated saw no
+    /// error at all.
+    /// </remarks>
+    private IEnumerable<SearchDocument> ResolveAll(IEnumerable<SearchDocument> documents)
+    {
+        foreach (var document in documents)
             yield return Resolve(document);
     }
 

@@ -43,7 +43,7 @@ namespace LexiSharp.Core;
 /// </para>
 /// </remarks>
 public sealed class SynchronizedTextSearchEngine
-    : ITextSearchEngine, IFacetedSearchEngine, IDetailedSearchEngine, IExplainableSearchEngine, IDisposable
+    : IFacetedSearchEngine, IDetailedSearchEngine, IExplainableSearchEngine, IDisposable
 {
     private readonly ITextSearchEngine _inner;
 

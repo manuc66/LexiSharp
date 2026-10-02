@@ -41,7 +41,7 @@ namespace LexiSharp.Expansion;
 /// something else.
 /// </para>
 /// </remarks>
-public sealed class ExpandingTextSearchEngine : ITextSearchEngine, IQueryCostProbe, IFacetedSearchEngine, IDetailedSearchEngine, IExplainableSearchEngine
+public sealed class ExpandingTextSearchEngine : IQueryCostProbe, IFacetedSearchEngine, IDetailedSearchEngine, IExplainableSearchEngine
 {
     private static readonly SearchValues<char> SyntaxCharacters = SearchValues.Create("~*\"");
     private const char Separator = ' ';
