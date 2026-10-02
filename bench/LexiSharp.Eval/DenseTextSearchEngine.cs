@@ -76,7 +76,7 @@ internal static class DenseEmbedder
 
         var tokenizer = SentencePieceTokenizer.Create(
             File.OpenRead(Path.Combine(modelCacheDir, DenseModels.SpmFile)),
-            addBeginOfSentence: false,
+            addBeginningOfSentence: false,
             addEndOfSentence: false);
 
         var options = new SessionOptions();
