@@ -160,7 +160,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `ParsedQuery` | record | — | The structured form of a raw query: free terms, quoted phrase constraints, expansion atoms, and the combined literal term list a scorer starts from. |
 | `QueryExpansion` | record | — | A free-text query atom carrying a search-time expansion operator: the base term (already tokenized to exactly one term) is matched against the index vocabulary… |
 | `QueryExpansionKind` | enum | — | How a query atom expands against the index vocabulary. |
-| `QueryFeature` | enum | — | The optional LexiSharp query-syntax features a raw query can carry. Engines declare which ones they interpret; using an unsupported one is a hard error rather… |
+| `QueryFeatures` | enum | — | The optional LexiSharp query-syntax features a raw query can carry. Engines declare which ones they interpret; using an unsupported one is a hard error rather… |
 | `QueryParser` | class | — | Splits a raw query on double quotes before tokenization — the tokenizer treats " as an ordinary separator and would destroy the delimiters — and recognizes the… |
 | `QueryRoute` | record | — | The decision an IQueryRouter returns for a query: which route to run, and how confident the router is. |
 | `QuerySyntax` | class | — | Detects and validates the LexiSharp query syntax a raw query carries, so an engine that does not interpret a feature fails fast instead of silently treating the… |
