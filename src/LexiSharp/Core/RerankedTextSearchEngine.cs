@@ -175,22 +175,26 @@ public sealed class RerankedTextSearchEngine : ITextSearchEngine, IQueryCostProb
         if (trace is null)
             return;
 
-        // maxCandidates-bounded, not corpus-bounded: only the shortlist is indexed.
-        Dictionary<string, double>? before = null;
+        // Built once, not once per page entry — the previous shape re-filled the map for every
+        // result the page held, an O(page x candidates) waste that the `??=` only masked at the
+        // allocation site. maxCandidates-bounded, not corpus-bounded: only the shortlist is
+        // indexed, and each per-result lookup stays O(1).
+        var before = new Dictionary<string, double>(candidates.Count, StringComparer.Ordinal);
+
+        for (int j = 0; j < candidates.Count; j++)
+        {
+            // The guard keeps first-occurrence-wins semantics for a candidate list that is
+            // off-contract and duplicates an id; search results are distinct by contract.
+            string id = candidates[j].DocumentId;
+            if (!before.ContainsKey(id))
+            {
+                before[id] = candidates[j].Score;
+            }
+        }
 
         for (int i = 0; i < page.Count; i++)
         {
             SearchResult result = page[i];
-
-            before ??= new Dictionary<string, double>(candidates.Count, StringComparer.Ordinal);
-            for (int j = 0; j < candidates.Count; j++)
-            {
-                string id = candidates[j].DocumentId;
-                if (!before.ContainsKey(id))
-                {
-                    before[id] = candidates[j].Score;
-                }
-            }
 
             double prior = before.TryGetValue(result.DocumentId, out double found) ? found : double.NaN;
             trace.Record(new TraceStep(TraceStage.Rerank, result.DocumentId, prior, result.Score, _rerankerName));
