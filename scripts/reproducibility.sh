@@ -32,7 +32,7 @@ cd "$ROOT"
 
 MODE=quick
 REPEATS=5
-while [ $# -gt 0 ]; do
+while [[ $# -gt 0 ]]; do
   case "$1" in
     --quick)   MODE=quick ;;
     --full)    MODE=full ;;
@@ -95,7 +95,7 @@ stage() {
   printf '  %s  (%ss)  %s\n' "$status" "$elapsed" "$desc"
   printf '%s\t%s\t%s\t%s\n' "$name" "$must" "$status" "$elapsed" >> "$RESULTS"
 
-  if [ "$status" = fail ] && [ "$must" = yes ]; then
+  if [[ "$status" == fail && "$must" == yes ]]; then
     FAILED=$((FAILED + 1))
     echo "  --- last 15 lines of $log ---"
     tail -15 "$log" | sed 's/^/  | /'
@@ -104,19 +104,26 @@ stage() {
 }
 
 # Stages that need a body: define with closures.
-build()            { dotnet build LexiSharp.slnx -c Release 2>&1 | grep -E ": error |: warning |Build succeeded|erreur" | tail -40; }
+#
+# Every one of these ends in `return $?`, and none of them may end in `return 0`. `stage` takes the
+# body's exit status as the stage's verdict and counts it when must=stable, so the last command's
+# status *is* the result the sweep reports. An explicit `return 0` would make all fourteen stable
+# stages report pass unconditionally — a green sweep that ran nothing. `set -o pipefail` is what
+# makes that status survive the `| tail` these carry: without it a pipeline reports the exit status
+# of its last command, and `tail` is always zero.
+build()            { dotnet build LexiSharp.slnx -c Release 2>&1 | grep -E ": error |: warning |Build succeeded|erreur" | tail -40; return $?; }
 # --no-incremental, not a delete of some scratch directory: the point is to force a full
 # recompilation, and an incremental build that reuses yesterday's obj proves nothing about
 # whether this tree compiles from nothing. The first version of this removed a path that
 # does not exist, so the stage passed in 3 seconds on a warm obj while claiming to be a
 # clean build.
-build_clean()      { dotnet build LexiSharp.slnx -c Release --no-incremental 2>&1 | tail -20; }
-unit_tests()       { dotnet test LexiSharp.slnx -c Release --no-build --logger "console;verbosity=minimal" 2>&1 | tail -6; }
-golden_verify()    { dotnet run --project bench/LexiSharp.Cli -c Release --no-build -- verify bench/reference-corpus/corpus "${COMMON[@]}" --configs "$CONFIGS" --top-k 5 --against "$GOLDEN" 2>&1; }
+build_clean()      { dotnet build LexiSharp.slnx -c Release --no-incremental 2>&1 | tail -20; return $?; }
+unit_tests()       { dotnet test LexiSharp.slnx -c Release --no-build --logger "console;verbosity=minimal" 2>&1 | tail -6; return $?; }
+golden_verify()    { dotnet run --project bench/LexiSharp.Cli -c Release --no-build -- verify bench/reference-corpus/corpus "${COMMON[@]}" --configs "$CONFIGS" --top-k 5 --against "$GOLDEN" 2>&1; return $?; }
 # The whole log, not a tail. A truncated log kept the verdict and dropped the evidence: the
 # first version showed "OK" with four of the eleven checks visible, which reads as proof and
 # is not. A stage that cannot show its work has not shown its work.
-pins_verify()      { dotnet run --project bench/LexiSharp.Eval -c Release --no-build -- --data bench/LexiSharp.Eval/data --verify-reference --jobs "$JOBS" 2>&1; }
+pins_verify()      { dotnet run --project bench/LexiSharp.Eval -c Release --no-build -- --data bench/LexiSharp.Eval/data --verify-reference --jobs "$JOBS" 2>&1; return $?; }
 
 # Re-record to a scratch file and byte-compare against the committed one. This is the
 # cross-machine check: the file in git was recorded on whatever machine wrote it, and this
@@ -198,6 +205,7 @@ eval_corpus() {
   local dataset="$1"; shift
   dotnet run --project bench/LexiSharp.Eval -c Release --no-build -- --data bench/LexiSharp.Eval/data \
     --dataset "$dataset" --no-tuned --jobs "$JOBS" "$@" 2>&1 | grep -E "^\s*(BM25|BM25F|BM25\+|BM25L|TF-IDF)" | head -20
+  return $?
 }
 
 # The parity row that used to be a gap: ArguAna at the reference's own k1 and b under the reference
@@ -238,7 +246,7 @@ arguana_parity() {
     --ndcg-gain linear --query-term-frequency --omit-saturation-constant \
     --single-precision-bm25 --reference-score-rounding --no-tuned \
     --jobs "$JOBS" --reference-index-statistics --top-k 11 --run "$scores" >/dev/null 2>&1
-  if [ -s "$REFERENCE_SCORES" ]; then
+  if [[ -s "$REFERENCE_SCORES" ]]; then
     awk 'NR==FNR { s[$1" "$2]=$3; next }
          { k=$1" "$3; if (k in s && s[k]!=$5) { d++; if (d<=3) print "  differe: " k " nous " s[k] " reference " $5 } }
          END { printf "  %d scores sur %d different sur le bit\n", d+0, FNR }' \
@@ -256,13 +264,14 @@ arguana_parity() {
   # trec_eval 9.0.8: ndcg_cut_10 0.3970 and recall_100 0.9324, against 0.3970 and 0.9324 published.
   local evaluator="${TREC_EVAL:-trec_eval}"
   local qrels="${ARGUANA_QRELS:-$ARGUANA_QRELS_DEFAULT}"
-  if command -v "$evaluator" >/dev/null 2>&1 && [ -s "$qrels" ]; then
+  if command -v "$evaluator" >/dev/null 2>&1 && [[ -s "$qrels" ]]; then
     echo "  $evaluator on the run file above:"
     "$evaluator" -m ndcg_cut.10 -m recall.100 "$qrels" "$run" | sed 's/^/    /'
   else
     echo "  $evaluator indisponible ou qrels absents : l'egalite au bit ci-dessus reste verifiee,"
     echo "  le nDCG@10 affiche au-dessus est mesure par ce harnais et n'est pas confirme a l'exterieur."
   fi
+  return $?
 }
 
 # The ArguAna exclusion comparison, kept as a stage because it is the measurement that found a
@@ -276,7 +285,7 @@ arguana_exclusion() {
   for p in 0.9,0.4 1.5,0.75; do
     k1="${p%%,*}"; b="${p#*,}"
     local extra=()
-    [ "$p" = "0.9,0.4" ] && extra=(--exclude-query-doc)
+    [[ "$p" == "0.9,0.4" ]] && extra=(--exclude-query-doc)
     local row
     # The label is printed with a space after the comma, so the pattern has to carry one. Matching the
     # parameters exactly rather than a prefix of them is what makes this stage able to fail: written as
@@ -286,7 +295,7 @@ arguana_exclusion() {
       --data bench/LexiSharp.Eval/data --dataset arguana --no-tuned --analyzer english \
       --jobs "$JOBS" --reference-bm25 "$p" --query-term-frequency --ndcg-gain linear "${extra[@]}" 2>&1 \
       | grep -F "BM25 (k1=$k1, b=$b)" | head -1)
-    printf '%s\t%s\t%s\n' "$p" "$([ ${#extra[@]} -gt 0 ] && echo exclude || echo plain)" "$row" >> "$out"
+    printf '%s\t%s\t%s\n' "$p" "$([[ ${#extra[@]} -gt 0 ]] && echo exclude || echo plain)" "$row" >> "$out"
   done
   cat "$out"
   # An empty metric column is a failure of this stage, not a value: it is what a pattern that matches
@@ -301,6 +310,7 @@ arguana_exclusion() {
 
 benchmarks() {
   dotnet run --project bench/LexiSharp.Benchmarks -c Release --no-build -- --filter '*' --job short 2>&1 | tail -30
+  return $?
 }
 
 # ---------------------------------------------------------------- run
@@ -354,7 +364,7 @@ stage code-shape         no  "IL shape under ReadyToRun on and off (reported, no
 # Quality, at the tolerance the repository actually claims.
 stage pins-verify        yes "8 pinned configurations within +/-0.002"                  pins_verify
 
-if [ "$MODE" = full ]; then
+if [[ "$MODE" == full ]]; then
   stage eval-nfcorpus    yes "nFCorpus reproduces"                                      eval_corpus nfcorpus --analyzer english
   stage eval-scifact     yes "SciFact reproduces"                                       eval_corpus scifact --analyzer english
   stage eval-arguana     yes "ArguAna reproduces"                                       eval_corpus arguana --analyzer english
@@ -374,7 +384,7 @@ while IFS=$'\t' read -r name must status elapsed; do
 done < "$RESULTS"
 
 printf '\n'
-if [ "$FAILED" -eq 0 ]; then
+if [[ "$FAILED" -eq 0 ]]; then
   echo "every stage that must be stable was stable."
   echo "Timings and IL sizes are reported above and are not claims; see docs/benchmarks.md."
 else
