@@ -22,6 +22,25 @@ The version number is not settled. Nothing here changes an existing default, but
 observable behaviour for callers who rely on the old results, and a patch release would understate
 that. Whichever number is chosen, the reason is here.
 
+### Added
+
+- **`SearchOptions.AccumulateFilteredQueries` — let the term-at-a-time pass serve a filtered
+  query, default off.** A query carrying `Filters` is declined by that pass and served by the
+  per-document loop, which scores **every candidate by document id**: one id-keyed length lookup
+  plus one per query term, for candidates the filter then discards. The pass scores by ordinal, as
+  one walk of the posting entries that exist, and applies the filter to the ordinals it recorded.
+  The two paths are numerically interchangeable — same terms, same summation order, same score
+  bits, which the equivalence tests assert — but they price the same filter very differently.
+
+  Which wins is a property of the filter, not the query, so this is the caller's decision rather
+  than a heuristic: a filter that rejects nothing pays the per-document price for nothing, and one
+  that rejects nearly everything pays accumulation to score a set it mostly discards.
+
+  A request combining it with a `TieBreak` other than `DocumentId` keeps the per-document loop. The
+  two paths do not produce candidates in the same order — a full scan is corpus order, the
+  accumulation pass is posting order — so under `InsertionOrder` they order documents that tie
+  exactly differently, which is the one thing that option exists to reproduce.
+
 ### Reproduced
 
 **The ArguAna figure published by the independent BEIR regression — nDCG@10 0.3970 — is now

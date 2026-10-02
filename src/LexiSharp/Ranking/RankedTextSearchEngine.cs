@@ -358,6 +358,14 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     private const int MinimumPostingEntriesForAccumulation = 8;
 
     /// <summary>
+    /// The minimum reachable documents a query needs for the accumulation pass to be taken, for a
+    /// given index. Internal so a test can assert its fixture <i>reaches</i> the path rather than
+    /// silently falling back and passing for the wrong reason.
+    /// </summary>
+    internal static int AccumulationThreshold(int ordinalSpace) =>
+        Math.Max(MinimumPostingEntriesForAccumulation, ordinalSpace / AccumulationCorpusDivisor);
+
+    /// <summary>
     /// How the floor above scales with the corpus: one posting entry per this many documents.
     /// </summary>
     /// <remarks>
@@ -379,14 +387,23 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// to go the per-document way instead.
     /// </summary>
     /// <remarks>
-    /// The gates this path refuses are the two that are cheaper before scoring than after:
-    /// a metadata filter and a phrase both reject documents, and both do it by walking positions
-    /// or fields, so a selective filter over a large corpus would have most of its score
-    /// arithmetic thrown away. The term-at-a-time pass has already paid for the arithmetic by the
-    /// time it can apply either, which is the opposite of what those requests want. Everything
-    /// else — the rare-term and head-term regimes alike — is a win, because the pass replaces
-    /// <c>2 · terms · documents</c> string hashes with one walk of the posting entries that
-    /// actually exist.
+    /// The gates this path refuses are the ones that are cheaper before scoring than after: a
+    /// quoted phrase rejects documents by walking positions, so a phrase-heavy query over a large
+    /// corpus would have most of its score arithmetic thrown away. That refusal stands.
+    /// <para>
+    /// A <see cref="SearchOptions.Filters"/> entry is not in that class, and
+    /// <see cref="SearchOptions.AccumulateFilteredQueries"/> is how a caller says so. The reason is a
+    /// price rather than a defect: the per-document loop this pass otherwise yields to scores
+    /// <b>every candidate by document id</b>, one id-keyed length lookup plus one per query term,
+    /// for candidates the filter may then discard. The trade the option exposes is that this pass
+    /// also scores the candidates a <i>selective</i> filter discards, which is why it is opt-in
+    /// rather than the default.
+    /// </para>
+    /// <para>
+    /// Everything else — the rare-term and head-term regimes alike — is a win either way, because
+    /// the pass replaces <c>2 · terms · documents</c> string hashes with one walk of the posting
+    /// entries that actually exist.
+    /// </para>
     /// <para>
     /// The matched set arrives in posting order rather than corpus order. Nothing downstream
     /// depends on the difference: the gates are per document, the facet counts are increments, and
@@ -404,20 +421,29 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     {
         ordinal = 0;
 
+        // A metadata filter reaches this pass only through AccumulateFilteredQueries, and only for a
+        // request that keeps TieBreak.DocumentId. InsertionOrder breaks ties by the position the
+        // candidate arrived at, and the two paths do not produce candidates in the same order: a full
+        // scan is corpus order, this pass is posting order, first-touch per term. On a corpus where two
+        // documents tie exactly, a query whose term coverage interleaves — even ordinals hold one term,
+        // odd ordinals the other — comes back doc-00, doc-02, … here and doc-00, doc-01, … on the other
+        // path, at identical scores. That is the one use InsertionOrder exists to serve, so the option
+        // declines rather than silently changing what a caller reproduced.
+        bool filterWouldBeHonoured = options.Filters is { Count: > 0 };
+
         if (plan is not IAccumulatingQueryPlan accumulating ||
             _index is not IAccumulatingIndex index ||
             _scorer is not ITermOverlapScorer ||
             parsed.HasPhrases ||
-            options.Filters is { Count: > 0 })
+            (filterWouldBeHonoured &&
+                (!options.AccumulateFilteredQueries || options.TieBreak != TieBreak.DocumentId)))
         {
             return false;
         }
 
         // The pass clears a buffer sized to the corpus before it scores anything, so a query too
         // small to amortize that is better served by the per-document loop. See the constants.
-        int minimumEntries = Math.Max(
-            MinimumPostingEntriesForAccumulation,
-            index.OrdinalSpace / AccumulationCorpusDivisor);
+        int minimumEntries = AccumulationThreshold(index.OrdinalSpace);
 
         if (reachableDocuments < minimumEntries)
             return false;
@@ -429,10 +455,10 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             if (!accumulating.TryAccumulate(index, accumulator))
                 return false;
 
-            // One gate list, shared with the per-document loop above, rather than this pass's own.
-            // Two lists is how the id exclusion came to be missing here while the other loop applied
-            // it: the two drifted and nothing in the shape of the code objected. PassesFilters opens
-            // with the same null test the hoisted set cost, so sharing it is free.
+            // One gate list, shared with the per-document loop, rather than this pass's own. A
+            // separate list is how the id exclusion came to be missing here while the loop above
+            // applied it: the two drifted, and nothing in the shape of the code objected. PassesFilters
+            // starts with the same null test the hoisted exclusion cost, so sharing it is free.
             for (int i = 0; i < accumulator.Count; i++)
             {
                 int candidate = accumulator.OrdinalAt(i);
