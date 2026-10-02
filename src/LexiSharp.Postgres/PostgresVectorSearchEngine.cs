@@ -463,16 +463,8 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
             command.Transaction = transaction;
             filters.Apply(command);
 
-            string searchSql = $"""
-                SELECT id, content, category, fields, text_fields, {ScoreExpression(column)} AS score
-                FROM {_options.QualifiedTableName}
-                WHERE {Quote(column)} IS NOT NULL{filters.Fragment}
-                ORDER BY {Quote(column)} {_options.Operator} @query::vector
-                LIMIT @limit;
-                """;
-
             // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); query text is parameterized.
-            command.CommandText = searchSql; // NOSONAR:S2077
+            command.CommandText = BuildSearchSql(column, filters.Fragment); // NOSONAR:S2077
 
             command.Parameters.AddWithValue("query", queryVectors[i]);
             command.Parameters.AddWithValue("limit", candidateLimit);
@@ -699,6 +691,20 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
             _ => $"1 - ({quoted} <=> @query::vector)",
         };
     }
+
+    /// <summary>
+    /// The statement a search over one embedding column runs, and the only copy of it: the ANN
+    /// harness explains this text rather than a hand-written approximation of it, so the plan it
+    /// reports is the plan a search gets. <paramref name="filterFragment"/> is the metadata filter's
+    /// fragment — a leading <c>" AND ..."</c>, or empty when there are no filters.
+    /// </summary>
+    internal string BuildSearchSql(string column, string filterFragment) => $"""
+        SELECT id, content, category, fields, text_fields, {ScoreExpression(column)} AS score
+        FROM {_options.QualifiedTableName}
+        WHERE {Quote(column)} IS NOT NULL{filterFragment}
+        ORDER BY {Quote(column)} {_options.Operator} @query::vector
+        LIMIT @limit;
+        """;
 
     private static string Quote(string identifier) => PostgresIndexOptions.QuoteIdentifier(identifier);
 
