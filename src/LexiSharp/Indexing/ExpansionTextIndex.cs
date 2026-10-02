@@ -29,7 +29,7 @@ namespace LexiSharp.Indexing;
 /// real token stream for the purposes of length statistics and candidate generation.
 /// </para>
 /// </remarks>
-public sealed class ExpansionTextIndex : ITextIndex, ICandidateIndex, IUnorderedCandidateIndex, IVocabularyIndex, IAccumulatingIndex, IFieldStatisticsIndex
+public sealed class ExpansionTextIndex : ITextIndex, IUnorderedCandidateIndex, IVocabularyIndex, IAccumulatingIndex, IFieldStatisticsIndex
 {
     private readonly InMemoryTextIndex _inner;
     private readonly ITermExpander _expander;
