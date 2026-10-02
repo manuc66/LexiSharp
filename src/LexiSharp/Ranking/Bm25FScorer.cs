@@ -313,7 +313,7 @@ public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
             // A field nobody filled averages 0; normalizing by it would explode, so the length
             // correction degenerates to 1 for such a field.
             double correction = field.AverageLength > 0
-                ? 1.0 - b + b * fieldLength / field.AverageLength
+                ? 1.0 - b + (b * fieldLength / field.AverageLength)
                 : 1.0;
 
             normalizedFrequency += field.Weight * tf / correction;
@@ -337,15 +337,15 @@ public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
         // A corpus where every field is empty or weightless has no baseline to normalize against,
         // so the length correction is dropped rather than divide by zero.
         double lengthCorrection = geometry.CorpusBaseline > 0
-            ? 1.0 - b + b * geometry.WeightedLength / geometry.CorpusBaseline
+            ? 1.0 - b + (b * geometry.WeightedLength / geometry.CorpusBaseline)
             : 1.0;
 
         return idf * normalizedFrequency * (k1 + 1.0)
-            / (k1 * lengthCorrection + normalizedFrequency);
+            / ((k1 * lengthCorrection) + normalizedFrequency);
     }
 
     private static double InverseDocumentFrequency(int documentCount, int documentFrequency) =>
-        Math.Log(1.0 + (documentCount - documentFrequency + 0.5) / (documentFrequency + 0.5));
+        Math.Log(1.0 + ((documentCount - documentFrequency + 0.5) / (documentFrequency + 0.5)));
 
     private static IFieldStatisticsIndex RequireFieldStatistics(IReadOnlyTextIndex index)
     {

@@ -536,13 +536,13 @@ public class NaiveBayesReinforcementTests
         var logScores = new Dictionary<string, double>();
         foreach (string category in classDocuments.Keys)
         {
-            double score = Math.Log((classDocuments[category] + alpha) / (documentCount + alpha * classCount));
-            double denominator = classTokenTotals[category] + alpha * vocabularySize;
+            double score = Math.Log((classDocuments[category] + alpha) / (documentCount + (alpha * classCount)));
+            double denominator = classTokenTotals[category] + (alpha * vocabularySize);
 
             foreach (var token in query)
             {
                 bool known = documentFrequency.TryGetValue(token.Token, out int df) && df > 0;
-                double idf = !known ? 1.0 : Math.Log(1.0 + documentCount / (double)df);
+                double idf = !known ? 1.0 : Math.Log(1.0 + (documentCount / (double)df));
                 double reinforcementIdf = known ? idf : 1.0;
 
                 classTokens[category].TryGetValue(token.Token, out int count);

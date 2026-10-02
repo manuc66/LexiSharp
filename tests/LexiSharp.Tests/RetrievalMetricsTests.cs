@@ -40,14 +40,14 @@ public class RetrievalMetricsTests
     public void Ndcg_DiscountsLaterRelevantPositionsAgainstTheIdealRanking()
     {
         // DCG = 1/log2(3) + 1/log2(5); IDCG = 1/log2(2) + 1/log2(3) + 1/log2(4).
-        double dcg = 1.0 / Math.Log2(3) + 1.0 / Math.Log2(5);
-        double idcg = 1.0 / Math.Log2(2) + 1.0 / Math.Log2(3) + 1.0 / Math.Log2(4);
+        double dcg = (1.0 / Math.Log2(3)) + (1.0 / Math.Log2(5));
+        double idcg = (1.0 / Math.Log2(2)) + (1.0 / Math.Log2(3)) + (1.0 / Math.Log2(4));
 
         Assert.Equal(dcg / idcg, RetrievalMetrics.NdcgAtK(Retrieved, Relevant, 5), 12);
 
         // Truncated at 2, only "b" is retrieved: DCG = 1/log2(3), IDCG over 2 positions.
         double dcg2 = 1.0 / Math.Log2(3);
-        double idcg2 = 1.0 / Math.Log2(2) + 1.0 / Math.Log2(3);
+        double idcg2 = (1.0 / Math.Log2(2)) + (1.0 / Math.Log2(3));
 
         Assert.Equal(dcg2 / idcg2, RetrievalMetrics.NdcgAtK(Retrieved, Relevant, 2), 12);
     }
@@ -70,7 +70,7 @@ public class RetrievalMetricsTests
         Assert.Equal(0.5, RetrievalMetrics.PrecisionAtK(retrieved, Relevant, 2), 12);
         Assert.Equal(1.0 / 3, RetrievalMetrics.RecallAtK(retrieved, Relevant, 2), 12);
         Assert.Equal(
-            1.0 / Math.Log2(3) / (1.0 / Math.Log2(2) + 1.0 / Math.Log2(3)),
+            (1.0 / Math.Log2(3)) / ((1.0 / Math.Log2(2)) + (1.0 / Math.Log2(3))),
             RetrievalMetrics.NdcgAtK(retrieved, Relevant, 2), 12); // only "b" within k=2
     }
 
@@ -119,9 +119,10 @@ public class RetrievalMetricsTests
         var graded = new Dictionary<string, double> { ["a"] = 3, ["b"] = 1, ["z"] = 2 };
 
         // DCG = (2^3−1)/log2(2) + (2^1−1)/log2(3); ideal gains [3,2,1] over 3 positions.
-        double dcg = (Math.Pow(2, 3) - 1) / Math.Log2(2) + (Math.Pow(2, 1) - 1) / Math.Log2(3);
-        double idcg = (Math.Pow(2, 3) - 1) / Math.Log2(2) + (Math.Pow(2, 2) - 1) / Math.Log2(3)
-                      + (Math.Pow(2, 1) - 1) / Math.Log2(4);
+        double dcg = ((Math.Pow(2, 3) - 1) / Math.Log2(2)) + ((Math.Pow(2, 1) - 1) / Math.Log2(3));
+        double idcg = ((Math.Pow(2, 3) - 1) / Math.Log2(2))
+                      + ((Math.Pow(2, 2) - 1) / Math.Log2(3))
+                      + ((Math.Pow(2, 1) - 1) / Math.Log2(4));
 
         Assert.Equal(dcg / idcg, RetrievalMetrics.NdcgAtK(Retrieved, graded, 3), 12);
     }
@@ -165,7 +166,7 @@ public class RetrievalMetricsTests
         // rank 3, so the score is (1/1 + 0) / (1/1 + 1/log2(3)) — not a divisor of three positions.
         var graded = new Dictionary<string, double> { ["a"] = 1, ["j"] = 0, ["z"] = 1 };
 
-        double expected = 1.0 / (1.0 / Math.Log2(2) + 1.0 / Math.Log2(3));
+        double expected = 1.0 / ((1.0 / Math.Log2(2)) + (1.0 / Math.Log2(3)));
 
         Assert.Equal(expected, RetrievalMetrics.NdcgAtK(Retrieved, graded, 3, NdcgGain.Linear), 12);
     }

@@ -239,7 +239,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         int baseLength = 24 + (1 << (exponent - 1));
         int step = 1 << (exponent - 4);
 
-        return baseLength + ((exactLength - baseLength) / step) * step;
+        return baseLength + (((exactLength - baseLength) / step) * step);
     }
 
     /// <summary>Creates an empty index, tokenizing with <c>Tokenizer.Default</c> unless told otherwise.</summary>

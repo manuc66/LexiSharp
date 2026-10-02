@@ -123,7 +123,7 @@ public class SearchTraceTests
         foreach (var step in boostSteps)
         {
             // after == before * 2 + 0.5, the exact rule the boost function applied
-            Assert.Equal(step.Before * 2.0 + 0.5, step.After, 10);
+            Assert.Equal((step.Before * 2.0) + 0.5, step.After, 10);
             Assert.Equal("x2 +0.5", step.Detail);
         }
 

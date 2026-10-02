@@ -738,7 +738,7 @@ public static class Program
         Console.WriteLine();
         Console.WriteLine(string.Join(" | ", header.Select((cell, i) =>
             i == 0 ? cell.PadRight(widths[0]) : cell.PadLeft(widths[i]))));
-        Console.WriteLine(new string('-', widths.Sum() + (widths.Length - 1) * 3));
+        Console.WriteLine(new string('-', widths.Sum() + ((widths.Length - 1) * 3)));
 
         foreach (var result in results)
         {

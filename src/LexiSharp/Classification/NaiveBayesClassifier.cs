@@ -510,7 +510,7 @@ public sealed class NaiveBayesClassifier
         // the priors out). Complement statistics: term and token totals over the other classes
         // are smoothed by Alpha over the vocabulary.
         int complementTokenCount = _totalTokenCount - classTokenCount;
-        double complementDenominator = complementTokenCount + _options.Alpha * _vocabularySize;
+        double complementDenominator = complementTokenCount + (_options.Alpha * _vocabularySize);
         double logProbability = 0.0;
 
         if (complementDenominator <= 0)
@@ -540,11 +540,11 @@ public sealed class NaiveBayesClassifier
         int classDocumentCount,
         QueryTerms query)
     {
-        double smoothingDenominator = classTokenCount + _options.Alpha * _vocabularySize;
+        double smoothingDenominator = classTokenCount + (_options.Alpha * _vocabularySize);
 
         double logProbability = _options.SmoothPriors
             ? Math.Log((classDocumentCount + _options.Alpha)
-                       / (_documentCount + _options.Alpha * _classCount))
+                       / (_documentCount + (_options.Alpha * _classCount)))
             : Math.Log((double)classDocumentCount / _documentCount);
 
         if (smoothingDenominator <= 0)
@@ -636,7 +636,7 @@ public sealed class NaiveBayesClassifier
                 if (_documentCount == 0 || !inVocabulary)
                     return 1.0;
 
-                return Math.Log(1.0 + _documentCount / (double)_termDocumentFrequencies[term]);
+                return Math.Log(1.0 + (_documentCount / (double)_termDocumentFrequencies[term]));
             }
 
             default:

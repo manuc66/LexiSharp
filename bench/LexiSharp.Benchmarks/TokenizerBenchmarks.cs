@@ -28,7 +28,7 @@ public class TokenizerBenchmarks
 
     private static string RepeatWords(string words, int times)
     {
-        var builder = new System.Text.StringBuilder(words.Length * times + times);
+        var builder = new System.Text.StringBuilder((words.Length * times) + times);
         for (int i = 0; i < times; i++)
             builder.Append(words).Append(' ');
         return builder.ToString();

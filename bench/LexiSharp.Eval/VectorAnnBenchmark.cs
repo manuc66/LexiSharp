@@ -323,7 +323,7 @@ internal static class VectorAnnBenchmark
     /// </summary>
     internal static string VectorLiteral(float[] vector)
     {
-        var builder = new StringBuilder(vector.Length * 10 + 2);
+        var builder = new StringBuilder((vector.Length * 10) + 2);
         builder.Append('[');
 
         for (int i = 0; i < vector.Length; i++)

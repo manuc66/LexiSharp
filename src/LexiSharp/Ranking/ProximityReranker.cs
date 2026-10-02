@@ -222,7 +222,7 @@ public sealed class ProximityReranker : IReranker
             foreach (string term in terms)
             {
                 int df = _index.DocumentFrequency(term);
-                idfSum += Math.Log(1.0 + (_index.StatisticDocumentCount - df + 0.5) / (df + 0.5));
+                idfSum += Math.Log(1.0 + ((_index.StatisticDocumentCount - df + 0.5) / (df + 0.5)));
             }
         }
 
@@ -243,13 +243,13 @@ public sealed class ProximityReranker : IReranker
 
             if (_mode == ProximityMode.Boost)
             {
-                score = candidate.Score + _strength * idfSum * tightness;
+                score = candidate.Score + (_strength * idfSum * tightness);
             }
             else
             {
                 // Bounded: the raw decay 1 - strength*(1 - tightness) approaches 0 as the window
                 // grows, which annihilates long documents for the crime of being long.
-                double factor = 1.0 - _strength * (1.0 - tightness);
+                double factor = 1.0 - (_strength * (1.0 - tightness));
                 score = candidate.Score * Math.Max(factor, _floor);
             }
 

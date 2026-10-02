@@ -167,7 +167,7 @@ public sealed class TextRankKeywordExtractor : IKeywordExtractor
                     incoming += scores[j] * (weights[j][i] / outWeights[j]);
             }
 
-            next[i] = (1 - _damping) / scores.Length + _damping * incoming;
+            next[i] = ((1 - _damping) / scores.Length) + (_damping * incoming);
             totalChange += Math.Abs(next[i] - scores[i]);
         }
 

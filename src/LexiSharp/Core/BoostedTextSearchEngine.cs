@@ -143,7 +143,7 @@ public sealed class BoostedTextSearchEngine : ITextSearchEngine, IQueryCostProbe
                 throw new ArgumentException(
                     $"A negative multiplicative factor ({boost.Multiply}) would invert the ranking for document '{candidate.DocumentId}'. Use a damp in (0, 1) or a negative offset instead.");
 
-            double boostedScore = candidate.Score * boost.Multiply + boost.Add;
+            double boostedScore = (candidate.Score * boost.Multiply) + boost.Add;
 
             if (double.IsNaN(boostedScore) || double.IsInfinity(boostedScore) || boostedScore == 0)
                 continue;

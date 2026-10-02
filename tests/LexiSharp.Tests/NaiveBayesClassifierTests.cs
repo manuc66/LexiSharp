@@ -673,12 +673,12 @@ public class NaiveBayesClassifierTests
         var logScores = new Dictionary<string, double>();
         foreach (string cls in model.ClassCounts.Keys)
         {
-            double logPrior = Math.Log((model.ClassCounts[cls] + alpha) / (totalDocs + alpha * classCount));
+            double logPrior = Math.Log((model.ClassCounts[cls] + alpha) / (totalDocs + (alpha * classCount)));
 
             double logLikelihood = 0;
             model.TokenCounts.TryGetValue(cls, out var map);
             double totalTokens = model.TotalTokensPerClass.GetValueOrDefault(cls, 0);
-            double denom = totalTokens + alpha * vocabSize;
+            double denom = totalTokens + (alpha * vocabSize);
 
             foreach ((string t, double weight) in tokenWeights)
             {

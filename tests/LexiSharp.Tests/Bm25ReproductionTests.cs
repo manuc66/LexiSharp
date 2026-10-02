@@ -49,9 +49,9 @@ public class Bm25ReproductionTests
         // term, and under this divisor the average is over those three, so N is three and not four.
         const int n = 3;
         int df = index.DocumentFrequency("alpha");
-        double idf = Math.Log(1.0 + (n - df + 0.5) / (df + 0.5));
+        double idf = Math.Log(1.0 + ((n - df + 0.5) / (df + 0.5)));
 
-        double expected = idf * 2 * 2.2 / (2 + 1.2 * (1.0 - 0.75 + 0.75 * 4 / index.AverageDocumentLength));
+        double expected = idf * 2 * 2.2 / (2 + (1.2 * (1.0 - 0.75 + ((0.75 * 4) / index.AverageDocumentLength))));
 
         Assert.Equal(expected, actual, 12);
     }
@@ -68,9 +68,9 @@ public class Bm25ReproductionTests
         // behaviour the other option changes, so it is asserted rather than assumed.
         const int n = 4;
         int df = index.DocumentFrequency("alpha");
-        double idf = Math.Log(1.0 + (n - df + 0.5) / (df + 0.5));
+        double idf = Math.Log(1.0 + ((n - df + 0.5) / (df + 0.5)));
 
-        double expected = idf * 2 * 2.2 / (2 + 1.2 * (1.0 - 0.75 + 0.75 * 4 / index.AverageDocumentLength));
+        double expected = idf * 2 * 2.2 / (2 + (1.2 * (1.0 - 0.75 + ((0.75 * 4) / index.AverageDocumentLength))));
 
         Assert.Equal(expected, actual, 12);
     }
@@ -146,7 +146,7 @@ public class Bm25ReproductionTests
             // that lands within that of another is moved down by a millionth per position, and the most
             // a small page can walk is one per hit.
             Assert.True(
-                Math.Abs(plain[i].Score - rounded[i].Score) <= 1e-4 + rounded.Count * 1e-6,
+                Math.Abs(plain[i].Score - rounded[i].Score) <= 1e-4 + (rounded.Count * 1e-6),
                 $"{rounded[i].DocumentId}: {plain[i].Score} contre {rounded[i].Score}");
 
             // And every returned score is a single-precision value, because that is what is stored.
