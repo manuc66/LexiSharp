@@ -66,6 +66,24 @@ public sealed partial record PostgresVectorOptions
     /// dedicated transaction around each search; when null (default), pgvector's built-in default
     /// (<c>40</c>) applies and no GUC is touched.
     /// </summary>
+    /// <para>
+    /// A larger value can also stop PostgreSQL using the index at all. pgvector's planner hook grows
+    /// the index's estimated <i>startup</i> cost with this setting, so on a given corpus past a
+    /// threshold set by its size and its statistics, the search is answered by a sequential scan and
+    /// an exact top-k: the same rows, exact rather than approximate, and on a corpus the index does
+    /// not need to relieve, considerably slower. Measured on NFCorpus — 3,633 documents, 384d,
+    /// <c>m = 16</c>, table analyzed — the index answers up to <c>ef_search = 60</c> and a scan takes
+    /// over from 80, where the median query costs 14.39 ms against the index's 1.90 ms at
+    /// <c>ef_search = 160</c> (323 queries, one host). 50,862 documents are answered by the index at
+    /// every value measured, 10 to 640, where an exact scan costs 82-89 ms against the index's
+    /// 0.43 ms at <c>ef_search = 10</c>.
+    /// </para>
+    /// <para>
+    /// The engine does not see the planner's decision, so keeping the setting inside the regime where
+    /// the index still wins is the caller's. <c>EXPLAIN (ANALYZE)</c> reads back which one answered:
+    /// the two can differ in latency severalfold while their recall differs by a point or two, so a
+    /// latency measurement on its own cannot tell an index from a scan.
+    /// </para>
     public int? HnswEfSearch { get; init; }
 
     /// <summary>IVFFlat <c>lists</c>, when <see cref="IndexMethod"/> is IVFFlat (roughly <c>sqrt(rows)</c>).</summary>
