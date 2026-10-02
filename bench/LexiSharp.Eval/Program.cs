@@ -677,8 +677,10 @@ public static class Program
         var points = await VectorAnnBenchmark.Measure(
             connection, documents, dense.DocumentVectors, queries, efValues, topK);
 
-        Console.WriteLine($"{"ef_search",8}{"plan",11}{"recall@" + topK,12}{"latency",16}");
-        Console.WriteLine(new string('-', 47));
+        string heading = VectorAnnBenchmark.Heading(topK);
+
+        Console.WriteLine(heading);
+        Console.WriteLine(new string('-', heading.Length));
 
         foreach (var point in points)
             Console.WriteLine(point.ToString());

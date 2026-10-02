@@ -52,11 +52,23 @@ internal static class VectorAnnBenchmark
     internal sealed record AnnPoint(int EfSearch, double RecallAtK, double MillisecondsPerQuery, string Plan)
     {
         public override string ToString() =>
-            EfSearch.ToString(CultureInfo.InvariantCulture).PadLeft(8)
-            + Plan.PadRight(11)
+            EfSearch.ToString(CultureInfo.InvariantCulture).PadLeft(9) + " "
+            + Plan.PadRight(10)
             + RecallAtK.ToString("0.0000", CultureInfo.InvariantCulture).PadLeft(12)
             + (MillisecondsPerQuery.ToString("0.00", CultureInfo.InvariantCulture) + " ms").PadLeft(16);
     }
+
+    /// <summary>
+    /// The heading <see cref="AnnPoint.ToString"/> lines its columns up with. It lives beside the
+    /// row rather than in the printing code, because a heading and a row written in two places are
+    /// two sets of widths to keep in agreement, and nothing notices when they disagree except a
+    /// reader squinting at a table — <c>VectorAnnPlanTests</c> asserts that they still agree.
+    /// </summary>
+    internal static string Heading(int topK) =>
+        "ef_search".PadRight(9) + " "
+        + $"{"plan",-10}"
+        + $"{"recall@" + topK.ToString(CultureInfo.InvariantCulture),12}"
+        + $"{"latency",16}";
 
     /// <summary>
     /// Runs the curve and returns one point per requested <c>ef_search</c>.
