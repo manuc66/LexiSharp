@@ -132,8 +132,8 @@ public class GraphAwareSearchEngineTests
             string text,
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<EntityTriplet>>(_store
-                .Where(triplet => text.IndexOf(triplet.Subject, StringComparison.OrdinalIgnoreCase) >= 0
-                               || text.IndexOf(triplet.Object, StringComparison.OrdinalIgnoreCase) >= 0)
+                .Where(triplet => text.Contains(triplet.Subject, StringComparison.OrdinalIgnoreCase)
+                               || text.Contains(triplet.Object, StringComparison.OrdinalIgnoreCase))
                 .ToList());
 
         public Task<GraphContext> QuerySubGraphAsync(

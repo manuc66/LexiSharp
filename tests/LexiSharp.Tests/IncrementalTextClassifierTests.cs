@@ -73,20 +73,30 @@ public class IncrementalTextClassifierTests
         AssertSameModel(trained, learned);
     }
 
-    public static TheoryData<NaiveBayesOptions> OptionCombinations() => new()
-    {
-        new NaiveBayesOptions(),
-        new NaiveBayesOptions { IdfMode = IdfMode.DocumentCount },
-        new NaiveBayesOptions { IdfMode = IdfMode.ClassCount },
-        new NaiveBayesOptions { Alpha = 0.25 },
-        new NaiveBayesOptions { Alpha = 50.0 },
-        new NaiveBayesOptions { SmoothPriors = true },
-        new NaiveBayesOptions { SkipOutOfVocabularyTokens = true },
-        new NaiveBayesOptions { Temperature = 0.5 },
-        new NaiveBayesOptions { Temperature = 4.0 },
-        new NaiveBayesOptions { Complement = true },
-        new NaiveBayesOptions { Complement = true, IdfMode = IdfMode.DocumentCount },
-        new NaiveBayesOptions
+    /// <summary>
+    /// The option combinations both theories below run over, each under a name.
+    /// </summary>
+    /// <remarks>
+    /// The name is what the theory passes, not the options object. <c>NaiveBayesOptions</c> is a
+    /// public record of primitives with no serialization contract, so a row carrying one is opaque
+    /// to Test Explorer: the run shows twelve passing tests named <c>(options)</c> instead of twelve
+    /// naming the combination that failed. A <c>string</c> row serializes, and carries more
+    /// information than the object did.
+    /// </remarks>
+    private static readonly (string Name, NaiveBayesOptions Options)[] Combinations =
+    [
+        ("defaults", new NaiveBayesOptions()),
+        ("idf=document-count", new NaiveBayesOptions { IdfMode = IdfMode.DocumentCount }),
+        ("idf=class-count", new NaiveBayesOptions { IdfMode = IdfMode.ClassCount }),
+        ("alpha=0.25", new NaiveBayesOptions { Alpha = 0.25 }),
+        ("alpha=50", new NaiveBayesOptions { Alpha = 50.0 }),
+        ("smooth-priors", new NaiveBayesOptions { SmoothPriors = true }),
+        ("skip-oov", new NaiveBayesOptions { SkipOutOfVocabularyTokens = true }),
+        ("temperature=0.5", new NaiveBayesOptions { Temperature = 0.5 }),
+        ("temperature=4", new NaiveBayesOptions { Temperature = 4.0 }),
+        ("complement", new NaiveBayesOptions { Complement = true }),
+        ("complement,idf=document-count", new NaiveBayesOptions { Complement = true, IdfMode = IdfMode.DocumentCount }),
+        ("every-option-together", new NaiveBayesOptions
         {
             Complement = true,
             IdfMode = IdfMode.ClassCount,
@@ -94,13 +104,29 @@ public class IncrementalTextClassifierTests
             SmoothPriors = true,
             SkipOutOfVocabularyTokens = true,
             Temperature = 0.75,
-        },
-    };
+        }),
+    ];
+
+    public static TheoryData<string> OptionCombinations()
+    {
+        var data = new TheoryData<string>();
+
+        foreach (var (name, _) in Combinations)
+            data.Add(name);
+
+        return data;
+    }
+
+    /// <summary>The options behind a row name. Throws rather than defaulting, so a typo is loud.</summary>
+    private static NaiveBayesOptions OptionsFor(string name) =>
+        Array.Find(Combinations, combination => combination.Name == name).Options;
 
     [Theory]
     [MemberData(nameof(OptionCombinations))]
-    public void Learn_MatchesBatchTrain_UnderEveryOptionCombination(NaiveBayesOptions options)
+    public void Learn_MatchesBatchTrain_UnderEveryOptionCombination(string combination)
     {
+        NaiveBayesOptions options = OptionsFor(combination);
+
         var learned = new NaiveBayesClassifier(options: options);
         foreach (var document in Corpus)
             learned.Learn(document);
@@ -199,8 +225,10 @@ public class IncrementalTextClassifierTests
     // term count alone would get wrong.
     [Theory]
     [MemberData(nameof(OptionCombinations))]
-    public void LearnThenPartiallyUnlearn_EqualsTrainingOnWhatIsLeft(NaiveBayesOptions options)
+    public void LearnThenPartiallyUnlearn_EqualsTrainingOnWhatIsLeft(string combination)
     {
+        NaiveBayesOptions options = OptionsFor(combination);
+
         var retracted = new HashSet<string> { "3", "6" };
 
         var learned = new NaiveBayesClassifier(options: options);
