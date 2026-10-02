@@ -46,7 +46,7 @@ public sealed class LexiSharpIndexOptions<TDocument>
 
     /// <summary>
     /// Extracts the document's named text fields, so an index built through the typed facade can
-    /// answer per-field statistics (<see cref="ITextIndex.Fields"/>) and feed a field-weighted
+    /// answer per-field statistics (<see cref="IReadOnlyTextIndex.Fields"/>) and feed a field-weighted
     /// scorer. When <typeparamref name="TDocument"/> is <see cref="SearchDocument"/>, defaults to
     /// its <see cref="SearchDocument.TextFields"/>.
     /// </summary>

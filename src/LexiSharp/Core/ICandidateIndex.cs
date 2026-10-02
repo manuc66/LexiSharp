@@ -14,14 +14,14 @@ namespace LexiSharp.Core;
 /// </para>
 /// <para>
 /// An index that cannot answer cheaply simply does not implement this interface; the engine
-/// falls back to iterating <see cref="ITextIndex.Documents"/>.
+/// falls back to iterating <see cref="IReadOnlyTextIndex.Documents"/>.
 /// </para>
 /// </remarks>
 public interface ICandidateIndex : IReadOnlyTextIndex
 {
     /// <summary>
     /// Union of the documents containing at least one of the given terms, each document
-    /// appearing at most once and in the same relative order as <see cref="ITextIndex.Documents"/>.
+    /// appearing at most once and in the same relative order as <see cref="IReadOnlyTextIndex.Documents"/>.
     /// </summary>
     IEnumerable<SearchDocument> GetCandidateDocuments(IReadOnlyList<string> terms);
 }

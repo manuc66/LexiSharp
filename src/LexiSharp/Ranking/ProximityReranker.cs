@@ -112,7 +112,7 @@ public sealed class ProximityReranker : IReranker
 
     /// <param name="index">
     /// The index the candidates were retrieved from. Needed for term positions
-    /// (<see cref="ITextIndex.GetTermPositions"/>) and, in <see cref="ProximityMode.Boost"/>, for
+    /// (<see cref="IReadOnlyTextIndex.GetTermPositions"/>) and, in <see cref="ProximityMode.Boost"/>, for
     /// document frequencies. It is read only.
     /// </param>
     /// <param name="tokenizer">
