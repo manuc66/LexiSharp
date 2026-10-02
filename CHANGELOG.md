@@ -53,7 +53,10 @@ below. The other four are conventions, and stay opt-in.
   `SynchronizedTextClassifier`. Searches take the read lock, the mutating members the write lock,
   and `IFacetedSearchEngine`/`IDetailedSearchEngine`/`IExplainableSearchEngine` forward unchanged
   when the wrapped engine has them. The uncontended read pair is measured, not assumed: 0.984x and
-  1.002x wrapped-to-unwrapped median on two same-session runs, straddling 1.0.
+  1.002x wrapped-to-unwrapped median on two same-session runs, straddling 1.0. Under write
+  contention the same-measured picture is different: one writer toggling Add/Remove as fast as it
+  can cut the readers' combined throughput to 0.15x the uncontended rate over a 3-second window,
+  with no reader starved to zero — a ratio on one host, not a contract.
 - `ExpandingTextSearchEngine` now forwards `IFacetedSearchEngine`, `IDetailedSearchEngine` and
   `IExplainableSearchEngine`, because its results are the inner engine's own against the expanded
   query — the one decorator where the forwarding is truthful. A wrapped engine without a
