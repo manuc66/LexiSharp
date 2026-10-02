@@ -1,14 +1,17 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
+using System.Text.Json;
 using LexiSharp.Core;
 using LexiSharp.Postgres;
+using Npgsql;
 
 namespace LexiSharp.Eval;
 
 /// <summary>
 /// The approximate-nearest-neighbour cost curve, measured through the real pgvector engine rather
-/// than asserted: recall of the ANN ranking against an exact top-k computed in process, and the
-/// wall-clock each <c>ef_search</c> costs.
+/// than asserted: recall of the ANN ranking against an exact top-k computed in process, the
+/// wall-clock each <c>ef_search</c> costs, and the scan node that answered.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -16,6 +19,14 @@ namespace LexiSharp.Eval;
 /// decision needs a latency measurement. The recall column is the one that makes the measurement
 /// trustworthy: pgvector's own scoring is compared against an exact search over the same cached
 /// vectors, so a drop in recall is the index and not a second, different scoring function.
+/// </para>
+/// <para>
+/// <b>The plan column is what makes the curve readable.</b> pgvector's planner hook grows the ANN
+/// index's estimated <i>startup</i> cost with <c>ef_search</c>, so past a threshold that depends on
+/// the corpus, PostgreSQL answers the search with a sequential scan and an exact top-k. A
+/// recall/latency pair measured there describes a different algorithm from the one this run is
+/// about, and nothing in a recall of 1.0 says so — so the node is read from the plan and printed,
+/// and the curve is only a curve over the index where every point on it names the index.
 /// </para>
 /// <para>
 /// The embeddings are read from the same cache the in-memory dense lane uses, so the two lanes
@@ -28,20 +39,21 @@ namespace LexiSharp.Eval;
 /// one identical table measured 2.79 / 15.69 / 2.80 ms, which is not a spread a mean can absorb.
 /// </para>
 /// <para>
-/// A step of roughly 15 ms appears at the larger <c>ef_search</c> values, reproducibly, and moves
-/// between sizes across runs. Recall is already 0.99 either side of it, so the curve has two
-/// regimes and the index is worth having below the step and not above it. <b>Unverified:</b>
-/// whether that step is the planner preferring an exact scan for a small LIMIT, the index
-/// degrading, or the per-value table rebuild warming differently. It was not isolated.
+/// Every point's table is <c>ANALYZE</c>d after it is loaded, because the planner's choice at these
+/// corpus sizes is a function of the table's statistics, and PostgreSQL only collects them on
+/// <c>ANALYZE</c> or on the autovacuum daemon's schedule. The threshold above lands wherever the
+/// daemon happened to fire otherwise: measured between <c>ef_search</c> 60 and 80 on a table
+/// analyzed on purpose, and around 160 on one the daemon analyzed part-way through its load.
 /// </para>
 /// </remarks>
 internal static class VectorAnnBenchmark
 {
-    /// <summary>One measured point on the curve.</summary>
-    internal sealed record AnnPoint(int EfSearch, double RecallAtK, double MillisecondsPerQuery)
+    /// <summary>One measured point on the curve, with the node that answered it.</summary>
+    internal sealed record AnnPoint(int EfSearch, double RecallAtK, double MillisecondsPerQuery, string Plan)
     {
         public override string ToString() =>
             EfSearch.ToString(CultureInfo.InvariantCulture).PadLeft(8)
+            + Plan.PadRight(11)
             + RecallAtK.ToString("0.0000", CultureInfo.InvariantCulture).PadLeft(12)
             + (MillisecondsPerQuery.ToString("0.00", CultureInfo.InvariantCulture) + " ms").PadLeft(16);
     }
@@ -61,7 +73,7 @@ internal static class VectorAnnBenchmark
     /// query. That is the expensive part of the run and the reason a sweep is a list of sizes
     /// rather than a default.
     /// </remarks>
-    public static IReadOnlyList<AnnPoint> Measure(
+    public static async Task<IReadOnlyList<AnnPoint>> Measure(
         string connectionString,
         IReadOnlyList<SearchDocument> documents,
         IReadOnlyList<float[]> documentVectors,
@@ -123,6 +135,14 @@ internal static class VectorAnnBenchmark
             {
                 engine.Index(documents);
 
+                // The plan is read once, on the statistics every point shares. It does not change
+                // during the passes: nothing here writes to the table, and the ef_search the search
+                // runs with is the one this read used.
+                await AnalyzeAsync(connectionString, options.QualifiedTableName);
+
+                string plan = await ReadPlanAsync(
+                    connectionString, options, efSearch, VectorLiteral(queries[0].Vector), topK);
+
                 // Recall accumulates over every pass; the reported figure is the mean, so a
                 // one-off tie-break difference between two equal-score documents does not move it.
                 var recalls = new List<double>(passes);
@@ -168,7 +188,8 @@ internal static class VectorAnnBenchmark
                 points.Add(new AnnPoint(
                     efSearch,
                     recalls.Average(),
-                    times.Min()));
+                    times.Min(),
+                    plan));
             }
             finally
             {
@@ -177,6 +198,132 @@ internal static class VectorAnnBenchmark
         }
 
         return points;
+    }
+
+    /// <summary>
+    /// Collects the table's statistics, so every point of the curve is planned against the same
+    /// numbers. A table that was only just loaded has none, and which plan PostgreSQL then picks
+    /// depends on whether the autovacuum daemon has been by yet — a threshold that moves between
+    /// runs, which is the opposite of what a sweep of one parameter is for.
+    /// </summary>
+    private static async Task AnalyzeAsync(string connectionString, string qualifiedTableName)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"ANALYZE {qualifiedTableName};"; // NOSONAR:S2077 (a validated, quoted identifier)
+        await command.ExecuteNonQueryAsync();
+    }
+
+    /// <summary>
+    /// The scan node that answers <see cref="SearchStatement"/> at this <c>ef_search</c>, read from
+    /// PostgreSQL's own plan rather than assumed from the shape of the query. An
+    /// <c>Index Scan</c> over the <c>hnsw</c> index is an approximate top-k; a <c>Seq Scan</c> under
+    /// a top-N sort is an exact one, and the two are not interchangeable in a recall column.
+    /// </summary>
+    private static async Task<string> ReadPlanAsync(
+        string connectionString, PostgresVectorOptions options, int efSearch, string vector, int limit)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+
+        await using (var set = connection.CreateCommand())
+        {
+            set.Transaction = transaction;
+            set.CommandText = $"SET LOCAL hnsw.ef_search = {efSearch};"; // NOSONAR:S2077 (an int option value)
+            await set.ExecuteNonQueryAsync();
+        }
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "EXPLAIN (FORMAT JSON) " + SearchStatement(options);
+        command.Parameters.AddWithValue("query", vector);
+        command.Parameters.AddWithValue("limit", limit);
+
+        var plan = new StringBuilder();
+
+        await using (var reader = await command.ExecuteReaderAsync())
+            while (await reader.ReadAsync())
+                plan.Append(reader.GetString(0));
+
+        await transaction.CommitAsync();
+        return PlanNode(plan.ToString());
+    }
+
+    /// <summary>
+    /// The scan node a plan names, in the words the table prints: the ANN index, an exact scan, or
+    /// <c>?</c> for a node this harness does not recognise — printed as unknown rather than guessed
+    /// at, because the whole column exists to keep an unrecognised answer from reading as the index.
+    /// </summary>
+    internal static string PlanNode(string explainJson)
+    {
+        using var document = JsonDocument.Parse(explainJson);
+
+        string node = "?";
+        Walk(document.RootElement[0].GetProperty("Plan"), ref node);
+        return node;
+
+        static void Walk(JsonElement plan, ref string node)
+        {
+            string type = plan.TryGetProperty("Node Type", out JsonElement nodeType)
+                ? nodeType.GetString() ?? ""
+                : "";
+
+            if (type.Contains("Index Scan", StringComparison.Ordinal)
+                && plan.TryGetProperty("Index Name", out JsonElement indexName)
+                && (indexName.GetString() ?? "").Contains("hnsw", StringComparison.Ordinal))
+            {
+                node = "index";
+            }
+            else if (type.Contains("Seq Scan", StringComparison.Ordinal))
+            {
+                node = "seq scan";
+            }
+
+            if (plan.TryGetProperty("Plans", out JsonElement children))
+                foreach (JsonElement child in children.EnumerateArray())
+                    Walk(child, ref node);
+        }
+    }
+
+    /// <summary>
+    /// The search statement this harness explains: a single-column cosine engine, the two parameters
+    /// <see cref="PostgresVectorSearchEngine"/> binds, and the metadata filter's fragment spliced
+    /// where the engine splices it. It is written out here rather than taken from the engine so that
+    /// the harness does not need the engine's internals, and <c>VectorAnnPlanTests</c> asserts the
+    /// two strings are equal — which is what makes the node reported beside a point the node a
+    /// search actually gets.
+    /// </summary>
+    internal static string SearchStatement(PostgresVectorOptions options, string filterFragment = "") => $"""
+        SELECT id, content, category, fields, text_fields, 1 - ("embedding" <=> @query::vector) AS score
+        FROM {options.QualifiedTableName}
+        WHERE "embedding" IS NOT NULL{filterFragment}
+        ORDER BY "embedding" <=> @query::vector
+        LIMIT @limit;
+        """;
+
+    /// <summary>
+    /// A vector as a pgvector literal. The engine has its own formatter behind an internal door; the
+    /// same rounding rule is asserted against it in <c>VectorAnnPlanTests</c>, since a parameter
+    /// written differently is a different statement text to the planner.
+    /// </summary>
+    internal static string VectorLiteral(float[] vector)
+    {
+        var builder = new StringBuilder(vector.Length * 10 + 2);
+        builder.Append('[');
+
+        for (int i = 0; i < vector.Length; i++)
+        {
+            if (i > 0)
+                builder.Append(',');
+
+            builder.Append(vector[i].ToString("R", CultureInfo.InvariantCulture));
+        }
+
+        builder.Append(']');
+        return builder.ToString();
     }
 
     private static double Dot(float[] a, float[] b)

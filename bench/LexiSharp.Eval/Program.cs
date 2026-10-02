@@ -674,11 +674,11 @@ public static class Program
         Console.WriteLine();
         Console.WriteLine($"== pgvector ANN curve ({dataset.Name}, {documents.Count} documents, {queries.Count} queries) ==");
 
-        var points = VectorAnnBenchmark.Measure(
+        var points = await VectorAnnBenchmark.Measure(
             connection, documents, dense.DocumentVectors, queries, efValues, topK);
 
-        Console.WriteLine($"{"ef_search",8}{"recall@" + topK,12}{"latency",16}");
-        Console.WriteLine(new string('-', 36));
+        Console.WriteLine($"{"ef_search",8}{"plan",11}{"recall@" + topK,12}{"latency",16}");
+        Console.WriteLine(new string('-', 47));
 
         foreach (var point in points)
             Console.WriteLine(point.ToString());
