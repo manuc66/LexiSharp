@@ -55,6 +55,29 @@ namespace LexiSharp.Core;
 /// in, which is what a system that breaks ties as documents are added does; use it to reproduce such a
 /// system, and expect the result to depend on the load order rather than only on the documents.
 /// </param>
+/// <param name="AccumulateFilteredQueries">
+/// Whether a query carrying <see cref="Filters"/> may be served by the term-at-a-time
+/// accumulation pass instead of the per-document loop. Default <c>false</c>.
+/// <para>Two paths that are numerically interchangeable — same terms, same summation order, same
+/// score bits — price the same filter very differently. The per-document loop scores
+/// <i>every candidate by document id</i>, one id-keyed length lookup plus one per query term, and
+/// then applies the filter to the result. The accumulation pass scores <i>by ordinal</i>, as one
+/// walk of the posting entries that exist, and applies the filter to the ordinals it recorded.
+/// </para>
+/// <para>So this trades <i>scoring arithmetic that a selective filter throws away</i> against
+/// <i>id-keyed scoring of every candidate</i>. Which wins is a property of the filter rather than
+/// of the query: a filter that rejects nothing pays the per-document price for nothing, and one
+/// that rejects nearly everything pays accumulation to score a set it mostly discards. Nothing
+/// can see the selectivity in advance, which is why this is the caller's decision and not a
+/// heuristic.
+/// </para>
+/// <para>A request that combines this with <see cref="TieBreak"/> other than
+/// <see cref="Ranking.TieBreak.DocumentId"/> keeps the per-document loop. The two paths do not
+/// produce candidates in the same order — a full scan is corpus order, the accumulation pass is
+/// posting order — so under <see cref="Ranking.TieBreak.InsertionOrder"/> they order documents
+/// that tie exactly differently, which is the one thing that option exists to reproduce.
+/// </para>
+/// </param>
 public sealed record SearchOptions(
     int Limit = 10,
     double MinimumScore = double.NegativeInfinity,
@@ -64,7 +87,8 @@ public sealed record SearchOptions(
     IReadOnlySet<string>? ExcludedDocumentIds = null,
     SearchTrace? Trace = null,
     bool ParseQuerySyntax = true,
-    Ranking.TieBreak TieBreak = Ranking.TieBreak.DocumentId)
+    Ranking.TieBreak TieBreak = Ranking.TieBreak.DocumentId,
+    bool AccumulateFilteredQueries = false)
 {
     /// <summary>
     /// The rounding a system that writes its scores down applies before it writes them, or
