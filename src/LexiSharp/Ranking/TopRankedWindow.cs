@@ -22,7 +22,7 @@ internal sealed class TopRankedWindow
 {
     private readonly int _limit;
     private readonly TieBreak _tieBreak;
-    private (double Score, SearchDocument Document, long Ordinal)[] _entries;
+    private readonly (double Score, SearchDocument Document, long Ordinal)[] _entries;
     private int _count;
 
     /// <param name="limit">Window size: the number of best entries to retain.</param>

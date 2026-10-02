@@ -242,7 +242,7 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
     /// both before and after: a merger is not a per-document transform but a re-ranking over the
     /// union, so there is no meaningful single before-score.
     /// </summary>
-    private void RecordMergeStage(SearchTrace? trace, IReadOnlyList<DetailedSearchResult> page)
+    private static void RecordMergeStage(SearchTrace? trace, IReadOnlyList<DetailedSearchResult> page)
     {
         if (trace is null)
             return;

@@ -89,8 +89,6 @@ internal sealed record GoldenBaseline
     /// <summary>Format version, so a future layout change is a loud error rather than a silent skip.</summary>
     public const int CurrentVersion = 2;
 
-    private const int MetricDecimals = 4;
-
     /// <summary>
     /// Renders a score as its exact bit pattern, so a recorded value and a re-computed one are
     /// compared as the doubles they are rather than as rounded text.
