@@ -351,6 +351,32 @@ public class RankedTextSearchEngineTests
         Assert.Equal(3, results.Count);
     }
 
+    /// <summary>
+    /// The prefix walk caps at <see cref="RankedTextSearchEngine.MaxExpansionsPerAtom"/> and orders
+    /// by document frequency (highest first), then ordinal — the contract the expansion sort is
+    /// held to. The fixture engages the cap: 65 terms share the "c0" prefix, every one with
+    /// frequency 1, so the sort falls back to ordinal order and the 64 kept must be the first 64
+    /// ordinal-wise — the rare, high-ordinal term is the one cut, and its document scores nothing.
+    /// </summary>
+    [Fact]
+    public void Search_PrefixAtom_CapsAtMaxExpansions_KeepingFrequencyThenOrdinalOrder()
+    {
+        // 64 frequent terms "c00".."c03f" live in doc "1"; one high-ordinal term "c0z9" (z > any
+        // digit) lives only in doc "2". Frequencies are all 1, so the tie-break is ordinal and the
+        // cap must drop "c0z9" — the worst candidate by the sort's own order — not a frequent term.
+        var terms = Enumerable.Range(0, 64).Select(i => $"c0{i:X}").Append("c0z9").ToArray();
+
+        var engine = CreateEngine(new[]
+        {
+            new SearchDocument("1", string.Join(' ', terms[..^1])),
+            new SearchDocument("2", terms[^1]),
+        });
+
+        var results = engine.Search("c0*", new SearchOptions(Limit: 10));
+
+        Assert.Equal(new[] { "1" }, results.Select(r => r.DocumentId));
+    }
+
     [Fact]
     public void Search_FuzzyAtom_MatchesWithinEditDistance()
     {
