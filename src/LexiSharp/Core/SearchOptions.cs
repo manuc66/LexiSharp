@@ -56,31 +56,36 @@ namespace LexiSharp.Core;
 /// system, and expect the result to depend on the load order rather than only on the documents.
 /// </param>
 /// <param name="AccumulateFilteredQueries">
-/// Whether a query carrying <see cref="Filters"/> may be served by the term-at-a-time
-/// accumulation pass instead of the per-document loop. Default <c>false</c>.
+/// Whether a query carrying <see cref="Filters"/> is served by the term-at-a-time accumulation
+/// pass rather than the per-document loop. Default <c>true</c>; set it <c>false</c> to go back to
+/// the per-document loop for a filter that discards almost everything.
 /// <para>Two paths that are numerically interchangeable — same terms, same summation order, same
 /// score bits — price the same filter very differently. The per-document loop scores
-/// <i>every candidate by document id</i>, one id-keyed length lookup plus one per query term, and
-/// then applies the filter to the result. The accumulation pass scores <i>by ordinal</i>, as one
-/// walk of the posting entries that exist, and applies the filter to the ordinals it recorded.
+/// <i>every surviving candidate by document id</i>, one id-keyed length lookup plus one per query
+/// term, and rejects the rest before paying that. The accumulation pass scores <i>by ordinal</i>,
+/// as one walk of the posting entries that exist, and applies the filter to the ordinals it
+/// recorded — so it pays for the documents the filter discards and the other path does not.
 /// </para>
-/// <para>So this trades <i>scoring arithmetic that a selective filter throws away</i> against
-/// <i>id-keyed scoring of every candidate</i>, and the measured balance is lopsided. Sweeping a
-/// filter from keeping every document to keeping none, on all three indexed BEIR corpora, the
-/// accumulation pass wins at every selectivity above roughly one percent kept, and the margin grows
-/// with it: the per-document loop is 5.9x slower on nfcorpus and 8.2x on scifact when the filter
-/// keeps everything, and 42x on arguana. It loses below that, where it has almost nothing to score.
+/// <para>Sweeping a filter from keeping every document to keeping none, on all three indexed BEIR
+/// corpora, the accumulation pass wins at essentially every selectivity: with the filter keeping
+/// everything the per-document loop is 42x slower on arguana, 8.2x on scifact and 5.9x on
+/// nfcorpus, and the margin shrinks monotonically as the filter tightens. The pass loses only where
+/// the filter discards nearly everything, and there by at most 1.7x — on the two smaller corpora it
+/// wins even with nothing kept, because the per-document loop still pays to walk the candidates and
+/// evaluate the predicate on each.
 /// </para>
-/// <para><b>Not measured:</b> the exact crossover, which is a function of query length and corpus
-/// shape and would be a constant fitted to three corpora. Nothing can see the selectivity in
-/// advance, which is why this is the caller's decision and not a heuristic — but a caller who
-/// filters can reasonably turn it on rather than measure first.
+/// <para><b>Not measured:</b> the crossover itself, which depends on query length and corpus shape,
+/// and any corpus larger than arguana's 8,674 documents. This pass's cost is proportional to the
+/// posting entries a query touches rather than to what survives the filter, so the region where it
+/// loses is expected to widen as the corpus grows. A query that is broad <i>and</i> filtered down to
+/// almost nothing is the case to watch; that caller sets this <c>false</c>.
 /// </para>
 /// <para>A request that combines this with <see cref="TieBreak"/> other than
-/// <see cref="Ranking.TieBreak.DocumentId"/> keeps the per-document loop. The two paths do not
-/// produce candidates in the same order — a full scan is corpus order, the accumulation pass is
-/// posting order — so under <see cref="Ranking.TieBreak.InsertionOrder"/> they order documents
-/// that tie exactly differently, which is the one thing that option exists to reproduce.
+/// <see cref="Ranking.TieBreak.DocumentId"/> keeps the per-document loop whatever this is set to.
+/// The two paths do not produce candidates in the same order — a full scan is corpus order, the
+/// accumulation pass is posting order — so under <see cref="Ranking.TieBreak.InsertionOrder"/> they
+/// order documents that tie exactly differently, which is the one thing that option exists to
+/// reproduce.
 /// </para>
 /// </param>
 public sealed record SearchOptions(
@@ -93,7 +98,7 @@ public sealed record SearchOptions(
     SearchTrace? Trace = null,
     bool ParseQuerySyntax = true,
     Ranking.TieBreak TieBreak = Ranking.TieBreak.DocumentId,
-    bool AccumulateFilteredQueries = false)
+    bool AccumulateFilteredQueries = true)
 {
     /// <summary>
     /// The rounding a system that writes its scores down applies before it writes them, or

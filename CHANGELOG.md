@@ -24,22 +24,32 @@ that. Whichever number is chosen, the reason is here.
 
 ### Added
 
-- **`SearchOptions.AccumulateFilteredQueries` — let the term-at-a-time pass serve a filtered
-  query, default off.** A query carrying `Filters` is declined by that pass and served by the
-  per-document loop, which scores **every candidate by document id**: one id-keyed length lookup
-  plus one per query term, for candidates the filter then discards. The pass scores by ordinal, as
-  one walk of the posting entries that exist, and applies the filter to the ordinals it recorded.
-  The two paths are numerically interchangeable — same terms, same summation order, same score
-  bits, which the equivalence tests assert — but they price the same filter very differently.
+- **A filtered query now uses the term-at-a-time pass by default.**
+  `SearchOptions.AccumulateFilteredQueries` decides, and it now defaults to `true`; set it `false`
+  for the previous behaviour. A query carrying `Filters` used to be declined by that pass and
+  served by the per-document loop, which scores **every surviving candidate by document id** — one
+  id-keyed length lookup plus one per query term. The pass scores by ordinal, as one walk of the
+  posting entries that exist, and applies the filter to the ordinals it recorded.
 
-  Which wins is a property of the filter, not the query, so this is the caller's decision rather
-  than a heuristic: a filter that rejects nothing pays the per-document price for nothing, and one
-  that rejects nearly everything pays accumulation to score a set it mostly discards.
+  **Results do not change.** The two paths are numerically interchangeable — same terms, same
+  summation order, same score bits — which the equivalence tests assert. Only the path serving the
+  query moves.
 
-  A request combining it with a `TieBreak` other than `DocumentId` keeps the per-document loop. The
-  two paths do not produce candidates in the same order — a full scan is corpus order, the
-  accumulation pass is posting order — so under `InsertionOrder` they order documents that tie
-  exactly differently, which is the one thing that option exists to reproduce.
+  Sweeping a filter from keeping every document to keeping none, on all three indexed BEIR corpora,
+  the per-document loop is **42× slower on arguana, 8.2× on scifact, 5.9× on nfcorpus** when the
+  filter keeps everything, and the margin shrinks monotonically as the filter tightens. The pass
+  loses only where a filter discards almost everything, and there by at most **1.7×**; on the two
+  smaller corpora it wins even with nothing kept. **Not measured:** the crossover itself, and any
+  corpus larger than arguana's 8,674 documents. This pass's cost is proportional to the posting
+  entries a query touches rather than to what survives, so the region where it loses is expected to
+  widen with corpus size — a caller whose query is broad *and* whose filter keeps almost nothing
+  should set the option `false`.
+
+  A request combining a filter with a `TieBreak` other than `DocumentId` keeps the per-document
+  loop whatever the option says. The two paths do not produce candidates in the same order — a full
+  scan is corpus order, the accumulation pass is posting order — so under `InsertionOrder` they
+  order documents that tie exactly differently, which is the one thing that option exists to
+  reproduce.
 
 ### Reproduced
 

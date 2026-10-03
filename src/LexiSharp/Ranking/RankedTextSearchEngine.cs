@@ -392,14 +392,13 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// corpus would have most of its score arithmetic thrown away. That refusal stands.
     /// <para>
     /// A <see cref="SearchOptions.Filters"/> entry is not in that class, and
-    /// <see cref="SearchOptions.AccumulateFilteredQueries"/> is how a caller says so. The reason is a
-    /// price rather than a defect: the per-document loop this pass otherwise yields to scores
-    /// <b>every candidate by document id</b>, one id-keyed length lookup plus one per query term,
-    /// for candidates the filter may then discard. That price is high at every selectivity measured
-    /// above about one percent kept — 5.9x on nfcorpus, 8.2x on scifact, 42x on arguana, when the
-    /// filter keeps everything — and the trade the option exposes is this pass scoring the
-    /// candidates a <i>very</i> selective filter discards, which is why the default is still the
-    /// conservative one.
+    /// <see cref="SearchOptions.AccumulateFilteredQueries"/> — on by default — is how a filter reaches
+    /// this pass anyway. The reason is a price rather than a defect: the per-document loop scores
+    /// <b>every surviving candidate by document id</b>, one id-keyed length lookup plus one per query
+    /// term. That price is 42x on arguana, 8.2x on scifact and 5.9x on nfcorpus when the filter keeps
+    /// everything, and falls monotonically as the filter tightens. The trade is that this pass scores
+    /// the candidates a <i>very</i> selective filter discards; the option goes back to the other path
+    /// for a caller whose filter keeps almost nothing.
     /// </para>
     /// <para>
     /// Everything else — the rare-term and head-term regimes alike — is a win either way, because
