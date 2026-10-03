@@ -3,7 +3,8 @@ title: BM25 and ranking functions
 nav_order: 5
 description: >-
   BM25 and its variants — BM25+, BM25L, BM25F — plus TF-IDF, query likelihood and
-  boolean scorers, score boosting, proximity, and per-term score explanations.
+  boolean scorers, composing scorers into a weighted sum, score boosting, proximity,
+  and per-term score explanations.
 ---
 
 # BM25 and ranking functions
@@ -26,6 +27,9 @@ engine does everything else. Swap the scorer, keep the index.
 - **Score boosting** — `BoostedTextSearchEngine` applies **signed** adjustments
   (multiplicative factor and/or additive offset) per result, without touching the engine
   underneath.
+- **`WeightedCompositeScorer`** — a scorer built out of scorers: the weighted sum of their
+  scores in one pass, in one scale. Negative weights make a part a penalty, which is how
+  **`DocumentLengthRatioScorer`** (`|D| / avgdl`) becomes a length prior.
 
 **The measurements are not all flattering, and publishing them is the point.** Each of the
 three measured sections below ends with what it actually scored on the corpora tried here:
@@ -318,6 +322,70 @@ What *is* verified about the scorer, rather than inferred: the arithmetic, the t
 contract, the plan parity, the explanation summing back to the score, and a test that a long body
 the term never appears in does *not* change the score under BM25F while it does under
 `Bm25Scorer`.
+
+## Composing scorers (`WeightedCompositeScorer`)
+
+A scorer can be built out of scorers: the weighted sum of their scores, `Σ wᵢ · componentᵢ`,
+computed in one pass over one candidate set.
+
+```csharp
+var scorer = new WeightedCompositeScorer(
+    (new Bm25Scorer(),                     1.0),
+    (new DocumentLengthRatioScorer(),     -0.2));   // a length prior: long documents lose
+```
+
+**Not the same tool as the weighted merger.** `WeightedScoreResultMerger` blends scores *across*
+finished rankings and normalizes each list by its own maximum first. That is right for fusing
+sources whose scores are not commensurable — a `ts_rank` and a cosine similarity — and wrong for
+composing one score out of parts of itself, because a per-list maximum makes the blend depend on how
+many documents each list happened to return. Here the weights are the only knob and every part is
+in one scale.
+
+**Weights may be negative, and half of what a composite is for depends on it.** A negative weight
+is how a part becomes a penalty. The weighted merger refuses negative weights because it blends
+non-negative normalized similarities, where a negative weight has no reading; both types say so, and
+only non-finite weights are rejected here.
+
+**A zero weight removes the part**, and the part is not called at all — not to save the call, but
+because `0 × NaN` is `NaN` and a part that answers with a non-finite score must not be able to
+poison a weight saying it does not participate. A composite whose weights are all zero matches
+nothing.
+
+**A non-finite part score propagates**, and the engine rejects the document. Dropping the part
+instead would produce a score computed from a subset of the components — a plausible-looking wrong
+number, harder to notice than a document that is simply missing.
+
+### The length prior, and how it differs from `b`
+
+`DocumentLengthRatioScorer` returns `|D| / avgdl`: one for an average document, above one for a
+long one. Weighted negatively it is a length prior. Two properties make it a component rather than a
+ranker:
+
+- **It is not a scorer alone.** It reads no query term and matches nothing; used by itself it ranks
+  documents by length. Give it a negative weight inside a score that does the matching.
+- **Its unit is always the document.** Both figures are the index's `DocumentLength` and
+  `AverageDocumentLength`, so the ratio means the same thing in every configuration reading the same
+  index — which is what makes it usable as a fixed term across an A/B. An index built over windows is
+  a different index with its own average length, and a prior measured against it answers a different
+  question than the same prior measured against whole documents.
+
+BM25's `b` lengthens the saturation factor for a long document, which damps a query term *in a
+document that matched*, in proportion to how much that term occurred. This term is a property of the
+document alone: it is added to every document's score, matching or not, and it does not scale with
+any term. Two documents that matched identically can therefore be ranked differently by it, which is
+what a prior does and what a normalization does not.
+
+### What the engine cannot do for a composite
+
+A prior part scores a document sharing **no** query term, because a length is a property of the
+document whatever the query asked for. Such a document gets a non-zero total and **can reach the
+page**. The composite therefore does not claim `ITermOverlapScorer` — the engine cannot skip
+non-matching candidates on its behalf, and scans the corpus when nothing else narrows the set. Two
+ways to keep the result set clean, both the caller's call: keep a matching part's weight above the
+priors', or compose inside a cascade stage so the candidates arrive from a retrieval stage that
+already decided what matched.
+
+No quality or latency figure is quoted for either type: neither has been measured on a corpus here.
 
 ## Score boosting (`BoostedTextSearchEngine`)
 
