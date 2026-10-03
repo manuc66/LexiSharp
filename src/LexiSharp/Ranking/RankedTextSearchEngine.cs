@@ -751,24 +751,28 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// </summary>
     private static void ExpandPrefix(List<string> terms, IVocabularyIndex index, QueryExpansion expansion)
     {
-        var matches = new List<string>();
+        // Frequency rides with the term instead of being re-fetched by the sort's comparer: the
+        // comparer would otherwise call DocumentFrequency twice per comparison, and each call is a
+        // dictionary probe over the whole term — O(n log n) probes for a value that is
+        // constant for a term. The order is the same either way; only the cost changes.
+        var matches = new List<(string Term, int Frequency)>();
 
         foreach (var term in index.Vocabulary)
         {
             if (term.StartsWith(expansion.BaseTerm, StringComparison.Ordinal))
-                matches.Add(term);
+                matches.Add((term, index.DocumentFrequency(term)));
         }
 
         matches.Sort((a, b) =>
         {
-            int byFrequency = index.DocumentFrequency(b).CompareTo(index.DocumentFrequency(a));
-            return byFrequency != 0 ? byFrequency : string.CompareOrdinal(a, b);
+            int byFrequency = b.Frequency.CompareTo(a.Frequency);
+            return byFrequency != 0 ? byFrequency : string.CompareOrdinal(a.Term, b.Term);
         });
 
         int count = Math.Min(matches.Count, MaxExpansionsPerAtom);
 
         for (int i = 0; i < count; i++)
-            terms.Add(matches[i]);
+            terms.Add(matches[i].Term);
     }
 
     /// <summary>
