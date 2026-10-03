@@ -56,6 +56,30 @@ that. Whichever number is chosen, the reason is here.
   window counts come from an engine, a decorator or a caller-side stage that has them in hand. The
   rows are bounded (`Capacity`, `Dropped`, `IsTruncated`) and the sheet is not thread-safe, like
   `SearchTrace`. With no sheet attached nothing is timestamped, built or allocated.
+- **`WeightedCompositeScorer` — a scorer built out of scorers, `Σ wᵢ · componentᵢ`, in one pass
+  over one candidate set.** For blending scores *inside* one scoring pass, where the weights are the
+  only knob and every part is in one scale. That is a different operation from
+  `WeightedScoreResultMerger`, which blends scores *across* finished rankings after normalizing
+  each list by its own maximum — the right tool for sources whose scores are not commensurable, the
+  wrong one for composing one score out of parts of itself, since a per-list maximum makes the blend
+  depend on how many documents each list happened to return.
+  Weights **may be negative**: that is how a part becomes a penalty, and `WeightedScoreResultMerger`
+  refuses them because it blends non-negative normalized similarities. Only non-finite weights are
+  rejected. A **zero weight removes** the part and the part is not called at all — because
+  `0 × NaN` is `NaN`, so a part answering with a non-finite score must not be able to poison a weight
+  saying it does not participate. A non-finite answer from a participating part propagates, so the
+  engine rejects the document rather than reporting a score computed from a subset of the parts.
+- **`DocumentLengthRatioScorer` — `|D| / avgdl`, the index's own document length over its own
+  average.** One for an average document, above one for a long one. At a negative weight inside a
+  composite it is a length prior, and it differs from BM25's `b` in kind: `b` damps a query term in
+  a document that matched, in proportion to how much that term occurred, whereas this term is a
+  property of the document alone — added to every document's score, matching or not, and scaling
+  with no term. Two documents that matched identically can therefore be ranked differently by it.
+  Used alone it ranks documents by length and nothing else, which is why it is a component and why
+  it is not an `ITermOverlapScorer`; for the same reason a composite containing it cannot be one
+  either, so a document sharing no query term receives a non-zero total and **can reach the page** —
+  keep a matching part's weight above the priors', or compose inside a cascade stage so the
+  candidates arrive from a retrieval stage that already decided what matched.
 
 ### Reproduced
 

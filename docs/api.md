@@ -301,6 +301,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `Bm25ValidationQuery` | record | — | One labeled validation query of a Bm25ParameterTuner: a raw query together with the ids of the documents a good ranking should surface. |
 | `BooleanMatch` | enum | — | How the modifiers of a BooleanScorer are combined. |
 | `BooleanScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | Pure boolean filter. A matching document gets a score of 1, a non-matching one 0. Because the RankedTextSearchEngine discards scores below MinimumScore, this… |
+| `DocumentLengthRatioScorer` | class | `ITextScorer` | A document's length relative to the corpus average: \|D\| / avgdl, where both figures come from the index. One for an average document, above one for a long… |
 | `NdcgGain` | enum | — | How a relevance level is turned into a gain in NdcgAtK. |
 | `ProximityMode` | enum | — | How ProximityReranker turns a term window into a score change. |
 | `ProximityReranker` | class | `IReranker` | Re-ranks a candidate list by how close together the query terms actually occur in each document, refining the order a term-frequency scorer produced without… |
@@ -313,6 +314,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `TfIdfScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | Classic TF-IDF relevance. A document matches when it contains at least one query term; rare terms are weighted more than common ones. |
 | `TieBreak` | enum | — | How the engines order candidates whose scores are exactly equal. |
 | `TuningMetric` | enum | — | The quality metric a Bm25ParameterTuner maximizes over its validation set. |
+| `WeightedCompositeScorer` | class | `ITextScorer` | A scorer built from other scorers: the weighted sum of their scores, Σ wᵢ · componentᵢ, computed in one pass over one candidate set. |
 
 #### `LexiSharp.Similarity`
 
