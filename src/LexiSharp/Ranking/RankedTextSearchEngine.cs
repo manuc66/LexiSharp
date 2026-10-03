@@ -395,9 +395,11 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// <see cref="SearchOptions.AccumulateFilteredQueries"/> is how a caller says so. The reason is a
     /// price rather than a defect: the per-document loop this pass otherwise yields to scores
     /// <b>every candidate by document id</b>, one id-keyed length lookup plus one per query term,
-    /// for candidates the filter may then discard. The trade the option exposes is that this pass
-    /// also scores the candidates a <i>selective</i> filter discards, which is why it is opt-in
-    /// rather than the default.
+    /// for candidates the filter may then discard. That price is high at every selectivity measured
+    /// above about one percent kept — 5.9x on nfcorpus, 8.2x on scifact, 42x on arguana, when the
+    /// filter keeps everything — and the trade the option exposes is this pass scoring the
+    /// candidates a <i>very</i> selective filter discards, which is why the default is still the
+    /// conservative one.
     /// </para>
     /// <para>
     /// Everything else — the rare-term and head-term regimes alike — is a win either way, because

@@ -65,11 +65,16 @@ namespace LexiSharp.Core;
 /// walk of the posting entries that exist, and applies the filter to the ordinals it recorded.
 /// </para>
 /// <para>So this trades <i>scoring arithmetic that a selective filter throws away</i> against
-/// <i>id-keyed scoring of every candidate</i>. Which wins is a property of the filter rather than
-/// of the query: a filter that rejects nothing pays the per-document price for nothing, and one
-/// that rejects nearly everything pays accumulation to score a set it mostly discards. Nothing
-/// can see the selectivity in advance, which is why this is the caller's decision and not a
-/// heuristic.
+/// <i>id-keyed scoring of every candidate</i>, and the measured balance is lopsided. Sweeping a
+/// filter from keeping every document to keeping none, on all three indexed BEIR corpora, the
+/// accumulation pass wins at every selectivity above roughly one percent kept, and the margin grows
+/// with it: the per-document loop is 5.9x slower on nfcorpus and 8.2x on scifact when the filter
+/// keeps everything, and 42x on arguana. It loses below that, where it has almost nothing to score.
+/// </para>
+/// <para><b>Not measured:</b> the exact crossover, which is a function of query length and corpus
+/// shape and would be a constant fitted to three corpora. Nothing can see the selectivity in
+/// advance, which is why this is the caller's decision and not a heuristic — but a caller who
+/// filters can reasonably turn it on rather than measure first.
 /// </para>
 /// <para>A request that combines this with <see cref="TieBreak"/> other than
 /// <see cref="Ranking.TieBreak.DocumentId"/> keeps the per-document loop. The two paths do not
