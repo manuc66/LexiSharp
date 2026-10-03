@@ -201,6 +201,13 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             return Array.Empty<SearchResult>();
         }
 
+        // The cost sheet, read once. `Tokens` is recorded here rather than beside the scoring
+        // below because the count belongs to the parse, which has happened and will not happen
+        // again: a query that goes on to match nothing has still cost this many tokens, and the
+        // stage row below would otherwise be the only record of a search that returned nothing.
+        var costs = options.Costs;
+        costs?.AddTokens(queryTerms.Count);
+
         var distinctQueryTerms = DistinctTermList.Wrap(TermDeduplicator.Distinct(queryTerms));
 
         // Precompute the query-level corpus constants (idf, collection probabilities, ...) once
@@ -246,7 +253,18 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         // there is no union to build and no corpus to walk when the query terms are rare — and it
         // does not have to be re-made per query shape. That choice stays as the fallback for
         // everything this pass declines.
-        if (!TryRunAccumulatingQuery(plan, reachableDocuments, parsed, options, facets, top, out ordinal))
+        // Scored under both paths below, so the clock brackets the branch rather than one arm of it:
+        // the two cost differently by a wide margin, and a sheet that timed whichever arm ran
+        // would still be right about the search it describes.
+        long scoreStarted = costs is not null ? RetrievalTelemetry.StartTimer() : 0;
+
+        // Documents whose relevance score was computed, whichever path below computes it. This is
+        // not `ordinal`, which counts the documents that *matched* and reached the top window: a
+        // document scored to zero was paid for and is not counted there, so a cost sheet built on
+        // ordinal would under-report the work by every non-matching candidate.
+        long scoredDocuments;
+
+        if (!TryRunAccumulatingQuery(plan, reachableDocuments, parsed, options, facets, top, out ordinal, out scoredDocuments))
         {
             // Convention: a score of exactly 0 means "not a match".
             // When the index can enumerate the documents sharing at least one query term
@@ -275,6 +293,8 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
                     ? _scorer.Score(document.Id, distinctQueryTerms, _index)
                     : plan.Score(document.Id);
 
+                scoredDocuments++;
+
                 if (double.IsNaN(score) || double.IsInfinity(score) || score == 0 || score < options.MinimumScore)
                     continue;
 
@@ -284,6 +304,14 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
                 ordinal++;
             }
         }
+
+        // `scoredDocuments` is what relevance math was paid for — the documents that cleared the
+        // filter and phrase gates on the path taken above — so it is the honest ItemCount whichever
+        // arm ran. Recorded before the page cut, so the elapsed time covers scoring and not the cut,
+        // and `Windows` stays 0: a scorer is handed no request and cannot report how many it looked
+        // at.
+        if (costs is not null)
+            costs.Record(new SearchCostStage("score", scoredDocuments, 0, RetrievalTelemetry.ElapsedMs(scoreStarted)));
 
         // The accumulated window holds at most Offset + Limit entries; skip the Offset prefix
         // of the best-first view to cut the requested page.
@@ -419,9 +447,11 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         SearchOptions options,
         FacetCollector? facets,
         TopRankedWindow top,
-        out long ordinal)
+        out long ordinal,
+        out long scoredDocuments)
     {
         ordinal = 0;
+        scoredDocuments = 0;
 
         // A metadata filter reaches this pass only through AccumulateFilteredQueries, and only for a
         // request that keeps TieBreak.DocumentId. InsertionOrder breaks ties by the position the
@@ -480,6 +510,12 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
                 top.Add(score, document, ordinal);
                 ordinal++;
             }
+
+            // Every recorded ordinal was scored — the buffer holds exactly the candidates this pass
+            // accumulated a weight for, whether or not its finalised score survived the gate in
+            // the loop above. That makes this the same quantity the per-document loop counts one
+            // at a time.
+            scoredDocuments = accumulator.Count;
 
             return true;
         }

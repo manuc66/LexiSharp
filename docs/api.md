@@ -180,6 +180,8 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `RoutingSearchEngine` | class | `ITextSearchEngine` | Opt-in decorator that asks an IQueryRouter which SearchRoute to run each query on, then runs that route's engine with the route's filters merged into the… |
 | `ScoreBoost` | record struct | — | A signed score adjustment: a multiplicative factor plus an additive offset. Both can go up or down, so positive and negative boosts are expressed the same way. |
 | `ScoreExplanation` | record | — | A transparent breakdown of why a document received its score for a query: global corpus figures, per-term contributions and the scorer's parameter values. |
+| `SearchCostStage` | record struct | — | One pipeline stage's share of what a single query cost: what it processed, and how long it took. |
+| `SearchCosts` | class | — | The per-query cost sheet a caller opts into: what the query was made of, and what each pipeline stage it went through processed and cost. |
 | `SearchDocument` | record | — | A single unit of text that can be indexed and searched. |
 | `SearchOptions` | record | — | Controls how a search is performed and how results are returned. |
 | `SearchResult` | record | — | A document ranked against a query. |
