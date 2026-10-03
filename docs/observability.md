@@ -2,15 +2,18 @@
 title: Search traces and telemetry
 nav_order: 10
 description: >-
-  SearchTrace — the per-stage score chain behind a result — plus production
-  telemetry, source agreement and calibrated score confidence.
+  SearchTrace — the per-stage score chain behind a result — a per-query cost
+  sheet, production telemetry, source agreement and calibrated score
+  confidence.
 ---
 
 # Search traces and telemetry
 
-Three questions, three tools. *Why did this rank here?* — for one search, per document:
+Four questions, four tools. *Why did this rank here?* — for one search, per document:
 `SearchTrace` below, and `Explain` in
-[Ranking](ranking.md#explainable-scoring-and-bm25-tuning). *How long, how many candidates,
+[Ranking](ranking.md#explainable-scoring-and-bm25-tuning). *What did this one query cost?* — the
+same search, counted rather than explained:
+[`SearchCosts`](#per-query-cost-sheet-searchcosts). *How long, how many candidates,
 which stage is slow?* — across all searches in production:
 [`RetrievalTelemetry`](#observability-retrievaltelemetry). *Does the whole fleet agree, or
 is one retriever insisting?* — for a fused page:
@@ -139,6 +142,61 @@ services.AddLexiSharpSearchHealthCheck(
     o => o.Tags = ["ready"],
            o.Probe = ct => connection.OpenAsync(ct));  // optional: backing-store reachability
 ```
+
+## Per-query cost sheet (`SearchCosts`)
+
+A trace explains one search; a telemetry aggregates every search. `SearchCosts` is the third thing:
+**one request's cost, handed back to the caller** — the tokens the query was parsed into, and per
+stage what it processed and how long it took.
+
+```csharp
+using LexiSharp.Core;
+
+var costs = new SearchCosts();
+var hits = engine.Search("refresh token", new SearchOptions(Limit: 5, Costs: costs));
+
+Console.WriteLine($"{costs.Tokens} token(s)");
+
+foreach (var stage in costs.Stages)
+    Console.WriteLine($"{stage.Stage,-16} {stage.ItemCount,6} item(s), {stage.Windows} window(s)");
+```
+
+It exists for the question the other two cannot answer: **how do two configurations compare, on the
+same queries, one at a time?** An aggregate metric answers that only in the mean, and a mean hides
+the query where a change bought a rank and the one where it cost one. A sheet is per request and
+comes back with the results, so holding two side by side is a two-column table.
+
+**What the built-in engines record.**
+
+| engine | rows |
+|---|---|
+| `RankedTextSearchEngine` | `score` |
+| `RerankedTextSearchEngine` | `score` (its inner engine), `retrieve`, `rerank:<name>` |
+
+The inner search is asked for the full candidate depth so the reranker has room to re-order, which
+is why a two-stage search reports three rows rather than two — and why `retrieve` and `score` carry
+different item counts.
+
+**`ItemCount` is work, not hits.** For a scoring stage it counts every document whose score was
+*computed*, including the ones that came back zero. It is deliberately not the
+`candidateCount` a telemetry reports: that one counts the matched set, and a cost sheet built on it
+would under-report the work by every non-matching candidate.
+
+**`Windows` is the column no library code fills.** A scorer is a pure function of (document, query,
+index) — `ITextScorer.Score` is handed no request and cannot reach the sheet — and neither can an
+`IReranker` from `Rerank`. Stages that know how many windows they visited are engines, decorators
+and caller-side stages, which do receive the options and can `Record` a row themselves. A
+non-zero `Windows` therefore reports work an application measured and handed in.
+
+**Bounds, thread-safety, reuse.** The stage rows stop at `Capacity` (default 64) and the overflow
+is counted in `Dropped`; check `IsTruncated`. A sheet is a mutable collector, so give each
+concurrent search its own, and create one per request — an instance reused across requests keeps
+filling.
+
+**Cost when unused.** `SearchOptions.Costs` defaults to `null` and an engine reads it once per
+search: with no sheet attached nothing is timestamped, built or allocated, and attaching one
+changes nothing about what a search returns. No allocation or timing figure is quoted here because
+none has been measured; the trace section above gives the reason not to invent one.
 
 ## Source agreement (`RetrievalAgreementAnalyzer`)
 

@@ -40,6 +40,22 @@ that. Whichever number is chosen, the reason is here.
   two paths do not produce candidates in the same order — a full scan is corpus order, the
   accumulation pass is posting order — so under `InsertionOrder` they order documents that tie
   exactly differently, which is the one thing that option exists to reproduce.
+- **`SearchOptions.Costs` — an opt-in per-query cost sheet, default `null`.** A `SearchCosts`
+  instance records what one request cost: the tokens its query was parsed into, and per stage what
+  that stage processed and how long it took. `RankedTextSearchEngine` records a `score` row;
+  `RerankedTextSearchEngine` records `retrieve` and `rerank:<name>` on top of its inner engine's
+  `score`, so a two-stage search reports three rows rather than two.
+  It is the third half of a pair the library already had: a trace explains one search per document,
+  a telemetry aggregates every search, and neither can say how two configurations compare on the
+  same queries one query at a time. A sheet is per request and comes back with the results, so that
+  comparison is two columns.
+  A scoring stage's item count is **work rather than hits** — every document whose score was
+  computed, including the ones that came back zero — which is deliberately not the `candidateCount`
+  a telemetry reports. `Windows` is the column no library code fills, and says so in its own
+  remarks: a scorer is a pure function of (document, query, index) and is handed no request, so
+  window counts come from an engine, a decorator or a caller-side stage that has them in hand. The
+  rows are bounded (`Capacity`, `Dropped`, `IsTruncated`) and the sheet is not thread-safe, like
+  `SearchTrace`. With no sheet attached nothing is timestamped, built or allocated.
 
 ### Reproduced
 

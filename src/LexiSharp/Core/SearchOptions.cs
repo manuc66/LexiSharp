@@ -55,6 +55,20 @@ namespace LexiSharp.Core;
 /// in, which is what a system that breaks ties as documents are added does; use it to reproduce such a
 /// system, and expect the result to depend on the load order rather than only on the documents.
 /// </param>
+/// <param name="Costs">
+/// Optional <see cref="SearchCosts"/> sheet to record what this query cost: the tokens it was
+/// parsed into, and per stage what it processed and how long it took. Default <c>null</c> — no
+/// engine reads the clock, builds a row or allocates anything.
+/// <para>
+/// The sheet is the caller's, handed back with the results it asked for, which is what makes two
+/// configurations comparable per query rather than only in the mean. It observes and never
+/// changes what a search returns.
+/// </para>
+/// <para>
+/// Give each concurrent search its own sheet: like <see cref="SearchTrace"/>, it is a mutable
+/// collector and is not thread-safe.
+/// </para>
+/// </param>
 /// <param name="AccumulateFilteredQueries">
 /// Whether a query carrying <see cref="Filters"/> may be served by the term-at-a-time
 /// accumulation pass instead of the per-document loop. Default <c>false</c>.
@@ -93,7 +107,8 @@ public sealed record SearchOptions(
     SearchTrace? Trace = null,
     bool ParseQuerySyntax = true,
     Ranking.TieBreak TieBreak = Ranking.TieBreak.DocumentId,
-    bool AccumulateFilteredQueries = false)
+    bool AccumulateFilteredQueries = false,
+    SearchCosts? Costs = null)
 {
     /// <summary>
     /// The rounding a system that writes its scores down applies before it writes them, or
