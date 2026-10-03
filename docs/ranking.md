@@ -30,6 +30,9 @@ engine does everything else. Swap the scorer, keep the index.
 - **`WeightedCompositeScorer`** — a scorer built out of scorers: the weighted sum of their
   scores in one pass, in one scale. Negative weights make a part a penalty, which is how
   **`DocumentLengthRatioScorer`** (`|D| / avgdl`) becomes a length prior.
+- **`WindowBm25Scorer`** — scores a document by its **best window** rather than its whole text,
+  over one or more widths. The window is a way of counting term frequencies; the document is
+  still the returned unit.
 
 **The measurements are not all flattering, and publishing them is the point.** Each of the
 three measured sections below ends with what it actually scored on the corpora tried here:
@@ -386,6 +389,51 @@ priors', or compose inside a cascade stage so the candidates arrive from a retri
 already decided what matched.
 
 No quality or latency figure is quoted for either type: neither has been measured on a corpus here.
+
+## Scoring a document by its best window (`WindowBm25Scorer`)
+
+A window here is a way of counting term frequencies, not a separate indexed unit: the document is
+returned whole, keeps its id and is ranked against other documents. Nothing here chunks anything,
+and the caller need not have chunked anything.
+
+For a window `w` of width `s`,
+
+```
+score(w) = Σ_t idf(t) · tf_w(t) · (k1 + 1) / (tf_w(t) + k1)
+```
+
+and the document's score is the largest such value over every window of every requested width. There
+is **no length normalization** in that formula, and the omission is the point: a window's length is
+its own width by construction, so a term's damping inside it is decided by how many times the term
+occurs in those `s` positions and by nothing else. Score a document by its best passage and length
+stops being what ranks it — if you want length to count, put it back as a term of its own, with a
+weight you chose.
+
+```csharp
+var scorer = new WindowBm25Scorer([32, 128], stride: 16, k1: 1.2);
+```
+
+**The whole document is the same scorer.** `includeWholeDocument: true` with no widths scores the
+document as one window, where every `tf_w` is the document's term frequency and the normalization is
+1 — which is BM25 with `b = 0`, exactly. `WindowBm25ScorerTests` asserts the equality to the bit over
+a hand-built corpus and `WindowBm25ScorerPropertiesTests` over five hundred generated ones, so a
+windowed-versus-whole comparison made through this type compares one scorer against itself and the
+difference is the windowing and nothing else.
+
+**What it costs.** One merged pass over the positions that actually match, then one window sweep per
+width, per candidate. It never takes the term-at-a-time accumulation pass — that pass scores by
+ordinal from a per-term weight and carries no positions, and counting frequencies per window needs
+the document in hand — so an engine serving it walks the candidate set document by document. That is
+a price, not a defect, and it is the reason the topology this scorer belongs to is a cascade:
+retrieval over a shortlist, then this on the shortlist.
+
+**Still a term-overlap scorer.** A document sharing no query term has no position inside any window,
+so the score is `0` and the engine may skip it. Composed inside a
+`WeightedCompositeScorer` next to a component that scores non-matching documents, that promise
+belongs to the composite instead — see above.
+
+No quality figure is quoted: this scorer has not been measured against a corpus here, and the
+arithmetic under test is its identity with BM25 at `b = 0`, not its ranking.
 
 ## Score boosting (`BoostedTextSearchEngine`)
 

@@ -315,6 +315,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `TieBreak` | enum | — | How the engines order candidates whose scores are exactly equal. |
 | `TuningMetric` | enum | — | The quality metric a Bm25ParameterTuner maximizes over its validation set. |
 | `WeightedCompositeScorer` | class | `ITextScorer` | A scorer built from other scorers: the weighted sum of their scores, Σ wᵢ · componentᵢ, computed in one pass over one candidate set. |
+| `WindowBm25Scorer` | class | `ITermOverlapScorer`, `ITextScorer` | Scores a document by its best window rather than by its whole text: BM25's saturation computed over term frequencies counted inside a sliding window, and the… |
 
 #### `LexiSharp.Similarity`
 

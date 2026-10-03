@@ -80,6 +80,24 @@ that. Whichever number is chosen, the reason is here.
   either, so a document sharing no query term receives a non-zero total and **can reach the page** —
   keep a matching part's weight above the priors', or compose inside a cascade stage so the
   candidates arrive from a retrieval stage that already decided what matched.
+- **`WindowBm25Scorer` — score a document by its best window rather than by its whole text.** For a
+  window `w` of width `s`, `Σ_t idf(t) · tf_w(t) · (k1 + 1) / (tf_w(t) + k1)`, and the document's
+  score is the best over every window of every requested width. A window is a way of counting term
+  frequencies, not a separate indexed unit: the document is returned whole and ranked against other
+  documents, and nothing here chunks anything.
+  The formula carries **no length normalization**, deliberately. A window's length is its own width
+  by construction, so a term's damping inside it is decided by how many times the term occurs in
+  those `s` positions and by nothing else — scoring by the best passage makes length stop being what
+  ranks the document, and a caller who wants length to count puts it back as a term of its own with a
+  weight they chose.
+  `includeWholeDocument: true` with no widths scores the document as one window, which is BM25 with
+  `b = 0` — **exactly**, asserted to the bit over a hand-built corpus and over 500 generated ones,
+  so a windowed-versus-whole comparison made through this type compares one scorer against itself.
+  It stays an `ITermOverlapScorer`: a document sharing no query term has no position inside any
+  window, so its score is `0` and the engine may skip it. It never takes the term-at-a-time
+  accumulation pass, which scores by ordinal from a per-term weight and carries no positions — a
+  price rather than a defect, and the reason the topology it belongs to is a cascade. No quality or
+  latency figure is quoted, because none has been measured on a corpus here.
 
 ### Reproduced
 
