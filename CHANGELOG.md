@@ -543,20 +543,15 @@ commit messages carry the measurements.
   accumulation pass, which scores by ordinal from a per-term weight and carries no positions — a
   price rather than a defect, and the reason the topology it belongs to is a cascade. No quality or
   latency figure is quoted, because none has been measured on a corpus here.
-
-**Withdrawn: the `+0.05` to `+0.08` nDCG@10 that `WindowBm25Scorer`'s documentation attributed to
-scoring a document by its best window above "the same scorer over the whole document".** The two arms
-were not the same scorer. The re-implementation measured normalized by length and, handed a window's
-own width, ran the windowed arm at an effective `k1` of 0.3 to 0.5 against the whole document's 1.2 —
-so the comparison moved the saturation constant along with the unit, and a lower `k1` damps a term by
-occurrence count more aggressively than `k1 = 1.2` does. Measured instead against a whole-document
-baseline tuned on the same development split, with the width chosen on that split and 125 judged
-documents in the test split, the delta at the chosen width is **+0.035, interval [+0.003, +0.067]** —
-real, and roughly a third smaller than published. The plateau it formed (256 to 1 024 tokens) and the
-collapse below it (−0.20 at 16 tokens, −0.12 at 32) both survive the corrected baseline and are what
-the documentation now states. **This type has still never been measured on a corpus**: it carries no
-length normalization and defaults to `k1 = 1.5`, so those figures describe the re-implementation and
-not the shipped formula.
+  **The width is the caller's decision, and nothing in this type makes it.** BM25's saturation over a
+  window is only as good as the width it is handed, and the useful widths are a property of the
+  documents rather than of the formula: an external measurement over long documents found a broad
+  plateau rather than a peak, an already-falling edge past it, and narrow windows scoring far below
+  the whole document, because a window narrower than the passage cannot contain it whatever the
+  scorer does. That measurement ran a re-implementation of BM25 and not this type — which carries no
+  length normalization and defaults to `k1 = 1.5` — so its figures are the re-implementation's and
+  this type has no measured quality figure of its own. `docs/ranking.md` carries the reasoning;
+  measure the sweep on the corpus you ship, and read it per length band rather than as one average.
 
 - **A filtered query now uses the term-at-a-time pass by default.**
   `SearchOptions.AccumulateFilteredQueries` decides, and it now defaults to `true`; set it `false`
