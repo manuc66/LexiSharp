@@ -162,19 +162,25 @@ public class AccumulateFilteredQueriesTests
     }
 
     [Fact]
-    public void TheDefaultLeavesAFilteredQueryOnThePerDocumentPath()
+    public void TheDefaultIsAccumulationAndEitherSettingReturnsTheSameAnswer()
     {
-        // The option is opt-in, so this is a property of the default rather than of the
-        // equivalence: if it ever became the default, a caller relying on the per-document price
-        // for a selective filter would find it silently changed under them.
+        // Under TieBreak.DocumentId the two paths are equivalent by construction, so which one ran
+        // is not observable from the outside — and that is the point: the default is a performance
+        // decision with no result attached. Asserting it through a trick that returns empty from
+        // both paths would prove nothing, so this asserts the two things that ARE checkable: the
+        // default's value, and that both settings agree on the answer.
+        //
+        // The value is asserted directly because it is the whole decision. If a future change flips
+        // it back, this is where it shows up — not as a slower query, which nothing would notice.
+        Assert.True(new SearchOptions().AccumulateFilteredQueries);
+        Assert.False(new SearchOptions(AccumulateFilteredQueries: false).AccumulateFilteredQueries);
+
         var index = Index();
         IReadOnlyList<MetadataFilter> filters = TierFilter("even");
 
-        var withoutTheOption = new RankedTextSearchEngine(index, new Bm25Scorer())
-            .Search("renewal policy session", new SearchOptions(Limit: 50, Filters: filters));
-
         Assert.Equal(
-            withoutTheOption.Select(r => (r.DocumentId, r.Score)).ToArray(),
+            Search(index, "renewal policy session", filters, accumulate: true)
+                .Select(r => (r.DocumentId, r.Score)).ToArray(),
             Search(index, "renewal policy session", filters, accumulate: false)
                 .Select(r => (r.DocumentId, r.Score)).ToArray());
     }
