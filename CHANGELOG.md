@@ -24,80 +24,32 @@ that. Whichever number is chosen, the reason is here.
 
 ### Added
 
-- **`SearchOptions.AccumulateFilteredQueries` — let the term-at-a-time pass serve a filtered
-  query, default off.** A query carrying `Filters` is declined by that pass and served by the
-  per-document loop, which scores **every candidate by document id**: one id-keyed length lookup
-  plus one per query term, for candidates the filter then discards. The pass scores by ordinal, as
-  one walk of the posting entries that exist, and applies the filter to the ordinals it recorded.
-  The two paths are numerically interchangeable — same terms, same summation order, same score
-  bits, which the equivalence tests assert — but they price the same filter very differently.
+- **A filtered query now uses the term-at-a-time pass by default.**
+  `SearchOptions.AccumulateFilteredQueries` decides, and it now defaults to `true`; set it `false`
+  for the previous behaviour. A query carrying `Filters` used to be declined by that pass and
+  served by the per-document loop, which scores **every surviving candidate by document id** — one
+  id-keyed length lookup plus one per query term. The pass scores by ordinal, as one walk of the
+  posting entries that exist, and applies the filter to the ordinals it recorded.
 
-  Which wins is a property of the filter, not the query, so this is the caller's decision rather
-  than a heuristic: a filter that rejects nothing pays the per-document price for nothing, and one
-  that rejects nearly everything pays accumulation to score a set it mostly discards.
+  **Results do not change.** The two paths are numerically interchangeable — same terms, same
+  summation order, same score bits — which the equivalence tests assert. Only the path serving the
+  query moves.
 
-  A request combining it with a `TieBreak` other than `DocumentId` keeps the per-document loop. The
-  two paths do not produce candidates in the same order — a full scan is corpus order, the
-  accumulation pass is posting order — so under `InsertionOrder` they order documents that tie
-  exactly differently, which is the one thing that option exists to reproduce.
-- **`SearchOptions.Costs` — an opt-in per-query cost sheet, default `null`.** A `SearchCosts`
-  instance records what one request cost: the tokens its query was parsed into, and per stage what
-  that stage processed and how long it took. `RankedTextSearchEngine` records a `score` row;
-  `RerankedTextSearchEngine` records `retrieve` and `rerank:<name>` on top of its inner engine's
-  `score`, so a two-stage search reports three rows rather than two.
-  It is the third half of a pair the library already had: a trace explains one search per document,
-  a telemetry aggregates every search, and neither can say how two configurations compare on the
-  same queries one query at a time. A sheet is per request and comes back with the results, so that
-  comparison is two columns.
-  A scoring stage's item count is **work rather than hits** — every document whose score was
-  computed, including the ones that came back zero — which is deliberately not the `candidateCount`
-  a telemetry reports. `Windows` is the column no library code fills, and says so in its own
-  remarks: a scorer is a pure function of (document, query, index) and is handed no request, so
-  window counts come from an engine, a decorator or a caller-side stage that has them in hand. The
-  rows are bounded (`Capacity`, `Dropped`, `IsTruncated`) and the sheet is not thread-safe, like
-  `SearchTrace`. With no sheet attached nothing is timestamped, built or allocated.
-- **`WeightedCompositeScorer` — a scorer built out of scorers, `Σ wᵢ · componentᵢ`, in one pass
-  over one candidate set.** For blending scores *inside* one scoring pass, where the weights are the
-  only knob and every part is in one scale. That is a different operation from
-  `WeightedScoreResultMerger`, which blends scores *across* finished rankings after normalizing
-  each list by its own maximum — the right tool for sources whose scores are not commensurable, the
-  wrong one for composing one score out of parts of itself, since a per-list maximum makes the blend
-  depend on how many documents each list happened to return.
-  Weights **may be negative**: that is how a part becomes a penalty, and `WeightedScoreResultMerger`
-  refuses them because it blends non-negative normalized similarities. Only non-finite weights are
-  rejected. A **zero weight removes** the part and the part is not called at all — because
-  `0 × NaN` is `NaN`, so a part answering with a non-finite score must not be able to poison a weight
-  saying it does not participate. A non-finite answer from a participating part propagates, so the
-  engine rejects the document rather than reporting a score computed from a subset of the parts.
-- **`DocumentLengthRatioScorer` — `|D| / avgdl`, the index's own document length over its own
-  average.** One for an average document, above one for a long one. At a negative weight inside a
-  composite it is a length prior, and it differs from BM25's `b` in kind: `b` damps a query term in
-  a document that matched, in proportion to how much that term occurred, whereas this term is a
-  property of the document alone — added to every document's score, matching or not, and scaling
-  with no term. Two documents that matched identically can therefore be ranked differently by it.
-  Used alone it ranks documents by length and nothing else, which is why it is a component and why
-  it is not an `ITermOverlapScorer`; for the same reason a composite containing it cannot be one
-  either, so a document sharing no query term receives a non-zero total and **can reach the page** —
-  keep a matching part's weight above the priors', or compose inside a cascade stage so the
-  candidates arrive from a retrieval stage that already decided what matched.
-- **`WindowBm25Scorer` — score a document by its best window rather than by its whole text.** For a
-  window `w` of width `s`, `Σ_t idf(t) · tf_w(t) · (k1 + 1) / (tf_w(t) + k1)`, and the document's
-  score is the best over every window of every requested width. A window is a way of counting term
-  frequencies, not a separate indexed unit: the document is returned whole and ranked against other
-  documents, and nothing here chunks anything.
-  The formula carries **no length normalization**, deliberately. A window's length is its own width
-  by construction, so a term's damping inside it is decided by how many times the term occurs in
-  those `s` positions and by nothing else — scoring by the best passage makes length stop being what
-  ranks the document, and a caller who wants length to count puts it back as a term of its own with a
-  weight they chose.
-  `includeWholeDocument: true` with no widths scores the document as one window, which is BM25 with
-  `b = 0` — **exactly**, asserted to the bit over a hand-built corpus and over 500 generated ones,
-  so a windowed-versus-whole comparison made through this type compares one scorer against itself.
-  It stays an `ITermOverlapScorer`: a document sharing no query term has no position inside any
-  window, so its score is `0` and the engine may skip it. It never takes the term-at-a-time
-  accumulation pass, which scores by ordinal from a per-term weight and carries no positions — a
-  price rather than a defect, and the reason the topology it belongs to is a cascade. No quality or
-  latency figure is quoted, because none has been measured on a corpus here.
+  Sweeping a filter from keeping every document to keeping none, on all three indexed BEIR corpora,
+  the per-document loop is **42× slower on arguana, 8.2× on scifact, 5.9× on nfcorpus** when the
+  filter keeps everything, and the margin shrinks monotonically as the filter tightens. The pass
+  loses only where a filter discards almost everything, and there by at most **1.7×**; on the two
+  smaller corpora it wins even with nothing kept. **Not measured:** the crossover itself, and any
+  corpus larger than arguana's 8,674 documents. This pass's cost is proportional to the posting
+  entries a query touches rather than to what survives, so the region where it loses is expected to
+  widen with corpus size — a caller whose query is broad *and* whose filter keeps almost nothing
+  should set the option `false`.
+
+  A request combining a filter with a `TieBreak` other than `DocumentId` keeps the per-document
+  loop whatever the option says. The two paths do not produce candidates in the same order — a full
+  scan is corpus order, the accumulation pass is posting order — so under `InsertionOrder` they
+  order documents that tie exactly differently, which is the one thing that option exists to
+  reproduce.
 
 ### Reproduced
 
@@ -532,3 +484,69 @@ below. The other four are conventions, and stay opt-in.
 
 Not recorded here. The tags are the record: `git log v0.6.0..main` for what changed, and the
 commit messages carry the measurements.
+
+- **`SearchOptions.Costs` — an opt-in per-query cost sheet, default `null`.** A `SearchCosts`
+  instance records what one request cost: the tokens its query was parsed into, and per stage what
+  that stage processed and how long it took. `RankedTextSearchEngine` records a `score` row;
+  `RerankedTextSearchEngine` records `retrieve` and `rerank:<name>` on top of its inner engine's
+  `score`, so a two-stage search reports three rows rather than two.
+  It is the third half of a pair the library already had: a trace explains one search per document,
+  a telemetry aggregates every search, and neither can say how two configurations compare on the
+  same queries one query at a time. A sheet is per request and comes back with the results, so that
+  comparison is two columns.
+  A scoring stage's item count is **work rather than hits** — every document whose score was
+  computed, including the ones that came back zero — which is deliberately not the `candidateCount`
+  a telemetry reports. `Windows` is the column no library code fills, and says so in its own
+  remarks: a scorer is a pure function of (document, query, index) and is handed no request, so
+  window counts come from an engine, a decorator or a caller-side stage that has them in hand. The
+  rows are bounded (`Capacity`, `Dropped`, `IsTruncated`) and the sheet is not thread-safe, like
+  `SearchTrace`. With no sheet attached nothing is timestamped, built or allocated.
+- **`WeightedCompositeScorer` — a scorer built out of scorers, `Σ wᵢ · componentᵢ`, in one pass
+  over one candidate set.** For blending scores *inside* one scoring pass, where the weights are the
+  only knob and every part is in one scale. That is a different operation from
+  `WeightedScoreResultMerger`, which blends scores *across* finished rankings after normalizing
+  each list by its own maximum — the right tool for sources whose scores are not commensurable, the
+  wrong one for composing one score out of parts of itself, since a per-list maximum makes the blend
+  depend on how many documents each list happened to return.
+  Weights **may be negative**: that is how a part becomes a penalty, and `WeightedScoreResultMerger`
+  refuses them because it blends non-negative normalized similarities. Only non-finite weights are
+  rejected. A **zero weight removes** the part and the part is not called at all — because
+  `0 × NaN` is `NaN`, so a part answering with a non-finite score must not be able to poison a weight
+  saying it does not participate. A non-finite answer from a participating part propagates, so the
+  engine rejects the document rather than reporting a score computed from a subset of the parts.
+- **`DocumentLengthRatioScorer` — `|D| / avgdl`, the index's own document length over its own
+  average.** One for an average document, above one for a long one. At a negative weight inside a
+  composite it is a length prior, and it differs from BM25's `b` in kind: `b` damps a query term in
+  a document that matched, in proportion to how much that term occurred, whereas this term is a
+  property of the document alone — added to every document's score, matching or not, and scaling
+  with no term. Two documents that matched identically can therefore be ranked differently by it.
+  Used alone it ranks documents by length and nothing else, which is why it is a component and why
+  it is not an `ITermOverlapScorer`; for the same reason a composite containing it cannot be one
+  either, so a document sharing no query term receives a non-zero total and **can reach the page** —
+  keep a matching part's weight above the priors', or compose inside a cascade stage so the
+  candidates arrive from a retrieval stage that already decided what matched.
+- **`WindowBm25Scorer` — score a document by its best window rather than by its whole text.** For a
+  window `w` of width `s`, `Σ_t idf(t) · tf_w(t) · (k1 + 1) / (tf_w(t) + k1)`, and the document's
+  score is the best over every window of every requested width. A window is a way of counting term
+  frequencies, not a separate indexed unit: the document is returned whole and ranked against other
+  documents, and nothing here chunks anything.
+  The formula carries **no length normalization**, deliberately. A window's length is its own width
+  by construction, so a term's damping inside it is decided by how many times the term occurs in
+  those `s` positions and by nothing else — scoring by the best passage makes length stop being what
+  ranks the document, and a caller who wants length to count puts it back as a term of its own with a
+  weight they chose.
+  `includeWholeDocument: true` with no widths scores the document as one window, which is BM25 with
+  `b = 0` — **exactly**, asserted to the bit over a hand-built corpus and over 500 generated ones,
+  so a windowed-versus-whole comparison made through this type compares one scorer against itself.
+  It stays an `ITermOverlapScorer`: a document sharing no query term has no position inside any
+  window, so its score is `0` and the engine may skip it. It never takes the term-at-a-time
+  accumulation pass, which scores by ordinal from a per-term weight and carries no positions — a
+  price rather than a defect, and the reason the topology it belongs to is a cascade. No quality or
+  latency figure is quoted, because none has been measured on a corpus here.
+=======
+- **A filtered query now uses the term-at-a-time pass by default.**
+  `SearchOptions.AccumulateFilteredQueries` decides, and it now defaults to `true`; set it `false`
+  for the previous behaviour. A query carrying `Filters` used to be declined by that pass and
+  served by the per-document loop, which scores **every surviving candidate by document id** — one
+  id-keyed length lookup plus one per query term. The pass scores by ordinal, as one walk of the
+  posting entries that exist, and applies the filter to the ordinals it recorded.
