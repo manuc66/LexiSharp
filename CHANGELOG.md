@@ -543,7 +543,7 @@ commit messages carry the measurements.
   accumulation pass, which scores by ordinal from a per-term weight and carries no positions — a
   price rather than a defect, and the reason the topology it belongs to is a cascade. No quality or
   latency figure is quoted, because none has been measured on a corpus here.
-=======
+
 - **A filtered query now uses the term-at-a-time pass by default.**
   `SearchOptions.AccumulateFilteredQueries` decides, and it now defaults to `true`; set it `false`
   for the previous behaviour. A query carrying `Filters` used to be declined by that pass and
