@@ -58,20 +58,37 @@ namespace LexiSharp.Ranking;
 /// topology it belongs to.
 /// </para>
 /// <para>
-/// <b>The width is the whole decision, and it belongs to the corpus.</b> An external measurement —
-/// BM25 alone, over a corpus of long documents, harness outside this repository and not reproducible
-/// from it — scored a document by its best window above the same scorer over the whole document by
-/// <c>+0.05</c> to <c>+0.08</c> nDCG@10, reproduced across three tokenizations and two ways of
-/// placing the windows. Two things about that number matter more than the number. The widths that
-/// earned it formed a broad <b>plateau</b> — roughly 512 to 1 024 tokens, some 6 % to 13 % of a
-/// document — rather than a peak, and 2 048 tokens was already past it; and <b>narrow windows fell a
-/// long way below the whole document</b>, by <c>0.19</c> to <c>0.25</c> at 16 tokens and
-/// <c>0.11</c> to <c>0.15</c> at 32, so a width well under the evidence it looks for costs more than
-/// not windowing at all. The gain also shrank as the documents grew, from about a tenth of the metric
-/// on the shortest length quartile to nothing measurable on the longest. A width is therefore a
-/// property of your documents and not of this scorer, nothing in this type can tell you which to
-/// pass, and a sweep read as one average across document lengths will look like a plateau where your
-/// corpus has a slope. Measure the sweep on the corpus you ship, and read it per length band.
+/// <b>The width is the whole decision, and it belongs to the corpus.</b> The evidence is an external
+/// measurement — a BM25 re-implementation, harness outside this repository and not reproducible from
+/// it — and <b>this type is not what was measured</b>, which is the first thing to know about the
+/// numbers. Its formula carries no length normalization and its default <c>k1</c> is <c>1.5</c>. The
+/// re-implementation normalized by length and, handed a window's own width, that put the windowed arm
+/// on an effective <c>k1</c> of 0.3 to 0.5 against the whole document's 1.2 — a different saturation
+/// constant as well as a different unit, and only one of those two is windowing.
+/// </para>
+/// <para>
+/// What the measurement does support, read against a whole-document baseline tuned on the same
+/// development split, with the width itself chosen on that split and the test split holding 125 judged
+/// documents: the widths that survived formed a broad <b>plateau</b> — 256 to 1 024 tokens, with 512
+/// and 1 024 excluding zero and 256 not — rather than a peak, and 2 048 was already past it; and
+/// <b>narrow windows fell a long way below the whole document</b>, by <c>0.20</c> at 16 tokens and
+/// <c>0.12</c> at 32, so a width well under the evidence it looks for costs more than not windowing
+/// at all. The narrow end is the more robust half of that, and it holds precisely because it does not
+/// depend on the baseline: a window of 16 tokens cannot contain the passage, whatever the scorer.
+/// </para>
+/// <para>
+/// What it does not support is a headline size for the gain, so none is given here. Against that
+/// tuned baseline the delta at the width development chose was <c>+0.035</c> nDCG@10 with an interval
+/// reaching <c>+0.003</c> — real, and small, and a statement about one corpus, one baseline and one
+/// split rather than a number to carry to another. A sweep averaged over document lengths will also
+/// look flatter than it is: the same corpus inverted by length quartile, from about a tenth of the
+/// metric on the shortest quartile to nothing measurable on the longest.
+/// </para>
+/// <para>
+/// A width is therefore a property of your documents and not of this scorer, nothing in this type can
+/// tell you which to pass, and a sweep read as one average across document lengths will look like a
+/// plateau where your corpus has a slope. Measure the sweep on the corpus you ship, and read it per
+/// length band.
 /// </para>
 /// <para>
 /// <b>Thread-safe.</b> Everything the score needs is computed inside the call; the instance holds only
