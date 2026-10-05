@@ -23,7 +23,12 @@ set -uo pipefail
 # MSB4014: this machine's workload manifests were removed by package management, and the
 # resolver fails hard on them. Every dotnet invocation in this repository needs this, and
 # forgetting it is a confusing error rather than an obvious one.
-export MSBuildEnableWorkloadResolver=false
+#
+# The mixed-case spelling is MSBuild's own: the variable is read by the build rather than by this
+# script, and renaming it to satisfy the ALL_CAPS convention would turn the fix off silently
+# rather than loudly. The trailing NOSONAR asks the analyzer to leave the line alone; whether its
+# shell analysis honours that marker is not something this repository can check.
+export MSBuildEnableWorkloadResolver=false # NOSONAR
 export DOTNET_CLI_TELEMETRY_OPTOUT=1
 export DOTNET_NOLOGO=1
 
