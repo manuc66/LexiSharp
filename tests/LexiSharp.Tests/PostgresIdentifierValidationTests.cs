@@ -90,25 +90,39 @@ public class PostgresIdentifierValidationTests
     [MemberData(nameof(AcceptedNames))]
     public void AnIdentifierOfTheAllowedShape_IsAcceptedByEveryEngine(string name)
     {
+        // The guard each engine consults is asserted on the options themselves, so a constructor
+        // that stopped consulting it fails here rather than passing on the absence of a throw.
+        var lexical = new PostgresIndexOptions { Schema = name, Table = name };
+        var parade = new ParadeDB.ParadeDBOptions { Schema = name, Table = name };
+        var fuzzy = new PostgresFuzzyOptions { Schema = name, Table = name };
+        var sparse = new PostgresSparseOptions { Schema = name, Table = name, Vocabulary = new Dictionary<string, int> { ["term"] = 0 } };
+        var vector = new PostgresVectorOptions { Schema = name, Table = name };
+
+        Assert.True(lexical.IsValid);
+        Assert.True(parade.IsValid);
+        Assert.True(fuzzy.IsValid);
+        Assert.True(sparse.IsValid);
+        Assert.True(vector.IsValid);
+
         // Schema and Table together, because each engine reads both through the same check and a
         // guard covering only one of them would still pass this.
-        using (new PostgresTextSearchEngine(Unused, new PostgresIndexOptions { Schema = name, Table = name }, autoCreateSchema: false))
+        using (new PostgresTextSearchEngine(Unused, lexical, autoCreateSchema: false))
         {
         }
 
-        using (new ParadeDB.ParadeDBTextSearchEngine(Unused, new ParadeDB.ParadeDBOptions { Schema = name, Table = name }, autoCreateSchema: false))
+        using (new ParadeDB.ParadeDBTextSearchEngine(Unused, parade, autoCreateSchema: false))
         {
         }
 
-        using (new PostgresFuzzySearchEngine(Unused, new PostgresFuzzyOptions { Schema = name, Table = name }, autoCreateSchema: false))
+        using (new PostgresFuzzySearchEngine(Unused, fuzzy, autoCreateSchema: false))
         {
         }
 
-        using (new PostgresSparseSearchEngine(Unused, new NeverCalled(), new PostgresSparseOptions { Schema = name, Table = name, Vocabulary = new Dictionary<string, int> { ["term"] = 0 } }, autoCreateSchema: false))
+        using (new PostgresSparseSearchEngine(Unused, new NeverCalled(), sparse, autoCreateSchema: false))
         {
         }
 
-        using (new PostgresVectorSearchEngine(Unused, new NeverCalled(), new PostgresVectorOptions { Schema = name, Table = name }, autoCreateSchema: false))
+        using (new PostgresVectorSearchEngine(Unused, new NeverCalled(), vector, autoCreateSchema: false))
         {
         }
     }
