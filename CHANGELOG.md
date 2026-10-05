@@ -51,32 +51,6 @@ that. Whichever number is chosen, the reason is here.
   order documents that tie exactly differently, which is the one thing that option exists to
   reproduce.
 
-### Reproduced
-
-**The ArguAna figure published by the independent BEIR regression — nDCG@10 0.3970 — is now
-reproduced exactly, on all 1,406 queries, one by one.** Paired difference 0.00000000, 95 % interval
-[0.00000000, 0.00000000]. Recall@100 (0.9324), recall@1000 (0.9872), nDCG@5 (0.3445), MAP@100 (0.3280)
-and reciprocal rank (0.3282) all match as well. The two indexes agree **term for term**: 23,895 distinct terms
-and 969,528 occurrences on each side, zero terms differing in document frequency, zero in term
-frequency, and zero terms present in one index and not the other.
-
-The deficit was never a ranking question. Four analysis rules accounted for it, each measured rather
-than assumed, and each shipped as an option whose default is unchanged:
-
-| option | default | what it aligns |
-|---|---|---|
-| `SearchOptions.ParseQuerySyntax` | `true` | a query language's `"` against prose's, 138 of 1,406 queries |
-| `QueryTermWeighting.QueryFrequency` | `Distinct` | one boost per occurrence of a repeated query term |
-| `TokenizerOptions.WordSegmentation` | `Flat` | 18 separators tested across digit and letter on both sides |
-| `TokenizerOptions.StripPossessives` | `false` | possessive removal **before** the stop word list |
-| `TokenizerOptions.FoldDiacritics` | `true` | diacritics kept |
-| `InMemoryTextIndex.DocumentLengthQuantization` | `Exact` | lengths stored as one byte |
-
-Two of these were defects in this library rather than differences of convention, and are fixed outright
-below. The other four are conventions, and stay opt-in.
-
-### Added
-
 - `AtomicEngineReference`, the publish point for the « snapshot swap » pattern: build a fresh
   engine off-lock, `Swap` it in one atomic step, and readers capture the engine once per search
   through a volatile read — the frequent-writes counterpart of `SynchronizedTextSearchEngine`,
@@ -205,6 +179,30 @@ below. The other four are conventions, and stay opt-in.
   of the same seam. The flat `Search` still returns full text — compression is an opt-in
   second surface, not a mutation of `SearchResult.Document`.
 
+### Reproduced
+
+**The ArguAna figure published by the independent BEIR regression — nDCG@10 0.3970 — is now
+reproduced exactly, on all 1,406 queries, one by one.** Paired difference 0.00000000, 95 % interval
+[0.00000000, 0.00000000]. Recall@100 (0.9324), recall@1000 (0.9872), nDCG@5 (0.3445), MAP@100 (0.3280)
+and reciprocal rank (0.3282) all match as well. The two indexes agree **term for term**: 23,895 distinct terms
+and 969,528 occurrences on each side, zero terms differing in document frequency, zero in term
+frequency, and zero terms present in one index and not the other.
+
+The deficit was never a ranking question. Four analysis rules accounted for it, each measured rather
+than assumed, and each shipped as an option whose default is unchanged:
+
+| option | default | what it aligns |
+|---|---|---|
+| `SearchOptions.ParseQuerySyntax` | `true` | a query language's `"` against prose's, 138 of 1,406 queries |
+| `QueryTermWeighting.QueryFrequency` | `Distinct` | one boost per occurrence of a repeated query term |
+| `TokenizerOptions.WordSegmentation` | `Flat` | 18 separators tested across digit and letter on both sides |
+| `TokenizerOptions.StripPossessives` | `false` | possessive removal **before** the stop word list |
+| `TokenizerOptions.FoldDiacritics` | `true` | diacritics kept |
+| `InMemoryTextIndex.DocumentLengthQuantization` | `Exact` | lengths stored as one byte |
+
+Two of these were defects in this library rather than differences of convention, and are fixed outright
+below. The other four are conventions, and stay opt-in.
+
 ### Fixed
 
 - **The pinned reference replayed query syntax the table does not use.** `ReferenceVerifier` built
@@ -269,20 +267,15 @@ below. The other four are conventions, and stay opt-in.
   text — ArguAna, where 1,298 of 1,406 test queries are corpus documents — the excluded document is
   the lexically closest thing to the query and takes rank 1. At k1=0.9, b=0.4 with the reference
   analysis, 1,406 queries: **0.271 → 0.364**, and the pin `arguana/english+exclude` moves from
-  0.2864 to 0.3806. A figure of "+0.002 for the exclusion" was circulated before this and was wrong:
-  it measured an option that did nothing. The seven other nDCG pins, all three index fingerprints and
-  the golden master are unchanged.
-
-  **What the remaining 0.033 turned out to be.** This entry previously closed by arguing that the
-  corpus was not behind, on the strength of 0.444 at this library's own defaults against a published
-  0.397. That reading was wrong, and it was wrong in a way worth recording: 0.444 was not a sign the
-  corpus suited these defaults, it was 0.397 plus four analysis differences that happened to point the
-  same way. With the analysis aligned, the defaults give 0.444 and the reference's parameters give
-  0.3970, and the two agree. Nothing about ArguAna needed explaining.
+  0.2864 to 0.3806. The seven other nDCG pins, all three index fingerprints and the golden master are
+  unchanged. Two related measurements are settled in
+  [docs/evaluation.md](docs/evaluation.md#measured-against-published-baselines): the option was inert
+  on this path, and the gap between this library's defaults and the published baseline is four analysis
+  conventions rather than anything about the corpus.
 
   The per-candidate cost is one null test on an already-hoisted set, the same shape as the gate
-  already at the top of the other loop; **the benchmark could not resolve it** — run-to-run error on
-  this host is ±5 % to ±25 % — so no timing claim is made here.
+  already at the top of the other loop; **the benchmark could not resolve it**, so no timing claim is
+  made here.
 
 - **`SearchOptions.ExcludedDocumentIds` was ignored on every Postgres backend.** Four of the five —
   `PostgresTextSearchEngine`, `PostgresSparseSearchEngine`, `PostgresFuzzySearchEngine` and
@@ -299,9 +292,9 @@ below. The other four are conventions, and stay opt-in.
   package already does for `MinimumScore`, so the id list never becomes a parameter. The row count is
   raised by one per excluded id to keep the page full, saturating rather than overflowing. The
   arithmetic is unit-tested in `PostgresDocumentExclusionTests`; the wiring is integration-tested
-  against a real server in `PostgresExcludedDocumentIdsTests`. **Those integration tests could not be
-  run on the machine this was written on — no reachable PostgreSQL — so they are verified by the CI
-  jobs that carry `POSTGRES_TEST_CONNECTION`, not by a local run.**
+  against a real server in `PostgresExcludedDocumentIdsTests`, and **that coverage runs in the CI jobs
+  that carry `POSTGRES_TEST_CONNECTION`** — the suite self-skips without it, so a green run without
+  that variable says nothing about this path either way.
 
 - `RerankedTextSearchEngine`'s trace stage built its candidate map once per page entry, an
   O(page × candidates) re-fill that the per-stage `??=` only masked at the allocation site; it is
@@ -541,17 +534,18 @@ commit messages carry the measurements.
   It stays an `ITermOverlapScorer`: a document sharing no query term has no position inside any
   window, so its score is `0` and the engine may skip it. It never takes the term-at-a-time
   accumulation pass, which scores by ordinal from a per-term weight and carries no positions — a
-  price rather than a defect, and the reason the topology it belongs to is a cascade. No quality or
-  latency figure is quoted, because none has been measured on a corpus here.
-  **The width is the caller's decision, and nothing in this type makes it.** BM25's saturation over a
-  window is only as good as the width it is handed, and the useful widths are a property of the
-  documents rather than of the formula: an external measurement over long documents found a broad
-  plateau rather than a peak, an already-falling edge past it, and narrow windows scoring far below
-  the whole document, because a window narrower than the passage cannot contain it whatever the
-  scorer does. That measurement ran a re-implementation of BM25 and not this type — which carries no
-  length normalization and defaults to `k1 = 1.5` — so its figures are the re-implementation's and
-  this type has no measured quality figure of its own. `docs/ranking.md` carries the reasoning;
-  measure the sweep on the corpus you ship, and read it per length band rather than as one average.
+  price rather than a defect, and the reason the topology it belongs to is a cascade.
+  **The width is the caller's decision, and the corpus's answer is not the same twice.** Measured on
+  this type against its own whole-document counterpart — which `includeWholeDocument` makes BM25 at
+  `b = 0` — the best width gave **+0.141 nDCG@10, interval [+0.092, +0.189]**, on 197 documents
+  averaging 9 271 terms. On 355 documents averaging 52 862 terms, the same protocol and the same
+  defaults gave **+0.003, interval [−0.019, +0.026]**, with no width excluding zero. The `b = 0`
+  counterpart is the honest within-family comparison and not a strong scorer: against a whole-document
+  BM25 tuned on the same development split, the same formula gains +0.035 on the first corpus and
+  loses 0.036 on the second, so a caller who has already tuned `Bm25Scorer` should expect much less
+  than +0.141. `docs/ranking.md` carries the reasoning; measure the sweep on the corpus you ship,
+  choose the width on a split you then do not read, and read it per length band rather than as one
+  average. No latency figure is quoted for this type, because none has been measured here.
 
 - **A filtered query now uses the term-at-a-time pass by default.**
   `SearchOptions.AccumulateFilteredQueries` decides, and it now defaults to `true`; set it `false`
