@@ -516,6 +516,22 @@ neighbourhood did not. On `narrativeqa` not one of the 180 configurations is pos
 dev-selected one *is* the best of them, and the width profile improves monotonically out to 2 048 and
 is still negative. Read the corpus that pays as a configuration that measured well on that corpus.
 
+**Which queries it pays on.** Read against the same tuned baselines inside strata, the delta tracks
+query length on both corpora, and does not track document length consistently:
+
+| | `qmsum` | `narrativeqa` |
+|---|---|---|
+| shortest tercile of distinct query terms | +0.061 [+0.001, +0.125] | +0.020 [−0.007, +0.049] |
+| longest tercile | −0.030 [−0.084, +0.023] | −0.030 [−0.071, +0.005] |
+| corr(Δ, query length) | −0.72 | −0.75 |
+| corr(Δ, judged-document length) | −0.84 | **+0.30** |
+
+The document-length correlation changes sign between the two corpora, which is not what a moderator
+looks like; on `qmsum` the short documents carry the short questions, so its shortest-quartile result is
+a query-length result. Of the eight cells across both corpora, one — `qmsum`'s shortest quartile of
+judged-document length, **+0.130 [+0.060, +0.205]** — has an interval excluding zero. A window holding
+512 tokens cannot co-locate a 119-term query, and these are the two facts on either side of it.
+
 So a caller who has already tuned `Bm25Scorer` should expect far less than +0.141, and on
 book-length narrative should expect a loss. That is the figure that answers "should I adopt this
 instead of tuning what I have", and it is the one to plan against.
@@ -539,8 +555,8 @@ whose start happens to be a multiple of the width. The 1.7 × 10⁻⁶ was a `fl
 that did not apply: prefix counts are exact integers below 2²⁴, so the only difference left is the
 order of the double summations. A second dump, written explicitly at `w/4`, agrees to 9 × 10⁻¹⁴ over
 all 78,800 pairs, and each dump now carries its stride in its filename. This mattered because the
-`stride w/4` result had never been cross-checked against the type at that stride. The generated tests establish the identity; these establish it where a
-window is a decision rather than a formality.
+`stride w/4` result had never been cross-checked against the type at that stride. The generated tests
+establish the identity; these establish it where a window is a decision rather than a formality.
 
 ## Score boosting (`BoostedTextSearchEngine`)
 
