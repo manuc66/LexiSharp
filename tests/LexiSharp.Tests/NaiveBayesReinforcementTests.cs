@@ -330,6 +330,56 @@ public class NaiveBayesReinforcementTests
         Assert.Equal("Billing", classifier.PredictBest("invoice"));
     }
 
+    // Unlearn retires a category when its last document goes, and it reaches the corpus model by a
+    // different path than Train does. The ledger is untouched by either, so an entry for a retired
+    // category stays unreachable and applies again if the category is re-learned -- the rule the
+    // Train case above pins, reached here through Unlearn instead.
+    [Fact]
+    public void Unlearn_ThatRetiresTheCategory_LeavesItsLedgerEntryInert_AndItAppliesAgainOnReturn()
+    {
+        var classifier = Trained();
+        classifier.Reinforce("invoice", "Support", weight: 4.0);
+        Assert.Equal("Support", classifier.PredictBest("invoice"));
+
+        // Support holds three documents; retracting them all retires the category with it.
+        classifier.Unlearn(Corpus[0]);
+        classifier.Unlearn(Corpus[1]);
+        classifier.Unlearn(Corpus[2]);
+
+        // Only Billing is left, and the classifier cannot name a label the corpus no longer holds.
+        Assert.Equal("Billing", classifier.PredictBest("invoice"));
+
+        // Support comes back on entirely different content, and the feedback still says what it said.
+        classifier.Learn(new SearchDocument("z", "chat", Category: "Support"));
+        Assert.Equal("Support", classifier.PredictBest("invoice"));
+
+        classifier.ForgetReinforcement();
+        Assert.Equal("Billing", classifier.PredictBest("invoice"));
+    }
+
+    // The ledger survives a category's retirement, which means it also survives a long absence.
+    // That is the same deliberate rule, and it is also why ForgetReinforcement has to exist: it is
+    // the only way to retire an entry whose category never comes back.
+    [Fact]
+    public void Unlearn_ThatRetiresTheCategory_KeepsTheLedgerEntryForReinforcingAgain()
+    {
+        var classifier = Trained();
+        classifier.Reinforce("invoice", "Support", weight: 4.0);
+
+        classifier.Unlearn(Corpus[0]);
+        classifier.Unlearn(Corpus[1]);
+        classifier.Unlearn(Corpus[2]);
+
+        // Re-learn Support, forget the feedback, then assert it again: this is the "I changed my
+        // mind" path, and it has to be reachable without retraining.
+        classifier.Learn(new SearchDocument("z", "chat", Category: "Support"));
+        classifier.ForgetReinforcement();
+        Assert.Equal("Billing", classifier.PredictBest("invoice"));
+
+        classifier.Reinforce("invoice", "Support", weight: 4.0);
+        Assert.Equal("Support", classifier.PredictBest("invoice"));
+    }
+
     [Fact]
     public void Reinforce_OnACategoryTheCorpusNeverSaw_IsIgnored()
     {
