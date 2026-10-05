@@ -32,15 +32,38 @@ public sealed class DemoSearchService
     private readonly HybridTextSearchEngine _hybrid;
     private readonly RerankedTextSearchEngine _rerank;
 
-    public DemoSearchService()
+    /// <summary>Indexes <paramref name="corpus"/> and builds the five lanes over it.</summary>
+    /// <param name="corpus">
+    /// The documents every lane is built over. The built-in corpus makes the demo run from a fresh
+    /// clone; a BEIR corpus puts the same five lanes on data at a realistic scale.
+    /// </param>
+    /// <param name="segmentation">
+    /// How a non-word character inside a word is treated. One tokenizer serves all five lanes on
+    /// purpose: segmentation changes document frequencies, and document frequencies change every
+    /// score that weights a term, so a comparison across two segmentations would not be a
+    /// comparison of ranking strategies.
+    /// </param>
+    public DemoSearchService(DemoCorpusSet corpus, WordSegmentation segmentation)
     {
+        ArgumentNullException.ThrowIfNull(corpus);
+
         // Stop-word removal keeps the corpus-derived associations meaningful: without it,
         // words like "the" or "with" co-occur with everything and act as noisy bridges.
-        _tokenizer = new Tokenizer(new TokenizerOptions { RemoveStopWords = true });
+        //
+        // The segmentation is not cosmetic. Under Flat a separator always ends a word, so "1,000"
+        // indexes as the term "000" — measured on the SciFact corpus, that term carried 19.3% of
+        // the top score for the query "1,000 genomes project" — and "don't" indexes as "don".
+        // The cost is not measured: enabling it takes the scan off the bulk ASCII skip.
+        _tokenizer = new Tokenizer(new TokenizerOptions
+        {
+            RemoveStopWords = true,
+            WordSegmentation = segmentation,
+        });
+
         _spanTokenizer = _tokenizer as ISpanTokenizer;
 
-        var corpus = DemoCorpus.Build();
-        var expander = PmiTermExpander.LearnFrom(corpus, _tokenizer);
+        IReadOnlyList<SearchDocument> documents = corpus.Documents;
+        var expander = PmiTermExpander.LearnFrom(documents, _tokenizer);
 
         _lexical = new LexiSharpIndex<SearchDocument>(options => options.Tokenizer = _tokenizer);
         _semantic = new LexiSharpIndex<SearchDocument>(options =>
@@ -49,12 +72,12 @@ public sealed class DemoSearchService
             options.TermExpander = expander;
         });
 
-        _lexical.AddRange(corpus);
-        _semantic.AddRange(corpus);
+        _lexical.AddRange(documents);
+        _semantic.AddRange(documents);
 
         // No model: the deterministic hashing provider makes the dense lane work offline.
         _dense = new InMemoryVectorSearchEngine(new HashingEmbeddingProvider(512, _tokenizer));
-        _dense.Index(corpus);
+        _dense.Index(documents);
 
         _hybrid = new HybridTextSearchEngine(
             new ITextSearchEngine[] { _lexical.Engine, _semantic.Engine, _dense },
@@ -65,7 +88,7 @@ public sealed class DemoSearchService
             _hybrid,
             new CrossEncoderReranker(new OverlapCrossEncoder(_tokenizer)));
 
-        WarmUp();
+        WarmUp(corpus);
     }
 
     /// <summary>Number of indexed documents.</summary>
@@ -349,13 +372,35 @@ public sealed class DemoSearchService
             highlighted ?? Snippet(document.Text),
             sources);
 
+    /// <summary>Length at or below which a document is highlighted whole rather than as a window.</summary>
+    private const int FullHighlightLimit = 400;
+
+    /// <summary>
+    /// The text a hit card shows, with the matched terms marked. A document short enough to read at
+    /// a glance is returned whole, so every match is visible; a longer one is cut to the first
+    /// window around a match, because a BEIR abstract or argument rendered in full makes a page of
+    /// six hits per lane unreadable and the payload large.
+    /// </summary>
     private string Highlight(string query, string text)
     {
         if (_spanTokenizer is null)
             return text;
 
         var terms = QueryParser.Parse(query, _tokenizer).AllTerms;
-        return terms.Count == 0 ? text : TextHighlighter.HighlightFull(text, terms, _spanTokenizer);
+
+        if (terms.Count == 0)
+            return text;
+
+        if (text.Length <= FullHighlightLimit)
+            return TextHighlighter.HighlightFull(text, terms, _spanTokenizer);
+
+        var snippets = TextHighlighter.Highlight(
+            text,
+            terms,
+            _spanTokenizer,
+            new HighlightOptions { MaxSnippets = 1 });
+
+        return snippets.Count != 0 ? snippets[0].Text : Snippet(text);
     }
 
     private static ExplanationDto FromTerms(
@@ -390,17 +435,43 @@ public sealed class DemoSearchService
             agreement);
     }
 
-    private static string Field(SearchDocument document, string key) =>
-        document.Fields is not null && document.Fields.TryGetValue(key, out var value)
-            ? value
+    /// <summary>
+    /// A field's value, for the hit card. <see cref="SearchDocument.TextFields"/> is consulted as
+    /// well as <see cref="SearchDocument.Fields"/>: a BEIR corpus carries its title as a text
+    /// field -- the shape <c>LexiSharp.Eval.Evaluation.BuildDocuments</c> builds, and the shape the
+    /// index itself reads for field-aware scoring -- so reading only <c>Fields</c> left every hit
+    /// card titled with its document id, on the one corpus whose documents have titles.
+    /// </summary>
+    /// <remarks>
+    /// The category fallback is what a corpus with no category column gets: the hit card renders
+    /// that field unconditionally, so an unresolved lookup would put the document id in a slot
+    /// labelled as a category.
+    /// </remarks>
+    private static string Field(SearchDocument document, string key)
+    {
+        if (document.Fields is not null && document.Fields.TryGetValue(key, out string? value))
+            return value;
+
+        if (document.TextFields is not null && document.TextFields.TryGetValue(key, out string? text))
+            return text;
+
+        return key == "category" && !string.IsNullOrEmpty(document.Category)
+            ? document.Category
             : document.Id;
+    }
 
     private static string Snippet(string text) =>
         text.Length <= 220 ? text : text[..220].TrimEnd() + "…";
 
-    private void WarmUp()
+    /// <summary>
+    /// Runs one query through every lane before serving. The first timing a user sees is otherwise
+    /// dominated by first-touch work — lazy index construction, span-tokenizer warm-up — and would
+    /// report the cost of starting up as the cost of searching.
+    /// </summary>
+    /// <param name="corpus">The corpus being served, whose own first query is used as the seed.</param>
+    private void WarmUp(DemoCorpusSet corpus)
     {
-        const string seed = "refresh token";
+        string seed = corpus.SampleQueries.Count != 0 ? corpus.SampleQueries[0] : "refresh token";
 
         _lexical.Search(seed, new LexiSharpQueryOptions(Limit: 5));
         _semantic.Search(seed, new LexiSharpQueryOptions(Limit: 5));

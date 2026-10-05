@@ -163,6 +163,13 @@ function fmt(value, digits = 2) {
   return Number(value).toFixed(digits);
 }
 
+const CHIP_LABEL_LENGTH = 70;
+
+function chipLabel(query) {
+  const text = query.length > CHIP_LABEL_LENGTH ? query.slice(0, CHIP_LABEL_LENGTH).trimEnd() + "…" : query;
+  return esc(text);
+}
+
 async function getJson(url) {
   const response = await fetch(url);
   if (!response.ok) throw new Error("HTTP " + response.status);
@@ -172,10 +179,18 @@ async function getJson(url) {
 async function loadMeta() {
   try {
     const meta = await getJson("/api/meta");
-    $("meta").textContent = meta.documentCount + " documents indexed · 5 strategies · click a hit to explain its rank";
-    $("chips").innerHTML = meta.queries.map((query) => `<span class="chip">${esc(query)}</span>`).join("");
+    const corpus = meta.corpus.label + " · ";
+    const analysis = meta.analysis.name + " · ";
+    $("meta").textContent = corpus + analysis + meta.documentCount
+      + " documents indexed · 5 strategies · click a hit to explain its rank";
+    // The label is abbreviated, the query is not: an ArguAna query is a whole argument, and a chip
+    // carrying several thousand characters is unreadable. The full text stays in data-q, which is
+    // what the click runs, so a truncated chip still searches for the query it names.
+    $("chips").innerHTML = meta.queries
+      .map((query) => `<span class="chip" data-q="${esc(query)}">${chipLabel(query)}</span>`)
+      .join("");
     document.querySelectorAll(".chip").forEach((chip) => chip.addEventListener("click", () => {
-      $("q").value = chip.textContent;
+      $("q").value = chip.dataset.q;
       runSearch();
     }));
   } catch {
