@@ -201,6 +201,17 @@ below. The other four are conventions, and stay opt-in.
 
 ### Fixed
 
+- **A schema, table or configuration name ending in a newline was accepted by the PostgreSQL
+  engines.** The identifier check's pattern was `^[A-Za-z0-9_]+$`, and in .NET `$` matches at the end
+  of a string *or immediately before a trailing newline* — so `"lexisharp\n"` passed. It affected
+  `Schema`, `Table`, `TextSearchConfig`, `ContentField` and the `EmbeddingColumns` keys of all five
+  engines, each of which reports that a name « must match [A-Za-z0-9_] ». The name is quoted before
+  it reaches a statement, so a rejected-then-quoted name could not have broken one out; what it
+  could do was create a table whose name is not the name anyone wrote. Those names now raise the
+  same `ArgumentException` as any other character outside `[A-Za-z0-9_]`, and a property test pins
+  the check to exactly that character set, so an anchoring mistake fails on generated input rather
+  than on review.
+
 - **A search that matched nothing was absent from the metrics.** `RerankedTextSearchEngine` reported
   its `retrieve` stage and then returned without a `SearchCompleted`, so a query whose inner engine
   retrieved nothing left a stage row with no search beside it — and the latency of that search, which
