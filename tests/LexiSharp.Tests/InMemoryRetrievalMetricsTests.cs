@@ -225,6 +225,37 @@ public class InMemoryRetrievalMetricsTests
     }
 
     [Fact]
+    public void ASingleSubMicrosecondSearchSetsBothExtremes()
+    {
+        var metrics = new InMemoryRetrievalMetrics();
+
+        // The sentinel case: one sample of 0 microseconds. Min and max both have to leave the
+        // "nothing seen yet" state, and min <= max has to hold afterwards.
+        metrics.RecordSearch("a", 1, 0.0001);
+
+        var engine = Assert.Single(metrics.Snapshot().Engines);
+
+        Assert.Equal(1, engine.SearchCount);
+        Assert.Equal(0, engine.MinElapsedMs);
+        Assert.Equal(0, engine.MaxElapsedMs);
+    }
+
+    [Fact]
+    public void ARoundedDurationDoesNotAccumulateDownwardBias()
+    {
+        var metrics = new InMemoryRetrievalMetrics();
+
+        // 0.0006 ms is 0.6 microseconds. A truncating cast drops the fraction and records 0 for
+        // every sample, so the run totals 0; rounding keeps the microsecond and totals 1 ms.
+        for (int i = 0; i < 1_000; i++)
+            metrics.RecordSearch("a", 1, 0.0006);
+
+        var engine = Assert.Single(metrics.Snapshot().Engines);
+
+        Assert.Equal(1.0, engine.TotalElapsedMs, 3);
+    }
+
+    [Fact]
     public void SnapshotIsUnaffectedByLaterRecordings()
     {
         var metrics = new InMemoryRetrievalMetrics();

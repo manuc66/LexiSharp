@@ -8,7 +8,10 @@ namespace LexiSharp.Core;
 /// <param name="TotalElapsedMs">Sum of the search durations.</param>
 /// <param name="MinElapsedMs">Shortest search observed; <c>0</c> when no search ran.</param>
 /// <param name="MaxElapsedMs">Longest search observed; <c>0</c> when no search ran.</param>
-/// <param name="LastResultCount">Results on the page of the most recent search.</param>
+/// <param name="LastResultCount">
+/// Results on the page of the most recently recorded search — the last write to land, which under
+/// concurrency is not necessarily the last search to finish.
+/// </param>
 public sealed record EngineRetrievalMetrics(
     string Engine,
     long SearchCount,
@@ -23,7 +26,10 @@ public sealed record EngineRetrievalMetrics(
 /// <param name="InvocationCount">Number of times the stage ran.</param>
 /// <param name="TotalElapsedMs">Sum of the stage durations.</param>
 /// <param name="MaxElapsedMs">Longest stage run observed.</param>
-/// <param name="LastItemCount">Items handled by the most recent run.</param>
+/// <param name="LastItemCount">
+/// Items handled by the most recently recorded run — the last write to land, which under
+/// concurrency is not necessarily the last run to finish.
+/// </param>
 public sealed record StageRetrievalMetrics(
     string Engine,
     string Stage,
@@ -60,8 +66,8 @@ public sealed record RetrievalMetricsSnapshot(
 }
 
 /// <summary>
-/// The default <see cref="IRetrievalMetrics"/>: fixed-size counters kept in memory, with no
-/// external dependency. Enough to assert on in tests and to back a diagnostics endpoint in a small
+/// The default <see cref="IRetrievalMetrics"/>: in-memory counters grouped by engine and stage,
+/// with no external dependency. Enough to assert on in tests and to back a diagnostics endpoint in a small
 /// application; for a real metrics pipeline, implement <see cref="IRetrievalMetrics"/> over your
 /// backend of choice.
 /// </summary>
@@ -83,7 +89,10 @@ public sealed class InMemoryRetrievalMetrics : IRetrievalMetrics
     private const double MicrosecondsPerMillisecond = 1000.0;
 
     private readonly ConcurrentDictionary<string, EngineCounters> _engines = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<(string Engine, string Stage), StageCounters> _stages = new();
+    // The explicit comparer is redundant (the tuple default is already ordinal per component) and
+    // kept only so the three dictionaries read alike.
+    private readonly ConcurrentDictionary<(string Engine, string Stage), StageCounters> _stages =
+        new(EqualityComparer<(string Engine, string Stage)>.Default);
     private readonly ConcurrentDictionary<string, IndexCounters> _indexes = new(StringComparer.Ordinal);
 
     private long _searchCount;
@@ -155,7 +164,16 @@ public sealed class InMemoryRetrievalMetrics : IRetrievalMetrics
             .OrderBy(x => x.Engine, StringComparer.Ordinal)
             .ToList());
 
-    /// <summary>Drops every counter, as if nothing had been recorded yet.</summary>
+    /// <summary>
+    /// Drops every counter, as if nothing had been recorded yet.
+    /// </summary>
+    /// <remarks>
+    /// Best-effort under concurrency: the dictionaries are cleared and the totals zeroed one field
+    /// at a time, so a search that records while <see cref="Reset"/> runs may survive in a counter
+    /// cleared just before it, and a <see cref="Snapshot"/> taken mid-reset can see a half-cleared
+    /// collector. Call it from a quiescent point — a test teardown, an admin endpoint between
+    /// searches — not as a way to cancel in-flight measurements.
+    /// </remarks>
     public void Reset()
     {
         _engines.Clear();
@@ -170,8 +188,10 @@ public sealed class InMemoryRetrievalMetrics : IRetrievalMetrics
     private static long ToMicros(double elapsedMs) =>
         // NaN and the infinities survive an `elapsedMs <= 0` test, and casting one of them to long
         // is undefined-to-garbage rather than an exception -- so they are excluded explicitly.
+        // Rounded rather than truncated: the cast would drop every fraction of a microsecond, and
+        // accumulated over a long run those dropped halves bias the total low.
         double.IsFinite(elapsedMs) && elapsedMs > 0
-            ? (long)(elapsedMs * MicrosecondsPerMillisecond)
+            ? (long)Math.Round(elapsedMs * MicrosecondsPerMillisecond)
             : 0;
 
     private sealed class EngineCounters
@@ -188,10 +208,11 @@ public sealed class InMemoryRetrievalMetrics : IRetrievalMetrics
             Interlocked.Add(ref _totalMicros, micros);
             Interlocked.Exchange(ref _lastResultCount, resultCount);
 
-            // -1 is the "nothing seen yet" sentinel for the minimum; the first sample installs it.
-            Interlocked.CompareExchange(ref _minMicros, micros, -1);
-            UpdateExtreme(ref _minMicros, micros, lower: true);
-            UpdateExtreme(ref _maxMicros, micros, lower: false);
+            // One call each: installing the -1 sentinel and converging on it in two steps left a
+            // window in which a concurrent Snapshot() read the sentinel back as a zero minimum --
+            // indistinguishable from a search that really did take under a microsecond.
+            UpdateMin(ref _minMicros, micros);
+            UpdateMax(ref _maxMicros, micros);
         }
 
         public EngineRetrievalMetrics Snapshot(string engine) => new(
@@ -221,7 +242,7 @@ public sealed class InMemoryRetrievalMetrics : IRetrievalMetrics
             Interlocked.Increment(ref _invocations);
             Interlocked.Add(ref _totalMicros, micros);
             Interlocked.Exchange(ref _lastItemCount, itemCount);
-            UpdateExtreme(ref _maxMicros, micros, lower: false);
+            UpdateMax(ref _maxMicros, micros);
         }
 
         public StageRetrievalMetrics Snapshot(string engine, string stage) => new(
@@ -239,15 +260,35 @@ public sealed class InMemoryRetrievalMetrics : IRetrievalMetrics
     }
 
     /// <summary>
-    /// Lock-free min/max on a <c>long</c> holding a microsecond count. The compare-exchange is
-    /// optimistic: the loop re-reads the current value and only wins if nobody else changed it
-    /// in between, and a losing writer simply retries with the fresh value.
+    /// Lock-free minimum on a <c>long</c> holding a microsecond count, where <c>-1</c> is the
+    /// "nothing seen yet" sentinel rather than a value. The compare-exchange is optimistic: the
+    /// loop re-reads the current value and only wins if nobody else changed it in between, and a
+    /// losing writer simply retries with the fresh value. Seeding and converging in one loop keeps
+    /// the sentinel from ever being observable through <see cref="EngineCounters.MinMs"/>.
     /// </summary>
-    private static void UpdateExtreme(ref long target, long value, bool lower)
+    private static void UpdateMin(ref long target, long value)
     {
-        long current = Interlocked.Read(ref target);
+        long current = Volatile.Read(ref target);
 
-        while (lower ? value < current : value > current)
+        while (current < 0 || value < current)
+        {
+            long observed = Interlocked.CompareExchange(ref target, value, current);
+            if (observed == current)
+                return;
+
+            current = observed;
+        }
+    }
+
+    /// <summary>
+    /// Lock-free maximum on the same representation, seeded by <c>0</c> since a duration is never
+    /// negative. Optimistic compare-exchange, same shape as <see cref="UpdateMin"/>.
+    /// </summary>
+    private static void UpdateMax(ref long target, long value)
+    {
+        long current = Volatile.Read(ref target);
+
+        while (value > current)
         {
             long observed = Interlocked.CompareExchange(ref target, value, current);
             if (observed == current)
