@@ -134,7 +134,35 @@ public class BoostedTextSearchEngineTests
         Assert.Contains(results, r => r.DocumentId == "b");
     }
 
-    [Fact]
+    // The score-0 exclusion is its own condition, not a step in a chain: a document boosted to
+    // exactly 0 is dropped even by a caller who asked for a negative floor, while one boosted to
+    // -1 survives that same floor. So the two are not interchangeable, and the difference is the
+    // score-0 convention rather than the threshold. Reordering the two guards would not change
+    // anything -- they are independent filters, both of which drop -- so this pins the asymmetry
+    // itself, which is what a caller setting a negative MinimumScore has to be able to rely on.
+[Fact]
+    public void ABoostedScoreOfZero_IsExcludedWhateverMinimumScoreTheCallerAsksFor()
+    {
+        var shared = new SearchDocument("shared", "unused text");
+        var inner = new StubEngine
+        {
+            Results =
+            {
+                new SearchResult("a", 10.0, shared),   // 10 - 10 = exactly 0
+                new SearchResult("b", 10.0, shared),   // 10 - 11 = -1
+            },
+        };
+
+        var boosted = new BoostedTextSearchEngine(
+            inner,
+            r => r.DocumentId == "a" ? ScoreBoost.Offset(-10.0) : ScoreBoost.Offset(-11.0));
+
+        var results = boosted.Search("query", new SearchOptions(MinimumScore: -5.0));
+
+        Assert.Equal(new[] { "b" }, results.Select(r => r.DocumentId));
+    }
+
+[Fact]
     public void OverFetch_BringsDeepCandidateIntoTopN()
     {
         var inner = new StubEngine { Results = Ranked(12).ToList() };
