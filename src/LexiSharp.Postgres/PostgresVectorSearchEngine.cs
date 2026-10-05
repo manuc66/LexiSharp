@@ -107,7 +107,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         {
             await using (var command = connection.CreateCommand())
             {
-                command.CommandText = $"ALTER TABLE {_options.QualifiedTableName} ADD COLUMN IF NOT EXISTS {Quote(column)} {_options.VectorType};"; // NOSONAR:S2077
+                command.CommandText = $"ALTER TABLE {_options.QualifiedTableName} ADD COLUMN IF NOT EXISTS {SafeIdentifier.QuoteIdentifier(column)} {_options.VectorType};"; // NOSONAR:S2077
                 await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
         }
@@ -149,11 +149,11 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
 
     private async Task CreateIndexAsync(NpgsqlConnection connection, string column, string indexBase, CancellationToken cancellationToken)
     {
-        var indexName = PostgresIndexOptions.QuoteIdentifier($"{indexBase}_{_options.IndexMethod.ToString().ToLowerInvariant()}");
+        var indexName = SafeIdentifier.QuoteIdentifier($"{indexBase}_{_options.IndexMethod.ToString().ToLowerInvariant()}");
 
         string build = _options.IndexMethod == VectorIndexMethod.Hnsw
-            ? $"USING hnsw ({Quote(column)} {_options.OpClass}) WITH (m = {_options.HnswM}, ef_construction = {_options.HnswEfConstruction})"
-            : $"USING ivfflat ({Quote(column)} {_options.OpClass}) WITH (lists = {_options.IvfLists})";
+            ? $"USING hnsw ({SafeIdentifier.QuoteIdentifier(column)} {_options.OpClass}) WITH (m = {_options.HnswM}, ef_construction = {_options.HnswEfConstruction})"
+            : $"USING ivfflat ({SafeIdentifier.QuoteIdentifier(column)} {_options.OpClass}) WITH (lists = {_options.IvfLists})";
 
         await using var command = connection.CreateCommand();
         command.CommandText = $"CREATE INDEX IF NOT EXISTS {indexName} ON {_options.QualifiedTableName} {build}"; // NOSONAR:S2077
@@ -267,10 +267,10 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         await using var multiConnection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         await using var multiCommand = multiConnection.CreateCommand();
 
-        string columnList = string.Join(", ", columns.Select(c => Quote($"{c}_embedding")));
+        string columnList = string.Join(", ", columns.Select(c => SafeIdentifier.QuoteIdentifier($"{c}_embedding")));
         string parameterList = string.Join(", ", columns.Select((_, i) => $"@e{i}::vector"));
         string updateList = string.Join(", ",
-            columns.Select(c => $"{Quote($"{c}_embedding")} = EXCLUDED.{Quote($"{c}_embedding")}"));
+            columns.Select(c => $"{SafeIdentifier.QuoteIdentifier($"{c}_embedding")} = EXCLUDED.{SafeIdentifier.QuoteIdentifier($"{c}_embedding")}"));
 
         string multiTsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content");
 
@@ -682,7 +682,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
 
     private string ScoreExpression(string column)
     {
-        string quoted = Quote(column);
+        string quoted = SafeIdentifier.QuoteIdentifier(column);
 
         return _options.Distance switch
         {
@@ -701,12 +701,10 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
     internal string BuildSearchSql(string column, string filterFragment) => $"""
         SELECT id, content, category, fields, text_fields, {ScoreExpression(column)} AS score
         FROM {_options.QualifiedTableName}
-        WHERE {Quote(column)} IS NOT NULL{filterFragment}
-        ORDER BY {Quote(column)} {_options.Operator} @query::vector
+        WHERE {SafeIdentifier.QuoteIdentifier(column)} IS NOT NULL{filterFragment}
+        ORDER BY {SafeIdentifier.QuoteIdentifier(column)} {_options.Operator} @query::vector
         LIMIT @limit;
         """;
-
-    private static string Quote(string identifier) => PostgresIndexOptions.QuoteIdentifier(identifier);
 
     private sealed record SearchOutcome(
         IReadOnlyList<SearchResult> Results,
