@@ -262,9 +262,14 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         // not `ordinal`, which counts the documents that *matched* and reached the top window: a
         // document scored to zero was paid for and is not counted there, so a cost sheet built on
         // ordinal would under-report the work by every non-matching candidate.
-        long scoredDocuments;
+        long scoredDocuments = 0;
 
-        if (!TryRunAccumulatingQuery(plan, reachableDocuments, parsed, options, facets, top, out ordinal, out scoredDocuments))
+        if (TryRunAccumulatingQuery(plan, reachableDocuments, parsed, options, facets, top) is { } accumulated)
+        {
+            ordinal = accumulated.Ordinal;
+            scoredDocuments = accumulated.ScoredDocuments;
+        }
+        else
         {
             // Convention: a score of exactly 0 means "not a match".
             // When the index can enumerate the documents sharing at least one query term
@@ -411,8 +416,8 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
     /// <summary>
     /// Scores the query in one term-at-a-time pass and cuts the window from the matched set,
-    /// returning <c>false</c> — having changed nothing but a rented buffer — when the query has
-    /// to go the per-document way instead.
+    /// returning the counts it produced — or <c>null</c>, having changed nothing but a rented
+    /// buffer, when the query has to go the per-document way instead.
     /// </summary>
     /// <remarks>
     /// The gates this path refuses are the ones that are cheaper before scoring than after: a
@@ -439,19 +444,14 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// <see cref="TopRankedWindow"/> breaks ties on the document id rather than on arrival order.
     /// </para>
     /// </remarks>
-    private bool TryRunAccumulatingQuery(
+    private AccumulatedCounts? TryRunAccumulatingQuery(
         ISearchQueryPlan? plan,
         int reachableDocuments,
         ParsedQuery parsed,
         SearchOptions options,
         FacetCollector? facets,
-        TopRankedWindow top,
-        out long ordinal,
-        out long scoredDocuments)
+        TopRankedWindow top)
     {
-        ordinal = 0;
-        scoredDocuments = 0;
-
         // A metadata filter reaches this pass only through AccumulateFilteredQueries, and only for a
         // request that keeps TieBreak.DocumentId. InsertionOrder breaks ties by the position the
         // candidate arrived at, and the two paths do not produce candidates in the same order: a full
@@ -469,7 +469,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             (filterWouldBeHonoured &&
                 (!options.AccumulateFilteredQueries || options.TieBreak != TieBreak.DocumentId)))
         {
-            return false;
+            return null;
         }
 
         // The pass clears a buffer sized to the corpus before it scores anything, so a query too
@@ -477,14 +477,15 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         int minimumEntries = AccumulationThreshold(index.OrdinalSpace);
 
         if (reachableDocuments < minimumEntries)
-            return false;
+            return null;
 
         var accumulator = ScoreAccumulator.Rent(index.OrdinalSpace);
+        long ordinal = 0;
 
         try
         {
             if (!accumulating.TryAccumulate(index, accumulator))
-                return false;
+                return null;
 
             // One gate list, shared with the per-document loop, rather than this pass's own. A
             // separate list is how the id exclusion came to be missing here while the loop above
@@ -514,9 +515,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             // accumulated a weight for, whether or not its finalised score survived the gate in
             // the loop above. That makes this the same quantity the per-document loop counts one
             // at a time.
-            scoredDocuments = accumulator.Count;
-
-            return true;
+            return new AccumulatedCounts(ordinal, accumulator.Count);
         }
         finally
         {
@@ -526,6 +525,18 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             accumulator.Dispose();
         }
     }
+
+    /// <summary>
+    /// What the term-at-a-time pass produced: the ordinals it recorded, and the documents it scored
+    /// to produce them.
+    /// </summary>
+    /// <param name="Ordinal">Documents that matched and reached the top window.</param>
+    /// <param name="ScoredDocuments">
+    /// Documents whose relevance score was computed, including those that scored zero. Not the same
+    /// number as <paramref name="Ordinal"/>: a document paid for and rejected is not counted in either,
+    /// but a document paid for and scored zero is counted here and not there.
+    /// </param>
+    private readonly record struct AccumulatedCounts(long Ordinal, long ScoredDocuments);
 
     /// <summary>
     /// Sum of the query terms' document frequencies: an upper bound on the union of the candidate
