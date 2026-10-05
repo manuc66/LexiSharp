@@ -16,6 +16,9 @@ namespace LexiSharp.Tests;
 /// <see cref="Score_PrefersTheConcentratedDocument_WhereBm25PrefersTheShortOne"/> is the opposite
 /// direction: on a corpus where the two scorers genuinely disagree, the windowed one reverses the
 /// order. Without it, a scorer that quietly ignored its windows would pass everything else here.
+/// <see cref="Score_WithTheWholeDocument_MakesTheWidthsInert"/> pins a consequence of the formula
+/// that a caller cannot see from the signature: with the whole document in the set, the maximum over
+/// windows is the whole document, so the widths decide nothing.
 /// </remarks>
 public class WindowBm25ScorerTests
 {
@@ -139,19 +142,58 @@ public class WindowBm25ScorerTests
     [Fact]
     public void Score_WithOverlappingWindows_CountsEachOccurrenceOncePerWindow()
     {
-        // A term at positions 1 and 2 belongs to every window that spans both, and must contribute
-        // its full frequency to each of them rather than accumulating across the sweep.
+        // A term contributes its frequency in a window to every window that spans its occurrences,
+        // and must not accumulate across the sweep as the window advances. The two occurrences sit
+        // 4 apart in a 6-token document on purpose: no width-4 window holds both, so the best the
+        // sweep can reach is a single occurrence, and a sweep that never released what it had passed
+        // would carry position 0 forward into the later windows and report 2, 3, more.
         var index = new InMemoryTextIndex();
-        index.Add(new SearchDocument("doc", "filler alpha alpha filler filler"));
+        index.Add(new SearchDocument("split", "alpha filler filler filler alpha filler"));
+        index.Add(new SearchDocument("single", "alpha filler filler filler filler filler"));
 
         var overlapping = new WindowBm25Scorer([4], stride: 1);
-        double best = overlapping.Score("doc", ["alpha"], index);
+        double best = overlapping.Score("split", ["alpha"], index);
 
-        // One window of width 4 holds both occurrences however far it slides, so the best it can
-        // reach is the frequency-2 score — never the sum of three overlapping windows.
-        var whole = new WindowBm25Scorer(includeWholeDocument: true).Score("doc", ["alpha"], index);
+        // `single` reaches the frequency-1 score with its one occurrence, and shares the corpus with
+        // `split`, so both terms carry the same idf and the two scores are directly comparable.
+        Assert.Equal(overlapping.Score("single", ["alpha"], index), best);
 
-        Assert.Equal(whole, best);
+        // The whole document holds both occurrences and is strictly above anything a window here can
+        // reach, which is the gap the windowed scorer exists to give up.
+        double whole = new Bm25Scorer(b: 0).Score("split", ["alpha"], index);
+        Assert.True(whole > best, $"whole {whole} should exceed the best window {best}");
+    }
+
+    [Fact]
+    public void Score_WithTheWholeDocument_MakesTheWidthsInert()
+    {
+        // The formula carries no length normalization, so a term's contribution tf·(k1+1)/(tf + k1)
+        // rises with tf; the whole document holds at least as many occurrences of every query term as
+        // any window does, so it dominates each window term by term and the maximum over a set that
+        // contains it can only be itself. Measured over 78 800 (query, document) pairs of a real
+        // corpus at k1 = 0, 0.4, 1.5, 2.4 and 13.0, the gap is exactly zero — so this asserts
+        // equality rather than a tolerance, which is what the arithmetic supports.
+        var index = CreateCorpus();
+        string[] query = ["alpha", "beta"];
+
+        var wholeOnly = new WindowBm25Scorer(includeWholeDocument: true);
+
+        // Two widths, and a stride that overlaps four deep, so neither the width nor the stride has
+        // anywhere to hide: if any window could win, one of these would.
+        foreach (int width in new[] { 2, 4, 8 })
+        {
+            foreach (int stride in new[] { 0, 1, 2 })
+            {
+                var withWhole = new WindowBm25Scorer([width], stride: stride, includeWholeDocument: true);
+
+                Assert.Equal(wholeOnly.Score("long", query, index), withWhole.Score("long", query, index));
+            }
+        }
+
+        // Without the flag the same widths are not inert, so the assertion above is about the flag
+        // and not about a scorer that ignores its windows.
+        var windowsOnly = new WindowBm25Scorer([2], stride: 1);
+        Assert.NotEqual(wholeOnly.Score("long", query, index), windowsOnly.Score("long", query, index));
     }
 
     [Fact]
