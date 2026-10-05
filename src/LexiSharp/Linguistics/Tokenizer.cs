@@ -340,14 +340,14 @@ public sealed class Tokenizer : ISpanTokenizer
     /// Whether the word continues at <paramref name="position"/>: either a character that can be part of
     /// a word, or an unconditional joiner — the run of leading underscores needs the second case.
     /// </summary>
-    private bool ContinuesWord(ReadOnlySpan<char> text, int position) =>
+    private static bool ContinuesWord(ReadOnlySpan<char> text, int position) =>
         StartsWordAt(text, position) || RuleFor(text[position]) == JoinRule.Always;
 
     /// <summary>
     /// Whether a token that has opened on joiners reaches a word character: one immediately, or past a
     /// further run of joiners. Measured: `__alpha` is a token, `___` alone is not.
     /// </summary>
-    private bool LeadsWordAt(ReadOnlySpan<char> text, int position)
+    private static bool LeadsWordAt(ReadOnlySpan<char> text, int position)
     {
         while (position < text.Length)
         {
