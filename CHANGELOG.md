@@ -524,9 +524,15 @@ commit messages carry the measurements.
   those `s` positions and by nothing else — scoring by the best passage makes length stop being what
   ranks the document, and a caller who wants length to count puts it back as a term of its own with a
   weight they chose.
-  `includeWholeDocument: true` with no widths scores the document as one window, which is BM25 with
-  `b = 0` — **exactly**, asserted to the bit over a hand-built corpus and over 500 generated ones,
-  so a windowed-versus-whole comparison made through this type compares one scorer against itself.
+  `includeWholeDocument: true` scores the document as one window, which is BM25 with `b = 0` —
+  **exactly**, asserted to the bit over a hand-built corpus, over 500 generated ones and over a
+  measured corpus, so a windowed-versus-whole comparison made through this type compares one scorer
+  against itself. **Combined with widths it changes nothing at all**, and that is the formula rather
+  than a fault: with no length term a term's contribution rises with its frequency, the whole document
+  dominates every window term by term, and a maximum over a set containing it can only be itself.
+  Measured over 78,800 (query, document) pairs at `k1` = 0, 0.4, 1.5, 2.4 and 13.0 the gap is zero,
+  and `WindowBm25ScorerTests` asserts it. **There is no multi-scale sweep to be had from this type**,
+  and a fusion whose span set contains the whole document is a global scorer with extra steps.
   It stays an `ITermOverlapScorer`: a document sharing no query term has no position inside any
   window, so its score is `0` and the engine may skip it. It never takes the term-at-a-time
   accumulation pass, which scores by ordinal from a per-term weight and carries no positions — a
@@ -537,8 +543,14 @@ commit messages carry the measurements.
   on a corpus of meeting transcripts, and **+0.003, interval [−0.019, +0.026]** on one of book-length
   narrative, with no width excluding zero. The `b = 0` counterpart is the honest within-family
   comparison and not a strong scorer: against a whole-document BM25 tuned on the same development
-  split, the same formula gains +0.035 on the first corpus and loses 0.036 on the second, so a caller
-  who has already tuned `Bm25Scorer` should expect much less than +0.141. The harness is outside this
+  split, the same formula gains +0.035 on the first corpus and loses 0.036 on the second. Tuning
+  **both** arms independently — the comparison that actually decides adoption — gives **+0.041,
+  interval [+0.006, +0.079]** on the first and **−0.020, interval [−0.041, −0.001]** on the second,
+  with both baselines at an interior optimum. Over the 180 windowed configurations swept on the first,
+  the median against the tuned baseline is −0.003 and 48 % are positive; on the second, none of the
+  180 is positive. So a caller who has already tuned `Bm25Scorer` should expect much less than +0.141,
+  and should read one configuration's result as one corpus's result rather than as a property of
+  windowing. The harness is outside this
   repository, so none of those figures is reproducible from it —
   [docs/ranking.md](docs/ranking.md#scoring-a-document-by-its-best-window-windowbm25scorer) carries
   them with the protocol, the corpora and the second baseline; `WindowBm25Scorer`'s remarks carry the
