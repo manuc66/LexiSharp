@@ -367,10 +367,11 @@ public sealed class LexiSharpIndex<TDocument>
         return static document => ((SearchDocument)(object)document).TextFields;
     }
 
-    // NOSONAR:S1172 -- both parameters are fixed by the Func<TDocument, ...> these are assigned to.
-    private static string? NoCategory(TDocument _) => null;
+    // The `_` parameters are fixed by the Func<TDocument, ...> these are assigned to: a selector
+    // over a document type has to accept the document, whether or not it reads anything from it.
+    private static string? NoCategory(TDocument _) => null; // NOSONAR:S1172
 
-    private static IReadOnlyDictionary<string, string>? NoFields(TDocument _) => null;
+    private static IReadOnlyDictionary<string, string>? NoFields(TDocument _) => null; // NOSONAR:S1172
 
     private static ArgumentException NewMappingError(string selector) =>
         new($"LexiSharpIndex<TDocument> requires an explicit {selector} selector for this document type. Set options.{selector} in the constructor delegate.");
