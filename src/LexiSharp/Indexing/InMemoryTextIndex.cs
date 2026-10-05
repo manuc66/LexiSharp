@@ -551,9 +551,13 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     {
         // The lookup the index had to do anyway, carrying the shared instance along: the first
         // occurrence of a value defines the instance, and every later occurrence is rewritten to it
-        // at no extra hashing cost.
+        // at no extra hashing cost. Assigned before the Add rather than inside it, so the statement
+        // says one thing — the list is stored under `term` — instead of storing and assigning.
         if (!_postings.TryGetValue(term, out var posting))
-            _postings.Add(term, posting = new PostingList(term));
+        {
+            posting = new PostingList(term);
+            _postings.Add(term, posting);
+        }
 
         string shared = posting.Term;
         var postings = posting.ByDocument;
@@ -646,7 +650,10 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
                 continue;
 
             if (!_postings.TryGetValue(candidate, out var posting))
-                _postings.Add(candidate, posting = new PostingList(candidate));
+            {
+                posting = new PostingList(candidate);
+                _postings.Add(candidate, posting);
+            }
 
             string term = posting.Term;
 
