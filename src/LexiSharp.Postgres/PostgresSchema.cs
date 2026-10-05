@@ -23,7 +23,7 @@ public static class PostgresSchema
 
         await using var command = connection.CreateCommand();
 
-        string indexName = PostgresIndexOptions.QuoteIdentifier($"{options.Table}_tsv_gin");
+        string indexName = SafeIdentifier.QuoteIdentifier($"{options.Table}_tsv_gin");
 
         string createSql = $"""
             CREATE TABLE IF NOT EXISTS {options.QualifiedTableName} (

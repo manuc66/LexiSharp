@@ -118,7 +118,7 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable, 
         if (_options.IncludePhonetic)
         {
             await using var command = connection.CreateCommand();
-            command.CommandText = $"CREATE INDEX IF NOT EXISTS {QuoteIdentifier($"{_options.Table}_metaphone_idx")} ON {_options.QualifiedTableName} (metaphone);"; // NOSONAR:S2077;
+            command.CommandText = $"CREATE INDEX IF NOT EXISTS {SafeIdentifier.QuoteIdentifier($"{_options.Table}_metaphone_idx")} ON {_options.QualifiedTableName} (metaphone);"; // NOSONAR:S2077;
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
@@ -263,15 +263,13 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable, 
 
     internal string TestTableName => _options.Table;
 
-    private static string QuoteIdentifier(string name) => PostgresIndexOptions.QuoteIdentifier(name);
-
     private async Task CreateIndexAsync(
         NpgsqlConnection connection,
         string kind,
         string accessMethod,
         CancellationToken cancellationToken)
     {
-        var indexName = QuoteIdentifier($"{_options.Table}_{_options.ContentField}_trgm_{kind}");
+        var indexName = SafeIdentifier.QuoteIdentifier($"{_options.Table}_{_options.ContentField}_trgm_{kind}");
         var opClass = kind == "gist" ? "gist_trgm_ops" : "gin_trgm_ops";
 
         await using var command = connection.CreateCommand();

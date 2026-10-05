@@ -113,7 +113,7 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
 
     private async Task CreateIndexAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
     {
-        var indexName = PostgresIndexOptions.QuoteIdentifier($"{_options.Table}_sparse_hnsw");
+        var indexName = SafeIdentifier.QuoteIdentifier($"{_options.Table}_sparse_hnsw");
 
         await using var command = connection.CreateCommand();
         string createIndexSql = $"""
