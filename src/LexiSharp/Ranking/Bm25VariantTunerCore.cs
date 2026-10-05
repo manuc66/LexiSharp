@@ -10,6 +10,18 @@ namespace LexiSharp.Ranking;
 /// <param name="MetricScore">Mean value of the tuned <see cref="TuningMetric"/> over the validation set.</param>
 internal sealed record Bm25VariantGridPoint(double K1, double B, double Delta, double MetricScore);
 
+/// <summary>
+/// What a variant grid search is run against and judged by: everything that does not vary per
+/// grid point, so the search itself reads as the grid loop and nothing else.
+/// </summary>
+internal sealed record Bm25VariantSearchRequest(
+    ITextIndex Index,
+    ITokenizer Tokenizer,
+    IReadOnlyList<Bm25ValidationQuery> ValidationQueries,
+    int TopK,
+    TuningMetric Metric,
+    int MaxConfigurations);
+
 /// <summary>What a variant grid search found, before it is shaped into a variant's public result.</summary>
 internal sealed record Bm25VariantSearchResult(
     IReadOnlyList<Bm25VariantGridPoint> Grid,
@@ -117,26 +129,20 @@ internal static class Bm25VariantTunerCore
     /// any combination reached with <b>no</b> lower bound — the baseline the bound has to beat.
     /// </summary>
     internal static Bm25VariantSearchResult Run(
-        ITextIndex index,
-        ITokenizer tokenizer,
-        IReadOnlyList<Bm25ValidationQuery> validationQueries,
-        double[] k1Grid,
-        double[] bGrid,
-        double[] deltaGrid,
-        int topK,
-        TuningMetric metric,
-        int maxConfigurations,
+        Bm25VariantSearchRequest request,
+        (double[] K1, double[] B, double[] Delta) grids,
         Func<double, double, double, ITextScorer> scorerFactory)
     {
+        var (k1Grid, bGrid, deltaGrid) = grids;
         long total = (long)k1Grid.Length * bGrid.Length * deltaGrid.Length;
 
-        if (total > maxConfigurations)
+        if (total > request.MaxConfigurations)
         {
             throw new ArgumentException(
-                $"This search would evaluate {total} configurations, above the cap of {maxConfigurations}. " +
+                $"This search would evaluate {total} configurations, above the cap of {request.MaxConfigurations}. " +
                 "Narrow a grid — delta is the cheapest axis to drop — or raise " +
-                $"{nameof(maxConfigurations)} deliberately, because a grid this size fits its noise.",
-                nameof(maxConfigurations));
+                $"{nameof(Bm25VariantSearchRequest.MaxConfigurations)} deliberately, because a grid this size fits its noise.",
+                nameof(Bm25VariantSearchRequest.MaxConfigurations));
         }
 
         var grid = new List<Bm25VariantGridPoint>((int)total);
@@ -154,10 +160,10 @@ internal static class Bm25VariantTunerCore
                     // A fresh engine per point, over the same index. The index is read-only here and
                     // no scorer state is shared, so tuning mutates nothing.
                     var engine = new RankedTextSearchEngine(
-                        index, scorerFactory(k1, b, delta), tokenizer);
+                        request.Index, scorerFactory(k1, b, delta), request.Tokenizer);
 
                     var point = new Bm25VariantGridPoint(
-                        k1, b, delta, Evaluate(engine, validationQueries, topK, metric));
+                        k1, b, delta, Evaluate(engine, request));
 
                     grid.Add(point);
 
@@ -183,15 +189,13 @@ internal static class Bm25VariantTunerCore
             grid.Count);
     }
 
-    private static double Evaluate(
-        ITextSearchEngine engine,
-        IReadOnlyList<Bm25ValidationQuery> validationQueries,
-        int topK,
-        TuningMetric metric)
+    private static double Evaluate(ITextSearchEngine engine, Bm25VariantSearchRequest request)
     {
+        int topK = request.TopK;
+        TuningMetric metric = request.Metric;
         double total = 0;
 
-        foreach (var validationQuery in validationQueries)
+        foreach (var validationQuery in request.ValidationQueries)
         {
             var retrievedIds = engine
                 .Search(validationQuery.Query, new SearchOptions(topK, ExcludedDocumentIds: validationQuery.ExcludedDocumentIds))
@@ -208,6 +212,6 @@ internal static class Bm25VariantTunerCore
             };
         }
 
-        return total / validationQueries.Count;
+        return total / request.ValidationQueries.Count;
     }
 }
