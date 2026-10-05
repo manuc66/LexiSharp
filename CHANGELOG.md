@@ -201,6 +201,24 @@ below. The other four are conventions, and stay opt-in.
 
 ### Fixed
 
+- **A search that matched nothing was absent from the metrics.** `RerankedTextSearchEngine` reported
+  its `retrieve` stage and then returned without a `SearchCompleted`, so a query whose inner engine
+  retrieved nothing left a stage row with no search beside it — and the latency of that search, which
+  on a real index is a miss rather than a fast path, never reached `RecordSearch`. A search that
+  answers nothing is still a search, and it is now counted with zero results, the shape
+  `HybridTextSearchEngine` already produced when every lane came back empty. A request the caller
+  made empty (`Limit` of zero or less) is rejected before any work and still reports nothing.
+
+- **A concurrent snapshot could read the minimum as zero before any search had timed.** The engine
+  counters installed their "nothing seen yet" sentinel and converged on it in two separate operations,
+  leaving a window in which a `Snapshot()` read the sentinel back as a minimum of `0` — indistinguishable
+  from a search that genuinely finished in under a microsecond, which is the common case at this
+  resolution. Seeding and converging now happen in one compare-exchange loop.
+
+- **Sub-microsecond durations were truncated, biasing a long total low.** A sample of 0.6 microseconds
+  cast to `long` recorded nothing, so a thousand of them totalled zero instead of one millisecond.
+  Rounded rather than truncated.
+
 - **The pinned reference replayed query syntax the table does not use.** `ReferenceVerifier` built
   its `SearchOptions` without naming `ParseQuerySyntax`, so every pin inherited the library default —
   a `"` is a phrase delimiter — while the table each row is compared against runs literal-text
