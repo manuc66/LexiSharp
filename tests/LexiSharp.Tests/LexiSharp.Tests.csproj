@@ -45,6 +45,11 @@
          numbers, and the mistake only surfaces in a conclusion drawn from it. Excluded from
          coverage, being bench code, whose coverage would flatter the library's own figure. -->
     <ProjectReference Include="../../bench/LexiSharp.Eval/LexiSharp.Eval.csproj" ExcludeFromCodeCoverage="true" />
+    <!-- The demo, referenced so its option resolution and corpus reading are tested rather than
+         trusted: both decide what a reader is shown and what gets indexed, and a wrong answer in
+         either produces a page that looks right. Excluded from coverage, being sample code, whose
+         coverage would flatter the library's own figure. -->
+    <ProjectReference Include="../../samples/LexiSharp.Demo/LexiSharp.Demo.csproj" ExcludeFromCodeCoverage="true" />
   </ItemGroup>
 
 </Project>
