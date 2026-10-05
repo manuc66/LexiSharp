@@ -18,10 +18,6 @@ workflow.
 
 ## [0.8.0] — Unreleased
 
-The version number is not settled. Nothing here changes an existing default, but two fixes change
-observable behaviour for callers who rely on the old results, and a patch release would understate
-that. Whichever number is chosen, the reason is here.
-
 ### Added
 
 - **A filtered query now uses the term-at-a-time pass by default.**
