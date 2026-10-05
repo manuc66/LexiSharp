@@ -153,7 +153,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `GraphContext` | record | — | The answer a IKnowledgeGraphBridge returns for a sub-graph query around a set of entities: the local facts that touch them, plus the community summaries the… |
 | `GraphHydratedResults` | record | — | The outcome of SearchWithGraphFacts: the ordinary ranked page plus the facts the IKnowledgeGraphBridge returned for the query's entities. |
 | `HierarchicalTextSearchEngine` | class | `IStructureAwareSearchEngine`, `ITextSearchEngine` | A decorator that layers a DocumentHierarchy over an existing engine: searches and writes are forwarded unchanged — flat retrieval still finds the precise node —… |
-| `InMemoryRetrievalMetrics` | class | `IRetrievalMetrics` | The default IRetrievalMetrics: fixed-size counters kept in memory, with no external dependency. Enough to assert on in tests and to back a diagnostics endpoint… |
+| `InMemoryRetrievalMetrics` | class | `IRetrievalMetrics` | The default IRetrievalMetrics: in-memory counters grouped by engine and stage, with no external dependency. Enough to assert on in tests and to back a… |
 | `IndexRetrievalMetrics` | record | — | The latest observed size of one engine's index. |
 | `MetadataFilter` | record | — | A declarative, single-field predicate over Fields — the raw material of structured filtering (e.g. category = article, year &gt; 2023, tags containing nlp). |
 | `MetadataFilterOperator` | enum | — | Comparison applied by a MetadataFilter. |
