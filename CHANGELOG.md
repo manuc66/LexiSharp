@@ -201,6 +201,11 @@ below. The other four are conventions, and stay opt-in.
 
 ### Fixed
 
+- **The sparse engine's rejection message named the pattern with a stray character in it.**
+  `PostgresSparseOptions` reported that a schema and table "must match `[A-Za-z0-9_]_`", which is not
+  the pattern any of the five engines checks and reads as a typo to whoever pastes the message into a
+  search.
+
 - **A schema, table or configuration name ending in a newline was accepted by the PostgreSQL
   engines.** The identifier check's pattern was `^[A-Za-z0-9_]+$`, and in .NET `$` matches at the end
   of a string *or immediately before a trailing newline* — so `"lexisharp\n"` passed. It affected

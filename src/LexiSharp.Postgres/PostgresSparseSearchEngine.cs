@@ -59,7 +59,7 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
 
         if (!_options.IsValid)
             throw new ArgumentException(
-                "Schema and table must match [A-Za-z0-9_]_, the vocabulary must be non-empty with non-negative" +
+                "Schema and table must match [A-Za-z0-9_], the vocabulary must be non-empty with non-negative" +
                 " coordinates, and HNSW parameters must be positive.",
                 nameof(options));
 
