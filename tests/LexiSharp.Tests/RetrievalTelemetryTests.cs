@@ -199,6 +199,49 @@ public class RetrievalTelemetryTests
     }
 
     [Fact]
+    public void RerankedEngineReportsACompletedSearchWhenNothingIsFound()
+    {
+        var metrics = new InMemoryRetrievalMetrics();
+
+        // Empty index: the inner engine retrieves nothing, so there is no rerank stage to time. The
+        // search is still answered, and its latency belongs in the search counter — otherwise a
+        // query that matches nothing leaves a retrieve stage row with no search beside it.
+        var engine = new RerankedTextSearchEngine(
+            new RankedTextSearchEngine(new InMemoryTextIndex(), new Bm25Scorer()),
+            new ProximityReranker(new InMemoryTextIndex()),
+            telemetry: new RetrievalTelemetry(metrics: metrics));
+
+        Assert.Empty(engine.Search("token"));
+
+        var snapshot = metrics.Snapshot();
+
+        Assert.Equal(1, snapshot.SearchCount);
+
+        var reported = Assert.Single(snapshot.Engines, e => e.Engine == RerankedTextSearchEngine.EngineName);
+        Assert.Equal(1, reported.SearchCount);
+        Assert.Equal(0, reported.LastResultCount);
+    }
+
+    [Fact]
+    public void RerankedEngineDoesNotReportASearchForAnEmptyRequest()
+    {
+        var metrics = new InMemoryRetrievalMetrics();
+        var index = new InMemoryTextIndex();
+        var inner = new RankedTextSearchEngine(index, new Bm25Scorer());
+        inner.Index(Corpus);
+
+        var engine = new RerankedTextSearchEngine(
+            inner,
+            new ProximityReranker(index),
+            telemetry: new RetrievalTelemetry(metrics: metrics));
+
+        // An empty request (Limit <= 0) is rejected before any work: the contract on IsEmpty is
+        // that a caller's own limit decides the outcome, without a scan, so no search is reported.
+        Assert.Empty(engine.Search("token", new SearchOptions(Limit: 0)));
+        Assert.Equal(0, metrics.Snapshot().SearchCount);
+    }
+
+    [Fact]
     public void WarningDoesNotRequireAMetricsCollector()
     {
         var events = new List<RetrievalLogEvent>();

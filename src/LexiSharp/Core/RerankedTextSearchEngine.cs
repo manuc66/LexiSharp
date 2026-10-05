@@ -7,8 +7,15 @@ namespace LexiSharp.Core;
 /// <para>
 /// Writes (<see cref="Index"/>, <see cref="Add"/>, <see cref="Remove"/>, <see cref="Clear"/>)
 /// are forwarded to the inner engine unchanged. <see cref="Search"/> runs the inner engine,
-/// hands its candidates to the <see cref="IReranker"/>, then re-sorts, re-applies the
-/// <see cref="SearchOptions.MinimumScore"/> and re-trims to <see cref="SearchOptions.Limit"/>.
+/// hands its candidates to the <see cref="IReranker"/>, keeps the order it returns, re-applies
+/// the <see cref="SearchOptions.MinimumScore"/> and re-trims to
+/// <see cref="SearchOptions.Limit"/>.
+/// </para>
+/// <para>
+/// The decorator does not sort. Ordering is the reranker's own output, taken as best-first per
+/// its contract, and this engine does not re-rank a tie it did not create — a reranker that
+/// returns two documents on equal scores has decided which of them comes first, and a
+/// decorator-side tie-break would silently overrule the stage that paid to produce the scores.
 /// </para>
 /// <para>
 /// The decorator only sees what the inner engine returns. To give candidates a chance to
@@ -16,6 +23,13 @@ namespace LexiSharp.Core;
 /// engine (<c>maxCandidates</c>); a document ranked beyond that retrieval depth stays out of
 /// reach no matter what the reranker thinks of it. This is the same recall/precision trade-off
 /// every two-stage pipeline makes: the inner engine provides recall, the reranker precision.
+/// </para>
+/// <para>
+/// That pool is <c>Offset + max(Limit, maxCandidates)</c>, because the page is cut from the
+/// re-ranked order and the skipped prefix has to be re-ranked too. A deep page is therefore
+/// paid for per skipped candidate: with <see cref="SearchOptions.Offset"/> at 10 000 and a
+/// cross-encoder behind <see cref="IReranker"/>, the second stage scores 10 050 candidates to
+/// return one page. Deep paging belongs to a cheap reranker, or to paging over a key.
 /// </para>
 /// <para>
 /// <see cref="SearchOptions.MinimumScore"/> is not pre-applied on the inner search: a reranker
@@ -136,7 +150,15 @@ public sealed class RerankedTextSearchEngine : ITextSearchEngine, IQueryCostProb
         if (candidates.Count == 0)
         {
             if (instrumented)
+            {
                 _telemetry.Warning(EngineName, "retrieval produced no candidate: the reranker had nothing to re-order");
+
+                // A search that answers nothing is still a search, and on a real index it can be a
+                // slow one. Reporting it keeps its latency in RecordSearch instead of leaving only
+                // the retrieve stage row behind — the same shape HybridTextSearchEngine emits when
+                // every lane comes back empty.
+                _telemetry.SearchCompleted(EngineName, started, 0);
+            }
 
             return Array.Empty<SearchResult>();
         }
@@ -207,11 +229,7 @@ public sealed class RerankedTextSearchEngine : ITextSearchEngine, IQueryCostProb
         {
             // The guard keeps first-occurrence-wins semantics for a candidate list that is
             // off-contract and duplicates an id; search results are distinct by contract.
-            string id = candidates[j].DocumentId;
-            if (!before.ContainsKey(id))
-            {
-                before[id] = candidates[j].Score;
-            }
+            before.TryAdd(candidates[j].DocumentId, candidates[j].Score);
         }
 
         for (int i = 0; i < page.Count; i++)
