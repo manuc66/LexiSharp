@@ -174,6 +174,28 @@ workflow.
   ellipsis-joined); a learned compressor (perplexity, LLM rewrite) is a consumer implementation
   of the same seam. The flat `Search` still returns full text — compression is an opt-in
   second surface, not a mutation of `SearchResult.Document`.
+- The demo runs over a real corpus and names its analysis. `samples/LexiSharp.Demo` takes
+  `--corpus` (`nfcorpus`, `scifact`, `arguana`, read from the evaluation harness's data
+  directory — the demo does not download it, and the message says which command would) and
+  `--segmentation` (`uax29`, the default, or `flat`). Example queries come from the corpus's
+  own `queries.jsonl`, restricted to those with a positive judgement in `qrels/test.tsv`, so
+  every chip has a known relevant document. `/api/meta` reports the active corpus, the
+  document count and the segmentation, and the page shows them: a lane's score means nothing
+  without the corpus and the analysis that produced it.
+
+  Two defects the option carried are fixed. A hit card's title was read from
+  `SearchDocument.Fields`, while a BEIR corpus carries its title as a `TextFields` entry — the
+  shape `Evaluation.BuildDocuments` builds and the shape the index reads for field-aware
+  scoring — so every card on a corpus with titles was titled with its document id. And
+  `flat`'s description said `1,000` indexes as `1` and `000`; the tokenizer discards terms
+  shorter than two characters unless `KeepSingleCharTerms` is set, which the demo does not
+  set, so the term is `000` and the `1` is absent rather than present-and-light.
+
+  The demo builds BEIR documents the way the harness does, and does not rank them the same
+  way: on NFCorpus, 5 of 6 example queries come back with a different top-10 ordering under
+  BM25(1.5, 0.75), for a mean top-10 overlap of 6.67 of 10, because the demo removes stop
+  words and the harness's default analysis does not. Compare a demo figure against the
+  harness by running the harness.
 
 ### Reproduced
 
