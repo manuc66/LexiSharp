@@ -413,12 +413,31 @@ weight you chose.
 var scorer = new WindowBm25Scorer([32, 128], stride: 16, k1: 1.2);
 ```
 
-**The whole document is the same scorer.** `includeWholeDocument: true` with no widths scores the
-document as one window, where every `tf_w` is the document's term frequency and the normalization is
-1 — which is BM25 with `b = 0`, exactly. `WindowBm25ScorerTests` asserts the equality to the bit over
-a hand-built corpus and `WindowBm25ScorerPropertiesTests` over five hundred generated ones, so a
+**The whole document is the same scorer.** `includeWholeDocument: true` scores the document as one
+window, where every `tf_w` is the document's term frequency and the normalization is 1 — which is
+BM25 with `b = 0`, exactly. `WindowBm25ScorerTests` asserts the equality to the bit over a hand-built
+corpus and `WindowBm25ScorerPropertiesTests` over five hundred generated ones, so a
 windowed-versus-whole comparison made through this type compares one scorer against itself and the
 difference is the windowing and nothing else.
+
+**Combined with widths, that flag decides nothing.** Not approximately: the score is the whole
+document's, exactly, and the widths are inert. The cause is the formula above rather than the sweep.
+A term's contribution is `tf·(k1+1)/(tf + k1)`, which rises with `tf` for every `k1 > 0`; the whole
+document holds at least as many occurrences of every query term as any window of it does; so it
+dominates each window term by term, and a maximum over a set that contains it can only be itself. At
+`k1 = 0` every term contributes its idf once whatever `tf` is, and the whole document still holds
+every term present anywhere in it, so the tie is exact there too. Measured on this type over 78,800
+(query, document) pairs at `k1` = 0, 0.4, 1.5, 2.4 and 13.0, the gap between
+`new WindowBm25Scorer([w], stride, includeWholeDocument: true)` and
+`new WindowBm25Scorer(includeWholeDocument: true)` is zero, while the same scorer with the flag off
+differs by up to 394. `WindowBm25ScorerTests` asserts it.
+
+So there is no multi-scale sweep to be had from this type, and a caller who wants one — a maximum over
+windows *and* the whole document, which is the shape a sliding-window scan usually wants — does not
+get it. The same arithmetic constrains a fusion built on a span contract: for any component monotone
+in term frequency, a span set containing the whole document makes the maximum the global score, so a
+document's score is its global one and the locality half of the sum computes nothing. A global
+component belongs in the weighted sum as a term of its own, outside the maximum.
 
 **What it costs.** One merged pass over the positions that actually match, then one window sweep per
 width, per candidate. It never takes the term-at-a-time accumulation pass — that pass scores by
@@ -467,6 +486,36 @@ the gain is:
 | `qmsum` at 512 | +0.0348 | [+0.0032, +0.0667] |
 | `narrativeqa` at 512 | **−0.0363** | [−0.0655, −0.0087] |
 
+Those two rows hold one arm's `k1` fixed and tune the other's, which is the asymmetry that produced
+them: the windowed arm ran at an effective `k1` of 0.3 to 0.5 against the whole document's 1.2, so some
+of what they report is a retuned saturation constant rather than locality. Tuning both arms over a
+15 × 7 `(k1, b)` grid on the same development split, at the type's conventions throughout, gives:
+
+| corpus | whole-document `(k1, b)` chosen on dev | windowed `(k1, width, stride)` chosen on dev | Δ nDCG@10 | 95 % |
+|---|---|---|---|---|
+| `qmsum` | `k1 = 2.4, b = 0.75` | `k1 = 0.4, w = 512, stride w/4` | **+0.0413** | [+0.0060, +0.0794] |
+| `narrativeqa` | `k1 = 13.0, b = 0.9` | `k1 = 2.4, w = 2048, stride w/4` | **−0.0198** | [−0.0409, −0.0007] |
+
+Both whole-document optima are interior — `qmsum` peaks at `k1 = 2.4` and falls away on both sides at
+every `b` tried, `narrativeqa` at `k1 = 13.0` — so the negative is not an under-tuned baseline. Note
+the distance between the two arms' chosen `k1`: a window with no length term saturates earlier than a
+whole text does, and that difference is large enough to reverse a sign, which is why holding one `k1`
+across both arms measures it instead of locality.
+
+**Neither row is a property of windowing, and the grid says so.** Over the 180 windowed
+configurations swept against the tuned baseline, read on test:
+
+| | median Δ | cells positive | dev-selected Δ | best cell on test |
+|---|---|---|---|---|
+| `qmsum` | **−0.0028** | 48 % of 180 | +0.0413 | +0.0489 |
+| `narrativeqa` | **−0.0466** | **0 % of 180** | −0.0198 | −0.0198 |
+
+On `qmsum` the cell the development split picked is very nearly the best cell in the grid, and the
+grid's median is a small negative number: one configuration beat a tuned baseline and its
+neighbourhood did not. On `narrativeqa` not one of the 180 configurations is positive, the
+dev-selected one *is* the best of them, and the width profile improves monotonically out to 2 048 and
+is still negative. Read the corpus that pays as a configuration that measured well on that corpus.
+
 So a caller who has already tuned `Bm25Scorer` should expect far less than +0.141, and on
 book-length narrative should expect a loss. That is the figure that answers "should I adopt this
 instead of tuning what I have", and it is the one to plan against.
@@ -481,7 +530,16 @@ generator and not the width.
 **The identity was checked here, at this document length.** `includeWholeDocument` and
 `Bm25Scorer(k1, b: 0)` agreed to the bit — maximum absolute difference 0 — over all 78,800
 (query, document) pairs on both corpora, and a Python re-implementation of the same formula reproduced
-every score to 1.7 × 10⁻⁶. The generated tests establish the identity; these establish it where a
+every score to 4 × 10⁻¹⁴ at the stride that dump was written at.
+
+That figure was previously given as 1.7 × 10⁻⁶, read against a dump taken at a stride of a quarter
+width — which is not the stride the dump holds. At `w/4` the same arithmetic diverges from it by up
+to 30, the size of a score rather than of a rounding error, and the windows that do match are those
+whose start happens to be a multiple of the width. The 1.7 × 10⁻⁶ was a `float32` prefix-sum floor
+that did not apply: prefix counts are exact integers below 2²⁴, so the only difference left is the
+order of the double summations. A second dump, written explicitly at `w/4`, agrees to 9 × 10⁻¹⁴ over
+all 78,800 pairs, and each dump now carries its stride in its filename. This mattered because the
+`stride w/4` result had never been cross-checked against the type at that stride. The generated tests establish the identity; these establish it where a
 window is a decision rather than a formality.
 
 ## Score boosting (`BoostedTextSearchEngine`)

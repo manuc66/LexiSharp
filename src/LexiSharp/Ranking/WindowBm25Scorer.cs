@@ -7,7 +7,8 @@ namespace LexiSharp.Ranking;
 /// <summary>
 /// Scores a document by its <b>best window</b> rather than by its whole text: BM25's saturation
 /// computed over term frequencies counted inside a sliding window, and the maximum taken over every
-/// window of every requested width.
+/// window of every requested width — which with <c>includeWholeDocument</c> is always the whole
+/// document, whatever widths are passed.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -37,6 +38,23 @@ namespace LexiSharp.Ranking;
 /// Comparing the two arms of a windowed-versus-whole experiment through this type therefore compares
 /// one scorer against itself rather than two of them, which is what makes the difference the windowing
 /// and nothing else.
+/// </para>
+/// <para>
+/// <b><c>includeWholeDocument</c> makes the widths inert, and this is arithmetic rather than an
+/// oversight.</b> The formula carries no length normalization, so a term's contribution is
+/// <c>tf·(k1+1)/(tf + k1)</c>, which rises with <c>tf</c> for every <c>k1 &gt; 0</c>. The whole
+/// document holds at least as many occurrences of every query term as any window of it does, so it
+/// dominates each window term by term, and a maximum taken over a set that contains it can only be
+/// itself. At <c>k1 = 0</c> every term contributes its idf once whatever <c>tf</c> is, and the whole
+/// document still contains every term present anywhere in it, so the tie is exact there too.
+/// Measured on this type over 78 800 (query, document) pairs of a real corpus, at <c>k1</c> = 0, 0.4,
+/// 1.5, 2.4 and 13.0, the gap between <c>new WindowBm25Scorer([w], stride, includeWholeDocument:
+/// true)</c> and <c>new WindowBm25Scorer(includeWholeDocument: true)</c> is zero.
+/// <c>WindowBm25ScorerTests</c> asserts it, so the behaviour cannot drift back into looking
+/// accidental, and <c>docs/ranking.md</c> carries the consequence for fusion: a span set offered to a
+/// weighted sum whose document score is a maximum must not contain the whole document, or the maximum
+/// is the global score for every component monotone in term frequency — BM25 at <c>b = 0</c> is, by
+/// this paragraph — and the locality half computes nothing.
 /// </para>
 /// <para>
 /// <b>An <see cref="ITermOverlapScorer"/>, unlike the composite.</b> A document sharing no query term
@@ -92,6 +110,18 @@ namespace LexiSharp.Ranking;
 /// will look like a plateau where your corpus has a slope.
 /// </para>
 /// <para>
+/// <b>Two things a single delta invites that the sweep does not settle.</b> A width is one axis of a
+/// configuration rather than the whole of it, and the full grid of widths, strides and <c>k1</c>
+/// values tried on the corpus that pays does not agree with the cell its development split picked:
+/// against a tuned whole-document BM25 the median of that grid is a small negative number and fewer
+/// than half its cells are positive. What beat the baseline was a configuration found on a split, not
+/// a property of windowing. And the two arms want <b>different</b> <c>k1</c> — the windowed one an
+/// order of magnitude below the whole document's, because a window with no length term saturates
+/// earlier — so a comparison holding one <c>k1</c> across both arms measures that difference instead
+/// of locality, and the difference is large enough to reverse a sign. <c>docs/ranking.md</c> carries
+/// both numbers and the grid they come from.
+/// </para>
+/// <para>
 /// <b>Thread-safe.</b> Everything the score needs is computed inside the call; the instance holds only
 /// its configuration, and two concurrent searches may share one.
 /// </para>
@@ -118,9 +148,9 @@ public sealed class WindowBm25Scorer : ITextScorer, ITermOverlapScorer
     /// would leave text unscored and is capped at the width instead.
     /// </param>
     /// <param name="includeWholeDocument">
-    /// Also score the whole document as one window. Combined with widths this is a multi-scale sweep
-    /// that includes the document itself, which is the shape a sliding-window sweep usually wants;
-    /// alone, it is the scorer this type reduces to when <paramref name="widths"/> is empty.
+    /// Also score the whole document as one window, which is the scorer this type reduces to when
+    /// <paramref name="widths"/> is empty. <b>Combined with widths it changes nothing at all</b>, and
+    /// not approximately: see the remarks for why, and for the measurement.
     /// </param>
     /// <param name="k1">Saturation parameter, as in BM25. Defaults to <c>1.5</c>.</param>
     /// <exception cref="ArgumentOutOfRangeException">
