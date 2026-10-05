@@ -58,37 +58,40 @@ namespace LexiSharp.Ranking;
 /// topology it belongs to.
 /// </para>
 /// <para>
-/// <b>The width is the whole decision, and it belongs to the corpus.</b> The evidence is an external
-/// measurement — a BM25 re-implementation, harness outside this repository and not reproducible from
-/// it — and <b>this type is not what was measured</b>, which is the first thing to know about the
-/// numbers. Its formula carries no length normalization and its default <c>k1</c> is <c>1.5</c>. The
-/// re-implementation normalized by length and, handed a window's own width, that put the windowed arm
-/// on an effective <c>k1</c> of 0.3 to 0.5 against the whole document's 1.2 — a different saturation
-/// constant as well as a different unit, and only one of those two is windowing.
+/// <b>The width is the whole decision, it belongs to the corpus, and on one of the two corpora
+/// measured here the gain is nothing at all.</b> The evidence is an external measurement — harness
+/// outside this repository, not reproducible from it — run on this type rather than on a
+/// re-implementation of it, against its own whole-document counterpart, which
+/// <c>includeWholeDocument</c> makes BM25 at <c>b = 0</c>. Width chosen on a development split,
+/// read on a held-out one, 400 queries per corpus. On 197 documents averaging 9 271 terms, the best
+/// width was 1 024 tokens and the delta was <b>+0.141 nDCG@10</b>, interval [+0.092, +0.189]. On 355
+/// documents averaging 52 862 terms, the best width was 2 048 and the delta was <b>+0.003</b>,
+/// interval [−0.019, +0.026] — no width excluded zero, and the development split ranked them in the
+/// opposite order to the test split at every one. Same code, same defaults, same protocol: a corpus of
+/// book-length narrative is a different measurement, and nothing in this type can tell you which one
+/// you have.
 /// </para>
 /// <para>
-/// What the measurement does support, read against a whole-document baseline tuned on the same
-/// development split, with the width itself chosen on that split and the test split holding 125 judged
-/// documents: the widths that survived formed a broad <b>plateau</b> — 256 to 1 024 tokens, with 512
-/// and 1 024 excluding zero and 256 not — rather than a peak, and 2 048 was already past it; and
-/// <b>narrow windows fell a long way below the whole document</b>, by <c>0.20</c> at 16 tokens and
-/// <c>0.12</c> at 32, so a width well under the evidence it looks for costs more than not windowing
-/// at all. The narrow end is the more robust half of that, and it holds precisely because it does not
-/// depend on the baseline: a window of 16 tokens cannot contain the passage, whatever the scorer.
+/// <b>Read that figure against the right alternative.</b> The counterpart above is this type at
+/// <c>b = 0</c>, which is the honest within-family comparison and not a strong scorer — a whole-document
+/// BM25 tuned on the same development split scored 0.8321 on the first corpus where <c>b = 0</c>
+/// scored 0.7184. Measured against <i>that</i> baseline, a re-implementation of the same formula at
+/// matched conventions gains <b>+0.035</b>, interval [+0.003, +0.067], on the first corpus and
+/// <b>−0.036</b>, interval [−0.066, −0.009], on the second. A caller who has already tuned
+/// <see cref="Bm25Scorer"/> should therefore expect far less than +0.141, and possibly a loss.
 /// </para>
 /// <para>
-/// What it does not support is a headline size for the gain, so none is given here. Against that
-/// tuned baseline the delta at the width development chose was <c>+0.035</c> nDCG@10 with an interval
-/// reaching <c>+0.003</c> — real, and small, and a statement about one corpus, one baseline and one
-/// split rather than a number to carry to another. A sweep averaged over document lengths will also
-/// look flatter than it is: the same corpus inverted by length quartile, from about a tenth of the
-/// metric on the shortest quartile to nothing measurable on the longest.
+/// Two details that measurement settled, both of which a plausible reading gets wrong. The candidate
+/// generator matters as much as the width: the type's default stride makes windows abut, and a stride
+/// of a quarter width makes them overlap four deep, which is worth <c>+0.151</c> instead of
+/// <c>+0.141</c> at a narrower width on the first corpus, and the difference between a narrow window
+/// being unusable and merely useless is entirely in the stride. And a window too narrow to hold the
+/// passage costs less than it looks — <c>−0.02</c> at 16 terms, not a collapse.
 /// </para>
 /// <para>
-/// A width is therefore a property of your documents and not of this scorer, nothing in this type can
-/// tell you which to pass, and a sweep read as one average across document lengths will look like a
-/// plateau where your corpus has a slope. Measure the sweep on the corpus you ship, and read it per
-/// length band.
+/// Measure the sweep on the corpus you ship, choose the width on a split you then do not read, and
+/// read it per length band rather than as one average: a single average over mixed document lengths
+/// will look like a plateau where your corpus has a slope.
 /// </para>
 /// <para>
 /// <b>Thread-safe.</b> Everything the score needs is computed inside the call; the instance holds only
