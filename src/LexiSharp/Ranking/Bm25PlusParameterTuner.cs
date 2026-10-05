@@ -170,7 +170,8 @@ public sealed class Bm25PlusParameterTuner
         var (k1Grid, bGrid, deltaGrid) = Bm25VariantTunerCore.ResolveGrids(k1Values, bValues, deltaValues);
 
         var found = Bm25VariantTunerCore.Run(
-            _index, _tokenizer, _validationQueries, k1Grid, bGrid, deltaGrid, topK, metric, maxConfigurations,
+            new Bm25VariantSearchRequest(_index, _tokenizer, _validationQueries, topK, metric, maxConfigurations),
+            (k1Grid, bGrid, deltaGrid),
             (k1, b, delta) => new Bm25PlusScorer(k1, b, delta));
 
         return new Bm25PlusTuningResult(
