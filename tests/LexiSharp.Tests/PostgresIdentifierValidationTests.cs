@@ -1,3 +1,6 @@
+using FsCheck;
+using FsCheck.Fluent;
+using FsCheck.Xunit;
 using LexiSharp.Core;
 using LexiSharp.Postgres;
 using Xunit;
@@ -202,4 +205,77 @@ public class PostgresIdentifierValidationTests
 
     private static void AssertRejected(Func<IDisposable> construct) =>
         Assert.Throws<ArgumentException>(construct);
+
+    // ---- the predicate itself, over generated names ----------------------------------------------
+
+    /// <summary>
+    /// The characters worth generating: the two the guard accepts, and every kind it exists to
+    /// refuse. A newline is in the alphabet on purpose — see <see cref="TheGuardRejectsANameEndingInANewline"/>.
+    /// </summary>
+    private static readonly char[] GuardAlphabet =
+        ['a', 'Z', '7', '_', ' ', '"', '\'', ';', '-', '.', '/', '\n', '\r', '\t', '\\', 'é'];
+
+    private static Gen<string> GuardNames() =>
+        from length in Gen.Choose(0, 8)
+        from chars in Gen.Elements(GuardAlphabet).ArrayOf(length)
+        select new string(chars);
+
+    private static readonly Arbitrary<string> Names = Arb.From(GuardNames());
+
+    /// <summary>The guard's promise, written out independently of the pattern that keeps it.</summary>
+    private static bool Expected(string name) =>
+        name.Length > 0 && name.All(c => c is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '_');
+
+    /// <summary>
+    /// The check accepts exactly <c>[A-Za-z0-9]+</c> and nothing else — the claim its comment, its
+    /// five callers' error messages and this repository's docs all make about it.
+    /// </summary>
+    [Property(MaxTest = 2_000)]
+    public Property TheGuardAcceptsExactlyTheCharactersItPromises() =>
+        Prop.ForAll(Names, name => SafeIdentifier.IsValid(name) == Expected(name));
+
+    /// <summary>
+    /// Every engine's options answer with the one check. Stated over generated names rather than
+    /// over the two tables above, because agreement on thirteen hand-picked strings is not the same
+    /// claim as agreement on the predicate.
+    /// </summary>
+    [Property(MaxTest = 2_000)]
+    public Property EveryEngineConsultsTheSameGuard() =>
+        Prop.ForAll(Names, name =>
+        {
+            bool expected = SafeIdentifier.IsValid(name);
+
+            return new PostgresIndexOptions { Schema = name }.IsValid == expected
+                && new ParadeDB.ParadeDBOptions { Schema = name }.IsValid == expected
+                && new PostgresFuzzyOptions { Schema = name }.IsValid == expected
+                && new PostgresSparseOptions
+                {
+                    Schema = name,
+                    Vocabulary = new Dictionary<string, int> { ["term"] = 0 },
+                }.IsValid == expected
+                && new PostgresVectorOptions { Schema = name }.IsValid == expected;
+        });
+
+    /// <summary>
+    /// A name ending in a newline is refused. <c>$</c> in a .NET pattern matches at the end of the
+    /// string <i>or before a trailing newline</i>, so the pattern this guard was written with —
+    /// <c>^[A-Za-z0-9_]+$</c> — accepted <c>"lexisharp\n"</c>. It was not an injection, because the
+    /// name is quoted before it reaches a statement and the quoting holds; it was a name the guard
+    /// said it refused and did not, which is the failure that makes the next one possible.
+    /// </summary>
+    [Fact]
+    public void TheGuardRejectsANameEndingInANewline()
+    {
+        AssertRejected(() => new PostgresTextSearchEngine(
+            Unused,
+            new PostgresIndexOptions { Schema = "lexisharp\n" }));
+
+        AssertRejected(() => new PostgresTextSearchEngine(
+            Unused,
+            new PostgresIndexOptions { Table = "lexisharp\n" }));
+
+        AssertRejected(() => new PostgresTextSearchEngine(
+            Unused,
+            new PostgresIndexOptions { TextSearchConfig = "simple\n" }));
+    }
 }

@@ -22,18 +22,25 @@ namespace LexiSharp.Postgres;
 /// check exists.
 /// </para>
 /// <para>
-/// Written out rather than declared with [GeneratedRegex] (SYSLIB1045): the source generator cannot
-/// emit a specialized matcher for NonBacktracking and falls back to precisely this constructor call,
-/// which is the SYSLIB1044 the build reports. The comment it replaced said "compiled once at startup
-/// by the source generator"; the generated file said "a custom Regex-derived type could not be
-/// generated because RegexOptions.NonBacktracking isn't supported". The second sentence was true
-/// whichever way it went.
+    /// Written out rather than declared with [GeneratedRegex] (SYSLIB1045): the source generator cannot
+    /// emit a specialized matcher for NonBacktracking and falls back to precisely this constructor call,
+    /// which is the SYSLIB1044 the build reports. The comment it replaced said "compiled once at startup
+    /// by the source generator"; the generated file said "a custom Regex-derived type could not be
+    /// generated because RegexOptions.NonBacktracking isn't supported". The second sentence was true
+    /// whichever way it went.
+/// </para>
+/// <para>
+/// <b>\A and \z, not ^ and $.</b> In .NET, <c>$</c> matches at the end of the string <i>or immediately
+/// before a trailing newline</i>, so <c>^[A-Za-z0-9_]+$</c> accepted <c>"lexisharp\n"</c> — a name this
+/// check documented itself as refusing. The quoting kept that from reaching a statement as anything
+/// but a name with an odd character in it; the fix is here rather than in the callers because the
+/// callers cannot tell the two apart.
 /// </para>
 /// </remarks>
 internal static class SafeIdentifier
 {
     private static readonly Regex SafeNameRegex =
-        new("^[A-Za-z0-9_]+$", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
+        new(@"\A[A-Za-z0-9_]+\z", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
 
     /// <summary>
     /// Whether <paramref name="name"/> is a name this library is willing to interpolate into SQL.
