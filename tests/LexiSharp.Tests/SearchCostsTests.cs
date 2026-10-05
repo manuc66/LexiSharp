@@ -179,8 +179,15 @@ public class SearchCostsTests
     public void Scoring_WithoutASheet_RecordsNothing()
     {
         var engine = CreateEngine(CreateFullScanCorpus());
+        var options = new SearchOptions(Limit: 10);
 
-        engine.Search("zebra plain", new SearchOptions(Limit: 10));
+        var results = engine.Search("zebra plain", options);
+
+        // Nothing to read back is the claim, so what is asserted is that there is no sheet to read
+        // and that its absence cost the search nothing: all six documents come back, every one of
+        // them carrying "plain".
+        Assert.Null(options.Costs);
+        Assert.Equal(6, results.Count);
     }
 
     [Fact]
