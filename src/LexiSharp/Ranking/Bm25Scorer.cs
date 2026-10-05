@@ -134,8 +134,10 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
         if (documentCount == 0 || documentLength == 0 || averageLength <= 0)
             return 0;
 
-        float[]? table = Table(averageLength);
+        var shape = new Bm25Shape(_k1, _b, _saturation, averageLength, Table(averageLength));
 
+        // Loop-invariant: the document is the same for every term.
+        double normalization = shape.Normalization(documentLength);
         double score = 0;
 
         // Indexed loop over the IReadOnlyList<string> interface: a foreach would box the
@@ -154,12 +156,10 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
             double idf = Math.Log(1.0 + ((documentCount - df + 0.5) / (df + 0.5)));
 
-            double normalization = 1.0 - _b + (_b * documentLength / averageLength);
-            score += Contribution(
-                idf, tf, documentLength, normalization, averageLength, _k1, _b, _saturation, table);
+            score += shape.Contribution(idf, tf, documentLength, normalization);
         }
 
-        return Round(score, table);
+        return shape.Round(score);
     }
 
     /// <summary>
@@ -183,18 +183,20 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
         // The plan builds its own table rather than taking the scorer's: it is given the index and so
         // knows the average length at construction, and a plan outlives the query that made it.
+        double averageLength = index.AverageDocumentLength;
         float[]? table = _arithmetic == Bm25Arithmetic.SinglePrecision
-            ? BuildNormInverseTable(_k1, _b, index.AverageDocumentLength)
+            ? BuildNormInverseTable(_k1, _b, averageLength)
             : null;
 
-        return new Bm25QueryPlan(Terms(queryTerms), index, _k1, _b, _saturation, table);
+        return new Bm25QueryPlan(
+            Terms(queryTerms), index, new Bm25Shape(_k1, _b, _saturation, averageLength, table));
     }
 
     /// <summary>Largest stored length the reciprocal table is indexed by.</summary>
     /// <remarks>
     /// The table stands in for one the reference's scorer builds with 256 entries, because the length
     /// reaches it as a single stored byte and a byte has 256 values. An index that stores exact lengths
-    /// can exceed it, so the table is not the only route: <see cref="Contribution"/> evaluates the same
+    /// can exceed it, so the table is not the only route: <see cref="Bm25Shape.Contribution"/> evaluates the same
     /// expression in single precision for a length past the end, which is the same number the table
     /// would hold — the table is a cache of that expression, not a different computation.
     /// </remarks>
@@ -270,40 +272,64 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
     }
 
     /// <summary>
-    /// One term's contribution, in whichever precision the table's presence announces.
+    /// The part of the formula that is fixed once the scorer and the corpus are: the two BM25
+    /// parameters, the numerator multiplier, the corpus average length, and the reciprocal table
+    /// when the arithmetic is single precision.
     /// </summary>
     /// <remarks>
-    /// The two are the same expression written twice rather than one written once and converted: the
-    /// grouping is part of what is being reproduced, and evaluating the double form and narrowing it
-    /// afterwards would round once, at the wrong places.
+    /// Held together because that is how it is read — every caller had all of it and passed all of
+    /// it — and because the table and the average length it was built for cannot be told apart: a
+    /// table paired with another average length indexes a normalization nobody computed.
     /// </remarks>
-    private static double Contribution(
-        double idf, int termFrequency, int documentLength, double normalization, double averageLength,
-        double k1, double b, double saturation, float[]? normInverse)
+    private readonly struct Bm25Shape(double k1, double b, double saturation, double averageLength, float[]? normInverse)
     {
-        if (normInverse is null)
-            return idf * termFrequency * saturation / (termFrequency + (k1 * normalization));
+        /// <summary>The corpus average length these constants were read against.</summary>
+        public double AverageLength => averageLength;
 
-        float entry = documentLength <= MaxStoredLength
-            ? normInverse[documentLength]
-            : 1f / ((float)k1 * (1f - (float)b + ((float)b * documentLength / (float)averageLength)));
+        /// <summary>Whether the arithmetic is the single-precision one, announced by the table.</summary>
+        public bool IsSinglePrecision => normInverse is not null;
 
-        // weight - weight / (1 + tf·normInverse), which is what the reference's scorer evaluates. The
-        // algebraically equal form — weight·tf / (tf + k1·normInverse) — divides by a different quantity
-        // and rounds differently, and the rounding is the thing being reproduced here.
-        float weight = (float)idf * (float)saturation;
+        /// <summary>
+        /// The length normalization of a document of <paramref name="documentLength"/> tokens:
+        /// <c>1 − b + b · |d| / avgdl</c>, spelled once because every caller wrote it out and
+        /// they have to agree to the bit.
+        /// </summary>
+        public double Normalization(int documentLength) =>
+            1.0 - b + (b * documentLength / averageLength);
 
-        return weight - (weight / (1f + (termFrequency * entry)));
+        /// <summary>
+        /// One term's contribution, in whichever precision the table's presence announces.
+        /// </summary>
+        /// <remarks>
+        /// The two are the same expression written twice rather than one written once and converted: the
+        /// grouping is part of what is being reproduced, and evaluating the double form and narrowing it
+        /// afterwards would round once, at the wrong places.
+        /// </remarks>
+        public double Contribution(double idf, int termFrequency, int documentLength, double normalization)
+        {
+            if (normInverse is null)
+                return idf * termFrequency * saturation / (termFrequency + (k1 * normalization));
+
+            float entry = documentLength <= MaxStoredLength
+                ? normInverse[documentLength]
+                : 1f / ((float)k1 * (1f - (float)b + ((float)b * documentLength / (float)averageLength)));
+
+            // weight - weight / (1 + tf·normInverse), which is what the reference's scorer evaluates. The
+            // algebraically equal form — weight·tf / (tf + k1·normInverse) — divides by a different quantity
+            // and rounds differently, and the rounding is the thing being reproduced here.
+            float weight = (float)idf * (float)saturation;
+
+            return weight - (weight / (1f + (termFrequency * entry)));
+        }
+
+        /// <summary>The total, narrowed once when the scorer was built for single precision.</summary>
+        /// <remarks>
+        /// One rounding, at the end, on the sum rather than on each addition: the per-term contributions are
+        /// single precision but they accumulate in double, so the total is rounded exactly once. Rounding
+        /// each partial sum instead would be a different arithmetic and would not reproduce anything.
+        /// </remarks>
+        public double Round(double score) => normInverse is null ? score : (float)score;
     }
-
-    /// <summary>The total, narrowed once when the scorer was built for single precision.</summary>
-    /// <remarks>
-    /// One rounding, at the end, on the sum rather than on each addition: the per-term contributions are
-    /// single precision but they accumulate in double, so the total is rounded exactly once. Rounding
-    /// each partial sum instead would be a different arithmetic and would not reproduce anything.
-    /// </remarks>
-    private static double Round(double score, float[]? normInverse) =>
-        normInverse is null ? score : (float)score;
 
     /// <summary>
     /// The query-bound half of BM25: everything that does not depend on the document, so the
@@ -313,29 +339,19 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
     private sealed class Bm25QueryPlan : IAccumulatingQueryPlan
     {
         private readonly IReadOnlyTextIndex _index;
-        private readonly float[]? _normInverse;
-        private readonly double _avgLength;
-        private readonly double _k1;
-        private readonly double _b;
-        private readonly double _saturation;
+        private readonly Bm25Shape _shape;
 
         private string[] _terms;
         private double[] _idf;
 
-        public Bm25QueryPlan(
-            IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index, double k1, double b, double saturation,
-            float[]? normInverse)
+        public Bm25QueryPlan(IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index, Bm25Shape shape)
         {
             ArgumentNullException.ThrowIfNull(queryTerms);
 
             _index = index;
+            _shape = shape;
             _terms = new string[queryTerms.Count];
             _idf = new double[queryTerms.Count];
-            _k1 = k1;
-            _b = b;
-            _saturation = saturation;
-            _normInverse = normInverse;
-            _avgLength = index.AverageDocumentLength;
 
             int documentCount = index.StatisticDocumentCount;
 
@@ -351,7 +367,8 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
                 _idf[i] = Math.Log(1.0 + ((documentCount - df + 0.5) / (df + 0.5)));
             }
 
-            if (normInverse is not null)
+            // Only single precision folds, because only there the two forms differ.
+            if (shape.IsSinglePrecision)
                 FoldQueryFrequencies();
         }
 
@@ -420,11 +437,12 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
         public double Score(string documentId)
         {
             int documentLength = _index.DocumentLength(documentId);
+            double averageLength = _shape.AverageLength;
 
-            if (documentLength == 0 || _avgLength <= 0)
+            if (documentLength == 0 || averageLength <= 0)
                 return 0;
 
-            double normalization = 1.0 - _b + (_b * documentLength / _avgLength);
+            double normalization = _shape.Normalization(documentLength);
             double score = 0;
 
             for (int i = 0; i < _terms.Length; i++)
@@ -434,16 +452,14 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
                 if (tf == 0)
                     continue;
 
-                score += Contribution(
-                    _idf[i], tf, documentLength, normalization, _avgLength,
-                    _k1, _b, _saturation, _normInverse);
+                score += _shape.Contribution(_idf[i], tf, documentLength, normalization);
             }
 
-            return Round(score, _normInverse);
+            return _shape.Round(score);
         }
 
         /// <inheritdoc />
-        public double Finalise(double accumulated) => Round(accumulated, _normInverse);
+        public double Finalise(double accumulated) => _shape.Round(accumulated);
 
         /// <inheritdoc />
         public bool TryAccumulate(IAccumulatingIndex index, ScoreAccumulator accumulator)
@@ -451,13 +467,11 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
             // The guards Score applies per document, hoisted: with no corpus or no average length
             // every score is 0, and with a zero length the normalization is not a number. A
             // document of length 0 has no posting entries at all, so it never reaches the loop.
-            if (_index.Count == 0 || _avgLength <= 0)
+            if (_index.Count == 0 || _shape.AverageLength <= 0)
                 return false;
 
             for (int i = 0; i < _terms.Length; i++)
-                index.Accumulate(
-                    new Bm25Weight(_terms[i], _idf[i], _k1, _b, _saturation, _avgLength, _normInverse),
-                    accumulator);
+                index.Accumulate(new Bm25Weight(_terms[i], _idf[i], _shape), accumulator);
 
             return true;
         }
@@ -467,10 +481,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
     /// The query-bound half of BM25 as the accumulating index consumes it: the same arithmetic as
     /// <see cref="Bm25QueryPlan.Score"/>, one posting entry at a time.
     /// </summary>
-    private readonly struct Bm25Weight(
-        string term, double idf, double k1, double b, double saturation, double averageLength,
-        float[]? normInverse)
-        : IPostingWeight
+    private readonly struct Bm25Weight(string term, double idf, Bm25Shape shape) : IPostingWeight
     {
         public string Term => term;
 
@@ -479,17 +490,13 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
         /// narrowing the total afterwards is the same arithmetic as narrowing each term and summing in
         /// double — which is what it has to be.
         /// </remarks>
-        public double Weight(int termFrequency, int documentLength)
-        {
-            // The length normalisation is spelled out here rather than taken from the caller: the
-            // accumulating index hands this one posting entry at a time and has nowhere to keep it, and
-            // recomputing it costs a divide the caller would otherwise have done once per document.
-            double normalization = 1.0 - b + (b * documentLength / averageLength);
-
-            return Contribution(
-                idf, termFrequency, documentLength, normalization, averageLength,
-                k1, b, saturation, normInverse);
-        }
+        /// <remarks>
+        /// The length normalisation is recomputed here rather than taken from the caller: the
+        /// accumulating index hands this one posting entry at a time and has nowhere to keep it, and
+        /// recomputing it costs a divide the caller would otherwise have done once per document.
+        /// </remarks>
+        public double Weight(int termFrequency, int documentLength) =>
+            shape.Contribution(idf, termFrequency, documentLength, shape.Normalization(documentLength));
     }
 
     /// <inheritdoc />
@@ -508,10 +515,13 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
         int documentLength = index.DocumentLength(documentId);
         double averageLength = index.AverageDocumentLength;
 
+        // Written out rather than taken from the shape's Normalization, which divides by the
+        // average length: a corpus without one reports 1 − b here, which is what the explanation
+        // says, and the shape's would not be a number.
         double lengthRatio = averageLength > 0 ? documentLength / averageLength : 0;
         double normalization = 1.0 - _b + (_b * lengthRatio);
 
-        float[]? table = Table(averageLength);
+        var shape = new Bm25Shape(_k1, _b, _saturation, averageLength, Table(averageLength));
         var contributions = new List<TermContribution>();
         double total = 0;
 
@@ -529,9 +539,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
                 int df = index.DocumentFrequency(term);
                 double idf = Math.Log(1.0 + ((documentCount - df + 0.5) / (df + 0.5)));
-                double termScore = Contribution(
-                    idf, tf, documentLength, normalization, averageLength,
-                    _k1, _b, _saturation, table);
+                double termScore = shape.Contribution(idf, tf, documentLength, normalization);
 
                 contributions.Add(new TermContribution(term, tf, df, idf, termScore));
                 total += termScore;
@@ -552,7 +560,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
         return new ScoreExplanation(
             documentId,
             Name,
-            Round(total, table),
+            shape.Round(total),
             documentLength,
             averageLength,
             lengthRatio,
