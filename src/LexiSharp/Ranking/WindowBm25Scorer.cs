@@ -58,35 +58,33 @@ namespace LexiSharp.Ranking;
 /// topology it belongs to.
 /// </para>
 /// <para>
-/// <b>The width is the whole decision, it belongs to the corpus, and on one of the two corpora
-/// measured here the gain is nothing at all.</b> The evidence is an external measurement — harness
-/// outside this repository, not reproducible from it — run on this type rather than on a
-/// re-implementation of it, against its own whole-document counterpart, which
-/// <c>includeWholeDocument</c> makes BM25 at <c>b = 0</c>. Width chosen on a development split,
-/// read on a held-out one, 400 queries per corpus. On 197 documents averaging 9 271 terms, the best
-/// width was 1 024 tokens and the delta was <b>+0.141 nDCG@10</b>, interval [+0.092, +0.189]. On 355
-/// documents averaging 52 862 terms, the best width was 2 048 and the delta was <b>+0.003</b>,
-/// interval [−0.019, +0.026] — no width excluded zero, and the development split ranked them in the
-/// opposite order to the test split at every one. Same code, same defaults, same protocol: a corpus of
-/// book-length narrative is a different measurement, and nothing in this type can tell you which one
-/// you have.
+/// <b>The width is the whole decision, it belongs to the corpus, and on one of the two corpora measured
+/// here the gain is nothing at all.</b> The evidence is an external measurement — harness outside this
+/// repository, not reproducible from it — run on this type rather than on a re-implementation of it,
+/// against its own whole-document counterpart, which <c>includeWholeDocument</c> makes BM25 at
+/// <c>b = 0</c>. Width chosen on a development split and read on a held-out one. On a corpus of meeting
+/// transcripts it is a large gain; on one of book-length narrative no width beat zero, and the
+/// development split's deltas were positive at every width while the test split's were negative or
+/// zero at every width. Same code, same defaults, same protocol. <c>docs/ranking.md</c> carries the
+/// figures and the protocol; the numbers are not repeated here because a figure in a comment on a
+/// public type is an assertion with nothing behind it.
 /// </para>
 /// <para>
-/// <b>Read that figure against the right alternative.</b> The counterpart above is this type at
-/// <c>b = 0</c>, which is the honest within-family comparison and not a strong scorer — a whole-document
-/// BM25 tuned on the same development split scored 0.8321 on the first corpus where <c>b = 0</c>
-/// scored 0.7184. Measured against <i>that</i> baseline, a re-implementation of the same formula at
-/// matched conventions gains <b>+0.035</b>, interval [+0.003, +0.067], on the first corpus and
-/// <b>−0.036</b>, interval [−0.066, −0.009], on the second. A caller who has already tuned
-/// <see cref="Bm25Scorer"/> should therefore expect far less than +0.141, and possibly a loss.
+/// <b>Read any such figure against the right alternative.</b> The counterpart above is this type at
+/// <c>b = 0</c>, which is the honest within-family comparison and not a strong scorer: a
+/// whole-document <see cref="Bm25Scorer"/> tuned on the same development split beats it by a wide
+/// margin on both corpora. Measured against <i>that</i> baseline, the same formula's advantage shrinks
+/// to a small gain on the first corpus and becomes a loss on the second. A caller who has already
+/// tuned <see cref="Bm25Scorer"/> should plan against the second comparison and not the first, and
+/// <c>docs/ranking.md</c> gives both.
 /// </para>
 /// <para>
-/// Two details that measurement settled, both of which a plausible reading gets wrong. The candidate
-/// generator matters as much as the width: the type's default stride makes windows abut, and a stride
-/// of a quarter width makes them overlap four deep, which is worth <c>+0.151</c> instead of
-/// <c>+0.141</c> at a narrower width on the first corpus, and the difference between a narrow window
-/// being unusable and merely useless is entirely in the stride. And a window too narrow to hold the
-/// passage costs less than it looks — <c>−0.02</c> at 16 terms, not a collapse.
+/// Two things that measurement settled, both of which a plausible reading gets wrong. The candidate
+/// generator matters as much as the width does — the default stride makes windows abut and a stride of
+/// a quarter width overlaps them four deep — and it decides whether a narrow window is unusable or
+/// merely useless. And a window too narrow to hold the passage costs less than it looks: an earlier
+/// re-implementation reported a collapse at 16 terms that was its fixed-count candidate generator
+/// rather than the width.
 /// </para>
 /// <para>
 /// Measure the sweep on the corpus you ship, choose the width on a split you then do not read, and

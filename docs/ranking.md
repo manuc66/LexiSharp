@@ -432,8 +432,57 @@ so the score is `0` and the engine may skip it. Composed inside a
 `WeightedCompositeScorer` next to a component that scores non-matching documents, that promise
 belongs to the composite instead — see above.
 
-No quality figure is quoted: this scorer has not been measured against a corpus here, and the
-arithmetic under test is its identity with BM25 at `b = 0`, not its ranking.
+**Measured, and not reproducible from this repository.** The harness that produced the figures below
+lives outside it, so nothing here can be re-derived by a command in this tree; that is stated once and
+not repeated per number. What follows is what it should be read as: an indication of the shape of the
+effect on two corpora, not a figure to quote.
+
+*Protocol.* Two corpora of long documents, 400 queries each, tokenized as lowercase word tokens so
+that the harness and the type agree on segmentation. The dev/test split is the parity of the sampled
+query order, and **the width is chosen on dev and read on test** — reading the best row's test column
+is selection over the set the interval is computed on, and it inflates the delta by 0.005 to 0.011.
+Intervals are 95 % bootstrap over queries.
+
+| corpus | documents | mean terms/document | width chosen on dev | Δ nDCG@10 | 95 % |
+|---|---|---|---|---|---|
+| `qmsum` (meeting transcripts) | 197 | 9,271 | 1 024 at stride 0 | **+0.1414** | [+0.0920, +0.1887] |
+| `qmsum` | 197 | 9 271 | 512 at stride w/4 | +0.1507 | [+0.1005, +0.1978] |
+| `narrativeqa` (book-length narrative) | 355 | 52 862 | 2 048 at stride 0 | +0.0030 | [−0.0193, +0.0257] |
+| `narrativeqa` | 355 | 52 862 | 2 048 at stride w/4 | +0.0101 | [−0.0095, +0.0303] |
+
+Those are this type against its own whole-document counterpart — `includeWholeDocument` at `b = 0` —
+which is the honest within-family comparison, and **on the second corpus it is nothing**: no width
+excluded zero, and the development split's deltas were positive at every width while the test split's
+were negative or zero at every width. The same code, the same defaults, the same protocol. A width
+cannot tell you which corpus you have, which is why the sweep is the caller's to run.
+
+**The baseline decides which number you are reading.** `b = 0` is a weak scorer: whole-document BM25 at
+`b = 0` scores 0.7184 on `qmsum`, where a whole-document BM25 tuned on the same dev split
+(`k1 = 1.6, b = 1.0`, an interior optimum) scores 0.8321. Measured against *that* baseline — a
+re-implementation of the same formula at the type's conventions, `k1` selected independently per side —
+the gain is:
+
+| corpus | Δ nDCG@10 against the tuned baseline | 95 % |
+|---|---|---|
+| `qmsum` at 512 | +0.0348 | [+0.0032, +0.0667] |
+| `narrativeqa` at 512 | **−0.0363** | [−0.0655, −0.0087] |
+
+So a caller who has already tuned `Bm25Scorer` should expect far less than +0.141, and on
+book-length narrative should expect a loss. That is the figure that answers "should I adopt this
+instead of tuning what I have", and it is the one to plan against.
+
+**The stride is half the decision.** The type's default makes windows abut; a stride of a quarter width
+overlaps them four deep, which is worth +0.151 instead of +0.141 at a narrower width. It also decides
+whether a narrow window is unusable or merely useless: at 16 terms against a stride of a quarter width
+the delta is +0.005 [−0.045, +0.053], and at the default stride −0.022 [−0.070, +0.025]. Neither is
+the −0.20 an earlier re-implementation reported at that width, which was its fixed-count candidate
+generator and not the width.
+
+**The identity was checked here, at this document length.** `includeWholeDocument` and
+`Bm25Scorer(k1, b: 0)` agreed to the bit — maximum absolute difference 0 — over all 78,800
+(query, document) pairs on both corpora, and a Python re-implementation of the same formula reproduced
+every score to 1.7 × 10⁻⁶. The generated tests establish the identity; these establish it where a
+window is a decision rather than a formality.
 
 ## Score boosting (`BoostedTextSearchEngine`)
 

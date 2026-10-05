@@ -537,15 +537,18 @@ commit messages carry the measurements.
   price rather than a defect, and the reason the topology it belongs to is a cascade.
   **The width is the caller's decision, and the corpus's answer is not the same twice.** Measured on
   this type against its own whole-document counterpart — which `includeWholeDocument` makes BM25 at
-  `b = 0` — the best width gave **+0.141 nDCG@10, interval [+0.092, +0.189]**, on 197 documents
-  averaging 9 271 terms. On 355 documents averaging 52 862 terms, the same protocol and the same
-  defaults gave **+0.003, interval [−0.019, +0.026]**, with no width excluding zero. The `b = 0`
-  counterpart is the honest within-family comparison and not a strong scorer: against a whole-document
-  BM25 tuned on the same development split, the same formula gains +0.035 on the first corpus and
-  loses 0.036 on the second, so a caller who has already tuned `Bm25Scorer` should expect much less
-  than +0.141. `docs/ranking.md` carries the reasoning; measure the sweep on the corpus you ship,
-  choose the width on a split you then do not read, and read it per length band rather than as one
-  average. No latency figure is quoted for this type, because none has been measured here.
+  `b = 0` — the width chosen on a development split gave **+0.141 nDCG@10, interval [+0.092, +0.189]**
+  on a corpus of meeting transcripts, and **+0.003, interval [−0.019, +0.026]** on one of book-length
+  narrative, with no width excluding zero. The `b = 0` counterpart is the honest within-family
+  comparison and not a strong scorer: against a whole-document BM25 tuned on the same development
+  split, the same formula gains +0.035 on the first corpus and loses 0.036 on the second, so a caller
+  who has already tuned `Bm25Scorer` should expect much less than +0.141. The harness is outside this
+  repository, so none of those figures is reproducible from it —
+  [docs/ranking.md](docs/ranking.md#scoring-a-document-by-its-best-window-windowbm25scorer) carries
+  them with the protocol, the corpora and the second baseline; `WindowBm25Scorer`'s remarks carry the
+  rule and the pointer. Measure the sweep on the corpus you ship, choose the width on a split you then
+  do not read, and read it per length band rather than as one average. No latency figure is quoted for
+  this type, because none has been measured here.
 
 - **A filtered query now uses the term-at-a-time pass by default.**
   `SearchOptions.AccumulateFilteredQueries` decides, and it now defaults to `true`; set it `false`
