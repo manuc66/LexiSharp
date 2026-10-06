@@ -52,10 +52,19 @@ workflow.
   serializable shape, and a caller-defined value among its properties would put both at the mercy
   of that type's `Equals`.
 
-  The plain `BoostedTextSearchEngine` — candidate-only, unchanged — is now a forwarder over the
-  generic one, so there is one ranking implementation.
+  `TPayload` is constrained to a reference type, so the payload-less overload passes a genuine
+  `null` rather than a value type's zero value, and a boost can test `Payload is null` without
+  having to handle both. The cost is that "no payload" and "a payload that is null" are the same
+  value to the boost; a caller where that distinction matters passes a payload that is never null.
 
-- **`ScoreBoost.None`: the way to say "leave this candidate alone".**
+  The plain `BoostedTextSearchEngine` — candidate-only, unchanged — is now a forwarder over the
+  generic one, so there is one ranking implementation. `BoostContext<TPayload>` derives its
+  confidences lazily, so that forwarder does not pay for a walk it cannot expose: on a
+  500-document corpus at `maxCandidates: 50` it allocates 8928 B/search against the 8880 B it
+  allocated before this type existed, and a contextual boost reading `TopConfidence` allocates
+  9776 B.
+
+- **`ScoreBoost.None()`: the way to say "leave this candidate alone".**
 
   `default(ScoreBoost)` does not mean that. The optional constructor parameters give
   `new ScoreBoost()` a factor of 1, but `default` bypasses the constructor and is all zeroes, so
