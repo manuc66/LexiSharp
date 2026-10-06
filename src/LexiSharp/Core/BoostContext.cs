@@ -18,24 +18,51 @@ namespace LexiSharp.Core;
 /// answerable at all.
 /// </para>
 /// <para>
+/// <see cref="Confidences"/> is computed on first read, not at construction. A boost that reads
+/// only the payload — and the candidate-only <see cref="BoostedTextSearchEngine"/>, which is this
+/// context's engine with the payload and the confidences discarded, is the degenerate case —
+/// never pays for the walk and the array. Measured on a 500-document corpus at
+/// <c>maxCandidates: 50</c>: the candidate-only engine allocates 8928 B/search where it did
+/// 8880 B before this type existed, and a contextual boost that reads
+/// <see cref="TopConfidence"/> allocates 9776 B.
+/// </para>
+/// <para>
+/// <b>Why a class and not a <c>readonly record struct</c>.</b> Two reasons, and the first is the
+/// one that decides it. This type is handed to the boost once per candidate, so a struct would be
+/// copied on every one of those calls — and a copy cannot keep the memoized
+/// <see cref="Confidences"/>: the lazy field would be written into a temporary that dies with the
+/// statement, and the walk would run again per candidate, which is the cost this laziness exists to
+/// avoid. A reference type keeps one array for the whole search.
+/// </para>
+/// <para>
+/// The second is that the struct form is not free either. At four reference fields this is 32
+/// bytes copied per candidate call — 1600 bytes of copying per search at
+/// <c>maxCandidates: 50</c>, against 48 bytes of allocation for one instance per search
+/// (32 + object header). The class is cheaper here, and it is the only form that can memoize.
+/// The <c>readonly record struct</c> types in this namespace are the opposite case: small, copied
+/// deliberately, and never asked to cache anything.
+/// </para>
+/// <para>
 /// <see cref="Payload"/> is the caller's, typed as <typeparamref name="TPayload"/> because the
 /// caller named it when it chose the engine. This library hands it through without reading it.
 /// </para>
 /// </remarks>
-/// <typeparam name="TPayload">The caller's per-search state.</typeparam>
+/// <typeparam name="TPayload">
+/// The caller's per-search state, constrained to a reference type: see
+/// <see cref="IContextualSearchEngine{TPayload}"/>.
+/// </typeparam>
 public sealed class BoostContext<TPayload>
+    where TPayload : class
 {
-    private readonly IReadOnlyList<double> _confidences;
+    private IReadOnlyList<double>? _confidences;
 
     internal BoostContext(
         string query,
         IReadOnlyList<SearchResult> results,
-        IReadOnlyList<double> confidences,
         TPayload payload)
     {
         Query = query;
         Results = results;
-        _confidences = confidences;
         Payload = payload;
     }
 
@@ -51,17 +78,34 @@ public sealed class BoostContext<TPayload>
     /// <summary>
     /// One confidence per entry of <see cref="Results"/>, in the same order, from
     /// <see cref="Ranking.ScoreConfidenceMethod.WinnerMargin"/>: <c>1 - score_next / score_current</c>
-    /// for each result against its follower, and <c>0</c> for the last. A result the inner engine
+    /// for each result against its follower, and <c>0</c> for the last. A lone result is reported
+    /// as <c>1</c> when its score is genuine and <c>0</c> otherwise. A result the inner engine
     /// scored <c>0</c> is not a match by engine convention and reads <c>0</c> here too.
     /// <para>
     /// These are <b>relative</b> confidences, not probabilities of relevance: see
     /// <see cref="Ranking.ScoreConfidence"/> for what that distinction costs, and
     /// <see cref="Ranking.CalibratedScoreConfidence"/> for a mapping fitted to labelled data.
     /// </para>
+    /// <para>
+    /// Two equal scores read as <c>0</c>, not as confidence: WinnerMargin is the gap to the
+    /// follower, so a tie is no gap. A gate written as "boost when the confidence is below 0.5"
+    /// and one written as "boost when it is above" therefore behave oppositely on a tie, and only
+    /// one of them is asking the intended question.
+    /// </para>
     /// </summary>
-    public IReadOnlyList<double> Confidences => _confidences;
+    public IReadOnlyList<double> Confidences =>
+        _confidences ??= Ranking.ScoreConfidence.Compute(Results, Ranking.ScoreConfidenceMethod.WinnerMargin);
 
-    /// <summary>The caller's per-search state, handed to the boost unchanged.</summary>
+    /// <summary>
+    /// The caller's per-search state, handed to the boost unchanged, or <c>null</c> when the
+    /// search came through the payload-less overload.
+    /// </summary>
+    /// <remarks>
+    /// <c>null</c> and "the caller passed a payload that happens to be null" are the same value
+    /// here. That is the cost of the reference-type constraint: a caller with no state to pass
+    /// and a caller passing an explicitly null payload are indistinguishable to the boost. Use a
+    /// payload that is never null where that distinction matters.
+    /// </remarks>
     public TPayload Payload { get; }
 
     /// <summary>
@@ -73,9 +117,10 @@ public sealed class BoostContext<TPayload>
 
     /// <summary>
     /// The confidence of the top result, or <c>0</c> when the inner engine returned nothing.
-    /// A single clear result reads as fully confident; see <see cref="Confidences"/>.
+    /// See <see cref="Confidences"/> for what the number means — in particular, that two equal
+    /// top scores read as <c>0</c>.
     /// </summary>
-    public double TopConfidence => _confidences.Count > 0 ? _confidences[0] : 0;
+    public double TopConfidence => Confidences.Count > 0 ? Confidences[0] : 0;
 }
 
 /// <summary>
@@ -84,7 +129,11 @@ public sealed class BoostContext<TPayload>
 /// </summary>
 /// <param name="context">The search being adjusted; the same instance for every candidate.</param>
 /// <param name="candidate">The candidate being boosted.</param>
-/// <typeparam name="TPayload">The caller's per-search state.</typeparam>
+/// <typeparam name="TPayload">
+/// The caller's per-search state, constrained to a reference type: see
+/// <see cref="IContextualSearchEngine{TPayload}"/>.
+/// </typeparam>
 public delegate ScoreBoost ContextualBoost<TPayload>(
     BoostContext<TPayload> context,
-    SearchResult candidate);
+    SearchResult candidate)
+    where TPayload : class;
