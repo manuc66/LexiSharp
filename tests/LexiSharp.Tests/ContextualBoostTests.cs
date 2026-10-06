@@ -249,6 +249,109 @@ public class ContextualBoostTests
     }
 
     [Fact]
+    public void PayloadSupplied_TellsNoPayloadFromANullPayload()
+    {
+        // The two are different situations and Payload alone cannot distinguish them, which is
+        // what made a null check the wrong test.
+        var supplied = new List<bool>();
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(("a", 10)),
+            (context, cand) =>
+            {
+                supplied.Add(context.PayloadSupplied);
+                return ScoreBoost.None();
+            });
+
+        // No payload offered.
+        engine.Search("q");
+        Assert.All(supplied, s => Assert.False(s));
+
+        supplied.Clear();
+
+        // A payload offered, and null.
+        engine.Search("q", null, null!);
+        Assert.All(supplied, s => Assert.True(s));
+
+        supplied.Clear();
+
+        // A payload offered, and real.
+        engine.Search("q", null, new CallerContext("ana", Noon));
+        Assert.All(supplied, s => Assert.True(s));
+    }
+
+    [Fact]
+    public void RequirePayload_MakesAPayloadlessSearchThrow()
+    {
+        // The regression this prevents: a per-user correction silently ceasing to apply, with
+        // results that still look plausible and nothing to indicate the boost stopped running.
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(("a", 100), ("b", 10)),
+            (context, cand) => context.Payload!.ExperimentArm == "arm-b"
+                ? new ScoreBoost(Add: 50)
+                : ScoreBoost.None(),
+            requirePayload: true);
+
+        ITextSearchEngine unaware = engine;
+
+        var error = Assert.Throws<InvalidOperationException>(() => unaware.Search("q"));
+        Assert.Contains("requirePayload", error.Message);
+        Assert.Contains(nameof(IContextualSearchEngine<CallerContext>), error.Message);
+
+        // The capability interface still serves it. The payload is offered, and requirePayload
+        // only ever rejects an absent one — it is not a non-null contract, so a null payload is
+        // the caller's to handle.
+        Assert.NotEmpty(engine.Search("q", null, new CallerContext("ana", Noon)));
+    }
+
+    [Fact]
+    public void RequirePayload_DefaultsToOff_SoARankingOnlyBoostKeepsWorking()
+    {
+        // A boost that reads nothing but the ranking must survive the plain ITextSearchEngine
+        // surface; making it opt-in is what keeps that true.
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(("a", 100), ("b", 99.9)),
+            (context, cand) => context.TopConfidence < 0.2 && cand.DocumentId == "b"
+                ? new ScoreBoost(Add: 500)
+                : ScoreBoost.None());
+
+        ITextSearchEngine unaware = engine;
+        var results = unaware.Search("q");
+
+        // No payload to gate on, and none needed.
+        Assert.Equal("b", results[0].DocumentId);
+    }
+
+    [Fact]
+    public void RequirePayload_ThrowsBeforeRetrievingFromTheInnerEngine()
+    {
+        // Failing here rather than after the inner engine ran keeps the cost of a misrouted call
+        // at zero and makes the mistake obvious in a stack trace.
+        var inner = new FixedEngine(("a", 10));
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            inner,
+            (context, cand) => ScoreBoost.None(),
+            requirePayload: true);
+
+        Assert.Throws<InvalidOperationException>(() => ((ITextSearchEngine)engine).Search("q"));
+
+        Assert.Empty(inner.LastResults);
+    }
+
+    [Fact]
+    public void RequirePayload_DoesNotDisturbAnEmptyRequest()
+    {
+        // A request that cannot produce results is not a payload mistake, and throwing there
+        // would turn an empty page into a failure.
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(("a", 10)),
+            (context, cand) => ScoreBoost.None(),
+            requirePayload: true);
+
+        Assert.Empty(engine.Search("q", new SearchOptions(Limit: 0)));
+        Assert.Empty(engine.Search("q", new SearchOptions(Offset: -1)));
+    }
+
+    [Fact]
     public void Confidences_AreComputedLazilyAndOnlyOnce()
     {
         var arrays = new List<IReadOnlyList<double>>();
