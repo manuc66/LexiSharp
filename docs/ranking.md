@@ -621,6 +621,49 @@ compose with a boosted or hybrid engine rather than replace one.
 `Snapshot` and `Restore` persist the history with its counters intact — a query answered five
 times is stored as five, not as one.
 
+### When the history belongs to a user
+
+One history per engine is the right shape when the history is about the corpus — a set of canonical
+documents, a deployment's preferred terms. It is the wrong shape when it is about who is asking:
+a history shared across users is evidence about none of them in particular, and serving someone the
+choices of strangers promotes documents they did not shape.
+
+`FeedbackAwareTextSearchEngine<TPayload>` takes a selector instead of a history, so one engine
+serves many:
+
+```csharp
+internal sealed record Viewer(string Id);
+
+var engine = new FeedbackAwareTextSearchEngine<Viewer>(
+    baseEngine,
+    viewer => histories.TryGetValue(viewer?.Id ?? "", out var h) ? h : null,
+    maxBoost: 5.0,
+    requirePayload: true);
+
+// Learn against the viewer who made the choice, not "the" user.
+if (engine.Learn(viewer, query, chosenDocumentId))
+    await SaveAsync(histories[viewer.Id]);
+
+var results = engine.Search(query, options, viewer);
+```
+
+The selector returning `null` means this search has no history — a viewer who has answered
+nothing — and the search is served unchanged. That is different from a payload that never arrived,
+and `requirePayload` distinguishes them the same way it does on `BoostedTextSearchEngine`: a search
+that lost its viewer would otherwise come back unboosted, and unboosted still looks plausible.
+
+`Learn` returns `false` when the selector mapped the payload to no history, so the caller learns
+that the choice was not recorded rather than assuming it was.
+
+### Cost
+
+`GetFuzzyAssociations` walks every recorded query, so its cost is proportional to the size of the
+history, not the depth of the index. A recorded query's terms are computed once when it is
+recorded — the tokenizer belongs to the history and cannot change — so a search does not tokenize
+them again. Measured over a 2 000-query history: 3454 µs per query before that, 1283 µs after, and
+the gap widens with the history. Past that size the walk is the thing to measure before assuming
+the channel is cheap; `GetAssociations`, an exact lookup keyed on the whole query, does not walk.
+
 ## Boosting on the search, not only on the document
 
 `BoostedTextSearchEngine`'s boost sees one candidate. That is enough for a decision the document

@@ -74,6 +74,29 @@ workflow.
   `BoostContext<TPayload>.PayloadSupplied` separates "no payload was offered" from "a null
   payload was offered", which `Payload` alone cannot. `requirePayload` rejects only the former.
 
+  `FeedbackAwareTextSearchEngine<TPayload>` applies the same pattern to the learned channel: one
+  engine serves many histories, the caller picks per search from the payload. A history shared
+  across users is evidence about none of them in particular — serving someone the choices of
+  strangers promotes documents they did not shape. It implements `IContextualSearchEngine<TPayload>`
+  with `requirePayload` for the same reason, and `Learn` returns whether the choice was recorded,
+  so a payload with no history reports that instead of silently discarding it. The
+  non-generic `FeedbackAwareTextSearchEngine` — one history for every search — is unchanged in
+  behaviour and now forwards to it.
+
+### Changed
+
+- **`QueryFeedbackHistory` computes a recorded query's terms once, when it is recorded.**
+
+  `GetFuzzyAssociations` walks every query the history holds, and it was tokenizing each of them
+  on every search, so each search cost one tokenization per query ever recorded. The tokenizer
+  belongs to the history and cannot change, so the terms are computed at construction and cannot
+  go stale. Measured over a 2 000-query history: 3454 µs → 1283 µs per query, a 2.7× reduction,
+  and the gap widens with the size of the history.
+
+  `GetFuzzyAssociationScores` returns the same associations keyed by document id, which is the
+  form a decorator applying them to a page needs; `GetFuzzyAssociations` is that dictionary
+  projected and sorted, unchanged.
+
 - **`ScoreBoost.None()`: the way to say "leave this candidate alone".**
 
   `default(ScoreBoost)` does not mean that. The optional constructor parameters give

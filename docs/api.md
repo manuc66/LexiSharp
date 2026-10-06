@@ -308,7 +308,8 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `CalibratedScoreConfidence` | class | — | A learned confidence calibrator that maps raw scores to calibrated probabilities using isotonic regression or Platt scaling, with an optional Youden-derived… |
 | `CalibrationMethod` | enum | — | The calibration method used by CalibratedScoreConfidence. |
 | `DocumentLengthRatioScorer` | class | `ITextScorer` | A document's length relative to the corpus average: \|D\| / avgdl, where both figures come from the index. One for an average document, above one for a long… |
-| `FeedbackAwareTextSearchEngine` | class | `ITextSearchEngine` | A decorator engine that augments a primary search engine with a learned query → document feedback channel. |
+| `FeedbackAwareTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that augments a primary search engine with a learned query → document feedback channel — one history for every search. |
+| `FeedbackAwareTextSearchEngine<TPayload>` | class | `IContextualSearchEngine`, `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that augments a primary search engine with a learned query → document feedback channel, choosing the history per search from the caller's… |
 | `NdcgGain` | enum | — | How a relevance level is turned into a gain in NdcgAtK. |
 | `ProximityMode` | enum | — | How ProximityReranker turns a term window into a score change. |
 | `ProximityReranker` | class | `IReranker` | Re-ranks a candidate list by how close together the query terms actually occur in each document, refining the order a term-frequency scorer produced without… |
