@@ -57,10 +57,10 @@ public class ContextualBoostTests
         string? seen = null;
         var engine = new BoostedTextSearchEngine<CallerContext>(
             new FixedEngine(("a", 10)),
-            (context, _) =>
+            (context, cand) =>
             {
                 seen = context.Query;
-                return ScoreBoost.None;
+                return ScoreBoost.None();
             });
 
         engine.Search("the original query", null, new CallerContext("ana", Noon));
@@ -75,10 +75,10 @@ public class ContextualBoostTests
         IReadOnlyList<SearchResult>? seen = null;
         var engine = new BoostedTextSearchEngine<CallerContext>(
             new FixedEngine(("a", 10), ("b", 9)),
-            (context, _) =>
+            (context, cand) =>
             {
                 seen = context.Results;
-                return ScoreBoost.None;
+                return ScoreBoost.None();
             });
 
         engine.Search("q", null, new CallerContext("ana", Noon));
@@ -95,10 +95,10 @@ public class ContextualBoostTests
         CallerContext? seen = null;
         var engine = new BoostedTextSearchEngine<CallerContext>(
             new FixedEngine(("a", 10)),
-            (context, _) =>
+            (context, cand) =>
             {
                 seen = context.Payload;
-                return ScoreBoost.None;
+                return ScoreBoost.None();
             });
 
         var payload = new CallerContext("ana", Noon, "arm-b");
@@ -116,10 +116,10 @@ public class ContextualBoostTests
         int calls = 0;
         var engine = new BoostedTextSearchEngine<CallerContext>(
             new FixedEngine(),
-            (_, _) =>
+            (_, cand) =>
             {
                 calls++;
-                return ScoreBoost.None;
+                return ScoreBoost.None();
             });
 
         Assert.Empty(engine.Search("q", null, new CallerContext("ana", Noon)));
@@ -134,8 +134,8 @@ public class ContextualBoostTests
         // ranking that was already right.
         var engine = new BoostedTextSearchEngine<CallerContext>(
             new FixedEngine(("a", 100), ("b", 10)),
-            (context, _) =>
-                context.TopConfidence < 0.2 ? new ScoreBoost(Add: 500) : ScoreBoost.None);
+            (context, cand) =>
+                context.TopConfidence < 0.2 ? new ScoreBoost(Add: 500) : ScoreBoost.None());
 
         var results = engine.Search("q", null, new CallerContext("ana", Noon));
 
@@ -152,7 +152,7 @@ public class ContextualBoostTests
             (context, candidate) =>
                 context.TopConfidence < 0.2 && candidate.DocumentId == "b"
                     ? new ScoreBoost(Add: 500)
-                    : ScoreBoost.None);
+                    : ScoreBoost.None());
 
         var results = engine.Search("q", null, new CallerContext("ana", Noon));
 
@@ -168,7 +168,7 @@ public class ContextualBoostTests
         // "confidence below 0.5" behave oppositely on a tie, and only one of them is right.
         var engine = new BoostedTextSearchEngine<CallerContext>(
             new FixedEngine(("a", 100), ("b", 100)),
-            (context, _) => ScoreBoost.None);
+            (context, cand) => ScoreBoost.None());
 
         var results = engine.Search("q", null, new CallerContext("ana", Noon));
 
@@ -182,10 +182,10 @@ public class ContextualBoostTests
         int builds = 0;
         var engine = new BoostedTextSearchEngine<CallerContext>(
             new FixedEngine(("a", 10), ("b", 9), ("c", 8)),
-            (context, _) =>
+            (context, cand) =>
             {
                 builds++;
-                return ScoreBoost.None;
+                return ScoreBoost.None();
             });
 
         engine.Search("q", null, new CallerContext("ana", Noon));
@@ -201,7 +201,7 @@ public class ContextualBoostTests
             (context, candidate) =>
                 context.Payload.ExperimentArm == "arm-b" && candidate.DocumentId == "b"
                     ? new ScoreBoost(Add: 50)
-                    : ScoreBoost.None);
+                    : ScoreBoost.None());
 
         // Two candidates, both kept, so a missing result means the document was dropped rather
         // than merely ranked second.
@@ -217,11 +217,12 @@ public class ContextualBoostTests
     public void Search_WithoutAPayload_LeavesEveryCandidateAtItsBaseScore()
     {
         // Reachable through ITextSearchEngine, so a pipeline unaware of the capability runs the
-        // engine — without the state it was given the means to use.
+        // engine — without the state it was given the means to use. Payload is null here, which
+        // is unambiguous because TPayload is constrained to a reference type.
         ITextSearchEngine engine = new BoostedTextSearchEngine<CallerContext>(
             new FixedEngine(("a", 100), ("b", 99.9)),
             (context, candidate) =>
-                context.Payload is not null ? new ScoreBoost(Add: 500) : ScoreBoost.None);
+                context.Payload is not null ? new ScoreBoost(Add: 500) : ScoreBoost.None());
 
         var results = engine.Search("q");
 
@@ -229,11 +230,127 @@ public class ContextualBoostTests
     }
 
     [Fact]
+    public void PayloadlessOverload_ReportsThePayloadAsNull()
+    {
+        CallerContext? seen = null;
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(("a", 10)),
+            (context, cand) =>
+            {
+                seen = context.Payload;
+                return ScoreBoost.None();
+            });
+
+        engine.Search("q");
+
+        // The check the type constraint exists to make safe: with a reference-type payload this
+        // reads null rather than a value type's zero value.
+        Assert.Null(seen);
+    }
+
+    [Fact]
+    public void Confidences_AreComputedLazilyAndOnlyOnce()
+    {
+        var arrays = new List<IReadOnlyList<double>>();
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(("a", 10), ("b", 9), ("c", 8)),
+            (context, cand) =>
+            {
+                arrays.Add(context.Confidences);
+                _ = context.TopConfidence;
+                return ScoreBoost.None();
+            });
+
+        engine.Search("q", null, new CallerContext("ana", Noon));
+
+        // One array for three candidates: the confidence walk is per search, not per candidate.
+        Assert.Equal(3, arrays.Count);
+        Assert.All(arrays, a => Assert.Same(arrays[0], a));
+    }
+
+    [Fact]
+    public void Confidences_AreNotComputedByABoostThatNeverReadsThem()
+    {
+        // The candidate-only engine discards the context entirely, so deriving its confidences
+        // eagerly would be work nobody can observe. Readable through the allocation a search
+        // performs, since the walk is what allocates.
+        static long BytesPerSearch(ITextSearchEngine e)
+        {
+            e.Search("q", new SearchOptions(10));
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 0; i < 100; i++) e.Search("q", new SearchOptions(10));
+            return (GC.GetAllocatedBytesForCurrentThread() - before) / 100;
+        }
+
+        var candidates = Enumerable.Range(0, 50).Select(i => (Id: $"d{i}", Score: (double)i)).ToArray();
+
+        var reads = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(candidates),
+            (context, cand) =>
+            {
+                _ = context.Confidences;
+                return ScoreBoost.None();
+            });
+
+        var ignores = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(candidates),
+            (context, cand) =>
+            {
+                _ = context.Payload;
+                return ScoreBoost.None();
+            });
+
+        // Both take the same path apart from whether the confidences are read; if the read is
+        // lazy, the two allocations differ by at most the 50-element array itself.
+        long withRead = BytesPerSearch(reads);
+        long withoutRead = BytesPerSearch(ignores);
+
+        Assert.True(
+            withoutRead < withRead,
+            $"expected the unread path ({withoutRead} B) to allocate less than the read path ({withRead} B)");
+    }
+
+    [Fact]
+    public void Confidences_AgreeWithScoreConfidenceOnTheSameResults()
+    {
+        IReadOnlyList<double>? seen = null;
+        var candidates = new (string Id, double Score)[] { ("a", 100.0), ("b", 40.0), ("c", 39.0) };
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(candidates),
+            (context, cand) =>
+            {
+                seen = context.Confidences;
+                return ScoreBoost.None();
+            });
+
+        engine.Search("q", null, new CallerContext("ana", Noon));
+
+        var expected = ScoreConfidence.Compute(
+            candidates
+                .Select(c => new SearchResult(c.Id, c.Score, new SearchDocument(c.Id, "t")))
+                .ToList());
+
+        Assert.Equal(expected, seen);
+    }
+
+    [Fact]
+    public void DefaultScoreBoost_ExcludesEveryDocument()
+    {
+        // The trap ScoreBoost.None() exists to name, pinned from the boost side: what a boost
+        // that returns default actually does to the page.
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(("a", 100), ("b", 99.9)),
+            (_, cand) => default);
+
+        Assert.Empty(engine.Search("q", null, new CallerContext("ana", Noon)));
+    }
+
+    [Fact]
     public void NegativeFactor_IsStillRejected()
     {
         var engine = new BoostedTextSearchEngine<CallerContext>(
             new FixedEngine(("a", 10)),
-            (_, _) => new ScoreBoost(Multiply: -2));
+            (_, cand) => new ScoreBoost(Multiply: -2));
 
         var error = Assert.Throws<ArgumentException>(() => engine.Search("q", null, new CallerContext("ana", Noon)));
 
@@ -247,7 +364,7 @@ public class ContextualBoostTests
         // no context, same ordering, and still accepting a bare double as a factor.
         var engine = new BoostedTextSearchEngine(
             new FixedEngine(("a", 10), ("b", 5)),
-            result => result.DocumentId == "b" ? 3.0 : ScoreBoost.None);
+            result => result.DocumentId == "b" ? 3.0 : ScoreBoost.None());
 
         var results = engine.Search("q");
 
@@ -272,7 +389,7 @@ public class ContextualBoostTests
             (context, candidate) =>
                 calibrated.ShouldAbstain(context.TopScore) && candidate.DocumentId == "b"
                     ? new ScoreBoost(Add: 100)
-                    : ScoreBoost.None);
+                    : ScoreBoost.None());
 
         var unsure = engine.Search("q", null, new CallerContext("ana", Noon));
         Assert.Equal("b", unsure[0].DocumentId);
@@ -283,7 +400,7 @@ public class ContextualBoostTests
             (context, candidate) =>
                 calibrated.ShouldAbstain(context.TopScore) && candidate.DocumentId == "b"
                     ? new ScoreBoost(Add: 100)
-                    : ScoreBoost.None);
+                    : ScoreBoost.None());
 
         var decided = sure.Search("q", null, new CallerContext("ana", Noon));
         Assert.Equal("a", decided[0].DocumentId);
