@@ -1,0 +1,291 @@
+using LexiSharp.Core;
+using LexiSharp.Ranking;
+using Xunit;
+
+namespace LexiSharp.Tests;
+
+/// <summary>
+/// What the caller hands to a contextual boost. A composite rather than a payload library could
+/// know the concepts in: adding a concept is a new property on the caller's own type, never a
+/// change to anything here.
+/// </summary>
+internal sealed record CallerContext(string User, DateTimeOffset Now, string? ExperimentArm = null);
+
+public class ContextualBoostTests
+{
+    /// <summary>
+    /// A base engine that returns a fixed page, so a test states the ranking it is boosting
+    /// instead of arranging a corpus to produce one.
+    /// </summary>
+    private sealed class FixedEngine : ITextSearchEngine
+    {
+        private readonly IReadOnlyList<SearchResult> _results;
+
+        public FixedEngine(params (string Id, double Score)[] results) =>
+            _results = results
+                .Select(r => new SearchResult(r.Id, r.Score, new SearchDocument(r.Id, $"text of {r.Id}")))
+                .ToList();
+
+        public IReadOnlyList<SearchResult> LastResults { get; private set; } = Array.Empty<SearchResult>();
+
+        public void Index(IEnumerable<SearchDocument> documents) { }
+
+        public void Add(SearchDocument document) { }
+
+        public bool Remove(string documentId) => false;
+
+        public void Clear() { }
+
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+        {
+            options ??= SearchOptions.Default;
+            LastResults = _results
+                .OrderByDescending(r => r.Score)
+                .ThenBy(r => r.DocumentId, StringComparer.Ordinal)
+                .Skip(options.Offset)
+                .Take(options.Limit)
+                .ToList();
+            return LastResults;
+        }
+    }
+
+    private static readonly DateTimeOffset Noon = new(2026, 3, 14, 12, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public void Boost_ReceivesTheQueryAsItWasIssued()
+    {
+        string? seen = null;
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(("a", 10)),
+            (context, _) =>
+            {
+                seen = context.Query;
+                return ScoreBoost.None;
+            });
+
+        engine.Search("the original query", null, new CallerContext("ana", Noon));
+
+        // Before tokenization: a boost that matches on phrasing has to see the phrasing.
+        Assert.Equal("the original query", seen);
+    }
+
+    [Fact]
+    public void Boost_ReceivesThePreBoostRanking()
+    {
+        IReadOnlyList<SearchResult>? seen = null;
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(("a", 10), ("b", 9)),
+            (context, _) =>
+            {
+                seen = context.Results;
+                return ScoreBoost.None;
+            });
+
+        engine.Search("q", null, new CallerContext("ana", Noon));
+
+        Assert.Equal(new[] { "a", "b" }, seen!.Select(r => r.DocumentId));
+
+        // The base scores, not the boosted ones — the whole point of being able to decline.
+        Assert.Equal(new[] { 10.0, 9.0 }, seen!.Select(r => r.Score));
+    }
+
+    [Fact]
+    public void Boost_ReceivesTheCallerPayload()
+    {
+        CallerContext? seen = null;
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(("a", 10)),
+            (context, _) =>
+            {
+                seen = context.Payload;
+                return ScoreBoost.None;
+            });
+
+        var payload = new CallerContext("ana", Noon, "arm-b");
+        engine.Search("q", null, payload);
+
+        Assert.Same(payload, seen);
+    }
+
+    [Fact]
+    public void EmptyInnerResultSet_NeverReachesTheBoost()
+    {
+        // With no candidate there is nothing to boost, so the boost is not called at all — which
+        // is also why the boost cannot observe TopConfidence on an empty ranking, and why
+        // TopConfidence is documented as 0 rather than as something to read there.
+        int calls = 0;
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(),
+            (_, _) =>
+            {
+                calls++;
+                return ScoreBoost.None;
+            });
+
+        Assert.Empty(engine.Search("q", null, new CallerContext("ana", Noon)));
+        Assert.Equal(0, calls);
+    }
+
+    [Fact]
+    public void DeclinedBoost_LeavesAClearRankingIntact()
+    {
+        // 100 against 10 is a clear winner, so a boost that only fires under doubt stays out of
+        // it. This is the regression the gate exists to prevent: a correction applied to a
+        // ranking that was already right.
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(("a", 100), ("b", 10)),
+            (context, _) =>
+                context.TopConfidence < 0.2 ? new ScoreBoost(Add: 500) : ScoreBoost.None);
+
+        var results = engine.Search("q", null, new CallerContext("ana", Noon));
+
+        Assert.Equal(new[] { 100.0, 10.0 }, results.Select(r => r.Score).OrderByDescending(s => s));
+    }
+
+    [Fact]
+    public void Boost_FiresOnAnAmbiguousRanking()
+    {
+        // Same boost, same threshold, ranking the base engine could not resolve: 100 against
+        // 99.9 reads as a near-tie, which is exactly when a correction is worth applying.
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(("a", 100), ("b", 99.9)),
+            (context, candidate) =>
+                context.TopConfidence < 0.2 && candidate.DocumentId == "b"
+                    ? new ScoreBoost(Add: 500)
+                    : ScoreBoost.None);
+
+        var results = engine.Search("q", null, new CallerContext("ana", Noon));
+
+        Assert.Equal("b", results[0].DocumentId);
+    }
+
+    [Fact]
+    public void WinnerMargin_ReadsAnExactTieAsNoConfidenceAtAll()
+    {
+        // Worth pinning because it is the one case where "ambiguous" and "certain" are easy to
+        // confuse: WinnerMargin is the gap to the follower, so two equal scores give 0 — maximum
+        // uncertainty — not 1. A gate written as "confidence above 0.5" and one written as
+        // "confidence below 0.5" behave oppositely on a tie, and only one of them is right.
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(("a", 100), ("b", 100)),
+            (context, _) => ScoreBoost.None);
+
+        var results = engine.Search("q", null, new CallerContext("ana", Noon));
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal(100, results[0].Score);
+    }
+
+    [Fact]
+    public void Context_IsBuiltOncePerSearchSoTheBaseRankingDoesNotMoveUnderTheBoost()
+    {
+        int builds = 0;
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(("a", 10), ("b", 9), ("c", 8)),
+            (context, _) =>
+            {
+                builds++;
+                return ScoreBoost.None;
+            });
+
+        engine.Search("q", null, new CallerContext("ana", Noon));
+
+        Assert.Equal(3, builds);
+    }
+
+    [Fact]
+    public void Boost_CanDependOnThePayloadPerCandidate()
+    {
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(("a", 10), ("b", 9)),
+            (context, candidate) =>
+                context.Payload.ExperimentArm == "arm-b" && candidate.DocumentId == "b"
+                    ? new ScoreBoost(Add: 50)
+                    : ScoreBoost.None);
+
+        // Two candidates, both kept, so a missing result means the document was dropped rather
+        // than merely ranked second.
+        var inArm = engine.Search("q", null, new CallerContext("ana", Noon, "arm-b"));
+        var outArm = engine.Search("q", null, new CallerContext("ana", Noon, "arm-a"));
+
+        Assert.Equal(2, inArm.Count);
+        Assert.Equal("b", inArm[0].DocumentId);
+        Assert.Equal("a", outArm[0].DocumentId);
+    }
+
+    [Fact]
+    public void Search_WithoutAPayload_LeavesEveryCandidateAtItsBaseScore()
+    {
+        // Reachable through ITextSearchEngine, so a pipeline unaware of the capability runs the
+        // engine — without the state it was given the means to use.
+        ITextSearchEngine engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(("a", 100), ("b", 99.9)),
+            (context, candidate) =>
+                context.Payload is not null ? new ScoreBoost(Add: 500) : ScoreBoost.None);
+
+        var results = engine.Search("q");
+
+        Assert.Equal(new[] { 100.0, 99.9 }, results.Select(r => r.Score).OrderByDescending(s => s));
+    }
+
+    [Fact]
+    public void NegativeFactor_IsStillRejected()
+    {
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(("a", 10)),
+            (_, _) => new ScoreBoost(Multiply: -2));
+
+        var error = Assert.Throws<ArgumentException>(() => engine.Search("q", null, new CallerContext("ana", Noon)));
+
+        Assert.Contains("invert", error.Message);
+    }
+
+    [Fact]
+    public void NonGenericBoost_RemainsUnchangedByTheGenericOneExisting()
+    {
+        // The candidate-only form is now a forwarder. It must keep behaving as it did: no payload,
+        // no context, same ordering, and still accepting a bare double as a factor.
+        var engine = new BoostedTextSearchEngine(
+            new FixedEngine(("a", 10), ("b", 5)),
+            result => result.DocumentId == "b" ? 3.0 : ScoreBoost.None);
+
+        var results = engine.Search("q");
+
+        Assert.Equal(new[] { "b", "a" }, results.Select(r => r.DocumentId));
+    }
+
+    [Fact]
+    public void Calibrator_FitsTheAbstentionTheContextGateReads()
+    {
+        // The two pieces together, which is what the gate is for: a fitted probability of being
+        // right, read from the top score the context exposes.
+        var pairs = new List<(double Score, bool IsCorrect)>();
+        for (int i = 0; i < 40; i++)
+        {
+            pairs.Add((i, false));
+            pairs.Add((100 + i, true));
+        }
+
+        var calibrated = CalibratedScoreConfidence.Fit(pairs);
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(("a", 20), ("b", 1)),
+            (context, candidate) =>
+                calibrated.ShouldAbstain(context.TopScore) && candidate.DocumentId == "b"
+                    ? new ScoreBoost(Add: 100)
+                    : ScoreBoost.None);
+
+        var unsure = engine.Search("q", null, new CallerContext("ana", Noon));
+        Assert.Equal("b", unsure[0].DocumentId);
+
+        // A clear top result is not uncertain, so the correction stays out.
+        var sure = new BoostedTextSearchEngine<CallerContext>(
+            new FixedEngine(("a", 139), ("b", 138)),
+            (context, candidate) =>
+                calibrated.ShouldAbstain(context.TopScore) && candidate.DocumentId == "b"
+                    ? new ScoreBoost(Add: 100)
+                    : ScoreBoost.None);
+
+        var decided = sure.Search("q", null, new CallerContext("ana", Noon));
+        Assert.Equal("a", decided[0].DocumentId);
+    }
+}
