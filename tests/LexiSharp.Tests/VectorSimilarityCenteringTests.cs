@@ -1,3 +1,4 @@
+using System.Numerics;
 using LexiSharp.Hybrid;
 using Xunit;
 
@@ -35,6 +36,28 @@ public class VectorSimilarityCenteringTests
         // There is no mean of nothing, and silently returning zeros would put a wrong offset
         // under every subsequent Center call.
         Assert.Throws<ArgumentException>(() => VectorSimilarity.Mean(Array.Empty<ReadOnlyMemory<float>>()));
+    }
+
+    [Fact]
+    public void Mean_DimensionNotASimdMultiple_KeepsTheTail()
+    {
+        // AccumulateVectorized walks Vector<float>.Count at a time, and a dimension that does not
+        // divide evenly must not lose its last elements — dropping them would be a wrong mean
+        // rather than a slow one. 385 is the shape a model emits when the width does not divide.
+        int dimension = 3 * Vector<float>.Count + 1;
+        var rows = new float[5][];
+
+        for (int r = 0; r < rows.Length; r++)
+        {
+            rows[r] = new float[dimension];
+            for (int i = 0; i < dimension; i++)
+                rows[r][i] = r + 1;
+        }
+
+        var mean = VectorSimilarity.Mean(rows);
+
+        Assert.Equal(dimension, mean.Length);
+        Assert.All(mean, value => Assert.Equal(3f, value, 4));   // mean of 1..5 is 3
     }
 
     [Fact]
