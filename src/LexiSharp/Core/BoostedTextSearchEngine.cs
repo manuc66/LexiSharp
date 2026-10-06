@@ -68,6 +68,7 @@ public sealed class BoostedTextSearchEngine<TPayload> : IContextualSearchEngine<
     private readonly ContextualBoost<TPayload> _boost;
     private readonly int _maxCandidates;
     private readonly RetrievalTelemetry _telemetry;
+    private readonly bool _requirePayload;
 
     /// <summary>
     /// Name this engine reports to <see cref="RetrievalTelemetry"/> and its metrics sinks.
@@ -88,11 +89,25 @@ public sealed class BoostedTextSearchEngine<TPayload> : IContextualSearchEngine<
     /// Optional observability sink. Reports a <c>retrieve</c> stage for the inner engine and a
     /// <c>boost</c> stage. Defaults to <see cref="RetrievalTelemetry.None"/>.
     /// </param>
+    /// <param name="requirePayload">
+    /// Whether a search arriving through <see cref="ITextSearchEngine.Search(string, SearchOptions?)"/>
+    /// — which offers no payload — should throw instead of running. Default <c>false</c>: the
+    /// search proceeds and the boost sees <see cref="BoostContext{TPayload}.PayloadSupplied"/>
+    /// as <c>false</c>.
+    /// <para>
+    /// Set it when the boost is built on the payload — a per-user or per-tenant correction that
+    /// silently stops applying is a bug nobody reports, because the results still look plausible.
+    /// Failing names the mistake at the call site that made it. Leave it <c>false</c> for a boost
+    /// that reads only the ranking, which needs no payload and must keep working through the
+    /// plain <see cref="ITextSearchEngine"/> surface.
+    /// </para>
+    /// </param>
     public BoostedTextSearchEngine(
         ITextSearchEngine inner,
         ContextualBoost<TPayload> boost,
         int maxCandidates = 50,
-        RetrievalTelemetry? telemetry = null)
+        RetrievalTelemetry? telemetry = null,
+        bool requirePayload = false)
     {
         ArgumentNullException.ThrowIfNull(inner);
         ArgumentNullException.ThrowIfNull(boost);
@@ -101,6 +116,7 @@ public sealed class BoostedTextSearchEngine<TPayload> : IContextualSearchEngine<
         _boost = boost;
         _maxCandidates = Math.Max(1, maxCandidates);
         _telemetry = telemetry ?? RetrievalTelemetry.None;
+        _requirePayload = requirePayload;
     }
 
     /// <inheritdoc />
@@ -125,20 +141,29 @@ public sealed class BoostedTextSearchEngine<TPayload> : IContextualSearchEngine<
     }
 
     /// <summary>
-    /// Searches with no payload. The payload is a reference type by contract, so
-    /// <c>default</c> means "nothing to add"; a boost that reads it must expect that, the same
-    /// way it must expect an empty candidate pool.
+    /// Searches with no payload. Reached through <see cref="ITextSearchEngine"/>, so a pipeline
+    /// that does not know about <see cref="IContextualSearchEngine{TPayload}"/> can still run
+    /// this engine.
     /// </summary>
     /// <remarks>
-    /// Reachable through <see cref="ITextSearchEngine"/>, so a pipeline that does not know about
-    /// <see cref="IContextualSearchEngine{TPayload}"/> still runs this engine — without the state
-    /// it was given the means to use.
+    /// The boost sees <see cref="BoostContext{TPayload}.PayloadSupplied"/> as <c>false</c> and
+    /// <see cref="BoostContext{TPayload}.Payload"/> as <c>null</c>. Whether that is allowed is the
+    /// engine's <c>requirePayload</c>: this overload throws when it was set, which is how a boost
+    /// built on the payload fails at the call site that dropped it instead of quietly returning
+    /// results the correction never touched.
     /// </remarks>
     public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
-        Search(query, options, default!);
+        Search(query, options, default!, payloadSupplied: false);
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options, TPayload payload)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options, TPayload payload) =>
+        Search(query, options, payload, payloadSupplied: true);
+
+    private IReadOnlyList<SearchResult> Search(
+        string query,
+        SearchOptions? options,
+        TPayload payload,
+        bool payloadSupplied)
     {
         ArgumentNullException.ThrowIfNull(query);
 
@@ -149,6 +174,20 @@ public sealed class BoostedTextSearchEngine<TPayload> : IContextualSearchEngine<
 
         if (options.IsEmpty)
             return Array.Empty<SearchResult>();
+
+        // After the empty-request check and before the inner engine runs: a request that could
+        // never produce results is not a payload mistake, and failing here rather than after
+        // retrieval keeps a misrouted call free.
+        if (_requirePayload && !payloadSupplied)
+        {
+            throw new InvalidOperationException(
+                $"BoostedTextSearchEngine<{typeof(TPayload).Name}> was constructed with " +
+                "requirePayload: true, so it cannot serve a search that offers no payload. A " +
+                $"caller holding an {nameof(ITextSearchEngine)} cannot reach " +
+                $"{nameof(IContextualSearchEngine<TPayload>)}.{nameof(IContextualSearchEngine<TPayload>.Search)} — " +
+                "pass the payload at the call site, or construct the engine with " +
+                "requirePayload: false if the boost does not read it.");
+        }
 
         // The final page is [Offset, Offset + Limit) of the boosted ranking, and boosting can
         // promote any inner candidate into it — so the inner engine is asked for a pool covering
@@ -175,7 +214,7 @@ public sealed class BoostedTextSearchEngine<TPayload> : IContextualSearchEngine<
 
         // Built once, before the first candidate: a boost that reads the base ranking must not see
         // it change under it as earlier candidates get boosted.
-        var context = new BoostContext<TPayload>(query, candidates, payload);
+        var context = new BoostContext<TPayload>(query, candidates, payload, payloadSupplied);
 
         var results = new List<SearchResult>(candidates.Count);
 

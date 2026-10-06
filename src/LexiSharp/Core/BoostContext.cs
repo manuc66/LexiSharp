@@ -59,11 +59,13 @@ public sealed class BoostContext<TPayload>
     internal BoostContext(
         string query,
         IReadOnlyList<SearchResult> results,
-        TPayload payload)
+        TPayload payload,
+        bool payloadSupplied)
     {
         Query = query;
         Results = results;
         Payload = payload;
+        PayloadSupplied = payloadSupplied;
     }
 
     /// <summary>The raw query text this search was issued with, before tokenization.</summary>
@@ -97,14 +99,30 @@ public sealed class BoostContext<TPayload>
         _confidences ??= Ranking.ScoreConfidence.Compute(Results, Ranking.ScoreConfidenceMethod.WinnerMargin);
 
     /// <summary>
+    /// Whether the search carried a payload at all, as opposed to
+    /// <see cref="Payload"/> being <c>null</c>.
+    /// </summary>
+    /// <remarks>
+    /// The two are different situations and this property is what tells them apart. Reached
+    /// through <see cref="ITextSearchEngine.Search(string, SearchOptions?)"/>, no payload was
+    /// ever offered and this is <c>false</c>; reached through
+    /// <see cref="IContextualSearchEngine{TPayload}.Search(string, SearchOptions?, TPayload)"/>,
+    /// one was offered and this is <c>true</c> — even if the caller passed <c>null</c>.
+    /// <para>
+    /// A boost that behaves differently depending on the payload should read this rather than
+    /// testing <see cref="Payload"/> for null. A boost that has no use for a payload — the
+    /// candidate-only case — reads neither, and never pays for the distinction.
+    /// </para>
+    /// </remarks>
+    public bool PayloadSupplied { get; }
+
+    /// <summary>
     /// The caller's per-search state, handed to the boost unchanged, or <c>null</c> when the
     /// search came through the payload-less overload.
     /// </summary>
     /// <remarks>
-    /// <c>null</c> and "the caller passed a payload that happens to be null" are the same value
-    /// here. That is the cost of the reference-type constraint: a caller with no state to pass
-    /// and a caller passing an explicitly null payload are indistinguishable to the boost. Use a
-    /// payload that is never null where that distinction matters.
+    /// See <see cref="PayloadSupplied"/> for how to tell "no payload was offered" from "a null
+    /// payload was offered", which this property alone cannot.
     /// </remarks>
     public TPayload Payload { get; }
 
@@ -113,6 +131,12 @@ public sealed class BoostContext<TPayload>
     /// top result a clear one?" is the question a conditional boost asks first, and because a
     /// fitted calibrator takes a raw score rather than a relative confidence.
     /// </summary>
+    /// <remarks>
+    /// This is a raw score on whatever scale the inner engine produces — BM25, a dense similarity,
+    /// a fusion score. A boost comparing it against a number has to know which, and a
+    /// <see cref="Ranking.CalibratedScoreConfidence"/> fitted on one corpus says nothing about
+    /// another engine's scale.
+    /// </remarks>
     public double TopScore => Results.Count > 0 ? Results[0].Score : 0;
 
     /// <summary>
@@ -120,6 +144,11 @@ public sealed class BoostContext<TPayload>
     /// See <see cref="Confidences"/> for what the number means — in particular, that two equal
     /// top scores read as <c>0</c>.
     /// </summary>
+    /// <remarks>
+    /// Scale-invariant, which is what makes it comparable across engines in a way
+    /// <see cref="TopScore"/> is not — at the cost of being relative to this result set rather
+    /// than a probability of being right. See <see cref="Ranking.ScoreConfidence"/>.
+    /// </remarks>
     public double TopConfidence => Confidences.Count > 0 ? Confidences[0] : 0;
 }
 
