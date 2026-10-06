@@ -146,8 +146,10 @@ is [Scope and limits](docs/reference.md#scope-and-limits).
 - **Not every combination is tested.** Engines, scorers, rerankers and mergers are tested
   individually *and* in the combinations described, but not every pairing — treat an unusual
   one as supported but unproven until you test it on your data.
-- **Version 0.6.0, one maintainer.** The public API may still change between minor versions —
-  pin a version and read the release notes.
+- **Version 0.8.0, one maintainer.** The public API may still change between minor versions —
+  pin a version and read the release notes. 0.8.0 breaks two things: `QueryFeatures.Phrases` replaces
+  the pair of `parent`/`child` features on the central record, and `AccumulateFilteredQueries` now
+  defaults to the fast path.
 
 ## Development
 

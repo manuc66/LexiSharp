@@ -16,7 +16,7 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --verify-reference
 on every push that touches the library or the harness, and weekly by the `Pinned reference`
 workflow.
 
-## [0.8.0] — Unreleased
+## [0.8.0] — 2026-10-06
 
 ### Added
 
@@ -620,3 +620,9 @@ commit messages carry the measurements.
   served by the per-document loop, which scores **every surviving candidate by document id** — one
   id-keyed length lookup plus one per query term. The pass scores by ordinal, as one walk of the
   posting entries that exist, and applies the filter to the ordinals it recorded.
+
+
+[unreleased]: https://github.com/manuc66/LexiSharp/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/manuc66/LexiSharp/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/manuc66/LexiSharp/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/manuc66/LexiSharp/releases/tag/v0.6.0
