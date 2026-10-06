@@ -663,6 +663,30 @@ the payload never pays for the walk. On a 500-document corpus at `maxCandidates:
 candidate-only `BoostedTextSearchEngine` allocates 8928 B/search, a contextual boost reading only
 `Payload` the same 8928 B, and one reading `TopConfidence` 9776 B.
 
+The payload-less overload passes `null`, and the boost sees
+`context.PayloadSupplied == false`. A caller holding a plain `ITextSearchEngine` cannot reach the
+payload at all, so a boost that is *built* on it stops applying without any sign — the results
+still look plausible. For a boost that cannot work without one:
+
+```csharp
+var engine = new BoostedTextSearchEngine<CallerContext>(
+    inner,
+    (context, candidate) => /* ... */,
+    requirePayload: true);
+```
+
+The payload-less `Search` then throws, naming the engine and the interface it cannot reach. It
+throws after the empty-request check and before the inner engine runs, so a request that could
+never produce results still returns an empty page and a misrouted call costs nothing. Leave the
+flag off for a boost that reads only the ranking, which needs no payload and must keep working
+through the plain `ITextSearchEngine` surface.
+
+`BoostContext.TopScore` is a raw score on the inner engine's scale — BM25, a dense similarity, a
+fusion score. A `Ranking.CalibratedScoreConfidence` fitted on one of those says nothing about
+another, so a gate comparing it against a fitted threshold has to re-fit when the pipeline's
+engine changes. `TopConfidence` is the scale-invariant alternative, relative to the result set
+rather than a probability. `docs/observability.md` has the two composed.
+
 ### Where the payload goes, and why it is not in `SearchOptions`
 
 `TPayload` is the caller's per-search state, reaching the boost as `context.Payload`. It is

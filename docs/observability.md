@@ -307,3 +307,38 @@ function of the corpus's score scale rather than of the data.
 
 Fitted on a set of pairs that all come from one corpus at one time, this is a statement about
 that corpus. Re-fit when the corpus changes materially.
+
+### Driving a conditional boost from it
+
+The two halves of "boost, but only when you are unsure" are `CalibratedScoreConfidence` here and
+`BoostContext<TPayload>` in `docs/ranking.md`, and they compose through one value: the
+calibrator takes a raw score, and `BoostContext.TopScore` is one.
+
+```csharp
+using LexiSharp.Ranking;
+
+var calibrated = CalibratedScoreConfidence.Fit(pairs);   // one fit per corpus
+
+var engine = new BoostedTextSearchEngine<CallerContext>(
+    inner,
+    (context, candidate) =>
+        // The abstention decision, taken once per candidate but about the whole ranking.
+        calibrated.ShouldAbstain(context.TopScore) && candidate.DocumentId == "b"
+            ? new ScoreBoost(Add: 50)
+            : ScoreBoost.None());
+```
+
+`ShouldAbstain` reads the top score, so it answers "would the base ranking have been right?" —
+and a boost gated on it only applies where that answer is no. `TopScore` is a raw score on
+whatever scale the inner engine produces, which is what the calibrator was fitted on; a
+calibrator fitted on BM25 says nothing about a dense-similarity engine's scores, so a pipeline
+that changes engines has to re-fit.
+
+For a gate that does not need labelled data, `BoostContext.TopConfidence` is the scale-invariant
+alternative — relative to this result set rather than a probability, and derived from
+`ScoreConfidence` above. The two answer the same question at different strengths, and which one
+is available does not depend on whether the caller has labels.
+
+A boost that needs the caller's own state does the same thing against
+`BoostContext.PayloadSupplied` and `Payload`; see the payload-less overload's remarks in
+`docs/ranking.md` for what happens when a pipeline drops it.
