@@ -137,7 +137,10 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | --- | --- | --- | --- |
 | `AtomicEngineReference` | class | — | The atomic publish point for the « snapshot swap » concurrency pattern: one thread builds a fresh engine off-lock, then Swap makes it visible to every… |
 | `BoostedTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that boosts or damps the matches of an inner engine after ranking. |
+| `CalibratedScoreConfidence` | class | — | A confidence model fitted on labelled (score, isCorrect) pairs by isotonic regression or Platt scaling, with an abstention threshold derived from Youden's J. |
+| `CalibrationMethod` | enum | — | Which fitted mapping a CalibratedScoreConfidence uses: the non-decreasing step function of isotonic regression, or the sigmoid of Platt scaling. |
 | `CheapestByCandidateCountEstimator` | class | `IQueryCostEstimator` | Picks the engine with the smallest EstimateCandidateCount. Engines that do not implement IQueryCostProbe cannot be costed and are only used when no probed… |
+| `FeedbackAwareTextSearchEngine` | class | `ITextSearchEngine` | A decorator engine that adds a learned query to document association channel to an inner engine's ranking. |
 | `ClassificationResult` | record | — | A category predicted for a piece of text, with its estimated probability. |
 | `CompressedHit` | record | — | One compressed hit of SearchCompressed: the ranked document's id and score, its text reduced to the query-relevant content, and how much of the source that… |
 | `DetailedSearchResult` | record | — | A ranked document whose final score is broken down by the source signal that produced it. |
@@ -165,6 +168,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `QueryRoute` | record | — | The decision an IQueryRouter returns for a query: which route to run, and how confident the router is. |
 | `QuerySyntax` | class | — | Detects and validates the LexiSharp query syntax a raw query carries, so an engine that does not interpret a feature fails fast instead of silently treating the… |
 | `RawQuerySegments` | record | — | The raw, un-tokenized quote-level split of a query: text outside quotes and the literal interior of each quoted segment. SQL backends forward these strings to… |
+| `QueryFeedbackHistory` | class | — | The associations between past queries and the documents they resolved to — the learned channel FeedbackAwareTextSearchEngine boosts from. |
 | `RerankedTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that re-ranks the matches of an inner engine before they are returned. |
 | `RetrievalAgreement` | enum | — | How much the sources of a federated search agree about one document. |
 | `RetrievalAgreementAnalyzer` | class | — | Classifies each document of a federated page by how much its sources agree, from the per-source scores in Contributions. |

@@ -585,6 +585,42 @@ negative ones (factor in (0, 1) damp, negative offset penalty) are equally expre
 drops the document entirely. The decorator requests more candidates than the final limit
 (`maxCandidates`, default 50) so boosted documents can surface.
 
+## Learning from past choices (`QueryFeedbackHistory`)
+
+A ranking function reads the query and the corpus. Sometimes the answer depends on something the
+text does not carry — an internal name for a recurring obligation, an abbreviation only the people
+who use it know. The evidence for it is what was chosen last time, and that evidence is already
+in application logs.
+
+`QueryFeedbackHistory` holds which document each query resolved to, and `FeedbackAwareTextSearchEngine`
+consults it on every search:
+
+```csharp
+using LexiSharp.Ranking;
+
+var history = new QueryFeedbackHistory();
+var engine   = new FeedbackAwareTextSearchEngine(baseEngine, history, maxBoost: 5.0);
+
+// On every query the user answers, record the choice.
+engine.Learn(userQuery, selectedDocumentId);
+
+var results = engine.Search(userQuery);
+```
+
+Two ways to read the history: `GetAssociations` is the exact lookup for a repeated query, and
+`GetFuzzyAssociations` scores every recorded query by term overlap — intersection over the longer
+of the two term sets — so a differently-worded query still reaches the document it led to before.
+Recorded documents carry a strength from how often they were chosen under that query; a query
+sharing no terms with the recorded one contributes nothing.
+
+The engine adds that strength as an additive bonus to the primary score, bounded by `maxBoost`,
+then re-sorts. The bonus lands after the base ranking, so it promotes among what the primary
+ranking already returned and never introduces a document it rejected. That is what lets it
+compose with a boosted or hybrid engine rather than replace one.
+
+`Snapshot` and `Restore` persist the history with its counters intact — a query answered five
+times is stored as five, not as one.
+
 ## Proximity
 
 BM25 scores a document by *how often* the query terms occur and is blind to *where*. `quick fox` in

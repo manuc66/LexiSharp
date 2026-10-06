@@ -16,6 +16,29 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --verify-reference
 on every push that touches the library or the harness, and weekly by the `Pinned reference`
 workflow.
 
+## [Unreleased]
+
+### Added
+
+- **A learned query → document channel, and a fitted confidence with an abstention threshold.**
+
+  `QueryFeedbackHistory` records which document each query resolved to. `FeedbackAwareTextSearchEngine`
+  consults it on every search and adds the association's strength to the primary score, bounded by
+  `maxBoost`. The bonus is applied after the inner engine has ranked, so it promotes among what the
+  base ranking returned and never introduces a document it rejected — it composes with a boosted or
+  hybrid engine instead of replacing one. `GetFuzzyAssociations` reaches a differently-worded query
+  through term overlap; `Snapshot`/`Restore` persist the history with its multiplicities.
+
+  `CalibratedScoreConfidence` fits a score → probability mapping on labelled `(score, isCorrect)`
+  pairs, by isotonic regression (PAVA) or Platt scaling, and derives the abstention threshold from
+  Youden's J over those pairs. Untrained it returns `0.5` and never abstains. This is the fitted
+  counterpart to `ScoreConfidence`, which remains the unfitted, scale-invariant gauge and is
+  unchanged.
+
+  No retrieval figure is claimed for either: both are new signals whose value depends on the
+  corpus and on the history fed to them, and are to be measured by the caller on their data. See
+  `docs/ranking.md` and `docs/observability.md`.
+
 ## [0.8.0] — 2026-10-06
 
 ### Added

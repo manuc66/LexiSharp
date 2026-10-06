@@ -273,3 +273,37 @@ A score of exactly `0` means *not a match* by engine convention, so such results
 non-finite score — are never confident. Read the name carefully: this is a **relative
 confidence in a result set, not a calibrated probability of relevance**. The threshold is
 yours to choose, and nothing here was fitted against relevance judgements.
+
+## Fitted confidence and the abstention threshold (`CalibratedScoreConfidence`)
+
+Choosing that threshold by hand means guessing what a confidence of `0.6` corresponds to in
+terms of being right. `CalibratedScoreConfidence` fits the mapping instead, on labelled
+`(score, isCorrect)` pairs, and derives the threshold from them:
+
+```csharp
+using LexiSharp.Ranking;
+
+// One (score, isCorrect) pair per historical query: the top score that query produced,
+// and whether that result was the one the user wanted.
+var calibrated = CalibratedScoreConfidence.Fit(pairs);
+
+double probability = calibrated.PredictProba(results[0].Score);
+
+// The abstain decision. Untrained, this is always false — so wiring it in ahead of a Fit
+// degrades nothing.
+if (calibrated.ShouldAbstain(results[0].Score))
+    return fallback;
+```
+
+| `CalibrationMethod` | Shape | Fitted as |
+|---|---|---|
+| `IsotonicRegression` (default) | non-decreasing step function, interpolated between fitted points | PAVA over the pairs |
+| `PlattScaling` | smooth sigmoid | logistic regression on the scores |
+
+The threshold is the score maximizing Youden's J (`TPR - FPR`) over the labelled pairs,
+converted into the probability space the calibrator reports, so `ShouldAbstain` compares a
+probability against a probability. Reading it any other way would make the abstain rate a
+function of the corpus's score scale rather than of the data.
+
+Fitted on a set of pairs that all come from one corpus at one time, this is a statement about
+that corpus. Re-fit when the corpus changes materially.
