@@ -83,6 +83,31 @@ workflow.
   non-generic `FeedbackAwareTextSearchEngine` — one history for every search — is unchanged in
   behaviour and now forwards to it.
 
+- **`NaiveBayesClassifier` can decline to answer on text it has never seen.**
+
+  A prediction was always available rather than earned: `Predict` returns a distribution whether or
+  not the input says anything about it, so text sharing no token with the training vocabulary was
+  still classified. Under Laplace smoothing an unseen token contributes
+  `log(alpha / (N_c + alpha*V))` to class `c`, which favours the class with the *least* training
+  text — so a paragraph of out-of-vocabulary words read as evidence for whichever class was trained
+  on the least, and the confidence rose with the amount of text the model could not interpret.
+  Measured on a 7/3 document split: French prose with no shared token returned the minority class
+  at `0.97`, nonsense at `0.88`, and input with no tokens at all the class prior at `0.70`.
+
+  `NaiveBayesOptions.AbstainWithoutVocabularyOverlap` returns no results instead. **Off by
+  default**, so no existing caller's numbers move; it declines to report those figures rather than
+  correcting them, and `SkipOutOfVocabularyTokens` remains the separate knob that stops unseen
+  tokens contributing evidence — which does not abstain either, since an input with nothing left to
+  contribute still falls through to the prior.
+
+  `HasAnyVocabularyOverlap(string)` and its `WeightedToken` overload report the condition directly,
+  for a caller whose fallback is not "nothing" or who wants to decide before paying for a
+  prediction. It tokenizes with the model's own tokenizer so it agrees with `Predict`; text that
+  tokenizes to nothing reports no overlap; reinforced terms count as vocabulary even though the
+  corpus never carried them, because `Reinforce` writes to a ledger where such a term still
+  contributes at full weight — abstaining on it would discard feedback the user gave explicitly.
+  An untrained model reports no overlap for anything.
+
 ### Changed
 
 - **`QueryFeedbackHistory` computes a recorded query's terms once, when it is recorded.**
