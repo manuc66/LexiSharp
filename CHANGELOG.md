@@ -35,6 +35,10 @@ workflow.
   counterpart to `ScoreConfidence`, which remains the unfitted, scale-invariant gauge and is
   unchanged.
 
+  No retrieval figure is claimed for either: both are new signals whose value depends on the
+  corpus and on the history fed to them, and are to be measured by the caller on their data. See
+  `docs/ranking.md` and `docs/observability.md`.
+
 - **A boost that can see the search it is adjusting, and decline.**
 
   `BoostedTextSearchEngine<TPayload>` takes a boost that receives a `BoostContext<TPayload>`:
@@ -123,7 +127,85 @@ workflow.
   What these do **not** promise is that centreing improves retrieval anywhere — that depends on
   the embedding model and the corpus, and is not established by arithmetic.
 
+### Fixed
+
+- **Youden's J was computed on a threshold no classifier can produce.**
+
+  The search walked candidate thresholds and scored each with a suffix over the examples at
+  indices `[i, n)`. But the predicate is `score >= threshold`, and with tied scores that spans the
+  *whole run* of equal scores — including examples at lower indices. One threshold was therefore
+  scored as counting part of a tied group positive and part negative, which no threshold can
+  produce, so the J reported was not one either. The walk now evaluates only where the score
+  changes, where suffix and predicate agree.
+
+  Measured on a fixture built to contain ties: **J = 0.1552 where 0.1591 was achievable** — a
+  threshold chosen as optimal that was not, and a caller abstaining at the wrong point of its own
+  labelled data. A test now asserts the threshold reaches the best J of any threshold, against an
+  O(n²) reference over the same pairs.
+
+- **`BoostedTextSearchEngine` broke ties in a culture the rest of the library does not use.**
+
+  Its `ThenBy(x => x.DocumentId)` passed no comparer, so it took `Comparer<string>.Default` —
+  culture-sensitive for strings. `TieBreak.DocumentId` documents an *ordinal* id ordering and
+  `TopRankedWindow` compares ordinally, so a decorated ranking disagreed with the ranking it was
+  decorating, on ids differing only in accents or letter case. Both decorators now order through
+  `ResultOrdering`, which compares ordinally.
+
 ### Changed
+
+- **`VectorSimilarity.Mean` runs on SIMD instead of one float at a time.**
+
+  The class has always claimed `Vector<T>` kernels; `Mean` — added for centreing — was plain
+  scalar, which contradicted the claim it sat under. Each SIMD slice now adds to its own slice of
+  the running total. Measured on 100 000 × 384: **28.6 ms → 9.8 ms, 2.92×**, and the two
+  implementations agree to 6e-8.
+
+  `Mean` is where vectorizing earns its keep: it walks a whole corpus. `Center`, `Normalize`
+  and `CenterAndNormalize` each touch one vector, once per query, and stay scalar — the register
+  setup would cost more than the 384 floats it processes.
+
+- **`CalibratedScoreConfidence.Fit` no longer costs O(n²) of its labelled pairs.**
+
+  The Youden search recomputed a suffix sum per candidate threshold. Measured: **0.7 ms at 1 000
+  pairs, 52.4 ms at 10 000** — the ~75× that an O(n²) pass shows at 10× the input, which puts
+  100 000 pairs at seconds. It is now one downward walk carrying a running suffix, alongside the
+  `O(n log n)` sort `Fit` already did: **1.69 ms at 10 000 (31×) and 18.2 ms at 100 000**, 10.8×
+  for 10× the input. A test pins the *shape* rather than the wall clock, because a CI machine's
+  speed is not this repository's to claim.
+
+- **The decorators' page sort allocates ~1600 B less, and honours `SearchOptions.TieBreak`.**
+
+  `OrderByDescending().ThenBy().Skip().Take().ToList()` became `ResultOrdering`, which sorts
+  indices rather than records and rents the index array from `ArrayPool`. On a decorator holding
+  fifty candidates and returning a page of ten: **9032 → 7296 B per search**. Pooling it was
+  measured rather than assumed — best of seven interleaved rounds, 1184 ns against 1512 ns for
+  `new int[total]`, because the cost of that allocation is not the bump pointer but the ~20 MB a
+  round leaves Gen0 to collect. The **page itself is deliberately allocated and never pooled**: it
+  escapes to the caller, and returning memory the caller still holds to a process-wide pool lets
+  another search rewrite it.
+
+  Neither decorator observed `SearchOptions.TieBreak` before — both hardcoded a document-id
+  ordering. `InsertionOrder` now means the position the inner engine produced the candidate in,
+  which is what the option documents.
+
+- **The learned channel's lookup cost 77% less per search.**
+
+  `FeedbackAwareTextSearchEngine` with a history of 200 recorded queries went **16 056 → 3664 B
+  per search**, against an undecorated engine's 1504 B. Three things, in order of what each was
+  worth:
+
+  `association.DocumentCounts.Values.Max()` ran once per recorded query. The LINQ overload
+  reached the struct enumerator through `IEnumerable<int>` and boxed it — ~40-54 B each, **200
+  times per search ≈ 8000 B**. It is now a loop over the dictionary's own enumerator. Found by
+  scaling the history: 752 B at one association, 8712 at two hundred, and the same 8712 whether
+  it returned one document or forty — the growth was per association, which named the line.
+
+  The page sort above, for the rest of the gap.
+
+  The dictionary of associations was sized by filling it until it learned its own size, at
+  1, 2, 4, 8, 16, 32, 64 — ~4400 B per search to hold forty entries. It is now told its size,
+  and the engine passes the ids of *its page*: an association carrying four hundred documents of
+  which ten will ever be consulted is four hundred inserts nobody reads.
 
 - **`QueryFeedbackHistory` computes a recorded query's terms once, when it is recorded.**
 
@@ -147,10 +229,6 @@ workflow.
 
   Not a behaviour change for any existing caller — nothing in the repository returned
   `default(ScoreBoost)` from a boost, and a caller who did was excluding its documents already.
-
-  No retrieval figure is claimed for either: both are new signals whose value depends on the
-  corpus and on the history fed to them, and are to be measured by the caller on their data. See
-  `docs/ranking.md` and `docs/observability.md`.
 
 ## [0.8.0] — 2026-10-06
 
