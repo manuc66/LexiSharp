@@ -252,12 +252,7 @@ public sealed class BoostedTextSearchEngine<TPayload> : IContextualSearchEngine<
                 SearchTrace.FormatBoost(boost)));
         }
 
-        var page = results
-            .OrderByDescending(x => x.Score)
-            .ThenBy(x => x.DocumentId)
-            .Skip(options.Offset)
-            .Take(options.Limit)
-            .ToList();
+        var page = ResultOrdering.SortAndPage(results, options.TieBreak, options.Offset, options.Limit);
 
         if (instrumented)
         {

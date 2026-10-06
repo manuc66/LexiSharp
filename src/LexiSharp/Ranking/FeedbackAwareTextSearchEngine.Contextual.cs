@@ -136,7 +136,16 @@ public sealed class FeedbackAwareTextSearchEngine<TPayload> : IContextualSearchE
         if (history is null || history.Count == 0 || results.Count == 0)
             return results;
 
-        var associations = history.GetFuzzyAssociationScores(query, _minSimilarity);
+        // Only the ids this page can actually ask about: an association carrying four hundred
+        // documents, of which a page of ten will consult ten, is four hundred inserts and a
+        // dictionary sized to four hundred on every search. Restricting it also gives the
+        // dictionary its size, which is where the growth cost was.
+        var pageIds = new HashSet<string>(results.Count, StringComparer.Ordinal);
+
+        foreach (var result in results)
+            pageIds.Add(result.DocumentId);
+
+        var associations = history.GetFuzzyAssociationScores(query, _minSimilarity, pageIds);
 
         if (associations.Count == 0)
             return results;
@@ -151,10 +160,9 @@ public sealed class FeedbackAwareTextSearchEngine<TPayload> : IContextualSearchE
                     : result);
         }
 
-        return boosted
-            .OrderByDescending(x => x.Score)
-            .ThenBy(x => x.DocumentId, StringComparer.Ordinal)
-            .ToList();
+        // The inner engine was handed the caller's Offset and Limit, so `results` is already the
+        // page: re-sort it, and do not page it again or the offset would be applied twice.
+        return ResultOrdering.SortAndPage(boosted, options.TieBreak, offset: 0, limit: boosted.Count);
     }
 
     /// <summary>
