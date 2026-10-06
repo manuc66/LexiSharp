@@ -67,6 +67,51 @@ spell-corrected token can carry less evidence than an exact match by passing
 `WeightedToken`s directly. `Predict`/`PredictBest` accept a set of `excludedCategories` to
 hide hot categories at runtime without retraining (probabilities renormalize over the rest).
 
+### Declining to answer
+
+`Predict` always returns a distribution — the model has a prior whether or not it has seen the
+input. Text that shares no token with the training vocabulary is therefore still classified, and
+the number it comes back with is not a probability of anything.
+
+Under Laplace smoothing an unseen token contributes `log(alpha / (N_c + alpha*V))` to class `c`,
+where `N_c` is that class's token count and `V` the shared vocabulary. The class with **less**
+training text has the smaller denominator and so gains the most evidence: a paragraph of words the
+model has never seen reads as evidence for whichever class was trained on the least, and the
+confidence *rises* with the amount of text the model cannot interpret. On a 7-document/3-document
+split, French prose sharing no token returns the minority class at `0.97`, and nonsense at `0.88`.
+
+The case with no tokens at all — an empty string, whitespace — is different and quieter. The
+likelihood contributes nothing, so the answer is exactly the class prior: `0.70` on that split.
+Correct arithmetic, and still not an answer to "what is this text".
+
+```csharp
+var strict = new NaiveBayesClassifier(
+    options: new NaiveBayesOptions { AbstainWithoutVocabularyOverlap = true });
+
+var results = strict.Predict(frenchProse);   // empty — no shared token to answer from
+var best   = strict.PredictBest(frenchProse); // null
+```
+
+The option is off by default, so no existing caller's numbers move. It declines to report the
+scores above rather than correcting them; `SkipOutOfVocabularyTokens` is the separate knob that
+stops unseen tokens contributing evidence in the first place, and it does not abstain either —
+an input with nothing left to contribute still falls through to the prior.
+
+To decide *without* paying for a prediction, or to fall back to something other than nothing:
+
+```csharp
+if (classifier.HasAnyVocabularyOverlap(input))
+    return classifier.PredictBest(input) is { } category ? category : fallback;
+return fallback;   // unseen text: say so, do not guess from the prior
+```
+
+`HasAnyVocabularyOverlap` tokenizes with the model's own tokenizer, so it agrees with `Predict`,
+and a text that tokenizes to nothing reports no overlap — which is the intent. Reinforced terms
+count as vocabulary even though the corpus never carried them: `Reinforce` writes to a ledger and
+a term the corpus never saw still contributes evidence there at full weight, so abstaining on such
+an input would discard feedback the user gave explicitly. An untrained model reports no overlap for
+anything, since it has no vocabulary.
+
 ### Incremental learning
 
 `NaiveBayesClassifier` is also an `IIncrementalTextClassifier` (`classifier is
