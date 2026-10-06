@@ -41,6 +41,23 @@ namespace LexiSharp.Classification;
 /// <see cref="SynchronizedTextClassifier"/> for the opt-in synchronization to use when mutation and
 /// prediction genuinely overlap.
 /// </remarks>
+/// <remarks>
+/// <para>
+/// A prediction is always available, never earned: <see cref="Predict(string, int,
+/// IReadOnlySet{string})"/> returns a distribution over classes whether or not the input says
+/// anything about them, so text sharing no token with the training vocabulary is still classified
+/// and the figure it returns is the class prior or the Laplace artifact, not a probability of
+/// relevance. <see cref="NaiveBayesOptions.AbstainWithoutVocabularyOverlap"/> makes it return
+/// nothing instead, and <see cref="HasAnyVocabularyOverlap(string)"/> reports the condition
+/// directly for a caller whose fallback is not "nothing".
+/// </para>
+/// <para>
+/// The three surfaces are deliberately separable: the corpus (<see cref="Train"/>,
+/// <see cref="Learn"/>, <see cref="Unlearn"/>), the ledger (<see cref="Reinforce"/>,
+/// <see cref="Unreinforce"/>, <see cref="ForgetReinforcement"/>), and the decision to answer at
+/// all. Each can be used without the others.
+/// </para>
+/// </remarks>
 public sealed class NaiveBayesClassifier
     : IWeightedPredictor, IIncrementalTextClassifier, IReinforceableTextClassifier
 {
@@ -329,12 +346,19 @@ public sealed class NaiveBayesClassifier
         if (limit <= 0 || _classCount == 0)
             return Array.Empty<ClassificationResult>();
 
-        var tokens = _tokenizer.Tokenize(text).Select(WeightedToken.Full);
+        var tokens = _tokenizer.Tokenize(text).Select(WeightedToken.Full).ToList();
+
+        if (_options.AbstainWithoutVocabularyOverlap && !HasAnyVocabularyOverlap(tokens))
+            return Array.Empty<ClassificationResult>();
 
         return PredictCore(tokens, limit, excludedCategories);
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// When <see cref="NaiveBayesOptions.AbstainWithoutVocabularyOverlap"/> is set and no token
+    /// here is in the training vocabulary, the result is empty rather than a prior-driven answer.
+    /// </remarks>
     public IReadOnlyList<ClassificationResult> Predict(
         IEnumerable<WeightedToken> tokens,
         int limit = 3,
@@ -345,7 +369,12 @@ public sealed class NaiveBayesClassifier
         if (limit <= 0 || _classCount == 0)
             return Array.Empty<ClassificationResult>();
 
-        return PredictCore(tokens, limit, excludedCategories);
+        var materialized = tokens as IReadOnlyList<WeightedToken> ?? tokens.ToList();
+
+        if (_options.AbstainWithoutVocabularyOverlap && !HasAnyVocabularyOverlap(materialized))
+            return Array.Empty<ClassificationResult>();
+
+        return PredictCore(materialized, limit, excludedCategories);
     }
 
     /// <inheritdoc />
@@ -353,6 +382,92 @@ public sealed class NaiveBayesClassifier
     {
         var results = Predict(text, limit: 1, excludedCategories);
         return results.Count > 0 ? results[0].Category : null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="text"/> shares at least one token with the vocabulary this model
+    /// was trained on.
+    /// </summary>
+    /// <remarks>
+    /// This is the guard <see cref="NaiveBayesOptions.AbstainWithoutVocabularyOverlap"/> applies.
+    /// Reach for it when a prediction should decline rather than guess but the fallback is not
+    /// "nothing": call it first, and decide.
+    /// <para>
+    /// A token counts as in-vocabulary when at least one training document carried it, on the
+    /// tokenizer this model uses — the same tokenization <see cref="Predict(string, int,
+    /// IReadOnlySet{string})"/> performs, so the two agree. Text that tokenizes to nothing (empty
+    /// string, whitespace, punctuation only) has no overlap and returns <c>false</c>, which is
+    /// the intent: there is nothing here for the model to have seen.
+    /// </para>
+    /// <para>
+    /// An untrained model returns <c>false</c> for every input, because it has no vocabulary.
+    /// </para>
+    /// <para>
+    /// Reinforced terms count as vocabulary, though the training corpus never carried them.
+    /// <see cref="Reinforce"/> writes to a ledger rather than to the corpus counts, and a term the
+    /// corpus never saw still contributes its evidence at full weight there — a user asserting
+    /// "this text means that category" outranks whatever the corpus happened to contain. Treating
+    /// such a term as unseen would let this abstain on the one input the user explicitly taught the
+    /// model about. The check is skipped entirely when nothing has been reinforced, which is the
+    /// usual state and costs one count test.
+    /// </para>
+    /// </remarks>
+    /// <param name="text">Raw text; tokenized internally with this model's tokenizer.</param>
+    public bool HasAnyVocabularyOverlap(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        foreach (string token in _tokenizer.Tokenize(text))
+        {
+            if (IsVocabularyTerm(token))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="tokens"/> shares at least one token with the vocabulary this model
+    /// was trained on.
+    /// </summary>
+    /// <remarks>
+    /// Weight is not consulted: a token at any weight still counts as overlap, because the
+    /// question is whether the model has seen the word, not how much the caller trusts it.
+    /// </remarks>
+    /// <param name="tokens">Tokens, already in the tokenizer's normalized form.</param>
+    public bool HasAnyVocabularyOverlap(IEnumerable<WeightedToken> tokens)
+    {
+        ArgumentNullException.ThrowIfNull(tokens);
+
+        foreach (var token in tokens)
+        {
+            if (IsVocabularyTerm(token.Token))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Whether this model has seen <paramref name="term"/>: in the training corpus's document
+    /// frequencies, or in some category's reinforcement ledger. The ledger is consulted only when
+    /// one exists, so a classifier nobody has reinforced never pays for that probe.
+    /// </summary>
+    private bool IsVocabularyTerm(string term)
+    {
+        if (_termDocumentFrequencies.TryGetValue(term, out int documentFrequency) && documentFrequency > 0)
+            return true;
+
+        if (_reinforcementByClass.Count == 0)
+            return false;
+
+        foreach (var ledger in _reinforcementByClass.Values)
+        {
+            if (ledger.ContainsKey(term))
+                return true;
+        }
+
+        return false;
     }
 
     private IReadOnlyList<ClassificationResult> PredictCore(
