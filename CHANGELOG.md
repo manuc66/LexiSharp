@@ -64,6 +64,16 @@ workflow.
   allocated before this type existed, and a contextual boost reading `TopConfidence` allocates
   9776 B.
 
+  `requirePayload` (default `false`) makes the payload-less overload throw instead of running. A
+  boost built on the payload — a per-user correction — silently ceasing to apply is a bug nobody
+  reports, because the results still look plausible; the flag names it at the call site that
+  dropped it. It throws after the empty-request check and before the inner engine runs, so an
+  impossible request still returns an empty page and a misrouted call costs nothing. A boost that
+  reads only the ranking leaves the flag off and keeps working through `ITextSearchEngine`.
+
+  `BoostContext<TPayload>.PayloadSupplied` separates "no payload was offered" from "a null
+  payload was offered", which `Payload` alone cannot. `requirePayload` rejects only the former.
+
 - **`ScoreBoost.None()`: the way to say "leave this candidate alone".**
 
   `default(ScoreBoost)` does not mean that. The optional constructor parameters give
