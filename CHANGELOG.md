@@ -108,6 +108,21 @@ workflow.
   contributes at full weight — abstaining on it would discard feedback the user gave explicitly.
   An untrained model reports no overlap for anything.
 
+- **`VectorSimilarity` can centre embeddings, so a caller does not reimplement it.**
+
+  `Mean` (over `ReadOnlyMemory<float>` or `float[]` rows — both shapes are real and C# covariance
+  will not convert between them), `Center`, `Normalize` and `CenterAndNormalize` compute the
+  shared offset of a corpus and remove it, then normalize. They exist because the arithmetic was
+  previously reachable only through a provider's own channel handling, and a caller wanting it had
+  to copy it.
+
+  The span-taking members allocate nothing and may be called in place; `Mean` allocates, being a
+  reduction over the corpus, and enumerates its input exactly once. A zero vector normalizes to
+  zeros rather than NaN, matching what `CosineSimilarity` already reports for one.
+
+  What these do **not** promise is that centreing improves retrieval anywhere — that depends on
+  the embedding model and the corpus, and is not established by arithmetic.
+
 ### Changed
 
 - **`QueryFeedbackHistory` computes a recorded query's terms once, when it is recorded.**
