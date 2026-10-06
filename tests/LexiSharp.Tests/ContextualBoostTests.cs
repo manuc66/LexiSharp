@@ -449,6 +449,75 @@ public class ContextualBoostTests
     }
 
     [Fact]
+    public void TiedScores_AreBrokenByOrdinalDocumentId_NotByCulture()
+    {
+        // The id break this decorator used to do was ThenBy(x => x.DocumentId) with no comparer,
+        // which is Comparer<string>.Default — culture-sensitive. Ordinally 'B' (0x42) sorts
+        // before 'a' (0x61); a culture-aware comparison puts "a" first. TieBreak.DocumentId
+        // documents ordinal, and TopRankedWindow compares ordinally, so a decorated ranking
+        // disagreeing with the ranking it decorates is the bug being pinned here.
+        //
+        // The stub hands them over in the opposite order, so it is the decorator's sort that
+        // decides and not the fixture's — FixedEngine sorts by id and would have proved nothing.
+        var engine = new BoostedTextSearchEngine<CallerContext>(
+            new TieOrderingEngine(("a", 10), ("B", 10)),
+            (context, cand) => ScoreBoost.None());
+
+        var page = engine.Search("q", null, new CallerContext("ana", Noon));
+
+        Assert.Equal(new[] { "B", "a" }, page.Select(r => r.DocumentId));
+    }
+
+    [Fact]
+    public void TiedScores_HonourInsertionOrder_WhenAskedForIt()
+    {
+        // Neither decorator observed SearchOptions.TieBreak before: both hardcoded a document-id
+        // ordering, so a caller reproducing an insertion-ordered system had it silently dropped
+        // the moment they wrapped the engine in a decorator.
+        //
+        // The stub returns ties in the order given, deliberately — FixedEngine sorts by id, and a
+        // fixture that had already sorted would make insertion order and id order the same thing
+        // and test neither.
+        var baseEngine = new TieOrderingEngine(("b", 10), ("a", 10));
+
+        var byId = new BoostedTextSearchEngine<CallerContext>(
+            baseEngine, (context, cand) => ScoreBoost.None())
+            .Search("q", new SearchOptions(TieBreak: TieBreak.DocumentId), new CallerContext("ana", Noon));
+
+        var byInsertion = new BoostedTextSearchEngine<CallerContext>(
+            new TieOrderingEngine(("b", 10), ("a", 10)), (context, cand) => ScoreBoost.None())
+            .Search("q", new SearchOptions(TieBreak: TieBreak.InsertionOrder), new CallerContext("ana", Noon));
+
+        Assert.Equal(new[] { "a", "b" }, byId.Select(r => r.DocumentId));
+        Assert.Equal(new[] { "b", "a" }, byInsertion.Select(r => r.DocumentId));
+    }
+
+    /// <summary>
+    /// Returns ties exactly as given: the precondition a test of tie-breaking needs, and the one
+    /// FixedEngine cannot provide because it sorts by id.
+    /// </summary>
+    private sealed class TieOrderingEngine : ITextSearchEngine
+    {
+        private readonly IReadOnlyList<SearchResult> _results;
+
+        public TieOrderingEngine(params (string Id, double Score)[] results) =>
+            _results = results
+                .Select(r => new SearchResult(r.Id, r.Score, new SearchDocument(r.Id, $"text of {r.Id}")))
+                .ToList();
+
+        public void Index(IEnumerable<SearchDocument> documents) { }
+
+        public void Add(SearchDocument document) { }
+
+        public bool Remove(string documentId) => false;
+
+        public void Clear() { }
+
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+            options is { IsEmpty: false } ? _results : Array.Empty<SearchResult>();
+    }
+
+    [Fact]
     public void NegativeFactor_IsStillRejected()
     {
         var engine = new BoostedTextSearchEngine<CallerContext>(
