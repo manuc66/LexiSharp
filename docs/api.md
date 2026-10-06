@@ -34,6 +34,7 @@ are listed first.
 | `IChunkContextEnricher` | — | Augments the searchable text of a SearchDocument before it is indexed — the « contextual retrieval » seam. A chunk that only says "the benefit rose 12%" is… | [guide](reference.md) |
 | `ICompressingSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that can return, alongside the ranked page, each document compressed to its query-relevant content — the surface a… | [guide](reference.md) |
 | `IContextCompressor` | — | Reduces a document's text to the content a query actually cares about — the token-reduction seam between a ranked page and a generation model. LexiSharp never… | [guide](reference.md) |
+| `IContextualSearchEngine<TPayload>` | `ITextSearchEngine` | An ITextSearchEngine that accepts a caller-supplied payload alongside a query, for the cases a query alone does not carry: who is asking, what time it is, which… | [guide](reference.md) |
 | `ICrossEncoderScorer` | — | Scores a (query, document) pair as a single relevance value — the job of a cross-encoder (concatenate query and document into one input) or, more generally, of… | [guide](reference.md) |
 | `IDetailedSearchEngine` | — | Optional capability of an ITextSearchEngine that can return, alongside the merged ranking, the per-source score breakdown that fed it (see Contributions). | [guide](reference.md) |
 | `IEmbeddingProvider` | — | Contract for producing text embeddings. LexiSharp never computes embeddings itself: implementing this interface is up to the consumer — a local ONNX model, an… | [guide](reference.md) |
@@ -136,17 +137,13 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
 | `AtomicEngineReference` | class | — | The atomic publish point for the « snapshot swap » concurrency pattern: one thread builds a fresh engine off-lock, then Swap makes it visible to every… |
-| `BoostContext` | class | — | What a contextual boost is told: the query as issued, the inner engine's pre-boost ranking, each candidate's confidence, and the caller's payload. |
+| `BoostContext<TPayload>` | class | — | What a boost function is told about the search it is adjusting: the query, the ranking the inner engine produced before any boost, the caller's payload, and the… |
 | `BoostedTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that boosts or damps the matches of an inner engine after ranking, from a function of the candidate alone. |
-| `BoostedTextSearchEngine<TPayload>` | class | `IContextualSearchEngine<TPayload>`, `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine whose boost also sees the query, the pre-boost ranking and a caller-supplied payload, so it can decline when the base ranking was already clear. |
-| `ContextualBoost` | delegate | — | A boost that takes the BoostContext around a candidate, not the candidate alone. |
-| `IContextualSearchEngine` | interface | `ITextSearchEngine` | An engine that accepts a caller-supplied payload per search, for the state a query alone does not carry. |
-| `CalibratedScoreConfidence` | class | — | A confidence model fitted on labelled (score, isCorrect) pairs by isotonic regression or Platt scaling, with an abstention threshold derived from Youden's J. |
-| `CalibrationMethod` | enum | — | Which fitted mapping a CalibratedScoreConfidence uses: the non-decreasing step function of isotonic regression, or the sigmoid of Platt scaling. |
+| `BoostedTextSearchEngine<TPayload>` | class | `IContextualSearchEngine`, `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that boosts or damps the matches of an inner engine after ranking, with a boost that sees the search it is adjusting. |
 | `CheapestByCandidateCountEstimator` | class | `IQueryCostEstimator` | Picks the engine with the smallest EstimateCandidateCount. Engines that do not implement IQueryCostProbe cannot be costed and are only used when no probed… |
-| `FeedbackAwareTextSearchEngine` | class | `ITextSearchEngine` | A decorator engine that adds a learned query to document association channel to an inner engine's ranking. |
 | `ClassificationResult` | record | — | A category predicted for a piece of text, with its estimated probability. |
 | `CompressedHit` | record | — | One compressed hit of SearchCompressed: the ranked document's id and score, its text reduced to the query-relevant content, and how much of the source that… |
+| `ContextualBoost<TPayload>` | delegate | — | A boost that depends on the search as a whole, not only on the candidate in hand: it sees the query, the pre-boost ranking, and the caller's payload. |
 | `DetailedSearchResult` | record | — | A ranked document whose final score is broken down by the source signal that produced it. |
 | `DocumentHierarchy` | class | — | A validated parent/child forest over searchable document ids — the « hierarchical metadata » seam. Declare the tree your chunks belong to (a chunk under a… |
 | `EmbeddingProviderExtensions` | class | — | Backwards-compatible call shape: embeds text as a Passage. |
@@ -172,7 +169,6 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `QueryRoute` | record | — | The decision an IQueryRouter returns for a query: which route to run, and how confident the router is. |
 | `QuerySyntax` | class | — | Detects and validates the LexiSharp query syntax a raw query carries, so an engine that does not interpret a feature fails fast instead of silently treating the… |
 | `RawQuerySegments` | record | — | The raw, un-tokenized quote-level split of a query: text outside quotes and the literal interior of each quoted segment. SQL backends forward these strings to… |
-| `QueryFeedbackHistory` | class | — | The associations between past queries and the documents they resolved to — the learned channel FeedbackAwareTextSearchEngine boosts from. |
 | `RerankedTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that re-ranks the matches of an inner engine before they are returned. |
 | `RetrievalAgreement` | enum | — | How much the sources of a federated search agree about one document. |
 | `RetrievalAgreementAnalyzer` | class | — | Classifies each document of a federated page by how much its sources agree, from the per-source scores in Contributions. |
@@ -186,7 +182,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `RoutedEngine` | record | — | A named engine candidate for a RoutedSearchEngine. |
 | `RoutedSearchEngine` | class | `IDetailedSearchEngine`, `IExplainableSearchEngine`, `IFacetedSearchEngine`, `IQueryCostProbe`, `ITextSearchEngine` | Opt-in decorator that forwards each query to one of several pre-filled engines, chosen by an IQueryCostEstimator — with CheapestByCandidateCountEstimator the… |
 | `RoutingSearchEngine` | class | `ITextSearchEngine` | Opt-in decorator that asks an IQueryRouter which SearchRoute to run each query on, then runs that route's engine with the route's filters merged into the… |
-| `ScoreBoost` | record struct | — | A signed score adjustment: a multiplicative factor plus an additive offset. Both can go up or down, so positive and negative boosts are expressed the same way. ScoreBoost.None() leaves the score untouched, which default(ScoreBoost) does not — it excludes the document. |
+| `ScoreBoost` | record struct | — | A signed score adjustment: a multiplicative factor plus an additive offset. Both can go up or down, so positive and negative boosts are expressed the same way. |
 | `ScoreExplanation` | record | — | A transparent breakdown of why a document received its score for a query: global corpus figures, per-term contributions and the scorer's parameter values. |
 | `SearchCostStage` | record struct | — | One pipeline stage's share of what a single query cost: what it processed, and how long it took. |
 | `SearchCosts` | class | — | The per-query cost sheet a caller opts into: what the query was made of, and what each pipeline stage it went through processed and cost. |
@@ -309,10 +305,14 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `Bm25ValidationQuery` | record | — | One labeled validation query of a Bm25ParameterTuner: a raw query together with the ids of the documents a good ranking should surface. |
 | `BooleanMatch` | enum | — | How the modifiers of a BooleanScorer are combined. |
 | `BooleanScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | Pure boolean filter. A matching document gets a score of 1, a non-matching one 0. Because the RankedTextSearchEngine discards scores below MinimumScore, this… |
+| `CalibratedScoreConfidence` | class | — | A learned confidence calibrator that maps raw scores to calibrated probabilities using isotonic regression or Platt scaling, with an optional Youden-derived… |
+| `CalibrationMethod` | enum | — | The calibration method used by CalibratedScoreConfidence. |
 | `DocumentLengthRatioScorer` | class | `ITextScorer` | A document's length relative to the corpus average: \|D\| / avgdl, where both figures come from the index. One for an average document, above one for a long… |
+| `FeedbackAwareTextSearchEngine` | class | `ITextSearchEngine` | A decorator engine that augments a primary search engine with a learned query → document feedback channel. |
 | `NdcgGain` | enum | — | How a relevance level is turned into a gain in NdcgAtK. |
 | `ProximityMode` | enum | — | How ProximityReranker turns a term window into a score change. |
 | `ProximityReranker` | class | `IReranker` | Re-ranks a candidate list by how close together the query terms actually occur in each document, refining the order a term-frequency scorer produced without… |
+| `QueryFeedbackHistory` | class | — | A learned relevance feedback channel: it records which document a user chose for past queries, and uses those associations to boost matching documents in future… |
 | `QueryLikelihoodScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | Query likelihood retrieval model with Jelinek-Mercer smoothing, a probabilistic language-model alternative to BM25. |
 | `QueryTermWeighting` | enum | — | How a scorer treats a term that occurs more than once in a query. |
 | `RankedTextSearchEngine` | class | `IExplainableSearchEngine`, `IFacetedSearchEngine`, `IQueryCostProbe`, `IQuerySyntaxSupport`, `ITextSearchEngine` | The stock search engine: delegates the corpus storage to an ITextIndex, delegates the relevance math to an ITextScorer, and takes care of query tokenization,… |
