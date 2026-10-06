@@ -136,7 +136,11 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
 | `AtomicEngineReference` | class | — | The atomic publish point for the « snapshot swap » concurrency pattern: one thread builds a fresh engine off-lock, then Swap makes it visible to every… |
-| `BoostedTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that boosts or damps the matches of an inner engine after ranking. |
+| `BoostContext` | class | — | What a contextual boost is told: the query as issued, the inner engine's pre-boost ranking, each candidate's confidence, and the caller's payload. |
+| `BoostedTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that boosts or damps the matches of an inner engine after ranking, from a function of the candidate alone. |
+| `BoostedTextSearchEngine<TPayload>` | class | `IContextualSearchEngine<TPayload>`, `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine whose boost also sees the query, the pre-boost ranking and a caller-supplied payload, so it can decline when the base ranking was already clear. |
+| `ContextualBoost` | delegate | — | A boost that takes the BoostContext around a candidate, not the candidate alone. |
+| `IContextualSearchEngine` | interface | `ITextSearchEngine` | An engine that accepts a caller-supplied payload per search, for the state a query alone does not carry. |
 | `CalibratedScoreConfidence` | class | — | A confidence model fitted on labelled (score, isCorrect) pairs by isotonic regression or Platt scaling, with an abstention threshold derived from Youden's J. |
 | `CalibrationMethod` | enum | — | Which fitted mapping a CalibratedScoreConfidence uses: the non-decreasing step function of isotonic regression, or the sigmoid of Platt scaling. |
 | `CheapestByCandidateCountEstimator` | class | `IQueryCostEstimator` | Picks the engine with the smallest EstimateCandidateCount. Engines that do not implement IQueryCostProbe cannot be costed and are only used when no probed… |
@@ -182,7 +186,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `RoutedEngine` | record | — | A named engine candidate for a RoutedSearchEngine. |
 | `RoutedSearchEngine` | class | `IDetailedSearchEngine`, `IExplainableSearchEngine`, `IFacetedSearchEngine`, `IQueryCostProbe`, `ITextSearchEngine` | Opt-in decorator that forwards each query to one of several pre-filled engines, chosen by an IQueryCostEstimator — with CheapestByCandidateCountEstimator the… |
 | `RoutingSearchEngine` | class | `ITextSearchEngine` | Opt-in decorator that asks an IQueryRouter which SearchRoute to run each query on, then runs that route's engine with the route's filters merged into the… |
-| `ScoreBoost` | record struct | — | A signed score adjustment: a multiplicative factor plus an additive offset. Both can go up or down, so positive and negative boosts are expressed the same way. |
+| `ScoreBoost` | record struct | — | A signed score adjustment: a multiplicative factor plus an additive offset. Both can go up or down, so positive and negative boosts are expressed the same way. ScoreBoost.None leaves the score untouched, which default(ScoreBoost) does not — it excludes the document. |
 | `ScoreExplanation` | record | — | A transparent breakdown of why a document received its score for a query: global corpus figures, per-term contributions and the scorer's parameter values. |
 | `SearchCostStage` | record struct | — | One pipeline stage's share of what a single query cost: what it processed, and how long it took. |
 | `SearchCosts` | class | — | The per-query cost sheet a caller opts into: what the query was made of, and what each pipeline stage it went through processed and cost. |
