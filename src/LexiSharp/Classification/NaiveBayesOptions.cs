@@ -73,6 +73,44 @@ public sealed record NaiveBayesOptions
     public bool SkipOutOfVocabularyTokens { get; init; }
 
     /// <summary>
+    /// When true, <see cref="NaiveBayesClassifier.Predict(string, int, IReadOnlySet{string})"/>
+    /// returns no results for text that shares no token with the training vocabulary, instead of
+    /// answering from the class priors. Default: <c>false</c> — existing behaviour, unchanged.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Without this, a text the model has never seen is scored as if its words meant something.
+    /// Under Laplace smoothing an unseen token contributes <c>log(alpha / (N_c + alpha*V))</c> to
+    /// class <c>c</c>, where <c>N_c</c> is that class's token count and <c>V</c> the shared
+    /// vocabulary — so the class with <b>less</b> training text has the smaller denominator and
+    /// gains the most evidence. A paragraph of out-of-vocabulary words therefore reads as
+    /// evidence for whichever class was trained on the least, and the confidence rises with the
+    /// amount of text the model cannot interpret: measured on a 7/3 document split, French prose
+    /// with no shared token returns the minority class at <c>0.97</c>, and nonsense at
+    /// <c>0.88</c>. Neither number is a probability of anything.
+    /// </para>
+    /// <para>
+    /// The prior-dominant case is different and less dramatic: with no tokens at all — whitespace,
+    /// an empty string — the likelihood contributes nothing and the answer is exactly the class
+    /// prior, which on a 7/3 split is <c>0.70</c>. Correct arithmetic, and still not an answer to
+    /// "what is this text".
+    /// </para>
+    /// <para>
+    /// Setting this does not repair those scores; it declines to report them. Use
+    /// <see cref="NaiveBayesClassifier.HasAnyVocabularyOverlap(string)"/> to inspect the condition
+    /// without paying for a prediction, or with the option off, when a caller wants to fall back
+    /// to something other than nothing.
+    /// </para>
+    /// <para>
+    /// Note that <see cref="SkipOutOfVocabularyTokens"/> is not this. It stops unseen tokens from
+    /// contributing evidence, which removes the 0.97 artifact — but an input with no tokens left
+    /// to contribute still falls through to the prior, so the answer stays <c>0.70</c> rather than
+    /// becoming an abstention.
+    /// </para>
+    /// </remarks>
+    public bool AbstainWithoutVocabularyOverlap { get; init; }
+
+    /// <summary>
     /// When true, the classifier learns each class from the documents of the *other* classes
     /// (Complement Naive Bayes, Rennie et al., ICML 2003) and scores a query through the
     /// likelihood of its terms under every class's complement. The crop with the smallest
