@@ -36,10 +36,14 @@ namespace LexiSharp.Core;
 /// </para>
 /// </remarks>
 /// <typeparam name="TPayload">
-/// The caller's per-search state. What it contains is the caller's business; this library passes it
-/// through without reading it.
+/// The caller's per-search state, constrained to a reference type so that the no-payload
+/// <see cref="ITextSearchEngine.Search(string, SearchOptions?)"/> overload can pass
+/// <c>null</c> unambiguously. A value type would make <c>default(TPayload)</c> the zero
+/// value, and a boost reading <c>Payload</c> would have to tell that apart from a payload the
+/// caller deliberately passed — which is the confusion the constraint removes.
 /// </typeparam>
 public interface IContextualSearchEngine<TPayload> : ITextSearchEngine
+    where TPayload : class
 {
     /// <summary>
     /// Searches as <see cref="ITextSearchEngine.Search(string, SearchOptions?)"/> does, with

@@ -1,5 +1,3 @@
-using LexiSharp.Ranking;
-
 namespace LexiSharp.Core;
 
 /// <summary>
@@ -8,7 +6,9 @@ namespace LexiSharp.Core;
 /// </summary>
 /// <typeparam name="TPayload">
 /// The caller's per-search state. It reaches the boost as
-/// <see cref="BoostContext{TPayload}.Payload"/> and is never read by this class.
+/// <see cref="BoostContext{TPayload}.Payload"/> and is never read by this class. Constrained to a
+/// reference type, so that the payload-less overload passes a genuine <c>null</c> rather than a
+/// value type's zero value — see <see cref="IContextualSearchEngine{TPayload}"/>.
 /// </typeparam>
 /// <remarks>
 /// <para>
@@ -28,7 +28,12 @@ namespace LexiSharp.Core;
 /// boosts are first-class: a factor above 1 or a positive offset raises a match, a factor below 1
 /// (damp) or a negative offset (penalty) lowers it, and factor 0 drops the document entirely
 /// (score-0 convention). A negative factor would invert the ranking and is rejected, as are
-/// NaN/Infinite values. Returning <c>default</c> leaves a candidate at its base score.
+/// NaN/Infinite values.
+/// </para>
+/// <para>
+/// To leave a candidate at its base score, return <c>ScoreBoost.None()</c>. Returning
+/// <c>default</c> does the opposite: it is all zeroes, so its factor is 0, which drops the
+/// document. See <see cref="ScoreBoost"/>.
 /// </para>
 /// <para>
 /// The <see cref="BoostContext{TPayload}"/> is built once per search and shared by every
@@ -57,6 +62,7 @@ namespace LexiSharp.Core;
 /// </para>
 /// </remarks>
 public sealed class BoostedTextSearchEngine<TPayload> : IContextualSearchEngine<TPayload>, IQueryCostProbe
+    where TPayload : class
 {
     private readonly ITextSearchEngine _inner;
     private readonly ContextualBoost<TPayload> _boost;
@@ -169,11 +175,7 @@ public sealed class BoostedTextSearchEngine<TPayload> : IContextualSearchEngine<
 
         // Built once, before the first candidate: a boost that reads the base ranking must not see
         // it change under it as earlier candidates get boosted.
-        var context = new BoostContext<TPayload>(
-            query,
-            candidates,
-            ScoreConfidence.Compute(candidates, ScoreConfidenceMethod.WinnerMargin),
-            payload);
+        var context = new BoostContext<TPayload>(query, candidates, payload);
 
         var results = new List<SearchResult>(candidates.Count);
 

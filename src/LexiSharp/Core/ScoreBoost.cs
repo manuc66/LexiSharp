@@ -11,10 +11,10 @@ namespace LexiSharp.Core;
 /// <item><b>Negative boost (damp)</b>: <see cref="Factor"/> in (0, 1) — down-weights a match.</item>
 /// <item><b>Negative boost (penalty)</b>: a negative <see cref="Offset"/> — subtracts from a match.</item>
 /// <item><see cref="Factor"/> = 0 zeroes the score (document excluded, score-0 convention).</item>
-/// <item><see cref="None"/> leaves the score untouched.</item>
+/// <item><c>None()</c> leaves the score untouched.</item>
 /// </list>
 /// <para>
-/// <b>Write <see cref="None"/>, not <c>default</c>, to mean "no change".</b> The optional
+/// <b>Write <c>None()</c>, not <c>default</c>, to mean "no change".</b> The optional
 /// constructor parameters give <c>new ScoreBoost()</c> a <see cref="Multiply"/> of 1, but
 /// <c>default(ScoreBoost)</c> does not go through the constructor: it is all zeroes, so its factor
 /// is 0 — which is the *exclude* case above. A boost function returning <c>default</c> therefore
@@ -32,7 +32,7 @@ public readonly record struct ScoreBoost(double Add = 0, double Multiply = 1)
     /// This is what a boost returns when it declines to act. It is a distinct value from
     /// <c>default(ScoreBoost)</c>, which excludes the document — see the type remarks.
     /// </remarks>
-    public static ScoreBoost None => new(0, 1);
+    public static ScoreBoost None() => new(0, 1);
 
     /// <summary>A pure multiplicative boost: &gt;1 boosts, &lt;1 damps, 0 excludes.</summary>
     public static ScoreBoost Factor(double factor) => new(0, factor);
