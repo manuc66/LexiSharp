@@ -621,6 +621,72 @@ compose with a boosted or hybrid engine rather than replace one.
 `Snapshot` and `Restore` persist the history with its counters intact — a query answered five
 times is stored as five, not as one.
 
+## Boosting on the search, not only on the document
+
+`BoostedTextSearchEngine`'s boost sees one candidate. That is enough for a decision the document
+settles — its field weights, its category, its age — and not enough for one the *ranking* settles,
+which is the decision that matters when a boost is a correction rather than a preference.
+
+`BoostedTextSearchEngine<TPayload>` widens what the boost is told. It receives a
+`BoostContext<TPayload>` carrying the query as issued, the inner engine's own pre-boost ranking,
+the confidence of each candidate, and the caller's payload:
+
+```csharp
+using LexiSharp.Core;
+
+// Fires only when the base ranking is close. TopConfidence is the WinnerMargin gap to the
+// runner-up: near 1 is a clear winner, near 0 is a near-tie.
+var engine = new BoostedTextSearchEngine<CallerContext>(
+    inner,
+    (context, candidate) =>
+        context.TopConfidence < 0.2 && candidate.DocumentId == "b"
+            ? new ScoreBoost(Add: 50)
+            : ScoreBoost.None);
+
+var results = engine.Search(query, options, new CallerContext(user, DateTimeOffset.UtcNow));
+```
+
+The context is built once per search and shared by every candidate, so a check on the whole ranking
+is evaluated once per query rather than once per document. `ScoreBoost.None` is what a boost
+returns when it declines — **not** `default(ScoreBoost)`, which is all zeroes and therefore
+*excludes* the document. That distinction is called out on `ScoreBoost` because the two read alike
+and mean opposites.
+
+### Where the payload goes, and why it is not in `SearchOptions`
+
+`TPayload` is the caller's per-search state, reaching the boost as `context.Payload`. It is
+deliberately not a property of `SearchOptions`: that record has value equality and a serializable
+shape, and a caller-defined value among its properties would put both at the mercy of whatever
+`Equals` that type implements. The payload travels as a separate argument instead.
+
+When a boost needs more than one concept — user *and* date, say — that is a `record` the caller
+owns, not a shape this library has to guess at:
+
+```csharp
+internal sealed record CallerContext(string User, DateTimeOffset Now, string? ExperimentArm);
+```
+
+### Finding out whether an engine accepts one
+
+The generic engine implements `IContextualSearchEngine<TPayload>`, an optional capability in the
+same family as `IFacetedSearchEngine` or `IDetailedSearchEngine`. Code holding a plain
+`ITextSearchEngine` cannot tell from the type whether a payload will be honoured, so it tests:
+
+```csharp
+var results = engine is IContextualSearchEngine<CallerContext> contextual
+    ? contextual.Search(query, options, userContext)
+    : engine.Search(query, options);
+```
+
+The payload type is the interface's type parameter rather than `object`, so a
+`BoostedTextSearchEngine<CallerContext>` answers to `IContextualSearchEngine<CallerContext>` and
+nothing else: handing it the wrong state does not compile. The plain
+`Search(query, options)` overload still exists and passes `default`, which is what lets an unaware
+pipeline run the engine at all — without the state it had the means to use.
+
+`BoostedTextSearchEngine` (no type parameter) is the original, candidate-only form and is
+unchanged. It forwards to the generic one, so there is one ranking implementation.
+
 ## Proximity
 
 BM25 scores a document by *how often* the query terms occur and is blind to *where*. `quick fox` in

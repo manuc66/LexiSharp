@@ -35,6 +35,37 @@ workflow.
   counterpart to `ScoreConfidence`, which remains the unfitted, scale-invariant gauge and is
   unchanged.
 
+- **A boost that can see the search it is adjusting, and decline.**
+
+  `BoostedTextSearchEngine<TPayload>` takes a boost that receives a `BoostContext<TPayload>`:
+  the query as issued, the inner engine's ranking **before** any boost, each candidate's
+  `WinnerMargin` confidence, and the caller's payload. That is what lets a boost be conditional on
+  the base ranking being uncertain — `context.TopConfidence` — which a per-candidate boost cannot
+  be, since it is never shown the ranking. The context is built once per search and shared by
+  every candidate, so a whole-ranking check is evaluated once per query.
+
+  It implements `IContextualSearchEngine<TPayload>`, an optional capability alongside
+  `IFacetedSearchEngine` and `IDetailedSearchEngine`. The payload type is the interface's type
+  parameter, not `object`: a `BoostedTextSearchEngine<UserContext>` answers to
+  `IContextualSearchEngine<UserContext>` and to nothing else, so a mismatched payload does not
+  compile. It is **not** a `SearchOptions` property — that record has value equality and a
+  serializable shape, and a caller-defined value among its properties would put both at the mercy
+  of that type's `Equals`.
+
+  The plain `BoostedTextSearchEngine` — candidate-only, unchanged — is now a forwarder over the
+  generic one, so there is one ranking implementation.
+
+- **`ScoreBoost.None`: the way to say "leave this candidate alone".**
+
+  `default(ScoreBoost)` does not mean that. The optional constructor parameters give
+  `new ScoreBoost()` a factor of 1, but `default` bypasses the constructor and is all zeroes, so
+  its factor is 0 — which is the *exclude* case. A boost function returning `default` drops every
+  document it is asked about, which is the opposite of what the expression reads as. `None` is the
+  explicit value; this is called out on the type because the two read alike and mean opposites.
+
+  Not a behaviour change for any existing caller — nothing in the repository returned
+  `default(ScoreBoost)` from a boost, and a caller who did was excluding its documents already.
+
   No retrieval figure is claimed for either: both are new signals whose value depends on the
   corpus and on the history fed to them, and are to be measured by the caller on their data. See
   `docs/ranking.md` and `docs/observability.md`.
