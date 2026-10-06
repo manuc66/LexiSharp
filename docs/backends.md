@@ -85,8 +85,14 @@ vector.Search("a fast fox");   // scores: cosine→1-dist, L2→1/(1+dist), inne
 The engine installs (idempotently) the `vector` extension, adds an `embedding vector(D)`
 column and an HNSW (or IVFFlat) index on the same documents table. IVFFlat needs rows to
 cluster lists, so the index is created on the first `EnsureSchema()` call **after** your
-first inserts. ANN results are approximate: combine with `HybridTextSearchEngine` + RRF to
-trade recall for speed — exact cosine behavior is verified in the integration suite.
+first inserts. What is approximate is **which** documents come back, not their scores. pgvector
+evaluates the distance of every row it returns with the same operator that ordered them, so the
+page arrives ordered and scored exactly and re-scoring it would change nothing — the score
+expression and the `ORDER BY` are one switch on `Distance`. The cost of the index is recall: a
+true neighbour the graph never visited. Raise `HnswEfSearch` to spend more I/O on finding it, or
+combine with `HybridTextSearchEngine` + RRF so a lexical channel covers what the ANN missed —
+which is the recall you are trading away for speed. Exact cosine behavior is verified in the
+integration suite.
 
 **When PostgreSQL stops using the index.** `hnsw.ef_search` feeds pgvector's planner hook,
 which grows the ANN index's estimated *startup* cost with it. Past a threshold set by your
