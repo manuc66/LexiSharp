@@ -24,7 +24,6 @@ public sealed class QueryFeedbackHistory
 {
     private readonly Dictionary<string, QueryAssociation> _associations = new(StringComparer.Ordinal);
     private readonly ITokenizer _tokenizer;
-
     /// <param name="tokenizer">Tokenizer used to normalize queries for similarity computation.</param>
     public QueryFeedbackHistory(ITokenizer? tokenizer = null)
     {
@@ -45,7 +44,7 @@ public sealed class QueryFeedbackHistory
 
         if (!_associations.TryGetValue(key, out var association))
         {
-            association = new QueryAssociation(key, new Dictionary<string, int>(StringComparer.Ordinal));
+            association = new QueryAssociation(key, new Dictionary<string, int>(StringComparer.Ordinal), _tokenizer);
             _associations[key] = association;
         }
 
@@ -97,6 +96,28 @@ public sealed class QueryFeedbackHistory
         string query,
         double minSimilarity = 0.3)
     {
+        var scores = GetFuzzyAssociationScores(query, minSimilarity);
+
+        return scores.Count == 0
+            ? Array.Empty<(string, double)>()
+            : scores
+                .Select(kvp => (kvp.Key, kvp.Value))
+                .OrderByDescending(x => x.Item2)
+                .ToList();
+    }
+
+    /// <summary>
+    /// The same associations <see cref="GetFuzzyAssociations"/> reports, keyed by document id so
+    /// a caller applying them to a page can look each candidate up without building a second map.
+    /// </summary>
+    /// <remarks>
+    /// This is the form the engines use: <see cref="GetFuzzyAssociations"/> sorts, and a decorator
+    /// that then needs a lookup would pay for the projection and the map on every search.
+    /// </remarks>
+    public IReadOnlyDictionary<string, double> GetFuzzyAssociationScores(
+        string query,
+        double minSimilarity = 0.3)
+    {
         ArgumentNullException.ThrowIfNull(query);
 
         if (minSimilarity <= 0 || minSimilarity > 1)
@@ -106,13 +127,13 @@ public sealed class QueryFeedbackHistory
         var queryTokens = new HashSet<string>(_tokenizer.Tokenize(NormalizeQuery(query)), StringComparer.Ordinal);
 
         if (queryTokens.Count == 0)
-            return Array.Empty<(string, double)>();
+            return EmptyScores;
 
         var documentScores = new Dictionary<string, double>(StringComparer.Ordinal);
 
         foreach (var association in _associations.Values)
         {
-            var historyTokens = new HashSet<string>(_tokenizer.Tokenize(association.Query), StringComparer.Ordinal);
+            var historyTokens = association.Tokens;
 
             if (historyTokens.Count == 0)
                 continue;
@@ -142,11 +163,15 @@ public sealed class QueryFeedbackHistory
             }
         }
 
-        return documentScores
-            .Select(kvp => (kvp.Key, kvp.Value))
-            .OrderByDescending(x => x.Item2)
-            .ToList();
+        return documentScores;
     }
+
+    /// <summary>
+    /// Shared empty result, so the no-match path allocates nothing. Not a mutable collection
+    /// anything can write to.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, double> EmptyScores =
+        new Dictionary<string, double>(0, StringComparer.Ordinal);
 
     /// <summary>
     /// Every recorded query with the document associations it carries, for bulk persistence.
@@ -179,7 +204,8 @@ public sealed class QueryFeedbackHistory
 
             _associations[key] = new QueryAssociation(
                 key,
-                new Dictionary<string, int>(documentCounts, StringComparer.Ordinal));
+                new Dictionary<string, int>(documentCounts, StringComparer.Ordinal),
+                _tokenizer);
         }
     }
 
@@ -192,13 +218,29 @@ public sealed class QueryFeedbackHistory
 
     private sealed class QueryAssociation
     {
-        public QueryAssociation(string query, Dictionary<string, int> documentCounts)
+        /// <param name="query">The recorded query, already normalized.</param>
+        /// <param name="documentCounts">Document id to times it was chosen under this query.</param>
+        /// <param name="tokenizer">
+        /// The history's own tokenizer, held so the terms are computed once here rather than on
+        /// every search: <see cref="GetFuzzyAssociations"/> walks every recorded query, so
+        /// tokenizing inside that loop would make each search cost one tokenization per query ever
+        /// recorded.
+        /// </param>
+        public QueryAssociation(string query, Dictionary<string, int> documentCounts, ITokenizer tokenizer)
         {
             Query = query;
             DocumentCounts = documentCounts;
+            Tokens = new HashSet<string>(tokenizer.Tokenize(query), StringComparer.Ordinal);
         }
 
         public string Query { get; }
+
         public Dictionary<string, int> DocumentCounts { get; }
+
+        /// <summary>
+        /// The query's terms, computed once at construction. The tokenizer belongs to the history
+        /// and cannot change, so these cannot go stale.
+        /// </summary>
+        public HashSet<string> Tokens { get; }
     }
 }
