@@ -305,7 +305,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         if (document.TextFields is not null)
         {
             var textFieldsParameter = command.Parameters.AddWithValue("text_fields",
-                System.Text.Json.JsonSerializer.Serialize(document.TextFields));
+                System.Text.Json.JsonSerializer.Serialize(document.TextFields, PostgresJsonContext.Default.IReadOnlyDictionaryStringString));
             textFieldsParameter.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Jsonb;
         }
         else
@@ -316,7 +316,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         if (document.Fields is not null)
         {
             var fieldsParameter = command.Parameters.AddWithValue("fields",
-                System.Text.Json.JsonSerializer.Serialize(document.Fields));
+                System.Text.Json.JsonSerializer.Serialize(document.Fields, PostgresJsonContext.Default.IReadOnlyDictionaryStringString));
             fieldsParameter.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Jsonb;
         }
         else
@@ -731,6 +731,6 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         if (string.IsNullOrEmpty(json))
             return null;
 
-        return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+        return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json, PostgresJsonContext.Default.DictionaryStringString);
     }
 }

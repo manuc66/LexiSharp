@@ -346,7 +346,7 @@ command.CommandText = $"CREATE INDEX IF NOT EXISTS {indexName} ON {_options.Qual
 
         var fieldsParameter = command.Parameters.AddWithValue(
             "fields",
-            document.Fields is null ? DBNull.Value : System.Text.Json.JsonSerializer.Serialize(document.Fields));
+            document.Fields is null ? DBNull.Value : System.Text.Json.JsonSerializer.Serialize(document.Fields, PostgresJsonContext.Default.IReadOnlyDictionaryStringString));
         fieldsParameter.NpgsqlDbType = NpgsqlDbType.Jsonb;
 
         command.ExecuteNonQuery();
@@ -367,6 +367,6 @@ command.CommandText = $"CREATE INDEX IF NOT EXISTS {indexName} ON {_options.Qual
         if (string.IsNullOrEmpty(json))
             return null;
 
-        return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+        return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json, PostgresJsonContext.Default.DictionaryStringString);
     }
 }
