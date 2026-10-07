@@ -208,34 +208,28 @@ public class CalibratedScoreConfidenceTests
     }
 
     [Fact]
-    public void YoudenThreshold_searchIsLinearNotQuadratic()
+    public void YoudenThreshold_walksTheLabelledSetOncePerPass()
     {
-        // The old search recomputed a suffix sum per candidate threshold: 0.7 ms at 1 000 pairs
-        // and 52.4 ms at 10 000, which is the ~75x an O(n^2) pass shows at 10x the input. The
-        // suffix walk is O(n) and the sort under Fit is O(n log n), so 10x the input should cost
-        // roughly 10-14x. The bound sits well under the 100x quadratic would give and well above
-        // the noise of a run, because the point is separating the two shapes, not timing the host.
-        static double Milliseconds(int count)
+        // One pass in each direction is a property of the code, not of a machine, so it is
+        // counted rather than timed. A stopwatch could not hold it: on a shared CI runner the
+        // same 20 000-pair fit measured 68.5 ms against 3.7 ms on the same input locally, and
+        // the ratio of two timings read that pause as a quadratic search — the failure that
+        // removed this test's clock. The count is the claim, taken where the claim lives.
+        static (double Score, double Label)[] Sorted(int count)
         {
-            var pairs = new List<(double, bool)>(count);
+            var pairs = new List<(double Score, double Label)>(count);
             var random = new Random(0);
             for (int i = 0; i < count; i++)
-                pairs.Add((i, random.NextDouble() < 0.5));
+                pairs.Add(((double)i, random.NextDouble() < 0.5 ? 1d : 0d));
 
-            var watch = System.Diagnostics.Stopwatch.StartNew();
-            _ = CalibratedScoreConfidence.Fit(pairs);
-            watch.Stop();
-            return watch.Elapsed.TotalMilliseconds;
+            return [.. pairs.OrderBy(p => p.Score)];
         }
 
-        Milliseconds(1_000);   // warm the JIT away from the measurement
+        _ = CalibratedScoreConfidence.ComputeYoudenThreshold(Sorted(2_000), out int small);
+        _ = CalibratedScoreConfidence.ComputeYoudenThreshold(Sorted(20_000), out int large);
 
-        double small = Milliseconds(2_000);
-        double large = Milliseconds(20_000);
-
-        Assert.True(
-            large < small * 40,
-            $"fitting 10x the pairs took {large / Math.Max(small, 0.001):F1}x longer, which is the shape of a " +
-            $"quadratic search (small {small:F2} ms, large {large:F2} ms)");
+        Assert.Equal(2 * 2_000, small);
+        Assert.Equal(2 * 20_000, large);
+        Assert.Equal(10 * small, large);
     }
 }
