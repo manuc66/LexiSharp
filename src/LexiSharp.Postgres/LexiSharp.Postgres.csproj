@@ -16,6 +16,12 @@
     <PackageTags>search;text;postgres;fts;tsvector;gin;unaccent;pgvector;sparse;pg_trgm;bm25;pg_search;paradedb;tantivy</PackageTags>
     <IsPackable>true</IsPackable>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!--
+      Trim/AOT analysis: with TreatWarningsAsErrors, every IL2026/IL3050 this package would
+      produce is a build failure. The eleven System.Text.Json call sites now go through
+      PostgresJsonContext instead of the reflection serializer.
+    -->
+    <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
 
   <ItemGroup>

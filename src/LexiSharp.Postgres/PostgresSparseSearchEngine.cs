@@ -222,7 +222,7 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
         if (document.Fields is not null)
         {
             var fieldsParameter = command.Parameters.AddWithValue("fields",
-                System.Text.Json.JsonSerializer.Serialize(document.Fields));
+                System.Text.Json.JsonSerializer.Serialize(document.Fields, PostgresJsonContext.Default.IReadOnlyDictionaryStringString));
             fieldsParameter.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Jsonb;
         }
         else
@@ -361,6 +361,6 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
         if (string.IsNullOrEmpty(json))
             return null;
 
-        return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+        return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json, PostgresJsonContext.Default.DictionaryStringString);
     }
 }
