@@ -27,13 +27,17 @@ Job: default (not ShortRun) — measurements below were collected in a single su
 Fast, non-noisy representative of the search hot path: a 10,000-document, 50-word corpus
 (index built once before the loop; `Allocated` is per-query, not the corpus itself):
 
+Host: BenchmarkDotNet v0.14.0, Manjaro Linux, Intel Core i7-8850H CPU 2.60GHz (Coffee Lake),
+12 logical cores, .NET SDK 10.0.111, Runtime .NET 10.0.11, DefaultJob — the host named in
+[Term-at-a-time scoring](#term-at-a-time-scoring), not the one at the top of this page.
+
 | Method                          | Mean      | Error     | StdDev    | Allocated |
 |-------------------------------- |----------:|----------:|----------:|----------:|
-| Bm25Search                      |  2.336 ms | 0.1464 ms | 0.4316 ms |   1.33 KB |
-| TfIdfSearch                     |  2.197 ms | 0.1709 ms | 0.5040 ms |    1.3 KB |
-| QueryLikelihoodSearch           |  3.009 ms | 0.1619 ms | 0.4566 ms |   1.35 KB |
-| BooleanSearch                   |  1.077 ms | 0.0328 ms | 0.0945 ms |   1.19 KB |
-| Bm25SearchRunAllQueries         | 24.283 ms | 0.5560 ms | 1.6395 ms |   6.87 KB |
+| Bm25Search                      |  206.4 µs |  4.02 µs |  4.63 µs |   1.36 KB |
+| TfIdfSearch                     |  177.4 µs |  3.53 µs |  3.30 µs |   1.32 KB |
+| QueryLikelihoodSearch           | 1,926.2 µs | 29.09 µs | 24.29 µs |   1.39 KB |
+| BooleanSearch                   |  918.4 µs | 17.87 µs | 26.19 µs |   1.23 KB |
+| Bm25SearchRunAllQueries         | 1,217.0 µs | 21.00 µs | 18.61 µs |     7 KB |
 
 Ranking output of every configuration is verified byte-for-byte against the pre-optimization
 engine (`QueryPlanParityTests`, full suite green), so the speedups below come with no quality
@@ -86,7 +90,7 @@ corpus against the committed baseline and fails the build on any drift in rankin
 clock is involved, so there is nothing to be noisy — which is the difference between a benchmark
 and a regression test, and the reason behaviour is protected that way rather than by a threshold.
 
-### Before / after the search optimization pass (same env)
+### Before / after the search optimization pass (the 'after' build is commit 639880e, same env)
 
 | Method                          | Before          | After          | Mean Δ   | Alloc Δ   |
 |-------------------------------- |----------------:|---------------:|---------:|----------:|
@@ -99,6 +103,67 @@ and a regression test, and the reason behaviour is protected that way rather tha
 The three big wins in the pass: a candidate-restricted scoring path for range scorers, a
 bounded top-L insertion instead of a full sort, and a per-query plan that hoists corpus
 statistics (idf, collection probabilities, average length) out of the per-document loop.
+
+## Where a query's bytes go (`QueryAllocationBreakdownBenchmarks`)
+
+`SearchBenchmarks` reports one figure per scorer. This class takes that figure apart: each row
+isolates one component of a search, so a reduction attempt knows which component to aim at.
+
+Host: BenchmarkDotNet v0.14.0, Manjaro Linux, Intel Core i7-8850H CPU 2.60GHz (Coffee Lake),
+12 logical cores, .NET SDK 10.0.111, Runtime .NET 10.0.11, DefaultJob, `MemoryDiagnoser`. The
+corpus is the same 10,000 × 50-word one as `SearchBenchmarks` (38-word vocabulary), the query is
+"search engine" (two terms), the scorer is `Bm25Scorer`. Read the `Allocated` column only — the
+same instruction the rest of this page carries.
+
+| Method                | Allocated |
+|-----------------------|----------:|
+| `Tokenize`            |    264 B  |
+| `TokenizeOneTerm`     |    224 B  |
+| `Parse`               |    312 B  |
+| `SearchHitLimit1`     |    744 B  |
+| `SearchHitLimit10`    |  1,392 B  |
+| `SearchHitLimit100`   |  7,873 B  |
+| `SearchMissLimit10`   |  1,048 B  |
+| `SearchPhraseLimit10` |  1,657 B  |
+| `SearchLiteralLimit10`|  1,392 B  |
+
+**Two rows do not reproduce under this diagnoser, and that is a property of the rows rather than
+a mystery.** `Tokenize` has read 264 B, 2,308 B and 7,078 B, and `Parse` has read 312 B and 0 B,
+for identical code across runs of this class; in the runs where `Allocated` reads 0 the Gen
+columns still show allocation happening. Five of the six search rows reproduce byte for byte; the
+phrase row has read 1,656 / 1,657 / 1,659 / 1,662 B across four runs — read it as ≈1.66 KB.
+The values shown are the ones that reproduce, and the tokenizer's split is confirmed by
+`TokenizeOneTerm`: 224 B for one term against 264 B for two is 184 B of list plus 40 B a token.
+
+**What the rows say.**
+
+- **The tokenizer and the parser: 312 B.** 184 B is the `List<string>` the tokenizer builds into
+  and 40 B is each token it emits; the parser adds one `ParsedQuery` record. For a two-term query
+  that is 264 + 48 B. This is the component a span-based tokenizer targets.
+- **The fixed cost: 672 B.** Three page sizes on one query fall on one line — 744 / 1,392 /
+  7,873 B — so everything a query costs before it returns anything is 672 B: the parse (312 B)
+  plus 360 B for the query plan, the top window and the per-query markers, not split further
+  here. The per-candidate work allocates nothing: the score arrays are rented from `ArrayPool`
+  and returned.
+- **A returned row: 72 B.** The slope of that line — a window entry, a slot in the result array
+  and a `SearchResult`. Of the 1,392 B a two-term search returns, 720 B is the page of ten, and
+  that is the API's shape rather than the engine's work.
+- **The paths price differently.** A query matching nothing takes the candidate-enumeration
+  fallback and pays 376 B more than the accumulation path's fixed cost (1,048 B against 672 B,
+  with no page to cut). A quoted phrase declines the accumulation pass and gates per candidate:
+  1,657 B, 265 B more than the same query unquoted. `ParseQuerySyntax: false` costs nothing
+  measurable — for a query without quotes or operators, parsing *is* tokenization plus one
+  record.
+
+**What is pinned.** `QueryAllocationBreakdownTests` holds the budgets a regression would break: the
+tokenizer under 512 B, a two-term search under 2 KB, a returned row under 128 B, a query matching
+nothing under 2 KB. A benchmark reports the number; the test refuses to let it come back.
+
+Reproduce:
+
+```bash
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*QueryAllocationBreakdown*'
+```
 
 ## Index building (`IndexBenchmarks`)
 
@@ -621,6 +686,8 @@ dotnet run --project bench/LexiSharp.Benchmarks -c Release
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*Search*'
 # the term-at-a-time crossover, both loops on the same query:
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*ScoringPath*'
+# where a query's bytes go, component by component:
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*QueryAllocationBreakdown*'
 ```
 
 The three-corpus-size crossover above is **not** in the benchmark project: a 1,000,000-document
