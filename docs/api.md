@@ -271,6 +271,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
+| `FrenchStemmer` | class | `IStemmer` | French stemmer implementing the Snowball French algorithm: an IStemmer that folds inflected French forms onto a common stem (continuer → continu, contractait →… |
 | `PorterStemmer` | class | `IStemmer` | English stemmer implementing Porter's suffix-stripping algorithm: an IStemmer that folds inflected English forms onto a common stem (caresses → caress, motoring… |
 | `StopWords` | class | — | Built-in sets of low-information words that can be removed during tokenization. |
 | `SynonymMap` | class | — | Raw synonym edges: one-way rewrites (Add) and bidirectional equivalence groups (AddEquivalent). Entries are plain text; the search engine tokenizes them with… |

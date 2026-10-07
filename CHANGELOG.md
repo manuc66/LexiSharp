@@ -127,6 +127,32 @@ workflow.
   What these do **not** promise is that centreing improves retrieval anywhere — that depends on
   the embedding model and the corpus, and is not established by arithmetic.
 
+- **A French stemmer and a French stop word list, both in the core and neither with a dependency.**
+
+  `FrenchStemmer` implements the Snowball French algorithm, written from the project's published
+  `algorithms/french.sbl` and pinned against its published vocabulary: **every one of 21 653
+  reference words stems to its reference output**, word for word. That is the standard
+  `PorterStemmer` has been held to since it was written, and it is what makes the name honest —
+  a stemmer that cannot be checked against a reference can only claim to be *a* stemmer.
+
+  `StopWords.French` is the 154-word list published alongside that stemmer, verbatim including its
+  deliberate omissions: `été`, `son`, `est`, `as` and `avions` stay out because each is a homonym
+  of an ordinary content word, and dropping them would remove content from an index in order to
+  remove function words. One list rather than a choice of two, because nothing here depends on a
+  French list's size the way `StopWords.EnglishFunction` does on the English one's.
+
+  Two properties recorded rather than glossed over:
+
+  It is **not idempotent** — stemming its own output can change it. 1843 of the 21653 reference
+  outputs are not fixed points of the algorithm (`abréviations` → `abrévi` → `abrev`), because a
+  second pass reaches rules the first pass moved the word into reach of. That is the algorithm's
+  behaviour, not this implementation's, and it is why an idempotency test was removed rather than
+  green-lit: asserting one would have asserted something false about someone else's algorithm.
+
+  Its **effect on retrieval is not measured**. No French corpus is in the evaluation harness, and
+  no nDCG figure is claimed for it. The English stemming numbers in the docs are English
+  measurements and say nothing about French.
+
 ### Fixed
 
 - **Youden's J was computed on a threshold no classifier can produce.**

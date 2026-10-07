@@ -22,7 +22,8 @@ tokenizer, and binary persistence.
   unaffected. See [Multi-field documents](#multi-field-documents).
 - **Configurable tokenizer** — Unicode NFKD normalization and diacritics removal,
   lowercasing, optional stop-word removal, optional n-grams, and a pluggable `IStemmer`
-  seam, with `PorterStemmer` (English, no dependency, opt-in) shipped in the core. See
+  seam, with `PorterStemmer` (English) and `FrenchStemmer` (French) shipped in the core,
+  neither with a dependency, both opt-in. See
   [Tokenizer customization](#tokenizer-customization).
 - **Persistence** — `LexiSharp.MessagePack` saves and reloads a whole corpus, tokenizer
   configuration included. See
@@ -221,7 +222,49 @@ queries are nearly all content words, the case where over-stemming has most to l
 for every config are in
 [the eval harness README](https://github.com/manuc66/LexiSharp/blob/main/bench/LexiSharp.Eval/README.md); reproduce with
 `dotnet run --project bench/LexiSharp.Eval -- --stem porter`. For another language, implement
-`IStemmer` (or take Snowball) and pass it the same way.
+`IStemmer` (or take Snowball) and pass it the same way — or use `FrenchStemmer`, below.
+
+### French stemming and stop words
+
+`FrenchStemmer` is the other stemmer shipped in the core, and it takes the same slot:
+
+```csharp
+using LexiSharp.Linguistics;
+
+var tokenizer = new Tokenizer(new TokenizerOptions
+{
+    RemoveStopWords = true,
+    StopWords = StopWords.French,
+    Stemmer = new FrenchStemmer(),
+});
+```
+
+It implements the Snowball French algorithm, written from the project's published source
+(`algorithms/french.sbl`) and pinned against its published vocabulary: **every one of 21,653
+reference words stems to its reference output**, word for word, in `FrenchStemmerTests`. That is
+the same standard `PorterStemmer` is held to and is what makes the name honest — a stemmer that
+cannot be checked against a reference can only claim to be *a* stemmer.
+
+`StopWords.French` is the 154-word list published with that stemmer, verbatim including its
+deliberate omissions: the source leaves `été`, `son`, `est`, `as` and `avions` out because each
+is a homonym of an ordinary content word, and dropping them would remove content from an index to
+remove function words. It is one list rather than a choice of two, because nothing in this
+repository's French measurement depends on the list's size the way `StopWords.EnglishFunction`
+does.
+
+Two things worth knowing before enabling either:
+
+- **It is not idempotent.** Stemming the output again can change it — 1843 of the 21653 reference
+  outputs are not fixed points of the algorithm (`abréviations` → `abrévi` → `abrev`), because a
+  second pass runs rules the first pass put the word within reach of. That is a property of the
+  algorithm, not a defect of this implementation, and it is why no idempotency test exists.
+- **Its effect on retrieval is not measured here.** No French corpus is part of the evaluation
+  harness, so nothing claims an nDCG figure for it. The English numbers above are English
+  measurements and say nothing about French — measure it on your own data before turning it on.
+
+Both are opt-in for the same reason `PorterStemmer` is: a default stemmer would silently change
+terms for every corpus that never asked for one, and an index can only be reloaded with the
+stemmer that produced it.
 
 ## Index persistence (`LexiSharp.MessagePack`)
 
