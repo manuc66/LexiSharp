@@ -16,6 +16,8 @@
     <PackageTags>search;text;lexical;tf-idf;bm25;classification;naive-bayes;incremental-learning;feedback;hybrid;federation;rrf;reranking</PackageTags>
     <IsPackable>true</IsPackable>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- AOT EXPERIMENT (local, not for commit): turns on the trim/AOT analyzers. -->
+    <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
 
   <ItemGroup>

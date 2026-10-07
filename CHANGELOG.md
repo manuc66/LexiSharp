@@ -153,6 +153,19 @@ workflow.
   no nDCG figure is claimed for it. The English stemming numbers in the docs are English
   measurements and say nothing about French.
 
+- **AOT validation for `LexiSharp` and `LexiSharp.Postgres`.**
+
+  Both carry `IsAotCompatible`, so `IL2026`/`IL3050` are build errors here rather than notes in
+  a log. `LexiSharp.Postgres` needed `PostgresJsonContext`, a source-generated context for its
+  eleven `System.Text.Json` call sites, which went through the reflection serializer. CI
+  publishes `tests/LexiSharp.AotSmoke` with `PublishAot` — ILC over the whole closure — and runs
+  the binary: index, search, and a document round trip through PostgreSQL.
+
+  Not claimed: `LexiSharp.MessagePack` passes the analyzers and still fails in an AOT binary
+  (`MissingMethodException` on `ListFormatter<T>`, reached by reflection at first use), and
+  `LexiSharp.AspNetCore` fails them at `MapGet(route, Delegate)`, which the framework annotates
+  `RequiresUnreferencedCode`/`RequiresDynamicCode`.
+
 ### Fixed
 
 - **Youden's J was computed on a threshold no classifier can produce.**

@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The Native AOT gate: CI publishes this with `dotnet publish -r linux-x64` (ILC over every
+    reference; a warning is an error) and runs the binary. Not an xUnit project — xUnit's runner
+    is not AOT compatible, so a test suite cannot show that the library's own code paths run in a
+    binary with no JIT behind them. The Postgres half self-skips without POSTGRES_TEST_CONNECTION;
+    its code is still rooted, so ILC still compiles it.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <PublishAot>true</PublishAot>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>LexiSharp.AotSmoke</RootNamespace>
+    <AssemblyName>LexiSharp.AotSmoke</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/LexiSharp/LexiSharp.csproj" />
+    <ProjectReference Include="../../src/LexiSharp.Postgres/LexiSharp.Postgres.csproj" />
+  </ItemGroup>
+
+</Project>

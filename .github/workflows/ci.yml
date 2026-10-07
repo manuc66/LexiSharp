@@ -255,6 +255,46 @@ jobs:
       - name: Test (lexical + ParadeDB BM25 + fuzzy)
         run: dotnet test tests/LexiSharp.Tests -c Release --no-build
 
+  aot:
+    # Publish a real consumer with ILC, then run it. The IsAotCompatible analyzers catch most
+    # problems at build time, but a resolver that reaches for reflection only on first use passes
+    # them — so the binary must actually index, search, and read a document back from Postgres.
+    name: Native AOT smoke (publish + run)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+        env:
+          POSTGRES_PASSWORD: postgres  # NOSONAR:S2068 (local test container only; Sonar flags the dummy dev password)
+          POSTGRES_DB: lexisharp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      POSTGRES_TEST_CONNECTION: Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp  # NOSONAR:S2068 (dummy password for ephemeral CI container)
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+      # No dotnet-version here on purpose: setup-dotnet installs the version it is
+      # given *as well as* the one in global.json, so naming one leaves the float.
+
+      - name: Native toolchain for ILC
+        # clang and the zlib headers the native link needs. Installed rather than assumed
+        # from whatever the runner image happens to carry: an image change would otherwise
+        # surface here first, as an opaque linker failure in one job.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends clang zlib1g-dev
+
+      - name: Publish (ILC over the closure; a warning fails the build)
+        run: dotnet publish tests/LexiSharp.AotSmoke -c Release -r linux-x64 -o "$RUNNER_TEMP/aot-smoke"
+
+      - name: Run the smoke
+        run: "$RUNNER_TEMP/aot-smoke/LexiSharp.AotSmoke"
+
   analysis:
     # SonarCloud cannot be analyzed with the generic GitHub action; C# requires
     # the SonarScanner for .NET, and per Sonar's docs the coverage report must

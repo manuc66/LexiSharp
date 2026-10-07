@@ -23,6 +23,29 @@ test and reproduce the numbers.
 All four target `net10.0` and are on [nuget.org](https://www.nuget.org/packages/LexiSharp/).
 The core package has **no** dependency; the others bring their own (MessagePack, Npgsql).
 
+### Native AOT
+
+`LexiSharp` and `LexiSharp.Postgres` carry `IsAotCompatible`, so the trim/AOT analyzers
+(`IL2026`, `IL3050`) are build errors. CI then publishes
+[`tests/LexiSharp.AotSmoke`](https://github.com/manuc66/LexiSharp/tree/main/tests/LexiSharp.AotSmoke)
+with `PublishAot` — ILC over the whole closure — and runs the binary: index, search, and a
+document round trip through PostgreSQL. A regression fails the workflow on every push to `main`
+and every pull request.
+
+```bash
+dotnet publish tests/LexiSharp.AotSmoke -c Release -r linux-x64 -o /tmp/aot-smoke
+/tmp/aot-smoke/LexiSharp.AotSmoke
+```
+
+Without `POSTGRES_TEST_CONNECTION` the Postgres half reports itself skipped; ILC compiles it
+either way, because the code is rooted whether or not the variable is set.
+
+**Not AOT-validated, and not claimed to be: `LexiSharp.MessagePack` and `LexiSharp.AspNetCore`.**
+MessagePack's resolver reaches for reflection on first use, so `Save` fails in an AOT binary
+(`MissingMethodException` on `ListFormatter<T>`); the AspNetCore endpoint's
+`MapGet(route, Delegate)` is annotated `RequiresUnreferencedCode`/`RequiresDynamicCode` and stops
+the build.
+
 ## Architecture
 
 ```
