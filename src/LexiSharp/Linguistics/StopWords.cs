@@ -36,6 +36,54 @@ public static class StopWords
         "will", "with", "you", "your", "yours", "yourself", "yourselves",
     };
 
+
+    /// <summary>
+    /// The French stop word list published with the Snowball French stemmer: 154 words of grammar
+    /// and conjugation, so that a French index has the same treatment the English one does and
+    /// the caller does not have to go looking for a list to pair with <see cref="FrenchStemmer"/>.
+    /// </summary>
+    /// <remarks>
+    /// Taken verbatim from <see href="https://snowballstem.org/algorithms/french/stop.txt">the
+    /// project's own stop file</see>, in the source's order (md5
+    /// <c>c2034e54065b709e5b4c7557dfe14892</c>). It is one list and not a choice of two, because
+    /// there is no published baseline in this repository whose analysis depends on French words
+    /// being kept — which is the whole reason <see cref="EnglishFunction"/> exists and is not the
+    /// default. Where the source comments a word out because it is a homonym of an ordinary noun
+    /// (<c>son</c>, <c>est</c>, <c>as</c>, <c>avions</c>), it stays out: keeping them would drop
+    /// content words from an index to remove function words.
+    /// </remarks>
+    private static readonly string[] _french =
+    {
+        "au", "aux", "avec", "ce", "ces", "dans", "de", "des",
+        "du", "elle", "en", "et", "eux", "il", "je", "la",
+        "le", "leur", "lui", "ma", "mais", "me", "même", "mes",
+        "moi", "mon", "ne", "nos", "notre", "nous", "on", "ou",
+        "par", "pas", "pour", "qu", "que", "qui", "sa", "se",
+        "ses", "sur", "ta", "te", "tes", "toi", "ton", "tu",
+        "un", "une", "vos", "votre", "vous", "c", "d", "j",
+        "l", "à", "m", "n", "s", "t", "y", "étée",
+        "étées", "étant", "suis", "es", "êtes", "sont", "serai", "seras",
+        "sera", "serons", "serez", "seront", "serais", "serait", "serions", "seriez",
+        "seraient", "étais", "était", "étions", "étiez", "étaient", "fus", "fut",
+        "fûmes", "fûtes", "furent", "sois", "soit", "soyons", "soyez", "soient",
+        "fusse", "fusses", "fussions", "fussiez", "fussent", "ayant", "eu", "eue",
+        "eues", "eus", "ai", "avons", "avez", "ont", "aurai", "aurons",
+        "aurez", "auront", "aurais", "aurait", "aurions", "auriez", "auraient", "avais",
+        "avait", "aviez", "avaient", "eut", "eûmes", "eûtes", "eurent", "aie",
+        "aies", "ait", "ayons", "ayez", "aient", "eusse", "eusses", "eût",
+        "eussions", "eussiez", "eussent", "ceci", "cela", "celà", "cet", "cette",
+        "ici", "ils", "les", "leurs", "quel", "quels", "quelle", "quelles",
+        "sans", "soi",
+    };
+
+    /// <summary>
+    /// The French stop word list published with the Snowball French stemmer.
+    /// </summary>
+    public static IReadOnlySet<string> French { get; } = CreateFrench();
+
+    private static IReadOnlySet<string> CreateFrench() =>
+        _french.ToFrozenSet(StringComparer.Ordinal);
+
     /// <summary>
     /// A compact English stop word list (function words: articles, pronouns, conjugations,
     /// auxiliaries, common prepositions).
