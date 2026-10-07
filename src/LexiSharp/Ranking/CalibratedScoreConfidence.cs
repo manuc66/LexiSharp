@@ -367,12 +367,37 @@ public sealed class CalibratedScoreConfidence
     /// </para>
     /// </remarks>
     private static double ComputeYoudenThreshold((double Score, double Label)[] sortedExamples)
+        => ComputeYoudenThreshold(sortedExamples, out _);
+
+    /// <summary>
+    /// The same walk, with the number of examples it looked at.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the count exists.</b> One pass in each direction is a property of this code, not
+    /// of a machine, and a stopwatch cannot hold it: on a shared CI runner the same
+    /// 20 000-pair fit measured 68.5 ms against 3.7 ms on the same input locally, and a ratio
+    /// of two timings read that pause as a quadratic search. The count is the claim, taken
+    /// where the claim lives.
+    /// </para>
+    /// <para>
+    /// Counted at the top of each loop, so a tied run that skips scoring still counts: the
+    /// walk visits every example once per pass, and a version recomputing a suffix per
+    /// threshold would report the square of that.
+    /// </para>
+    /// </remarks>
+    internal static double ComputeYoudenThreshold(
+        (double Score, double Label)[] sortedExamples, out int examplesExamined)
     {
         int n = sortedExamples.Length;
         int totalPositives = 0;
+        examplesExamined = 0;
 
         for (int i = 0; i < n; i++)
+        {
+            examplesExamined++;
             totalPositives += (int)sortedExamples[i].Label;
+        }
 
         int totalNegatives = n - totalPositives;
 
@@ -386,6 +411,7 @@ public sealed class CalibratedScoreConfidence
         // Downward: entering iteration i, truePositives already holds the labels from i to n-1.
         for (int i = n - 1; i >= 0; i--)
         {
+            examplesExamined++;
             truePositives += (int)sortedExamples[i].Label;
 
             // A threshold only exists where the score *changes*. The predicate being scored is

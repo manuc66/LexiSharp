@@ -190,6 +190,16 @@ workflow.
   decorating, on ids differing only in accents or letter case. Both decorators now order through
   `ResultOrdering`, which compares ordinally.
 
+- **The Youden complexity test timed the host, and the host is not the algorithm.**
+
+  `YoudenThreshold_searchIsLinearNotQuadratic` compared two stopwatches — 2 000 pairs
+  against 20 000 — and failed on a shared CI runner: 68.5 ms against 3.7 ms for the same
+  input locally, a ratio read as a quadratic search that does not exist. Measured here,
+  best-of-5: 0.51 ms at 2 000 pairs, 3.67 ms at 20 000, 22.3 ms at 100 000 — the walk is one
+  pass in each direction. `ComputeYoudenThreshold` now reports the examples it looked at,
+  and the test asserts `2n` and `10×` at 10× the input; a mutation that recomputes the
+  suffix per threshold fails it.
+
 ### Changed
 
 - **`VectorSimilarity.Mean` runs on SIMD instead of one float at a time.**
