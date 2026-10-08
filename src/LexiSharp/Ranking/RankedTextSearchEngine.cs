@@ -1,3 +1,4 @@
+using System.Buffers;
 using LexiSharp.Core;
 using LexiSharp.Linguistics;
 using LexiSharp.Similarity;
@@ -191,6 +192,19 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             return Array.Empty<SearchResult>();
         }
 
+        // The span pass first: a plain query whose terms are slices of the query text is scored
+        // without ever materializing them. It declines — and the string path below then runs
+        // unchanged — when the terms are not slices, when the scorer or the index cannot resolve them
+        // as such, or when the query is too rare to amortize the accumulation buffer.
+        var top = new TopRankedWindow(options.Window, options.TieBreak);
+        var spanRun = TryRunSpanQuery(query, options, facets, top);
+
+        if (spanRun is { } span)
+        {
+            return CutPage(
+                options, top, span.Counts.Ordinal, span.Counts.ScoredDocuments, span.ScoreStarted, started, instrumented);
+        }
+
         var (parsed, queryTerms) = BuildQuery(query, options);
 
         if (queryTerms.Count == 0)
@@ -236,11 +250,6 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             ? plannable.CreatePlan(queryTerms, _index)
             : null;
 
-        // Bounded top-Window accumulation, worst-first, reproducing the exact semantics of
-        // OrderByDescending(Score).Skip(offset).Take(limit) with equal scores ordered by document id.
-        // SearchResult objects are materialized only for the kept entries.
-        int window = options.Window;
-        var top = new TopRankedWindow(window, options.TieBreak);
         long ordinal = 0;
 
         // One dictionary lookup per query term, feeding both of the decisions below. They are two
@@ -310,12 +319,31 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             }
         }
 
+        return CutPage(options, top, ordinal, scoredDocuments, scoreStarted, started, instrumented);
+    }
+
+    /// <summary>
+    /// Cuts the requested page out of the window and records what the search cost.
+    /// </summary>
+    /// <remarks>
+    /// The rounding, the trace and the telemetry belong to the answer rather than to the path that
+    /// produced the ranking, so both scoring paths arrive here and this is the only place they run.
+    /// </remarks>
+    private IReadOnlyList<SearchResult> CutPage(
+        SearchOptions options,
+        TopRankedWindow top,
+        long ordinal,
+        long scoredDocuments,
+        long scoreStarted,
+        long started,
+        bool instrumented)
+    {
         // `scoredDocuments` is what relevance math was paid for — the documents that cleared the
-        // filter and phrase gates on the path taken above — so it is the honest ItemCount whichever
-        // arm ran. Recorded before the page cut, so the elapsed time covers scoring and not the cut,
+        // filter and phrase gates on the path taken — so it is the honest ItemCount whichever arm
+        // ran. Recorded before the page cut, so the elapsed time covers scoring and not the cut,
         // and `Windows` stays 0: a scorer is handed no request and cannot report how many it looked
         // at.
-        if (costs is not null)
+        if (options.Costs is { } costs)
             costs.Record(new SearchCostStage("score", scoredDocuments, 0, RetrievalTelemetry.ElapsedMs(scoreStarted)));
 
         // The accumulated window holds at most Offset + Limit entries; skip the Offset prefix
@@ -344,6 +372,153 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// The documents an accumulation pass recorded, gated, counted and offered to the window.
+    /// </summary>
+    /// <remarks>
+    /// One loop for both kinds of plan, which differ only in how they filled the accumulator. One
+    /// gate list, shared with the per-document loop, rather than this pass's own: a separate list is
+    /// how the id exclusion came to be missing from this path while the other applied it — the two
+    /// drifted, and nothing in the shape of the code objected.
+    /// </remarks>
+    private AccumulatedCounts FinishAccumulatedPass(
+        IAccumulatingIndex index,
+        ScoreAccumulator accumulator,
+        IAccumulatedScoreFinisher finisher,
+        SearchOptions options,
+        FacetCollector? facets,
+        TopRankedWindow top)
+    {
+        long ordinal = 0;
+
+        for (int i = 0; i < accumulator.Count; i++)
+        {
+            int candidate = accumulator.OrdinalAt(i);
+            var document = index.DocumentAt(candidate)!;
+
+            // The plan's last step, because this path never calls Score and a score that is narrowed
+            // at the end of the sum has to be narrowed somewhere.
+            double score = finisher.Finalise(accumulator[candidate]);
+
+            if (double.IsNaN(score) || double.IsInfinity(score) || score == 0 || score < options.MinimumScore)
+                continue;
+
+            if (!options.PassesFilters(document))
+                continue;
+
+            facets?.Count(document);
+
+            top.Add(score, document, ordinal);
+            ordinal++;
+        }
+
+        // Every recorded ordinal was scored — the buffer holds exactly the candidates the pass
+        // accumulated a weight for, whether or not a finalised score survived the gate above. That
+        // makes this the same quantity the per-document loop counts one at a time.
+        return new AccumulatedCounts(ordinal, accumulator.Count);
+    }
+
+    /// <summary>
+    /// The query path that never materializes a term: the tokenizer fills slices of the query text,
+    /// the index resolves each slice by span and the plan folds them.
+    /// </summary>
+    /// <remarks>
+    /// Everything this cannot serve returns <c>null</c> and the caller falls back to the string path
+    /// unchanged — a phrase, a prefix or fuzzy atom or a configured synonym resolves to terms that
+    /// are not in the query text; a tokenizer, a scorer or an index without the span capability has
+    /// no such path; and a query too rare to amortize the accumulation buffer is the one the
+    /// per-document loop serves better.
+    /// </remarks>
+    private (AccumulatedCounts Counts, long ScoreStarted)? TryRunSpanQuery(
+        ReadOnlySpan<char> query,
+        SearchOptions options,
+        FacetCollector? facets,
+        TopRankedWindow top)
+    {
+        if (_synonyms is not null || _tokenizer is not ISpanTokenizer tokenizer)
+            return null;
+
+        // A phrase or an operator is what the parser exists for; a plain query is the case this path
+        // serves. Asking the predicate the string path asks is what keeps the two in step — without
+        // it a quoted query would reach the vocabulary with its quotes tokenized away and its
+        // positional gate lost. The literal mode has no query language at all, so it is plain by
+        // construction and needs no predicate.
+        if (options.ParseQuerySyntax && !QueryParser.IsPlain(query))
+            return null;
+
+        if (_scorer is not IQueryPlannableScorer plannable || _index is not ISpanAccumulatingIndex spanIndex)
+            return null;
+
+        // The same gates the string path applies before it accumulates, so that whenever this pass
+        // runs the string path would have run it too: a scorer that does not return zero for a
+        // document sharing none of the terms, and a filtered query whose filter the pass would not
+        // honour, both decline here rather than producing a second answer to the same question.
+        if (_scorer is not ITermOverlapScorer)
+            return null;
+
+        if (options.Filters is { Count: > 0 } && (!options.AccumulateFilteredQueries || options.TieBreak != TieBreak.DocumentId))
+            return null;
+
+        // A text can produce at most one term per character, and the tokenizer declines rather than
+        // overflowing when it needs more room than this.
+        var rented = ArrayPool<NormalizedTerm>.Shared.Rent(query.Length + 1);
+
+        try
+        {
+            int count = tokenizer.TokenizeNormalized(query, rented);
+
+            if (count <= 0)
+                return null;
+
+            var terms = rented.AsSpan(0, count);
+
+            // The reach of the query, counted once per distinct term exactly as the string path
+            // counts it: a query repeating a term must not push itself over the accumulation
+            // threshold here and stay under it there, which would be two searches with two different
+            // paths and two different cost sheets for one query.
+            int reachable = 0;
+
+            for (int i = 0; i < terms.Length; i++)
+            {
+                if (!NormalizedTerm.IsRepeated(terms, i, query))
+                    reachable += spanIndex.SpanDocumentFrequency(terms[i].View(query));
+            }
+
+            if (reachable < AccumulationThreshold(spanIndex.OrdinalSpace))
+                return null;
+
+            if (plannable.CreateSpanPlan(terms, query, _index) is not { } plan)
+                return null;
+
+            // Recorded here rather than beside the tokenization: the count belongs to the parse that
+            // is now certainly this path's, and a decline above hands the query to the string path,
+            // which records it itself.
+            options.Costs?.AddTokens(terms.Length);
+
+            // Read here rather than at the top of the caller's branch, so the sheet's score stage
+            // covers the fold and not the parse — the same accounting the string path has.
+            long scoreStarted = options.Costs is not null ? RetrievalTelemetry.StartTimer() : 0;
+            var accumulator = ScoreAccumulator.Rent(spanIndex.OrdinalSpace);
+
+            try
+            {
+                if (!plan.TryAccumulateSpans(spanIndex, terms, query, accumulator))
+                    return null;
+
+                return (FinishAccumulatedPass(spanIndex, accumulator, plan, options, facets, top), scoreStarted);
+            }
+            finally
+            {
+                accumulator.Reset();
+                accumulator.Dispose();
+            }
+        }
+        finally
+        {
+            ArrayPool<NormalizedTerm>.Shared.Return(rented);
+        }
     }
 
     /// <summary>
@@ -480,42 +655,13 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             return null;
 
         var accumulator = ScoreAccumulator.Rent(index.OrdinalSpace);
-        long ordinal = 0;
 
         try
         {
             if (!accumulating.TryAccumulate(index, accumulator))
                 return null;
 
-            // One gate list, shared with the per-document loop, rather than this pass's own. A
-            // separate list is how the id exclusion came to be missing here while the loop above
-            // applied it: the two drifted, and nothing in the shape of the code objected. PassesFilters
-            // starts with the same null test the hoisted exclusion cost, so sharing it is free.
-            for (int i = 0; i < accumulator.Count; i++)
-            {
-                int candidate = accumulator.OrdinalAt(i);
-                var document = index.DocumentAt(candidate)!;
-                // The plan's last step, because this path never calls Score and a score that is narrowed
-                // at the end of the sum has to be narrowed somewhere.
-                double score = accumulating.Finalise(accumulator[candidate]);
-
-                if (double.IsNaN(score) || double.IsInfinity(score) || score == 0 || score < options.MinimumScore)
-                    continue;
-
-                if (!options.PassesFilters(document))
-                    continue;
-
-                facets?.Count(document);
-
-                top.Add(score, document, ordinal);
-                ordinal++;
-            }
-
-            // Every recorded ordinal was scored — the buffer holds exactly the candidates this pass
-            // accumulated a weight for, whether or not its finalised score survived the gate in
-            // the loop above. That makes this the same quantity the per-document loop counts one
-            // at a time.
-            return new AccumulatedCounts(ordinal, accumulator.Count);
+            return FinishAccumulatedPass(index, accumulator, accumulating, options, facets, top);
         }
         finally
         {

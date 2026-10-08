@@ -1,4 +1,5 @@
 using LexiSharp.Core;
+using LexiSharp.Linguistics;
 
 namespace LexiSharp.Ranking;
 
@@ -190,6 +191,44 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
         return new Bm25QueryPlan(
             Terms(queryTerms), index, new Bm25Shape(_k1, _b, _saturation, averageLength, table));
+    }
+
+    ISpanAccumulatingQueryPlan? IQueryPlannableScorer.CreateSpanPlan(
+        ReadOnlySpan<NormalizedTerm> terms,
+        ReadOnlySpan<char> source,
+        IReadOnlyTextIndex index)
+    {
+        ArgumentNullException.ThrowIfNull(index);
+
+        // Only an index that resolves a term by span can run this plan, and the caller asks for the
+        // capability before it asks the scorer.
+        if (index is not ISpanAccumulatingIndex spanIndex)
+            return null;
+
+        // Single precision collapses a repeated query term into one clause whose weight carries the
+        // repetition, and that fold is a property of the string plan's term list. Reproducing it here
+        // would mean reimplementing it over slices to serve one reproduction, so this plan declines
+        // and the string path takes that query.
+        if (_arithmetic == Bm25Arithmetic.SinglePrecision)
+            return null;
+
+        double averageLength = index.AverageDocumentLength;
+        int documentCount = index.StatisticDocumentCount;
+        var idf = new double[terms.Length];
+
+        for (int i = 0; i < terms.Length; i++)
+        {
+            if (documentCount == 0)
+                continue;
+
+            int df = spanIndex.SpanDocumentFrequency(terms[i].View(source));
+            idf[i] = Math.Log(1.0 + ((documentCount - df + 0.5) / (df + 0.5)));
+        }
+
+        return new Bm25SpanQueryPlan(
+            new Bm25Shape(_k1, _b, _saturation, averageLength, null),
+            idf,
+            distinct: _queryTerms != QueryTermWeighting.QueryFrequency);
     }
 
     /// <summary>Largest stored length the reciprocal table is indexed by.</summary>
@@ -477,6 +516,62 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
             return true;
         }
+    }
+
+    /// <summary>
+    /// The query-bound half of BM25 for terms given as slices of the query text.
+    /// </summary>
+    /// <remarks>
+    /// Same arithmetic and same order as <see cref="Bm25QueryPlan"/>: the terms are folded in query
+    /// order, one posting entry at a time, and the per-term weight is the same expression over the
+    /// same shape. What differs is only how a term reaches the index — by characters instead of by a
+    /// string — which is why the two plans have to produce the same doubles and the parity tests and
+    /// the golden master check it.
+    /// </remarks>
+    private sealed class Bm25SpanQueryPlan(Bm25Shape shape, double[] idf, bool distinct) : ISpanAccumulatingQueryPlan
+    {
+        /// <inheritdoc />
+        public double Finalise(double accumulated) => shape.Round(accumulated);
+
+        /// <inheritdoc />
+        public bool TryAccumulateSpans(
+            ISpanAccumulatingIndex index,
+            ReadOnlySpan<NormalizedTerm> terms,
+            ReadOnlySpan<char> source,
+            ScoreAccumulator accumulator)
+        {
+            // The guards Score applies per document, hoisted exactly as the string plan hoists them:
+            // with no corpus or no average length every score is 0, and a term the index cannot
+            // resolve contributes nothing, which is what the string plan's fold does with it too.
+            if (index.Count == 0 || shape.AverageLength <= 0)
+                return false;
+
+            for (int i = 0; i < terms.Length; i++)
+            {
+                // `Terms` collapses a repeated query term unless the scorer counts occurrences, and
+                // this plan carries that decision rather than re-deriving it: the rule is the same
+                // one, applied to slices.
+                if (distinct && NormalizedTerm.IsRepeated(terms, i, source))
+                    continue;
+
+                if (!index.TryResolvePostings(terms[i].View(source), out var postings))
+                    continue;
+
+                index.AccumulateResolved(postings, new Bm25ResolvedWeight(idf[i], shape), accumulator);
+            }
+
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// The per-term weight for a term whose postings the index has already resolved: the same
+    /// contribution as <see cref="Bm25Weight"/>, over the same shape, naming no term.
+    /// </summary>
+    private readonly struct Bm25ResolvedWeight(double idf, Bm25Shape shape) : IResolvedWeight
+    {
+        public double Weight(int termFrequency, int documentLength) =>
+            shape.Contribution(idf, termFrequency, documentLength, shape.Normalization(documentLength));
     }
 
     /// <summary>

@@ -14,13 +14,20 @@ namespace LexiSharp.Indexing;
 /// single thread (or synchronize externally). Read-only queries hold no shared mutable state and
 /// may run concurrently with one another.
 /// </remarks>
-public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IVocabularyIndex, IAccumulatingIndex, IFieldStatisticsIndex
+public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IVocabularyIndex, IAccumulatingIndex, ISpanAccumulatingIndex, IFieldStatisticsIndex
 {
     private readonly ITokenizer _tokenizer;
 
     /// <summary>Document id → the document's ordinal. The one map ids are resolved through.</summary>
     private readonly Dictionary<string, int> _documents = new(StringComparer.Ordinal);
     private readonly Dictionary<string, PostingList> _postings = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// <see cref="_postings"/> seen through <see cref="ReadOnlySpan{T}"/>, so a query term that is
+    /// its own normalized form is resolved without being materialized as a string first.
+    /// </summary>
+    private readonly Dictionary<string, PostingList>.AlternateLookup<ReadOnlySpan<char>> _spanPostings;
+
     private readonly Dictionary<string, IReadOnlyList<string>> _tokens = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _corpusFrequencies = new(StringComparer.Ordinal);
 
@@ -269,6 +276,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         _tokenizer = tokenizer ?? LexiSharp.Linguistics.Tokenizer.Default;
         _averageLengthDivisor = averageLengthDivisor;
         _documentLengthQuantization = DocumentLengthQuantization.Exact;
+        _spanPostings = _postings.GetAlternateLookup<ReadOnlySpan<char>>();
     }
 
     /// <summary>
@@ -296,6 +304,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         _tokenizer = tokenizer ?? LexiSharp.Linguistics.Tokenizer.Default;
         _averageLengthDivisor = averageLengthDivisor;
         _documentLengthQuantization = documentLengthQuantization;
+        _spanPostings = _postings.GetAlternateLookup<ReadOnlySpan<char>>();
     }
 
     /// <summary>The tokenizer used to split documents and queries into terms.</summary>
@@ -1026,13 +1035,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         if (!_postings.TryGetValue(weight.Term, out var posting))
             return;
 
-        var flat = posting.Flat;
-
-        if (flat is null || flat.Epoch != _epoch)
-        {
-            flat = BuildFlatPosting(posting, _epoch);
-            posting.PublishFlat(flat);
-        }
+        var flat = FlatFor(posting);
 
         int[] ordinals = flat.Ordinals;
         int[] frequencies = flat.Frequencies;
@@ -1041,10 +1044,64 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         // quantized lengths have to be an array too. Rounding inside this loop would put an
         // arithmetic sequence on the innermost loop of the whole library for a convention that one
         // caller in one reproduction wants.
-        int[] lengths = _documentLengthQuantization == DocumentLengthQuantization.Exact
-            ? _lengthsByOrdinal
-            : QuantizedLengths();
+        int[] lengths = AccumulationLengths();
         int count = flat.Count;
+
+        for (int i = 0; i < count; i++)
+        {
+            int ordinal = ordinals[i];
+            accumulator.Record(ordinal, weight.Weight(frequencies[i], lengths[ordinal]));
+        }
+    }
+
+    /// <summary>
+    /// The contiguous copy of <paramref name="posting"/>, rebuilt when the corpus has moved under it.
+    /// </summary>
+    private FlatPosting FlatFor(PostingList posting)
+    {
+        var flat = posting.Flat;
+
+        if (flat is null || flat.Epoch != _epoch)
+        {
+            flat = BuildFlatPosting(posting, _epoch);
+            posting.PublishFlat(flat);
+        }
+
+        return flat;
+    }
+
+    /// <summary>The length array the accumulation loops read: the exact one, or the quantized copy.</summary>
+    private int[] AccumulationLengths() =>
+        _documentLengthQuantization == DocumentLengthQuantization.Exact ? _lengthsByOrdinal : QuantizedLengths();
+
+    /// <inheritdoc />
+    int ISpanAccumulatingIndex.SpanDocumentFrequency(ReadOnlySpan<char> term) =>
+        _spanPostings.TryGetValue(term, out var posting) ? posting.ByDocument.Count : 0;
+
+    /// <inheritdoc />
+    bool ISpanAccumulatingIndex.TryResolvePostings(ReadOnlySpan<char> term, out PostingView postings)
+    {
+        if (_spanPostings.TryGetValue(term, out var posting))
+        {
+            var flat = FlatFor(posting);
+            postings = new PostingView(flat.Ordinals, flat.Frequencies, AccumulationLengths());
+            return true;
+        }
+
+        postings = default;
+        return false;
+    }
+
+    /// <inheritdoc />
+    void ISpanAccumulatingIndex.AccumulateResolved<TWeight>(
+        in PostingView postings,
+        TWeight weight,
+        ScoreAccumulator accumulator)
+    {
+        var ordinals = postings.Ordinals;
+        var frequencies = postings.Frequencies;
+        var lengths = postings.Lengths;
+        int count = postings.Count;
 
         for (int i = 0; i < count; i++)
         {
