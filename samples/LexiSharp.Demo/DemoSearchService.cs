@@ -144,7 +144,9 @@ public sealed class DemoSearchService
                 .Search(query, new SearchOptions(Limit: 50))
                 .FirstOrDefault(result => string.Equals(result.DocumentId, documentId, StringComparison.Ordinal));
 
-            if (dense is null)
+            // A result is a value type, so the absence of one is the value nobody produced: a null
+            // identifier. See SearchResult's remarks.
+            if (dense.DocumentId is null)
                 return null;
 
             return new ExplanationDto(

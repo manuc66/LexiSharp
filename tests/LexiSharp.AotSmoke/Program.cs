@@ -69,13 +69,13 @@ else
         Check(found.Count == 2, "postgres: both documents are found");
 
         var fable = found.FirstOrDefault(r => r.DocumentId == "a");
-        Check(fable is not null, "postgres: the document with fields comes back");
+        Check(fable.DocumentId is not null, "postgres: the document with fields comes back");
         Check(
-            fable?.Document.Fields is not null
+            fable.Document.Fields is not null
                 && fable.Document.Fields.TryGetValue("kind", out var kind)
                 && kind == "fable",
             "postgres: the Fields map survives the jsonb round trip");
-        Check(fable?.Document.Category == "fable", "postgres: the category survives the round trip");
+        Check(fable.Document.Category == "fable", "postgres: the category survives the round trip");
     }
     finally
     {
