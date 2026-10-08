@@ -213,6 +213,12 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex
         ordinal >= 0 && ordinal < Count ? _reader.Document(ordinal) : null;
 
     /// <inheritdoc />
+    int IAccumulatingIndex.OrdinalOf(string documentId) =>
+        documentId is not null && _ordinals.TryGetValue(documentId, out int ordinal) ? ordinal : -1;
+
+    /// <inheritdoc />
+
+    /// <inheritdoc />
     void IAccumulatingIndex.Accumulate<TWeight>(TWeight weight, ScoreAccumulator accumulator)
     {
         if (!_reader.TryFindTerm(weight.Term.AsSpan(), out _, out var postings))

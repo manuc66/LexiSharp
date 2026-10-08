@@ -75,6 +75,12 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     private readonly Dictionary<string, string[]>? _synonyms;
     private readonly RetrievalTelemetry _telemetry;
 
+    /// <summary>
+    /// Documents by ordinal, for the page window's ties and page cut. One delegate per engine, not
+    /// per query: the index never changes, so nothing about the resolver does either.
+    /// </summary>
+    private readonly Func<int, SearchDocument?> _resolveOrdinal;
+
     /// <param name="index">
     /// The corpus index backing the engine. Only the read view is asked for, because that is all a
     /// search needs — and all an index that cannot be written to, such as one read from a segment,
@@ -112,6 +118,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         _tokenizer = tokenizer ?? Tokenizer.Default;
         _synonyms = ResolveSynonyms(synonyms);
         _telemetry = telemetry ?? RetrievalTelemetry.None;
+        _resolveOrdinal = ResolveOrdinal;
     }
 
     /// <inheritdoc />
@@ -162,6 +169,27 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         _index as ITextIndex
         ?? throw new NotSupportedException(
             $"{EngineName} holds a read-only index ({_index.GetType().Name}): Index, Add, Remove and Clear need an index that accepts writes (ITextIndex).");
+
+    /// <summary>The document for an ordinal, for the window's ties and page cut.</summary>
+    private SearchDocument? ResolveOrdinal(int ordinal) =>
+        _index is IAccumulatingIndex acc ? acc.DocumentAt(ordinal) : null;
+
+    /// <summary>The ordinal of a candidate document, or a refusal that says why it cannot be had.</summary>
+    private int OrdinalOf(string documentId)
+    {
+        if (_index is not IAccumulatingIndex acc)
+            throw new NotSupportedException(
+                $"{EngineName} keeps its page by ordinal, and {_index.GetType().Name} does not enumerate its ordinals");
+
+        return acc.OrdinalOf(documentId);
+    }
+
+    /// <summary>
+    /// The ordinal of a candidate document, or <c>-1</c> when this index cannot enumerate its
+    /// ordinals — a caller-resolved document goes to the window in that case.
+    /// </summary>
+    private int TryOrdinalOf(string documentId) =>
+        _index is IAccumulatingIndex acc ? acc.OrdinalOf(documentId) : -1;
 
     /// <inheritdoc />
     public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
@@ -225,7 +253,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         // without ever materializing them. It declines — and the string path below then runs
         // unchanged — when the terms are not slices, when the scorer or the index cannot resolve them
         // as such, or when the query is too rare to amortize the accumulation buffer.
-        var top = new TopRankedWindow(options.Window, options.TieBreak);
+        var top = new TopRankedWindow(options.Window, options.TieBreak, _resolveOrdinal);
         var spanRun = TryRunSpanQuery(query, options, facets, top);
 
         if (spanRun is { } span)
@@ -343,7 +371,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
                 facets?.Count(document);
 
-                top.Add(score, document, ordinal);
+                top.Add(score, TryOrdinalOf(document.Id), document, ordinal);
                 ordinal++;
             }
         }
@@ -422,10 +450,17 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     {
         long ordinal = 0;
 
+        // The filters, the exclusions and the facet counter are the only costs that read a document,
+        // so the document is resolved exactly when one of them is in play: a plain search keeps this
+        // pass by ordinal and never decodes a candidate's document until the page cut. That is the
+        // deferral that makes a segment index's finish pass cheap in the first place.
+        bool needsDocument = options.Filters is { Count: > 0 }
+            || options.ExcludedDocumentIds is not null
+            || facets is not null;
+
         for (int i = 0; i < accumulator.Count; i++)
         {
             int candidate = accumulator.OrdinalAt(i);
-            var document = index.DocumentAt(candidate)!;
 
             // The plan's last step, because this path never calls Score and a score that is narrowed
             // at the end of the sum has to be narrowed somewhere.
@@ -434,12 +469,19 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             if (double.IsNaN(score) || double.IsInfinity(score) || score == 0 || score < options.MinimumScore)
                 continue;
 
-            if (!options.PassesFilters(document))
-                continue;
+            // An empty filter list and no exclusions make PassesFilters answer without reading the
+            // document, so the common case is the same answer with none of the resolution.
+            if (needsDocument)
+            {
+                var document = index.DocumentAt(candidate)!;
 
-            facets?.Count(document);
+                if (!options.PassesFilters(document))
+                    continue;
 
-            top.Add(score, document, ordinal);
+                facets?.Count(document);
+            }
+
+            top.Add(score, candidate, resolved: null, ordinal: ordinal);
             ordinal++;
         }
 

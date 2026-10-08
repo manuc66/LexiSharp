@@ -69,6 +69,9 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
     /// <summary>Slots vacated by <see cref="Remove"/>, reused before the buffer grows.</summary>
     private readonly List<int> _freeSlots = [];
 
+    /// <summary>The document living in a slot, for the page window's ties and page cut.</summary>
+    private readonly Func<int, SearchDocument?> _resolveDocument;
+
     private int _slotCount;
 
     /// <summary>
@@ -87,6 +90,7 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
     {
         ArgumentNullException.ThrowIfNull(embeddings);
         _embeddings = embeddings;
+        _resolveDocument = slot => _slotDocument[slot];
     }
 
     /// <summary>Documents currently indexed, unordered.</summary>
@@ -259,7 +263,7 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
         // The slot is not the insertion order: slots are vacated by Remove and reused, so a slot number
 // orders by where a vector happens to sit now. Tie-breaking on that would be neither stable nor
 // meaningful, so this engine keeps the default and passes no ordinal.
-        var top = new TopRankedWindow(options.Window);
+        var top = new TopRankedWindow(options.Window, TieBreak.DocumentId, _resolveDocument);
         int stride = _stride;
         var data = _vectorData;
         var norms = _squaredNorms;
@@ -288,7 +292,7 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
             if (!(score > 0) || score < options.MinimumScore)
                 continue;
 
-            top.Add(score, document);
+            top.Add(score, slot);
         }
 
         int skip = Math.Min(options.Offset, top.Count);

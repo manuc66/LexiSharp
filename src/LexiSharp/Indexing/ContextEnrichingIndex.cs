@@ -298,6 +298,10 @@ public sealed class ContextEnrichingIndex : ITextIndex, IUnorderedCandidateIndex
     }
 
     /// <inheritdoc />
+    int IAccumulatingIndex.OrdinalOf(string documentId) =>
+        ((IAccumulatingIndex)_inner).OrdinalOf(documentId);
+
+    /// <inheritdoc />
     void IAccumulatingIndex.Accumulate<TWeight>(TWeight weight, ScoreAccumulator accumulator) =>
         ((IAccumulatingIndex)_inner).Accumulate(weight, accumulator);
 
