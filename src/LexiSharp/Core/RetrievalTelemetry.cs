@@ -163,8 +163,8 @@ public sealed class RetrievalTelemetry
 
     /// <summary>Reports the current size of an index after a mutation.</summary>
     /// <param name="engine">Name of the engine whose index changed.</param>
-    /// <param name="index">The index, for its counts.</param>
-    public void IndexChanged(string engine, ITextIndex index)
+    /// <param name="index">The index, for its counts. Read only: reporting a size is not a write.</param>
+    public void IndexChanged(string engine, IReadOnlyTextIndex index)
     {
         ArgumentNullException.ThrowIfNull(index);
 

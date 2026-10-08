@@ -8,10 +8,15 @@ namespace LexiSharp.Core;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This type is what an engine holds when it needs to forward writes; the scoring seams
-/// (<see cref="ITextScorer.Score"/>, <see cref="IScoreExplainer.Explain"/>, a query plan) receive
-/// only <see cref="IReadOnlyTextIndex"/>, so a scorer is never handed write access. Capabilities
-/// beyond the flat surface are separate interfaces on the read view
+/// A caller who owns the corpus hands an engine an <see cref="ITextIndex"/>; an engine only ever asks
+/// for the read view (<see cref="IReadOnlyTextIndex"/>), and refuses the four mutations below when the
+/// index it holds cannot accept them. So a corpus that is read from a file and never written to needs
+/// nothing added to it to be searched.
+/// </para>
+/// <para>
+/// The scoring seams (<see cref="ITextScorer.Score"/>, <see cref="IScoreExplainer.Explain"/>, a query
+/// plan) receive only <see cref="IReadOnlyTextIndex"/>, so a scorer is never handed write access.
+/// Capabilities beyond the flat surface are separate interfaces on the read view
 /// (<see cref="ICandidateIndex"/>, <see cref="IVocabularyIndex"/>,
 /// <see cref="IFieldStatisticsIndex"/>), detected with pattern matching.
 /// </para>

@@ -220,6 +220,28 @@ workflow.
 
 ### Changed
 
+- **An engine searches an index it cannot write to, and refuses a write instead of assuming one.**
+
+  `RankedTextSearchEngine` took `ITextIndex` — the write-capable interface — so a corpus that cannot be
+  written to had to implement `Add`/`Remove`/`Clear` to satisfy a constructor that never writes during a
+  search, and could only refuse them at the call. It now holds `IReadOnlyTextIndex`, which is all a
+  search reads, and asks for the write capability when one of its four mutating methods is called:
+
+  ```
+  RankedTextSearchEngine holds a read-only index (SegmentTextIndex):
+  Index, Add, Remove and Clear need an index that accepts writes (ITextIndex).
+  ```
+
+  `RetrievalTelemetry.IndexChanged` narrows the same way — reporting an index's size is a read — and the
+  type's published summary now says what it holds.
+
+  **This is a binary-breaking change to a public constructor, and source-compatible**: an `ITextIndex`
+  *is* an `IReadOnlyTextIndex`, so every existing call site compiles unchanged. It is the piece an
+  immutable corpus needs — read from a segment, or from anywhere else nothing writes — to be searched
+  without a type that lies about what it accepts. `ReadOnlyIndexTests` pins both halves: an engine over
+  a read-only view returns the same page as one over the same index directly, and each mutation throws
+  a message naming what is missing.
+
 - **`SearchResult` is a value type, and a page of results costs a quarter less.**
 
   A page is read once and thrown away, and an object per row paid a header and a reference the answer

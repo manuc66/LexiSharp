@@ -318,7 +318,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `QueryFeedbackHistory` | class | — | A learned relevance feedback channel: it records which document a user chose for past queries, and uses those associations to boost matching documents in future… |
 | `QueryLikelihoodScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | Query likelihood retrieval model with Jelinek-Mercer smoothing, a probabilistic language-model alternative to BM25. |
 | `QueryTermWeighting` | enum | — | How a scorer treats a term that occurs more than once in a query. |
-| `RankedTextSearchEngine` | class | `IExplainableSearchEngine`, `IFacetedSearchEngine`, `IQueryCostProbe`, `IQuerySyntaxSupport`, `ITextSearchEngine` | The stock search engine: delegates the corpus storage to an ITextIndex, delegates the relevance math to an ITextScorer, and takes care of query tokenization,… |
+| `RankedTextSearchEngine` | class | `IExplainableSearchEngine`, `IFacetedSearchEngine`, `IQueryCostProbe`, `IQuerySyntaxSupport`, `ITextSearchEngine` | The stock search engine: delegates the corpus storage to an IReadOnlyTextIndex, delegates the relevance math to an ITextScorer, and takes care of query… |
 | `RetrievalMetrics` | class | — | Standard top-k retrieval metrics over a ranked list of document ids, used to evaluate (and tune) ranking quality against a validation set. |
 | `ScoreConfidence` | class | — | Maps an ordered result set's raw scores into calibrated confidences in [0,1] — the "is this really the answer?" gauge that raw lexical scores (BM25, TF-IDF,… |
 | `ScoreConfidenceMethod` | enum | — | How an ordered result set's raw scores are mapped into a calibrated per-result confidence in [0,1]. |
