@@ -17,12 +17,21 @@ namespace LexiSharp.Ranking;
 /// id. Ids are unique, so the order never depends on the order candidates were produced in — which
 /// is what keeps a ranking reproducible across machines.
 /// </para>
+/// <para>
+/// The arrival position — the third thing a candidate carries — is retained only under
+/// <see cref="TieBreak.InsertionOrder"/>, which is the only setting that reads it. Under the
+/// default it costs nothing rather than 8 bytes a retained row.
+/// </para>
 /// </remarks>
 internal sealed class TopRankedWindow
 {
     private readonly int _limit;
     private readonly TieBreak _tieBreak;
-    private readonly (double Score, SearchDocument Document, long Ordinal)[] _entries;
+    private readonly (double Score, SearchDocument Document)[] _entries;
+
+    /// <summary>Arrival positions, allocated exactly when <see cref="_tieBreak"/> reads them.</summary>
+    private readonly long[]? _ordinals;
+
     private int _count;
 
     /// <param name="limit">Window size: the number of best entries to retain.</param>
@@ -31,7 +40,8 @@ internal sealed class TopRankedWindow
     {
         _limit = limit;
         _tieBreak = tieBreak;
-        _entries = limit <= 0 ? Array.Empty<(double, SearchDocument, long)>() : new (double, SearchDocument, long)[limit];
+        _entries = limit <= 0 ? Array.Empty<(double, SearchDocument)>() : new (double, SearchDocument)[limit];
+        _ordinals = limit > 0 && tieBreak == TieBreak.InsertionOrder ? new long[limit] : null;
     }
 
     /// <summary>Number of entries currently retained (at most the window size).</summary>
@@ -49,37 +59,36 @@ internal sealed class TopRankedWindow
     /// </param>
     public void Add(double score, SearchDocument document, long ordinal = 0)
     {
-        var entry = (Score: score, Document: document, Ordinal: ordinal);
-
         if (_count < _limit)
         {
-            _entries[_count++] = entry;
+            Set(_count, score, document, ordinal);
+            _count++;
 
             // Sift the newcomer up from the bottom (worst) end. The list is worst-first, so the
             // order is settled as soon as the entry above is *worse* than the one below.
             for (int j = _count - 1; j > 0; j--)
             {
-                if (RanksBefore(_entries[j], _entries[j - 1]))
+                if (RanksBefore(j, j - 1))
                     break;
 
-                (_entries[j - 1], _entries[j]) = (_entries[j], _entries[j - 1]);
+                Swap(j - 1, j);
             }
 
             return;
         }
 
-        if (RanksBefore(_entries[0], entry))
+        if (RanksBefore(0, score, document, ordinal))
             return; // the incumbent worst already outranks the newcomer
 
-        _entries[0] = entry;
+        Set(0, score, document, ordinal);
 
         // Sift the new worst back down to where it belongs.
         for (int j = 0; j < _count - 1; j++)
         {
-            if (RanksBefore(_entries[j + 1], _entries[j]))
+            if (RanksBefore(j + 1, j))
                 break;
 
-            (_entries[j], _entries[j + 1]) = (_entries[j + 1], _entries[j]);
+            Swap(j, j + 1);
         }
     }
 
@@ -96,18 +105,33 @@ internal sealed class TopRankedWindow
         }
     }
 
-    /// <summary>
-    /// Whether <paramref name="left"/> belongs before <paramref name="right"/> in best-first order:
-    /// a higher score, or the same score ordered by the configured tie-break.
-    /// </summary>
-    private bool RanksBefore(
-        (double Score, SearchDocument Document, long Ordinal) left,
-        (double Score, SearchDocument Document, long Ordinal) right)
+    private void Set(int index, double score, SearchDocument document, long ordinal)
     {
-        if (left.Score > right.Score)
+        _entries[index] = (score, document);
+
+        if (_ordinals is not null)
+            _ordinals[index] = ordinal;
+    }
+
+    private void Swap(int left, int right)
+    {
+        (_entries[left], _entries[right]) = (_entries[right], _entries[left]);
+
+        if (_ordinals is not null)
+            (_ordinals[left], _ordinals[right]) = (_ordinals[right], _ordinals[left]);
+    }
+
+    /// <summary>
+    /// Whether the entry at <paramref name="left"/> belongs before the entry at
+    /// <paramref name="right"/> in best-first order: a higher score, or the same score ordered by
+    /// the configured tie-break.
+    /// </summary>
+    private bool RanksBefore(int left, int right)
+    {
+        if (_entries[left].Score > _entries[right].Score)
             return true;
 
-        if (!ScoresAreTied(left.Score, right.Score))
+        if (!ScoresAreTied(_entries[left].Score, _entries[right].Score))
             return false;
 
         // The id is what makes the order total. Tie-breaking on enumeration order did not, because
@@ -115,8 +139,26 @@ internal sealed class TopRankedWindow
         // filesystem: the same checkout ranked differently on a developer machine and on a CI
         // runner, which is what made the golden master gate environment-dependent.
         return _tieBreak == TieBreak.InsertionOrder
-            ? left.Ordinal < right.Ordinal
-            : string.CompareOrdinal(left.Document.Id, right.Document.Id) < 0;
+            ? _ordinals![left] < _ordinals[right]
+            : string.CompareOrdinal(_entries[left].Document.Id, _entries[right].Document.Id) < 0;
+    }
+
+    /// <summary>
+    /// Whether the entry at <paramref name="incumbent"/> belongs before a candidate the window has
+    /// not retained — the full-window test, which is the only comparison asking about a candidate
+    /// that is not an entry.
+    /// </summary>
+    private bool RanksBefore(int incumbent, double score, SearchDocument document, long ordinal)
+    {
+        if (_entries[incumbent].Score > score)
+            return true;
+
+        if (!ScoresAreTied(_entries[incumbent].Score, score))
+            return false;
+
+        return _tieBreak == TieBreak.InsertionOrder
+            ? _ordinals![incumbent] < ordinal
+            : string.CompareOrdinal(_entries[incumbent].Document.Id, document.Id) < 0;
     }
 
     /// <summary>
