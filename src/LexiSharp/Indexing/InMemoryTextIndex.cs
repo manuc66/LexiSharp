@@ -1148,6 +1148,10 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         ordinal >= 0 && ordinal < _byOrdinal.Count ? _byOrdinal[ordinal] : null;
 
     /// <inheritdoc />
+    public int OrdinalOf(string documentId) =>
+        documentId is not null && _documents.TryGetValue(documentId, out int ordinal) ? ordinal : -1;
+
+    /// <inheritdoc />
     public TextIndexStatistics GetStatistics() => TextIndexStatistics.From(this);
 
     /// <inheritdoc />

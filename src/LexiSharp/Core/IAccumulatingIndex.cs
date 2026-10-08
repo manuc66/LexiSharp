@@ -40,6 +40,18 @@ internal interface IAccumulatingIndex
     SearchDocument? DocumentAt(int ordinal);
 
     /// <summary>
+    /// The ordinal of the document with this id — the same number <see cref="DocumentAt"/> uses —
+    /// or <c>-1</c> when this index does not hold the id or cannot enumerate its ordinals.
+    /// </summary>
+    /// <remarks>
+    /// The reverse of <see cref="DocumentAt"/>, and the reason it exists is resolution: a search that
+    /// keeps a page by ordinal can defer turning ordinals into documents until it has kept them, and
+    /// needs this to turn its candidates back into ordinals first. Every index in this repository maps
+    /// its documents both ways.
+    /// </remarks>
+    int OrdinalOf(string documentId);
+
+    /// <summary>
     /// Folds <paramref name="weight"/> into <paramref name="accumulator"/> for every document
     /// containing <see cref="IPostingWeight.Term"/>. A no-op when the term is out of vocabulary.
     /// </summary>
