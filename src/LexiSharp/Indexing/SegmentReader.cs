@@ -1,5 +1,4 @@
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -12,45 +11,65 @@ namespace LexiSharp.Indexing;
 /// every term's document frequency and postings.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Every lookup lands on an offset the header or a table holds, and every offset is validated where it
 /// is read — a segment whose tables point outside itself is refused rather than read as something. A
 /// term is found by binary search over the dictionary's UTF-8 bytes, so a lookup never materializes the
 /// query term as a string; only <see cref="Terms"/> does, and only when a caller asks for it.
+/// </para>
+/// <para>
+/// The bytes come from a <see cref="SegmentSource"/>, which is what lets the same reader work over a
+/// byte array (where every read is a slice) and over a memory-mapped file (where every read is a copy
+/// into the scratch buffer this reader keeps). A span returned by a read is valid until the next one.
+/// </para>
 /// </remarks>
 internal sealed class SegmentReader
 {
-    private readonly byte[] _bytes;
+    /// <summary>Bytes fetched when a source cannot be viewed; enough for the largest posting block.</summary>
+    private const int FetchWindow = 2048;
+
+    private readonly SegmentSource _source;
     private readonly int _documentsTableOffset;
     private readonly int _lengthsOffset;
     private readonly int _termsTableOffset;
+    private byte[] _scratch;
 
     /// <summary>Reads the segment in <paramref name="bytes"/>.</summary>
     /// <exception cref="InvalidDataException">The bytes are not a segment this reader knows.</exception>
     public SegmentReader(byte[] bytes)
+        : this(new ArraySegmentSource(bytes))
     {
-        ArgumentNullException.ThrowIfNull(bytes);
+    }
 
-        if (bytes.Length < SegmentWriter.HeaderBytes)
+    /// <summary>Reads the segment a source holds.</summary>
+    /// <exception cref="InvalidDataException">The bytes are not a segment this reader knows.</exception>
+    public SegmentReader(SegmentSource source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        if (source.Length < SegmentWriter.HeaderBytes)
             throw new InvalidDataException("the segment is shorter than its header");
 
-        if (BinaryPrimitives.ReadUInt32LittleEndian(bytes) != SegmentWriter.Magic)
+        if ((uint)source.ReadInt32(0) != SegmentWriter.Magic)
             throw new InvalidDataException("the segment does not start with its magic bytes");
 
-        int version = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(4));
+        int version = source.ReadInt32(4);
 
         if (version != SegmentWriter.Version)
             throw new InvalidDataException($"the segment declares version {version}, and this reader reads {SegmentWriter.Version}");
 
-        _bytes = bytes;
-        DocumentCount = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(8));
-        TermCount = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(12));
+        _source = source;
+        _scratch = new byte[FetchWindow];
+
+        DocumentCount = source.ReadInt32(8);
+        TermCount = source.ReadInt32(12);
 
         if (DocumentCount < 0 || TermCount < 0)
             throw new InvalidDataException("the segment declares a negative count");
 
-        _documentsTableOffset = TableOffset(bytes, 16, DocumentCount, sizeof(int), "documents");
-        _lengthsOffset = TableOffset(bytes, 24, DocumentCount, sizeof(int), "lengths");
-        _termsTableOffset = TableOffset(bytes, 32, TermCount, sizeof(int), "terms");
+        _documentsTableOffset = TableOffset(16, DocumentCount, sizeof(int), "documents");
+        _lengthsOffset = TableOffset(24, DocumentCount, sizeof(int), "lengths");
+        _termsTableOffset = TableOffset(32, TermCount, sizeof(int), "terms");
     }
 
     /// <summary>Documents the segment holds.</summary>
@@ -85,7 +104,7 @@ internal sealed class SegmentReader
     {
         ArgumentOutOfRange(ordinal);
 
-        int entry = ReadInt32(_documentsTableOffset + (ordinal * sizeof(int)), "document offset");
+        int entry = EntryOffset(_documentsTableOffset, ordinal);
         int idLength = ReadInt32(entry, "id length");
 
         return Encoding.UTF8.GetString(Slice(entry + sizeof(int), idLength, "id"));
@@ -96,7 +115,7 @@ internal sealed class SegmentReader
     {
         ArgumentOutOfRange(ordinal);
 
-        int entry = ReadInt32(_documentsTableOffset + (ordinal * sizeof(int)), "document offset");
+        int entry = EntryOffset(_documentsTableOffset, ordinal);
 
         string id = ReadLengthPrefixed(entry, out int afterId);
         string text = ReadLengthPrefixed(afterId, out _);
@@ -125,7 +144,9 @@ internal sealed class SegmentReader
             if (comparison == 0)
             {
                 documentFrequency = entry.DocumentFrequency;
-                postings = new PostingBlockReader(_bytes.AsSpan(entry.PostingsOffset, entry.PostingsLength));
+                postings = _source.TryView(entry.PostingsOffset, entry.PostingsLength, out var view)
+                    ? new PostingBlockReader(view)
+                    : new PostingBlockReader(_source, entry.PostingsOffset, entry.PostingsLength, _scratch);
 
                 return true;
             }
@@ -154,10 +175,10 @@ internal sealed class SegmentReader
         ReadOnlySpan<byte> wanted,
         out int comparison)
     {
-        int entry = ReadInt32(_termsTableOffset + (index * sizeof(int)), "term offset");
+        int entry = EntryOffset(_termsTableOffset, index);
         int termLength = ReadInt32(entry, "term length");
 
-        var term = _bytes.AsSpan(entry + sizeof(int), termLength);
+        var term = Slice(entry + sizeof(int), termLength, "term");
         comparison = wanted.IsEmpty ? 0 : term.SequenceCompareTo(wanted);
 
         int frequency = ReadInt32(entry + sizeof(int) + termLength, "document frequency");
@@ -175,21 +196,35 @@ internal sealed class SegmentReader
         return Encoding.UTF8.GetString(Slice(at + sizeof(int), length, "string"));
     }
 
-    /// <summary>A span into the segment, refused when it would run past the end.</summary>
+    /// <summary>
+    /// The bytes at <c>[at, at + length)</c>, viewed when the source can and copied into the scratch
+    /// when it cannot. <b>Valid until the next read.</b>
+    /// </summary>
     private ReadOnlySpan<byte> Slice(int at, int length, string what)
     {
-        if (at < SegmentWriter.HeaderBytes || length < 0 || at + length > _bytes.Length)
+        if (at < SegmentWriter.HeaderBytes || length < 0 || at + length > _source.Length)
             throw new InvalidDataException($"a {what} runs outside the segment");
 
-        return _bytes.AsSpan(at, length);
+        if (_source.TryView(at, length, out var view))
+            return view;
+
+        if (_scratch.Length < length)
+            _scratch = new byte[Math.Max(length, _scratch.Length * 2)];
+
+        _source.Read(at, length, _scratch);
+
+        return _scratch.AsSpan(0, length);
     }
+
+    private int EntryOffset(int tableOffset, int index) =>
+        ReadInt32(tableOffset + (index * sizeof(int)), "table entry");
 
     private int ReadInt32(int at, string what)
     {
-        if (at < SegmentWriter.HeaderBytes || at + sizeof(int) > _bytes.Length)
+        if (at < SegmentWriter.HeaderBytes || at + sizeof(int) > _source.Length)
             throw new InvalidDataException($"a {what} points outside the segment");
 
-        return BinaryPrimitives.ReadInt32LittleEndian(_bytes.AsSpan(at));
+        return _source.ReadInt32(at);
     }
 
     private void ArgumentOutOfRange(int ordinal)
@@ -198,11 +233,11 @@ internal sealed class SegmentReader
             throw new ArgumentOutOfRangeException(nameof(ordinal), ordinal, $"the segment holds {DocumentCount} document(s)");
     }
 
-    private static int TableOffset(byte[] bytes, int at, int count, int width, string what)
+    private int TableOffset(int at, int count, int width, string what)
     {
-        long offset = BinaryPrimitives.ReadInt64LittleEndian(bytes.AsSpan(at));
+        long offset = _source.ReadInt64(at);
 
-        if (offset < SegmentWriter.HeaderBytes || (count > 0 && offset + ((long)count * width) > bytes.Length))
+        if (offset < SegmentWriter.HeaderBytes || (count > 0 && offset + ((long)count * width) > _source.Length))
             throw new InvalidDataException($"the {what} table does not fit the segment");
 
         return (int)offset;
