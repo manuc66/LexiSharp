@@ -76,6 +76,21 @@ internal sealed class SegmentReader
         return ReadInt32(_lengthsOffset + (ordinal * sizeof(int)), "length");
     }
 
+    /// <summary>The id of the document at <paramref name="ordinal"/>, without decoding its text.</summary>
+    /// <remarks>
+    /// Separate from <see cref="Document"/> because a reader opening a segment builds an id to ordinal
+    /// map, and doing that through <see cref="Document"/> would decode every text in the corpus at open.
+    /// </remarks>
+    public string DocumentId(int ordinal)
+    {
+        ArgumentOutOfRange(ordinal);
+
+        int entry = ReadInt32(_documentsTableOffset + (ordinal * sizeof(int)), "document offset");
+        int idLength = ReadInt32(entry, "id length");
+
+        return Encoding.UTF8.GetString(Slice(entry + sizeof(int), idLength, "id"));
+    }
+
     /// <summary>Reads the document at <paramref name="ordinal"/>, without its fields or category.</summary>
     public SearchDocument Document(int ordinal)
     {
@@ -155,10 +170,18 @@ internal sealed class SegmentReader
     private string ReadLengthPrefixed(int at, out int after)
     {
         int length = ReadInt32(at, "string length");
-        var value = _bytes.AsSpan(at + sizeof(int), length);
         after = at + sizeof(int) + length;
 
-        return Encoding.UTF8.GetString(value);
+        return Encoding.UTF8.GetString(Slice(at + sizeof(int), length, "string"));
+    }
+
+    /// <summary>A span into the segment, refused when it would run past the end.</summary>
+    private ReadOnlySpan<byte> Slice(int at, int length, string what)
+    {
+        if (at < SegmentWriter.HeaderBytes || length < 0 || at + length > _bytes.Length)
+            throw new InvalidDataException($"a {what} runs outside the segment");
+
+        return _bytes.AsSpan(at, length);
     }
 
     private int ReadInt32(int at, string what)
