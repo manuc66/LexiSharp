@@ -73,6 +73,15 @@ public static class QueryParser
     }
 
     /// <summary>
+    /// Whether <paramref name="query"/> is plain: no double quote and no prefix or fuzzy operator,
+    /// so the query language has nothing to add to it. A plain query tokenizes to exactly
+    /// <c>tokenizer.Tokenize(query)</c>, which is what lets a caller with no use for the phrases
+    /// and expansions of a <see cref="ParsedQuery"/> skip building one.
+    /// </summary>
+    public static bool IsPlain(ReadOnlySpan<char> query) =>
+        query.IndexOf('"') < 0 && !ContainsExpansionMarker(query);
+
+    /// <summary>
     /// Tokenizes <paramref name="query"/> into free terms, phrase constraints and expansion
     /// atoms, without materializing the query as a string.
     /// </summary>
@@ -80,7 +89,7 @@ public static class QueryParser
     {
         ArgumentNullException.ThrowIfNull(tokenizer);
 
-        if (query.IndexOf('"') < 0 && !ContainsExpansionMarker(query))
+        if (IsPlain(query))
         {
             var plainTerms = tokenizer.Tokenize(query);
             return new ParsedQuery(
