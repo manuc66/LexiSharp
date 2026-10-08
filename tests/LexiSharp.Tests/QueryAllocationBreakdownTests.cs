@@ -11,7 +11,7 @@ namespace LexiSharp.Tests;
 /// </summary>
 /// <remarks>
 /// <c>docs/benchmarks.md</c> takes a search apart into the bytes it spends — a two-term
-/// tokenizer call at 264 B, a page of ten results at 72 B a row, an accumulation pass at zero —
+/// tokenizer call at 264 B, a page of ten results at 64 B a row, an accumulation pass at zero —
 /// and this test is the refusal to let those figures come back up. Every budget below sits well
 /// above the measured value (the widest is about 40 % over) so that a real regression fails by a
 /// margin rather than marginally, and so that the assertion survives a measurement detail this
@@ -29,10 +29,10 @@ public class QueryAllocationBreakdownTests
     /// <summary>184 B for the list the tokenizer builds into, plus 40 B for each token it emits.</summary>
     private const long TokenizerBudget = 512;
 
-    /// <summary>Measured: 1,392 B for a two-term query returning a page of ten.</summary>
+    /// <summary>Measured: 1,168 B for a two-term query returning a page of ten.</summary>
     private const long SearchBudget = 2 * 1024;
 
-    /// <summary>Measured: 72 B — a window entry, a slot in the result array, and a SearchResult.</summary>
+    /// <summary>Measured: 64 B — a window entry, a slot in the result array, and a SearchResult.</summary>
     private const long PerRowBudget = 128;
 
     private static RankedTextSearchEngine BuildEngine()
@@ -128,7 +128,7 @@ public class QueryAllocationBreakdownTests
         var engine = BuildEngine();
         var options = new SearchOptions(Limit: 10);
 
-        // Parses, plans, sizes the window, returns nothing. Measured: 1,048 B.
+        // Parses, plans, sizes the window, returns nothing. Measured: 824 B.
         long perSearch = BytesPerCall(() => engine.Search("quokka wombat", options));
 
         Assert.True(
