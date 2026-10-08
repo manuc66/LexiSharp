@@ -1,58 +1,137 @@
+using System;
 using System.Buffers.Binary;
 using System.IO;
 
 namespace LexiSharp.Indexing;
 
 /// <summary>
-/// Reads one term's postings out of a region written by <see cref="PostingBlocks"/>: a forward
-/// cursor over blocks, and within a block over its entries.
+/// Reads one term's postings out of a region written by <see cref="PostingBlocks"/>: a forward cursor
+/// over blocks, and within a block over its entries.
 /// </summary>
 /// <remarks>
 /// <para>
 /// A cursor rather than a decoded array, and that is the point of the format: a pruned pass reads the
 /// bound of a block, decides, and often moves on without touching its entries, and a mapped segment
-/// cannot hand out an array at all. Nothing here copies the region.
+/// cannot hand out an array at all. Nothing here copies the region when it can be viewed, and nothing
+/// holds a whole postings list when it cannot — a source-backed reader fetches one block at a time into
+/// a buffer its caller owns.
 /// </para>
 /// <para>
-/// The cursor moves forward only — there is no going back to a block already passed, because the skip
+/// The cursor moves forward only: there is no going back to a block already passed, because the skip
 /// table is what makes a forward jump cheap and a backward one impossible without rereading.
+/// </para>
+/// <para>
+/// A fetched block lands in the scratch buffer the caller passed, so <b>two source-backed readers over
+/// the same buffer must not be interleaved</b>. The index creates one at a time and finishes with each
+/// before it asks for the next, which is what makes one buffer per index safe.
 /// </para>
 /// </remarks>
 internal ref struct PostingBlockReader
 {
     private readonly ReadOnlySpan<byte> _region;
+    private readonly SegmentSource? _source;
+    private readonly int _regionOffset;
+    private readonly int _regionLength;
+    private readonly byte[]? _scratch;
     private readonly ReadOnlySpan<byte> _skip;
     private readonly int _skipCount;
     private readonly int _blockCount;
-    private ReadOnlySpan<byte> _position;
     private ReadOnlySpan<byte> _entries;
+    private int _position;
     private int _blockIndex;
     private int _previousOrdinal;
 
-    /// <summary>Positions the cursor before the first block of <paramref name="region"/>.</summary>
-    /// <exception cref="InvalidDataException">The region does not hold a posting region.</exception>
+    /// <summary>Positions the cursor before the first block of a region held in memory.</summary>
+    /// <exception cref="InvalidDataException">The region does not hold a postings list.</exception>
     public PostingBlockReader(ReadOnlySpan<byte> region)
     {
         _region = region;
+        _source = null;
+        _regionOffset = 0;
+        _regionLength = region.Length;
+        _scratch = null;
 
-        if (!Varints.TryRead(ref region, out int blockCount) || blockCount < 0)
+        var remaining = region;
+        int countBytes = region.Length;
+
+        if (!Varints.TryRead(ref remaining, out int blockCount) || blockCount < 0)
             throw new InvalidDataException("the posting region does not start with a block count");
+
+        countBytes -= remaining.Length;
 
         int skipCount = PostingBlocks.SkipCount(blockCount);
         int skipBytes = skipCount * PostingBlocks.SkipEntryBytes;
 
-        if (region.Length < skipBytes)
+        if (remaining.Length < skipBytes)
             throw new InvalidDataException("the posting region ends inside its skip table");
 
         _blockCount = blockCount;
         _skipCount = skipCount;
-        _skip = region[..skipBytes];
-        _position = region[skipBytes..];
+        _skip = remaining[..skipBytes];
+        _position = countBytes + skipBytes;
         _entries = default;
         _blockIndex = -1;
         _previousOrdinal = 0;
         LastOrdinal = int.MinValue;
     }
+
+    /// <summary>
+    /// Positions the cursor before the first block of a region a source holds, fetching one block at a
+    /// time into <paramref name="scratch"/>.
+    /// </summary>
+    /// <exception cref="InvalidDataException">The region does not hold a postings list.</exception>
+    public PostingBlockReader(SegmentSource source, int offset, int length, byte[] scratch)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(scratch);
+
+        if (scratch.Length < FetchWindow)
+            throw new ArgumentException($"a source-backed reader needs at least {FetchWindow} bytes of scratch", nameof(scratch));
+
+        _region = default;
+        _source = source;
+        _regionOffset = offset;
+        _regionLength = length;
+        _scratch = scratch;
+        _skip = default;
+
+        // The header is small and fixed: a window is enough to read the count and the table it announces.
+        int window = Math.Min(scratch.Length, length);
+
+        if (window <= 0)
+            throw new InvalidDataException("the posting region is empty");
+
+        source.Read(offset, window, scratch);
+
+        ReadOnlySpan<byte> remaining = scratch.AsSpan(0, window);
+        int countBytes = window;
+
+        if (!Varints.TryRead(ref remaining, out int blockCount) || blockCount < 0)
+            throw new InvalidDataException("the posting region does not start with a block count");
+
+        countBytes -= remaining.Length;
+
+        int skipCount = PostingBlocks.SkipCount(blockCount);
+        int skipBytes = skipCount * PostingBlocks.SkipEntryBytes;
+
+        if (remaining.Length < skipBytes)
+            throw new InvalidDataException("the posting region ends inside its skip table");
+
+        _blockCount = blockCount;
+        _skipCount = skipCount;
+        _position = countBytes + skipBytes;
+        _entries = default;
+        _blockIndex = -1;
+        _previousOrdinal = 0;
+        LastOrdinal = int.MinValue;
+    }
+
+    /// <summary>Bytes a source-backed reader fetches at a time; a block cannot exceed it.</summary>
+    /// <remarks>
+    /// A block holds at most 128 entries, and an entry is two varints of at most five bytes each, so a
+    /// block is under 1.4 KB and a 2 KB window always holds one.
+    /// </remarks>
+    private const int FetchWindow = 2048;
 
     /// <summary>Number of blocks the region holds.</summary>
     public int BlockCount => _blockCount;
@@ -84,10 +163,10 @@ internal ref struct PostingBlockReader
         if (_blockIndex + 1 >= _blockCount)
             return false;
 
-        if (!TryDecodeBlock(_position, out int consumed))
+        if (!TryDecodeBlock(Load(_position), out int consumed))
             throw new InvalidDataException("the posting region ends inside a block");
 
-        _position = _position[consumed..];
+        _position += consumed;
         _blockIndex++;
 
         return true;
@@ -149,13 +228,44 @@ internal ref struct PostingBlockReader
         return false;
     }
 
+    /// <summary>The bytes from <paramref name="position"/> on: the region when it can be viewed, a fetched window otherwise.</summary>
+    private ReadOnlySpan<byte> Load(int position)
+    {
+        if (_source is null)
+        {
+            if (position < 0 || position > _region.Length)
+                throw new InvalidDataException("a block starts outside the posting region");
+
+            return _region[position..];
+        }
+
+        int available = _regionLength - position;
+
+        if (available <= 0)
+            throw new InvalidDataException("a block starts outside the posting region");
+
+        int window = Math.Min(_scratch!.Length, available);
+        _source.Read(_regionOffset + position, window, _scratch);
+
+        return _scratch.AsSpan(0, window);
+    }
+
+    /// <summary>The window stored for skip entry <paramref name="entry"/>.</summary>
+    private readonly int SkipWindow(int entry) =>
+        _source is null
+            ? (int)BinaryPrimitives.ReadUInt32LittleEndian(_skip.Slice(entry * PostingBlocks.SkipEntryBytes))
+            : _source.ReadInt32(_regionOffset + (entry * PostingBlocks.SkipEntryBytes));
+
+    /// <summary>The block offset stored for skip entry <paramref name="entry"/>, from the region's start.</summary>
+    private readonly int SkipOffset(int entry) =>
+        _source is null
+            ? BinaryPrimitives.ReadInt32LittleEndian(_skip.Slice((entry * PostingBlocks.SkipEntryBytes) + sizeof(int)))
+            : _source.ReadInt32(_regionOffset + (entry * PostingBlocks.SkipEntryBytes) + sizeof(int));
+
     /// <summary>Jumps the cursor to a block the skip table has an offset for.</summary>
     private void Seek(int blockIndex)
     {
-        uint offset = BinaryPrimitives.ReadUInt32LittleEndian(
-            _skip.Slice((blockIndex / PostingBlocks.SkipEvery * PostingBlocks.SkipEntryBytes) + sizeof(uint)));
-
-        _position = _region[(int)offset..];
+        _position = SkipOffset(blockIndex / PostingBlocks.SkipEvery);
         _blockIndex = blockIndex - 1;
         _entries = default;
         _previousOrdinal = 0;
@@ -176,10 +286,8 @@ internal ref struct PostingBlockReader
         while (low <= high)
         {
             int middle = (low + high) / 2;
-            uint candidate = BinaryPrimitives.ReadUInt32LittleEndian(
-                _skip.Slice(middle * PostingBlocks.SkipEntryBytes));
 
-            if (candidate <= (uint)window)
+            if (SkipWindow(middle) <= window)
             {
                 found = middle;
                 low = middle + 1;

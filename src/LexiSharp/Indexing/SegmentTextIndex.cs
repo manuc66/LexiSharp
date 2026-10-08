@@ -57,8 +57,18 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex
     /// is what an index built without one uses.
     /// </param>
     public SegmentTextIndex(byte[] bytes, ITokenizer? tokenizer = null)
+        : this(new ArraySegmentSource(bytes), tokenizer)
     {
-        _reader = new SegmentReader(bytes);
+    }
+
+    /// <summary>Opens the index over the segment a source holds.</summary>
+    /// <remarks>
+    /// Internal because the public story is a byte array or a file; a mapped file reaches this through
+    /// <see cref="MappedSegment"/>.
+    /// </remarks>
+    internal SegmentTextIndex(SegmentSource source, ITokenizer? tokenizer = null)
+    {
+        _reader = new SegmentReader(source);
         _tokenizer = tokenizer ?? Tokenizer.Default;
         _ordinals = new Dictionary<string, int>(_reader.DocumentCount, StringComparer.Ordinal);
         _lengths = new int[_reader.DocumentCount];
