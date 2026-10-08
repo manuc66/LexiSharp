@@ -30,6 +30,7 @@ namespace LexiSharp.Indexing;
 ///   blocks, in ascending window order:
 ///     varint windowIndex        ordinal window, = firstOrdinal / BlockSpan
 ///     varint count              entries in the block, 1 … BlockSpan
+///     varint entriesBytes       bytes the entries take — the block's own length
 ///     varint lastOrdinalDelta   last entry's ordinal − windowIndex × BlockSpan
 ///     varint maxFrequency       largest term frequency in the block
 ///     varint minDocumentLength  smallest document length in the block
@@ -184,20 +185,38 @@ internal static class PostingBlocks
     {
         int window = ordinals[start] / BlockSpan;
         (int maxFrequency, int minLength) = BlockBounds(ordinals, frequencies, lengths, start, end);
+        int entriesBytes = EntrySize(ordinals, frequencies, start, end, out int lastOrdinal);
 
-        int size = Varints.Size(window)
+        // The block carries its own length, which is what lets a reader reach the scoring entries
+        // without first walking them to find where the block ends.
+        return Varints.Size(window)
             + Varints.Size(end - start)
-            + Varints.Size(ordinals[end - 1] - (window * BlockSpan))
+            + Varints.Size(entriesBytes)
+            + Varints.Size(lastOrdinal - (window * BlockSpan))
             + Varints.Size(maxFrequency)
-            + Varints.Size(minLength);
+            + Varints.Size(minLength)
+            + entriesBytes;
+    }
 
+    /// <summary>Bytes the entries take, and the last ordinal they reach.</summary>
+    private static int EntrySize(
+        ReadOnlySpan<int> ordinals,
+        ReadOnlySpan<int> frequencies,
+        int start,
+        int end,
+        out int lastOrdinal)
+    {
+        int window = ordinals[start] / BlockSpan;
         int previous = window * BlockSpan;
+        int size = 0;
 
         for (int i = start; i < end; i++)
         {
             size += Varints.Size(ordinals[i] - previous) + Varints.Size(frequencies[i]);
             previous = ordinals[i];
         }
+
+        lastOrdinal = previous;
 
         return size;
     }
@@ -236,10 +255,12 @@ internal static class PostingBlocks
     {
         int window = ordinals[start] / BlockSpan;
         (int maxFrequency, int minLength) = BlockBounds(ordinals, frequencies, lengths, start, end);
+        int entriesBytes = EntrySize(ordinals, frequencies, start, end, out int lastOrdinal);
 
         int written = Varints.Write(window, destination);
         written += Varints.Write(end - start, destination[written..]);
-        written += Varints.Write(ordinals[end - 1] - (window * BlockSpan), destination[written..]);
+        written += Varints.Write(entriesBytes, destination[written..]);
+        written += Varints.Write(lastOrdinal - (window * BlockSpan), destination[written..]);
         written += Varints.Write(maxFrequency, destination[written..]);
         written += Varints.Write(minLength, destination[written..]);
 
