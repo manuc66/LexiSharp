@@ -20,6 +20,17 @@ workflow.
 
 ### Added
 
+- **`ISpanTokenizer.TokenizeNormalized` and `NormalizedTerm` — tokenize without building a term that
+  is already there.**
+
+  A term the source already holds in its normalized form — lowercase ASCII, under an analysis that
+  does not fold, stem, filter or trim — needs no string, and a caller that only looks terms up in a
+  vocabulary can resolve it as a slice of the text. `TokenizeNormalized` fills a buffer of
+  `NormalizedTerm`s with those slices, materializing a string only for the terms folding or a
+  stemmer replaced, and returns `-1` when the analysis cannot serve the call at all, which is the
+  caller's signal to take the string path. The default implementation returns `-1`, so a tokenizer
+  that has not been written for it is unaffected.
+
 - **`ITokenizer.TokenizeInto` — tokenize into a list the caller owns.**
 
   `Tokenize` returns a list the tokenizer sized, and it sizes it for a document. A caller that
@@ -208,6 +219,39 @@ workflow.
   suffix per threshold fails it.
 
 ### Changed
+
+- **A plain query is scored without ever turning its terms into strings.**
+
+  Every lookup a search made about a term — its document frequency, its posting list, its weight —
+  went through the `string` the tokenizer had built for it, and for a term that is its own
+  normalized form that string was a copy of characters the query already held.
+
+  Three pieces, all of them internal to the library, so the public surface only gains
+  `TokenizeNormalized` and `NormalizedTerm`:
+
+  `ISpanAccumulatingIndex` resolves a slice to the same posting list and the same length array
+  `IAccumulatingIndex.Accumulate` folds, and folds it with a weight that names no term;
+  `ISpanAccumulatingQueryPlan` is BM25's plan for that shape — idf by span, the same arithmetic in
+  the same order as the string plan; and the engine asks for the capability before it asks the
+  scorer, so a decorator, a scorer without the plan, a phrase, an operator, a configured synonym, a
+  query too rare to amortize the accumulation buffer and an analysis that materializes all keep the
+  string path, which is unchanged.
+
+  Measured on the 10,000-document corpus, a two-term query at `Limit: 10`: **1,168 → 896 B per
+  search**, a page of one **592 → 320 B**, and a page of a hundred **6,929 → 6,656 B**. The fixed
+  cost of a query falls to **256 B**, which makes the returned page 640 of those 896 — the API's
+  shape rather than the engine's work.
+
+  It is not only the allocation. The same harness compiled against the two builds and alternated in
+  one session — single-threaded, 10,000-document corpus, two-term query, 20,000 searches a build —
+  gives mean **208 → 155 µs** and p99 **375 → 235 µs**, while a phrase query, which does not take
+  this path, stayed flat at 1,892-2,071 µs both ways. No collection count moved over 20,000
+  searches in either build: what the win is made of is the work and the cache traffic avoided, not
+  the pressure relieved. The string path wrote two new objects per search and read them back to hash
+  them; the span path reads characters the caller already has.
+
+  The golden master is unchanged — 132 rankings, no tie reordering — and so is every score bit the
+  parity tests compare.
 
 - **A search allocates 224 bytes less, and each returned row 8 less.**
 
