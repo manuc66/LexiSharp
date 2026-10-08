@@ -33,11 +33,11 @@ Host: BenchmarkDotNet v0.14.0, Manjaro Linux, Intel Core i7-8850H CPU 2.60GHz (C
 
 | Method                          | Mean      | Error     | StdDev    | Allocated |
 |-------------------------------- |----------:|----------:|----------:|----------:|
-| Bm25Search                      |  182.1 µs |  3.58 µs |  5.13 µs |   1.14 KB |
-| TfIdfSearch                     |  141.5 µs |  2.80 µs |  3.73 µs |   1.14 KB |
-| QueryLikelihoodSearch           | 2,088.6 µs | 41.53 µs | 110.13 µs |   1.21 KB |
-| BooleanSearch                   |  880.2 µs | 16.68 µs | 15.61 µs |   1.05 KB |
-| Bm25SearchRunAllQueries         | 1,046.0 µs |  7.23 µs |  6.41 µs |   5.87 KB |
+| Bm25Search                      |  147.6 µs |  1.33 µs |  1.18 µs |     656 B |
+| TfIdfSearch                     |  129.8 µs |  0.91 µs |  0.71 µs |     928 B |
+| QueryLikelihoodSearch           | 1,954.7 µs | 79.65 µs | 223.34 µs |   1,001 B |
+| BooleanSearch                   |  910.1 µs | 18.44 µs | 53.80 µs |     834 B |
+| Bm25SearchRunAllQueries         |  863.9 µs | 13.54 µs | 12.66 µs |   3,321 B |
 
 Ranking output of every configuration is verified byte-for-byte against the pre-optimization
 engine (`QueryPlanParityTests`, full suite green), so the speedups below come with no quality
@@ -120,18 +120,18 @@ same instruction the rest of this page carries.
 | `Tokenize`            |    264 B  |
 | `TokenizeOneTerm`     |    224 B  |
 | `Parse`               |    312 B  |
-| `SearchHitLimit1`     |    320 B  |
-| `SearchHitLimit10`    |    896 B  |
-| `SearchHitLimit100`   |  6,656 B  |
+| `SearchHitLimit1`     |    296 B  |
+| `SearchHitLimit10`    |    656 B  |
+| `SearchHitLimit100`   |  4,256 B  |
 | `SearchMissLimit10`   |    824 B  |
-| `SearchPhraseLimit10` |  1,545 B  |
-| `SearchLiteralLimit10`|    896 B  |
+| `SearchPhraseLimit10` |  1,307 B  |
+| `SearchLiteralLimit10`|    656 B  |
 
 **Two rows do not reproduce under this diagnoser, and that is a property of the rows rather than
 a mystery.** `Tokenize` has read 264 B, 2,308 B and 7,078 B, and `Parse` has read 312 B and 0 B,
 for identical code across runs of this class; in the runs where `Allocated` reads 0 the Gen
 columns still show allocation happening. Five of the six search rows reproduce byte for byte; the
-phrase row has read 1,544 / 1,545 / 1,547 / 1,548 B across runs — read it as ≈1.55 KB.
+phrase row has read 1,304 / 1,307 B across runs — read it as ≈1.31 KB.
 The values shown are the ones that reproduce, and the tokenizer's split is confirmed by
 `TokenizeOneTerm`: 224 B for one term against 264 B for two is 184 B of list plus 40 B a token.
 
@@ -145,20 +145,22 @@ The values shown are the ones that reproduce, and the tokenizer's split is confi
   for one that folding, stemming or trimming replaced — and the index resolves each slice by span.
   The `Tokenize` and `Parse` rows above describe the string pipeline a caller of those methods
   still pays for; a search pays none of it.
-- **The fixed cost: 256 B.** Three page sizes on one query fall on one line — 320 / 896 /
-  6,656 B — so everything a query costs before it returns anything is 256 B: the tokenization into
+- **The fixed cost: 256 B.** Three page sizes on one query fall on one line — 296 / 656 /
+  4,256 B — so everything a query costs before it returns anything is 256 B: the tokenization into
   slices, the query plan, the top window and the per-query markers, not split further here. The
   per-candidate work allocates nothing: the score arrays and the slice buffer are rented and
   returned, so a steady stream of searches allocates nothing after the first few.
-- **A returned row: 64 B.** The slope of that line — a window entry, a slot in the result array
-  and a `SearchResult`. Of the 896 B a two-term search returns, 640 B is the page of ten: **71 % of
-  the figure is the shape of the answer**, not the engine's work, which is the reason a caller who
-  needs less than a `SearchResult` per row has more to gain than any change to the scoring path.
+- **A returned row: 40 B.** The slope of that line — a window entry of 16 B and a `SearchResult` of
+  24, which is a value type and so sits in the page's array rather than behind a reference to an
+  object of its own. Of the 656 B a two-term search returns, 400 B is the page of ten: **61 % of the
+  figure is the shape of the answer**, not the engine's work. A caller that can take its page into a
+  buffer of its own has more left to gain here than any change to the scoring path.
 - **The paths price differently.** A query matching nothing takes the candidate path with the string
-  tokenizer — it is too rare to amortize the accumulation buffer — and costs 824 B, *less* than the
-  896 B of a query that returns a page, because there is no page to cut. A quoted phrase is not a
-  plain query, so it keeps the string path and gates every candidate positionally: 1,545 B.
-  `ParseQuerySyntax: false` is plain by construction and costs exactly what the parsed one does.
+  tokenizer — it is too rare to amortize the accumulation buffer — and costs 824 B, *more* than the
+  656 B of a query that returns a page: the page became the cheap part, and the string path did not.
+  A quoted phrase is not a plain query, so it keeps the string path and gates every candidate
+  positionally: 1,307 B. `ParseQuerySyntax: false` is plain by construction and costs exactly what
+  the parsed one does.
 
 **What is pinned.** `QueryAllocationBreakdownTests` holds the budgets a regression would break: the
 tokenizer under 512 B, a two-term search under 2 KB, a returned row under 128 B, a query matching
