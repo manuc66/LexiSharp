@@ -291,7 +291,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
                 // Quoted segments are a hard positional gate: every phrase must appear at
                 // consecutive positions, checked before any relevance math is paid.
-                if (parsed.HasPhrases && !MatchesPhrases(document.Id, parsed.Phrases))
+                if (parsed is { HasPhrases: true } phrases && !MatchesPhrases(document.Id, phrases.Phrases))
                     continue;
 
                 double score = plan is null
@@ -447,7 +447,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     private AccumulatedCounts? TryRunAccumulatingQuery(
         ISearchQueryPlan? plan,
         int reachableDocuments,
-        ParsedQuery parsed,
+        ParsedQuery? parsed,
         SearchOptions options,
         FacetCollector? facets,
         TopRankedWindow top)
@@ -465,7 +465,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         if (plan is not IAccumulatingQueryPlan accumulating ||
             _index is not IAccumulatingIndex index ||
             _scorer is not ITermOverlapScorer ||
-            parsed.HasPhrases ||
+            parsed is { HasPhrases: true } ||
             (filterWouldBeHonoured &&
                 (!options.AccumulateFilteredQueries || options.TieBreak != TieBreak.DocumentId)))
         {
@@ -646,25 +646,39 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
     /// <summary>
     /// Shared by <see cref="Search(string, SearchOptions)"/> and <see cref="Explain(string, string)"/>: parse the raw query, then
-    /// resolve synonyms and vocabulary expansions into the concrete scoring terms. The
-    /// parsed form still carries the literal phrase constraints for the positional gate.
+    /// resolve synonyms and vocabulary expansions into the concrete scoring terms. The parsed
+    /// form still carries the literal phrase constraints for the positional gate, and is null for
+    /// a query that has none — a plain one, which the query language leaves alone.
     /// </summary>
-    private (ParsedQuery Parsed, IReadOnlyList<string> Terms) BuildQuery(ReadOnlySpan<char> query, SearchOptions options)
+    private (ParsedQuery? Parsed, IReadOnlyList<string> Terms) BuildQuery(ReadOnlySpan<char> query, SearchOptions options)
     {
         // The literal path skips the query language entirely, so the terms are the tokenizer's and a
         // quotation mark is a separator like any other. Everything downstream reads the same shape.
         if (!options.ParseQuerySyntax)
-        {
-            var literal = _tokenizer.Tokenize(query);
-            return (new ParsedQuery(
-                literal,
-                Array.Empty<IReadOnlyList<string>>(),
-                literal,
-                Array.Empty<QueryExpansion>()), literal);
-        }
+            return (null, TokenizeQueryTerms(query));
+
+        // A plain query is what the query language would produce for it anyway: the tokenizer's
+        // terms, no phrases and no expansion atoms. Building the ParsedQuery record to say that
+        // costs 48 bytes a search, so the record is built only when there is something in it.
+        // Synonyms are the one resolution a plain query still needs, and that path keeps the
+        // parsed form rather than duplicating the expansion here.
+        if (_synonyms is null && QueryParser.IsPlain(query))
+            return (null, TokenizeQueryTerms(query));
 
         var parsed = QueryParser.Parse(query, _tokenizer);
         return (parsed, ResolveQueryTerms(parsed, options.FuzzyOnlyOutOfVocabulary));
+    }
+
+    /// <summary>
+    /// The query's terms, tokenized straight into a list sized for a query rather than for a
+    /// document: the tokenizer's own list is sized for the latter and costs 184 bytes, against 120
+    /// here, and this is the path that runs per search rather than per document.
+    /// </summary>
+    private List<string> TokenizeQueryTerms(ReadOnlySpan<char> query)
+    {
+        var terms = new List<string>(8);
+        _tokenizer.TokenizeInto(query, terms);
+        return terms;
     }
 
     /// <summary>

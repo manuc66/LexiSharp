@@ -126,6 +126,26 @@ public sealed class Tokenizer : ISpanTokenizer
     public IReadOnlyList<TokenSpan> TokenizeWithSpans(string text) => TokenizeWithSpans(text.AsSpan());
 
     /// <inheritdoc />
+    public void TokenizeInto(ReadOnlySpan<char> text, List<string> destination)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+
+        // The n-gram pass renumbers the list — a minimum above 1 drops the unigrams the scan
+        // produced — and the version that builds a fresh list gets that for free. Reproducing it
+        // here would mean removing terms the caller's list already holds, so that configuration
+        // delegates to the allocating path rather than filling in place.
+        if (_useNgrams)
+        {
+            foreach (string term in Tokenize(text))
+                destination.Add(term);
+
+            return;
+        }
+
+        Scan(text, destination, null);
+    }
+
+    /// <inheritdoc />
     public IReadOnlyList<TokenSpan> TokenizeWithSpans(ReadOnlySpan<char> text)
     {
         if (text.IsEmpty)
