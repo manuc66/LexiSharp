@@ -20,6 +20,13 @@ workflow.
 
 ### Added
 
+- **`ITokenizer.TokenizeInto` — tokenize into a list the caller owns.**
+
+  `Tokenize` returns a list the tokenizer sized, and it sizes it for a document. A caller that
+  tokenizes a query per request can hand in its own list instead, and the search engine does. The
+  default implementation forwards to `Tokenize(ReadOnlySpan<char>)` and adds what it returns, so an
+  existing tokenizer keeps working unchanged; `Tokenizer` overrides it and fills the list in place.
+
 - **A learned query → document channel, and a fitted confidence with an abstention threshold.**
 
   `QueryFeedbackHistory` records which document each query resolved to. `FeedbackAwareTextSearchEngine`
@@ -201,6 +208,31 @@ workflow.
   suffix per threshold fails it.
 
 ### Changed
+
+- **A search allocates 224 bytes less, and each returned row 8 less.**
+
+  Four allocations a search was paying, none of them the answer.
+
+  The tokenizer's `List<string>` is sized for a document — 184 bytes, sixteen terms — and a query
+  rarely carries more than a handful. The engine now tokenizes into its own list, sized for a
+  query: 120 bytes.
+
+  A plain query — no quote, no prefix or fuzzy operator — built a `ParsedQuery` record (48 bytes)
+  to say that it had no phrases and no expansions. `QueryParser.IsPlain` exposes the predicate
+  `Parse` already used, so the engine skips the record when there is nothing in it.
+
+  The BM25 plan copied the query terms into a `string[]` (40 bytes) that lived exactly as long as
+  the list it copied them from, because both live exactly as long as the search. It holds the list
+  instead.
+
+  `TopRankedWindow` carried the arrival ordinal — the third thing a candidate has — under
+  `TieBreak.DocumentId`, which never reads it: 8 bytes a retained row, allocated for an option
+  that did not ask for them.
+
+  Measured on the 10,000-document corpus, a two-term query at `Limit: 10`: **1392 → 1168 B per
+  search**; a query matching nothing **1048 → 824 B**; a page of one **744 → 592 B**. Neither the
+  page nor the scoring changed, and the golden master is unchanged — 132 rankings, no tie
+  reordering.
 
 - **`VectorSimilarity.Mean` runs on SIMD instead of one float at a time.**
 
