@@ -307,50 +307,38 @@ internal ref struct PostingBlockReader
 
         if (!Varints.TryRead(ref remaining, out int window) ||
             !Varints.TryRead(ref remaining, out int count) ||
+            !Varints.TryRead(ref remaining, out int entryBytes) ||
             !Varints.TryRead(ref remaining, out int lastDelta) ||
             !Varints.TryRead(ref remaining, out int maxFrequency) ||
             !Varints.TryRead(ref remaining, out int minLength) ||
             count <= 0 ||
             count > PostingBlocks.BlockSpan ||
             window < 0 ||
-            lastDelta < 0)
+            lastDelta < 0 ||
+            entryBytes < 2 ||
+            entryBytes > PostingBlocks.BlockSpan * 10)
         {
             consumed = 0;
             return false;
         }
 
         int headerBytes = block.Length - remaining.Length;
-        var entries = remaining;
-        int previous = window * PostingBlocks.BlockSpan;
-        int last = previous;
 
-        for (int i = 0; i < count; i++)
+        if (headerBytes + entryBytes > block.Length)
         {
-            if (!Varints.TryRead(ref entries, out int delta) || !Varints.TryRead(ref entries, out _))
-            {
-                consumed = 0;
-                return false;
-            }
-
-            last = previous + delta;
-            previous = last;
-        }
-
-        int entryBytes = (block.Length - headerBytes) - entries.Length;
-
-        if (last != (window * PostingBlocks.BlockSpan) + lastDelta)
-        {
-            // The stored last entry and the deltas disagree. Cheap to check here and it is the one
-            // relationship a reader uses to skip a block without decoding it.
             consumed = 0;
             return false;
         }
 
+        // The block carries its own length, so its entries are reached without first walking them to
+        // find where the block ends — which is what the reader once paid a whole extra decode for. The
+        // writer's length is trusted; a corrupt one surfaces as an entry walk that ends early rather
+        // than as an exception.
         WindowIndex = window;
         Count = count;
         MaxFrequency = maxFrequency;
         MinDocumentLength = minLength;
-        LastOrdinal = last;
+        LastOrdinal = (window * PostingBlocks.BlockSpan) + lastDelta;
         _entries = block.Slice(headerBytes, entryBytes);
         _previousOrdinal = window * PostingBlocks.BlockSpan;
         consumed = headerBytes + entryBytes;
