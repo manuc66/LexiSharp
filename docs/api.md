@@ -188,7 +188,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `SearchCosts` | class | — | The per-query cost sheet a caller opts into: what the query was made of, and what each pipeline stage it went through processed and cost. |
 | `SearchDocument` | record | — | A single unit of text that can be indexed and searched. |
 | `SearchOptions` | record | — | Controls how a search is performed and how results are returned. |
-| `SearchResult` | record | — | A document ranked against a query. |
+| `SearchResult` | record struct | — | A document ranked against a query. |
 | `SearchRoute` | record | — | A named route a RoutingSearchEngine can run: an engine plus optional metadata filters AND-ed onto the caller's own filters when this route is selected. |
 | `SearchTrace` | class | — | Collects a TraceStep per document per stage, so a ranking can be explained end to end: which engine scored a document, what each merger contributed, what the… |
 | `SparseEmbeddingProviderExtensions` | class | — | Backwards-compatible call shape: embeds text as a Passage. |
@@ -272,6 +272,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
 | `FrenchStemmer` | class | `IStemmer` | French stemmer implementing the Snowball French algorithm: an IStemmer that folds inflected French forms onto a common stem (continuer → continu, contractait →… |
+| `NormalizedTerm` | record struct | — | One normalized term of a tokenized text: a slice of the text that produced it, or the string it had to be materialized into. |
 | `PorterStemmer` | class | `IStemmer` | English stemmer implementing Porter's suffix-stripping algorithm: an IStemmer that folds inflected English forms onto a common stem (caresses → caress, motoring… |
 | `StopWords` | class | — | Built-in sets of low-information words that can be removed during tokenization. |
 | `SynonymMap` | class | — | Raw synonym edges: one-way rewrites (Add) and bidirectional equivalence groups (AddEquivalent). Entries are plain text; the search engine tokenizes them with… |
