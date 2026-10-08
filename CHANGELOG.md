@@ -220,6 +220,25 @@ workflow.
 
 ### Changed
 
+- **`SearchResult` is a value type, and a page of results costs a quarter less.**
+
+  A page is read once and thrown away, and an object per row paid a header and a reference the answer
+  never needed. As a `readonly record struct` a row is 24 bytes inline instead of a reference to a
+  40-byte object: a page of ten allocates **896 → 656 B** per search, a page of one **320 → 296 B**,
+  a page of a hundred **6,656 → 4,256 B** — 24 bytes a row, measured.
+
+  **This changes the public shape of `SearchResult`.** A caller that treated it as a reference has to
+  say something else: `FirstOrDefault` returns `default` rather than null, so an absent result is the
+  value nobody produced — a null `DocumentId`, which is what the two callers in this repository that
+  relied on the null now test (the demo's lane lookup and the AOT smoke test). `default(SearchResult)`
+  is a value with no score, and a collection of results is a collection of values.
+
+  Measured end to end, the same harness compiled against the two builds and alternated in one session
+  (10,000-document corpus, two-term query, 20,000 searches a build): allocation **1,392 → 656 B** per
+  search, and **no Gen0 collection at all** where the reference page had one. The latency of this
+  change on its own is not resolvable in that harness — 149-152 µs against the 152-158 µs the span
+  pass alone measured, overlapping distributions.
+
 - **A plain query is scored without ever turning its terms into strings.**
 
   Every lookup a search made about a term — its document frequency, its posting list, its weight —

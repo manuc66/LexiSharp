@@ -30,12 +30,12 @@ public class QueryAllocationBreakdownTests
     private const long TokenizerBudget = 512;
 
     /// <summary>
-    /// Measured: 896 B for a two-term query returning a page of ten — the span path's figure, which
-    /// is what this budget exists to hold. It sits closer to the measurement than the others on
-    /// purpose: a search that stops resolving its terms by span costs 1,168 B, and a budget with the
-    /// usual headroom would let that pass.
+    /// Measured: 656 B for a two-term query returning a page of ten. It sits closer to the
+    /// measurement than the other budgets on purpose: a search that stops resolving its terms by
+    /// span costs 1,168 B and one whose page returns to reference results costs 896 B, so a budget
+    /// with the usual headroom would let both regressions pass.
     /// </summary>
-    private const long SearchBudget = 1088;
+    private const long SearchBudget = 832;
 
     /// <summary>Measured: 64 B — a window entry, a slot in the result array, and a SearchResult.</summary>
     private const long PerRowBudget = 128;
