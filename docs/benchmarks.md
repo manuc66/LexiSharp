@@ -33,11 +33,11 @@ Host: BenchmarkDotNet v0.14.0, Manjaro Linux, Intel Core i7-8850H CPU 2.60GHz (C
 
 | Method                          | Mean      | Error     | StdDev    | Allocated |
 |-------------------------------- |----------:|----------:|----------:|----------:|
-| Bm25Search                      |  147.6 µs |  1.33 µs |  1.18 µs |     656 B |
-| TfIdfSearch                     |  129.8 µs |  0.91 µs |  0.71 µs |     928 B |
-| QueryLikelihoodSearch           | 1,954.7 µs | 79.65 µs | 223.34 µs |   1,001 B |
-| BooleanSearch                   |  910.1 µs | 18.44 µs | 53.80 µs |     834 B |
-| Bm25SearchRunAllQueries         |  863.9 µs | 13.54 µs | 12.66 µs |   3,321 B |
+| Bm25Search                      |  121.6 µs |  2.38 µs |  2.23 µs |     672 B |
+| TfIdfSearch                     |  104.8 µs |  1.58 µs |  1.47 µs |     944 B |
+| QueryLikelihoodSearch           | 2,012.7 µs | 31.53 µs | 44.20 µs |   1,127 B |
+| BooleanSearch                   | 1,099.6 µs | 21.90 µs | 57.30 µs |     955 B |
+| Bm25SearchRunAllQueries         |   861.6 µs |  9.83 µs |  8.72 µs |   3,402 B |
 
 Ranking output of every configuration is verified byte-for-byte against the pre-optimization
 engine (`QueryPlanParityTests`, full suite green), so the speedups below come with no quality
@@ -120,12 +120,12 @@ same instruction the rest of this page carries.
 | `Tokenize`            |    264 B  |
 | `TokenizeOneTerm`     |    224 B  |
 | `Parse`               |    312 B  |
-| `SearchHitLimit1`     |    296 B  |
-| `SearchHitLimit10`    |    656 B  |
-| `SearchHitLimit100`   |  4,256 B  |
-| `SearchMissLimit10`   |    824 B  |
-| `SearchPhraseLimit10` |  1,307 B  |
-| `SearchLiteralLimit10`|    656 B  |
+| `SearchHitLimit1`     |    312 B  |
+| `SearchHitLimit10`    |    672 B  |
+| `SearchHitLimit100`   |  4,273 B  |
+| `SearchMissLimit10`   |    840 B  |
+| `SearchPhraseLimit10` |  1,425 B  |
+| `SearchLiteralLimit10`|    672 B  |
 
 **Two rows do not reproduce under this diagnoser, and that is a property of the rows rather than
 a mystery.** `Tokenize` has read 264 B, 2,308 B and 7,078 B, and `Parse` has read 312 B and 0 B,
@@ -145,8 +145,8 @@ The values shown are the ones that reproduce, and the tokenizer's split is confi
   for one that folding, stemming or trimming replaced — and the index resolves each slice by span.
   The `Tokenize` and `Parse` rows above describe the string pipeline a caller of those methods
   still pays for; a search pays none of it.
-- **The fixed cost: 256 B.** Three page sizes on one query fall on one line — 296 / 656 /
-  4,256 B — so everything a query costs before it returns anything is 256 B: the tokenization into
+- **The fixed cost: 272 B.** Three page sizes on one query fall on one line — 312 / 672 /
+  4,273 B — so everything a query costs before it returns anything is 272 B: the tokenization into
   slices, the query plan, the top window and the per-query markers, not split further here. The
   per-candidate work allocates nothing: the score arrays and the slice buffer are rented and
   returned, so a steady stream of searches allocates nothing after the first few.
@@ -156,10 +156,10 @@ The values shown are the ones that reproduce, and the tokenizer's split is confi
   figure is the shape of the answer**, not the engine's work. A caller that can take its page into a
   buffer of its own has more left to gain here than any change to the scoring path.
 - **The paths price differently.** A query matching nothing takes the candidate path with the string
-  tokenizer — it is too rare to amortize the accumulation buffer — and costs 824 B, *more* than the
-  656 B of a query that returns a page: the page became the cheap part, and the string path did not.
+  tokenizer — it is too rare to amortize the accumulation buffer — and costs 840 B, *more* than the
+  672 B of a query that returns a page: the page became the cheap part, and the string path did not.
   A quoted phrase is not a plain query, so it keeps the string path and gates every candidate
-  positionally: 1,307 B. `ParseQuerySyntax: false` is plain by construction and costs exactly what
+  positionally: 1,425 B. `ParseQuerySyntax: false` is plain by construction and costs exactly what
   the parsed one does.
 
 **What is pinned.** `QueryAllocationBreakdownTests` holds the budgets a regression would break: the

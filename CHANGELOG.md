@@ -220,6 +220,24 @@ workflow.
 
 ### Changed
 
+- **The engine keeps its page by ordinal, and resolves a document only where one is needed.**
+
+  The accumulation pass resolved every candidate document to offer it to the page window. For an
+  in-memory index that resolution is a list index, and for a segment index it is a decode of the
+  document's stored text — a per-candidate difference of 68× that a ten-thousand-candidate finish pass
+  paid ten thousand times. Measured on the same corpus and query, a segment search went from **20× to
+  about 3×** the in-memory index's time, and an in-memory segment from 10× to about 2.5×.
+
+  The window now holds score and ordinal, resolves documents for the filters, exclusions and facet
+  counter only when they are in play, reads identifiers only on an exact tie, and materializes the
+  page at the end. Paths that already hold a document hand it to the window directly, in a side slot
+  that exists only when the caller resolves — neither path pays for the other. A search now allocates
+  about **16 bytes more**, the one per-query cost of the new page cut, and its attribution stops there.
+
+  An index that offers the candidate path must also map its documents back to ordinals (`OrdinalOf`
+  on the accumulating capability); the four in-repository indexes do, the two decorators by
+  delegation. Full suite green, golden master unchanged.
+
 - **An engine searches an index it cannot write to, and refuses a write instead of assuming one.**
 
   `RankedTextSearchEngine` took `ITextIndex` — the write-capable interface — so a corpus that cannot be
