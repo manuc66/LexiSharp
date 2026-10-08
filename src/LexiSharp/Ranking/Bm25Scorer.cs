@@ -341,7 +341,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
         private readonly IReadOnlyTextIndex _index;
         private readonly Bm25Shape _shape;
 
-        private string[] _terms;
+        private IReadOnlyList<string> _terms;
         private double[] _idf;
 
         public Bm25QueryPlan(IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index, Bm25Shape shape)
@@ -350,20 +350,22 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
             _index = index;
             _shape = shape;
-            _terms = new string[queryTerms.Count];
+
+            // The plan holds the caller's list rather than a copy of it: it is created and discarded
+            // inside one search, so the list outlives it by construction, and the terms the caller
+            // tokenized for that query are the terms the plan wants. Copying them into a `string[]`
+            // buys nothing but the array.
+            _terms = queryTerms;
             _idf = new double[queryTerms.Count];
 
             int documentCount = index.StatisticDocumentCount;
 
             for (int i = 0; i < queryTerms.Count; i++)
             {
-                string term = queryTerms[i];
-                _terms[i] = term;
-
                 if (documentCount == 0)
                     continue;
 
-                int df = index.DocumentFrequency(term);
+                int df = index.DocumentFrequency(queryTerms[i]);
                 _idf[i] = Math.Log(1.0 + ((documentCount - df + 0.5) / (df + 0.5)));
             }
 
@@ -392,11 +394,11 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
         private void FoldQueryFrequencies()
         {
             // One pass: where each term first appears, and how often it appears at all.
-            var firstOf = new Dictionary<string, int>(_terms.Length, StringComparer.Ordinal);
-            var occurrences = new Dictionary<string, int>(_terms.Length, StringComparer.Ordinal);
-            var order = new List<string>(_terms.Length);
+            var firstOf = new Dictionary<string, int>(_terms.Count, StringComparer.Ordinal);
+            var occurrences = new Dictionary<string, int>(_terms.Count, StringComparer.Ordinal);
+            var order = new List<string>(_terms.Count);
 
-            for (int i = 0; i < _terms.Length; i++)
+            for (int i = 0; i < _terms.Count; i++)
             {
                 string term = _terms[i];
 
@@ -411,7 +413,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
                 order.Add(term);
             }
 
-            if (order.Count == _terms.Length)
+            if (order.Count == _terms.Count)
                 return;
 
             string[] foldedTerms = new string[order.Count];
@@ -445,7 +447,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
             double normalization = _shape.Normalization(documentLength);
             double score = 0;
 
-            for (int i = 0; i < _terms.Length; i++)
+            for (int i = 0; i < _terms.Count; i++)
             {
                 int tf = _index.TermFrequency(documentId, _terms[i]);
 
@@ -470,7 +472,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
             if (_index.Count == 0 || _shape.AverageLength <= 0)
                 return false;
 
-            for (int i = 0; i < _terms.Length; i++)
+            for (int i = 0; i < _terms.Count; i++)
                 index.Accumulate(new Bm25Weight(_terms[i], _idf[i], _shape), accumulator);
 
             return true;
