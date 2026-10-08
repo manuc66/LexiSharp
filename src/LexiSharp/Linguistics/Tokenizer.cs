@@ -111,7 +111,8 @@ public sealed class Tokenizer : ISpanTokenizer
             return Array.Empty<string>();
 
         var terms = new List<string>(16);
-        Scan(text, terms, null);
+        var none = new NormalizedTermsBuilder(default, enabled: false);
+        Scan(text, terms, null, ref none);
 
         if (terms.Count == 0)
             return Array.Empty<string>();
@@ -142,7 +143,90 @@ public sealed class Tokenizer : ISpanTokenizer
             return;
         }
 
-        Scan(text, destination, null);
+        var none = new NormalizedTermsBuilder(default, enabled: false);
+        Scan(text, destination, null, ref none);
+    }
+
+    /// <inheritdoc />
+    public int TokenizeNormalized(ReadOnlySpan<char> text, Span<NormalizedTerm> destination)
+    {
+        if (text.IsEmpty)
+            return 0;
+
+        // A term is its own source slice only where nothing in the pipeline replaces it. An n-gram
+        // pass renumbers the terms, a stop-word list is asked a question a span cannot answer, and a
+        // stemmer or the possessive trim builds a new term outright; the joining scans emit through
+        // a path that does not fill this buffer. Each of those materializes, so the caller is told to
+        // take the string path rather than handed a term it cannot resolve.
+        if (_useNgrams ||
+            _stopWords is not null ||
+            _options.Stemmer is not null ||
+            _stripPossessives ||
+            _asciiJoiners is not null ||
+            _nonAsciiJoiners is not null ||
+            _conditionalJoins)
+        {
+            return -1;
+        }
+
+        var normalized = new NormalizedTermsBuilder(destination);
+        Scan(text, null, null, ref normalized);
+
+        return normalized.Complete();
+    }
+
+    /// <summary>
+    /// Whether a source slice is already its own normalized form: ASCII, with no uppercase letter.
+    /// Every other character is one that folding, lowercasing or decomposition could replace.
+    /// </summary>
+    private static bool IsNormalizedLiteral(ReadOnlySpan<char> slice)
+    {
+        for (int i = 0; i < slice.Length; i++)
+        {
+            char c = slice[i];
+
+            if (c >= 128 || (c >= 'A' && c <= 'Z'))
+                return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The destination of <see cref="TokenizeNormalized"/>, counting what it holds and noticing when
+    /// it did not hold everything. A disabled builder is what the scans that do not fill it carry.
+    /// </summary>
+    private ref struct NormalizedTermsBuilder
+    {
+        private readonly Span<NormalizedTerm> _destination;
+        private readonly bool _enabled;
+
+        public NormalizedTermsBuilder(Span<NormalizedTerm> destination, bool enabled = true)
+        {
+            _destination = destination;
+            _enabled = enabled;
+            Count = 0;
+            Overflowed = false;
+        }
+
+        public int Count { get; private set; }
+
+        public bool Overflowed { get; private set; }
+
+        public readonly bool Enabled => _enabled;
+
+        public void Add(NormalizedTerm term)
+        {
+            if (Count >= _destination.Length)
+            {
+                Overflowed = true;
+                return;
+            }
+
+            _destination[Count++] = term;
+        }
+
+        public readonly int Complete() => Overflowed ? -1 : Count;
     }
 
     /// <inheritdoc />
@@ -152,7 +236,8 @@ public sealed class Tokenizer : ISpanTokenizer
             return Array.Empty<TokenSpan>();
 
         var spans = new List<TokenSpan>(16);
-        Scan(text, null, spans);
+        var none = new NormalizedTermsBuilder(default, enabled: false);
+        Scan(text, null, spans, ref none);
 
         if (spans.Count == 0)
             return Array.Empty<TokenSpan>();
@@ -169,10 +254,12 @@ public sealed class Tokenizer : ISpanTokenizer
     /// non-null). Normalization, stop-word removal and stemming happen at emission, straight
     /// from the source slice.
     /// </summary>
-    private void Scan(ReadOnlySpan<char> text, List<string>? terms, List<TokenSpan>? spans)
+    private void Scan(ReadOnlySpan<char> text, List<string>? terms, List<TokenSpan>? spans, ref NormalizedTermsBuilder normalized)
     {
         if (_asciiJoiners is not null || _nonAsciiJoiners is not null || _conditionalJoins)
         {
+            // The joining scans emit through their own path, and TokenizeNormalized declines a
+            // joining configuration, so `normalized` is never enabled here.
             ScanJoining(text, terms, spans);
             return;
         }
@@ -216,7 +303,7 @@ public sealed class Tokenizer : ISpanTokenizer
             }
             else if (wordStart >= 0)
             {
-                EmitWord(text, wordStart, position, terms, spans);
+                EmitWord(text, wordStart, position, terms, spans, ref normalized);
                 wordStart = -1;
             }
 
@@ -224,7 +311,7 @@ public sealed class Tokenizer : ISpanTokenizer
         }
 
         if (wordStart >= 0)
-            EmitWord(text, wordStart, text.Length, terms, spans);
+            EmitWord(text, wordStart, text.Length, terms, spans, ref normalized);
     }
 
     /// <summary>
@@ -582,12 +669,33 @@ public sealed class Tokenizer : ISpanTokenizer
     }
 
     /// <summary>Normalizes, filters and stores one word range, honoring single-char/stop-word/stemming options.</summary>
-    private void EmitWord(ReadOnlySpan<char> text, int start, int end, List<string>? terms, List<TokenSpan>? spans)
+    private void EmitWord(
+        ReadOnlySpan<char> text,
+        int start,
+        int end,
+        List<string>? terms,
+        List<TokenSpan>? spans,
+        ref NormalizedTermsBuilder normalized)
     {
         int length = end - start;
 
         if (length < 2 && !_options.KeepSingleCharTerms)
             return;
+
+        if (normalized.Enabled)
+        {
+            var source = text.Slice(start, length);
+
+            // The term is its own normalized form: the caller can resolve it by span, and no string
+            // is built for it. TokenizeNormalized declines every configuration whose pipeline would
+            // replace the term, so reaching here means folding is the only thing left to decide, and
+            // an ASCII slice with no uppercase character is what folding leaves alone.
+            if (IsNormalizedLiteral(source))
+            {
+                normalized.Add(new NormalizedTerm(start, length, null));
+                return;
+            }
+        }
 
         string term = NormalizeToken(text.Slice(start, length));
 
@@ -602,6 +710,11 @@ public sealed class Tokenizer : ISpanTokenizer
 
         terms?.Add(term);
         spans?.Add(new TokenSpan(term, start, length));
+
+        // A term that had to be normalized, stemmed or trimmed reaches the destination as the string
+        // it became. TokenizeNormalized never runs those pipelines, so this is the rare arm.
+        if (normalized.Enabled)
+            normalized.Add(new NormalizedTerm(0, 0, term));
     }
 
     /// <summary>Builds the n-gram term list (unigrams first, then longer grams) from a term list.</summary>
