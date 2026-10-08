@@ -6,13 +6,19 @@ using LexiSharp.Similarity;
 namespace LexiSharp.Ranking;
 
 /// <summary>
-/// The stock search engine: delegates the corpus storage to an <see cref="ITextIndex"/>,
+/// The stock search engine: delegates the corpus storage to an <see cref="IReadOnlyTextIndex"/>,
 /// delegates the relevance math to an <see cref="ITextScorer"/>, and takes care of
 /// query tokenization, filtering, ranking and limiting.
 /// </summary>
 /// <remarks>
 /// Scorers are interchangeable, so one engine instance can host several ranking
 /// strategies by simply swapping the scorer.
+/// <para>
+/// The index is held as its read view, which is all a search needs — an index that cannot be written
+/// to is searched as it is. The four mutating methods ask for the write capability when they are
+/// called and refuse with <see cref="NotSupportedException"/> when the index does not have it, rather
+/// than the constructor demanding it and the caller discovering the truth at the first write.
+/// </para>
 /// <para>
 /// Convention: a document is considered "not a match" when its score is exactly
 /// <c>0</c>; such documents are excluded from results unless <see cref="SearchOptions.MinimumScore"/>
@@ -63,13 +69,18 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// <inheritdoc />
     public QueryFeatures SupportedQueryFeatures => QueryFeatures.Phrases | QueryFeatures.Expansions;
 
-    private readonly ITextIndex _index;
+    private readonly IReadOnlyTextIndex _index;
     private readonly ITextScorer _scorer;
     private readonly ITokenizer _tokenizer;
     private readonly Dictionary<string, string[]>? _synonyms;
     private readonly RetrievalTelemetry _telemetry;
 
-    /// <param name="index">The corpus index backing the engine.</param>
+    /// <param name="index">
+    /// The corpus index backing the engine. Only the read view is asked for, because that is all a
+    /// search needs — and all an index that cannot be written to, such as one read from a segment,
+    /// can offer. The four mutating methods ask for the write capability when they are called and
+    /// refuse rather than pretending they worked.
+    /// </param>
     /// <param name="scorer">The ranking strategy (TF-IDF, BM25, ...).</param>
     /// <param name="tokenizer">
     /// Tokenizer used for queries. Should be consistent with the one the index was
@@ -87,7 +98,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// A <paramref name="synonyms"/> entry tokenizes to zero or more than one term.
     /// </exception>
     public RankedTextSearchEngine(
-        ITextIndex index,
+        IReadOnlyTextIndex index,
         ITextScorer scorer,
         ITokenizer? tokenizer = null,
         SynonymMap? synonyms = null,
@@ -104,35 +115,53 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     }
 
     /// <inheritdoc />
+    /// <exception cref="NotSupportedException">The index this engine holds is read-only.</exception>
     public void Index(IEnumerable<SearchDocument> documents)
     {
         ArgumentNullException.ThrowIfNull(documents);
-        _index.Index(documents);
+        Writable().Index(documents);
         _telemetry.IndexChanged(EngineName, _index);
     }
 
     /// <inheritdoc />
+    /// <exception cref="NotSupportedException">The index this engine holds is read-only.</exception>
     public void Add(SearchDocument document)
     {
         ArgumentNullException.ThrowIfNull(document);
-        _index.Add(document);
+        Writable().Add(document);
         _telemetry.IndexChanged(EngineName, _index);
     }
 
     /// <inheritdoc />
+    /// <exception cref="NotSupportedException">The index this engine holds is read-only.</exception>
     public bool Remove(string documentId)
     {
-        bool removed = _index.Remove(documentId);
+        bool removed = Writable().Remove(documentId);
         _telemetry.IndexChanged(EngineName, _index);
         return removed;
     }
 
     /// <inheritdoc />
+    /// <exception cref="NotSupportedException">The index this engine holds is read-only.</exception>
     public void Clear()
     {
-        _index.Clear();
+        Writable().Clear();
         _telemetry.IndexChanged(EngineName, _index);
     }
+
+    /// <summary>
+    /// The index as something that accepts writes, or a refusal that says why.
+    /// </summary>
+    /// <remarks>
+    /// A search reads through <see cref="IReadOnlyTextIndex"/>, which is all a corpus that cannot be
+    /// written to — one read from a segment, for instance — is able to offer. These four methods are
+    /// the only place that needs more, so they ask for it here rather than the constructor assuming it
+    /// and the caller finding out at the first write.
+    /// </remarks>
+    private ITextIndex Writable() =>
+        _index as ITextIndex
+        ?? throw new NotSupportedException(
+            $"{EngineName} holds a read-only index ({_index.GetType().Name}): Index, Add, Remove and Clear need an index that accepts writes (ITextIndex).");
 
     /// <inheritdoc />
     public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
