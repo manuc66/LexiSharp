@@ -220,6 +220,22 @@ workflow.
 
 ### Changed
 
+- **The segment's postings move from varint entries to byte-aligned planes.**
+
+  Each block now packs its ordinal deltas and its frequencies in two planes at 8 or 16 bits per entry,
+  the width chosen per block and announced by a seventh header varint; a plane widens only when one of
+  its values exceeds 255. Decoding an entry is two aligned loads instead of two varint walks.
+  `SegmentWriter.Version` bumps 1 → 2, and a reader refuses the old format rather than guessing.
+
+  Measured on the same corpus, query and host as the previous figures: the decode of two head terms
+  went from 844 to 270 µs (about 3.1×), the memory-mapped segment search from 1 457 to about 900 µs,
+  and the in-memory segment search from about 1 370 to about 915 µs — a mapped head query is now about
+  1.5× the in-memory index instead of 3×. The trade is stated with the figure: this corpus's postings
+  are 8.0 % larger than the varint layout would have been, and 28 % smaller than the flat pair. Every
+  test in the suite re-encodes and re-decodes, so the planes are round-tripped rather than pinned;
+  a dedicated round-trip forces frequencies and deltas above 255, which the synthetic lists (capped at
+  a frequency of 6) never did.
+
 - **A source-backed posting reader feeds several blocks from one fetch.**
 
   The reader over a source that cannot be viewed (a memory-mapped segment) fetched a 2 KB window at

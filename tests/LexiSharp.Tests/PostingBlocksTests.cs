@@ -48,6 +48,46 @@ public class PostingBlocksTests
     }
 
     [Fact]
+    public void WidePlanesRoundTrip()
+    {
+        // Frequencies above 255 and deltas above 255 force the 16-bit planes; without a list like this,
+        // form 1 and form 3 never run and a width bug ships unseen.
+        var random = new Random(71);
+        var ordinals = new int[1_500];
+        var frequencies = new int[1_500];
+        var lengths = new int[1_000_000];
+
+        for (int i = 0; i < lengths.Length; i++)
+            lengths[i] = 1 + random.Next(400);
+
+        int ordinal = -1;
+
+        for (int i = 0; i < ordinals.Length; i++)
+        {
+            ordinal += 300 + random.Next(200);
+            ordinals[i] = ordinal;
+            frequencies[i] = 200 + random.Next(10_000);
+        }
+
+        var postings = (ordinals, frequencies, lengths);
+        var region = Region(postings);
+        var reader = new PostingBlockReader(region);
+        int index = 0;
+
+        while (reader.MoveNext())
+        {
+            while (reader.TryReadEntry(out int readOrdinal, out int readFrequency))
+            {
+                Assert.Equal(ordinals[index], readOrdinal);
+                Assert.Equal(frequencies[index], readFrequency);
+                index++;
+            }
+        }
+
+        Assert.Equal(ordinals.Length, index);
+    }
+
+    [Fact]
     public void EachBlockIsBoundByItsOwnEntries()
     {
         var postings = Postings(1_000, 100_000, seed: 7);
