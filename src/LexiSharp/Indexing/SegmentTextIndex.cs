@@ -49,6 +49,7 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex
     private readonly ITokenizer _tokenizer;
     private readonly Dictionary<string, int> _ordinals;
     private readonly int[] _lengths;
+    private readonly DecodedPostingsCache? _decoded;
     private SearchDocument?[]? _documents;
 
     /// <param name="bytes">A segment written by <see cref="SegmentWriter"/>.</param>
@@ -66,10 +67,11 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex
     /// Internal because the public story is a byte array or a file; a mapped file reaches this through
     /// <see cref="MappedSegment"/>.
     /// </remarks>
-    internal SegmentTextIndex(SegmentSource source, ITokenizer? tokenizer = null)
+    internal SegmentTextIndex(SegmentSource source, ITokenizer? tokenizer = null, DecodedPostingsCache? decoded = null)
     {
         _reader = new SegmentReader(source);
         _tokenizer = tokenizer ?? Tokenizer.Default;
+        _decoded = decoded;
         _ordinals = new Dictionary<string, int>(_reader.DocumentCount, StringComparer.Ordinal);
         _lengths = new int[_reader.DocumentCount];
 
@@ -221,8 +223,39 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex
     /// <inheritdoc />
     void IAccumulatingIndex.Accumulate<TWeight>(TWeight weight, ScoreAccumulator accumulator)
     {
-        if (!_reader.TryFindTerm(weight.Term.AsSpan(), out _, out var postings))
+        if (!_reader.TryFindTerm(weight.Term.AsSpan(), out int df, out var postings))
             return;
+
+        // A decoded cache turns a repeat look-up of a hot term into exactly the in-memory index's
+        // walk: the same flat arrays, the same ascending entry order, so the sums are bit-identical
+        // to a fresh decode. The fill decodes once and reuses; the budget decides what stays.
+        if (_decoded is { } decoded)
+        {
+            if (decoded.TryGet(weight.Term, out var ordinalsCache, out var frequenciesCache))
+            {
+                Fold(ordinalsCache, frequenciesCache, weight, accumulator);
+                return;
+            }
+
+            int[] ordinals = new int[df];
+            var frequencies = new int[df];
+
+            int index = 0;
+
+            while (postings.MoveNext())
+            {
+                while (postings.TryReadEntry(out int ordinal, out int frequency))
+                {
+                    ordinals[index] = ordinal;
+                    frequencies[index] = frequency;
+                    index++;
+                }
+            }
+
+            decoded.Store(weight.Term, ordinals, frequencies);
+            Fold(ordinals, frequencies, weight, accumulator);
+            return;
+        }
 
         // The blocks ascend by ordinal and so do the entries inside them, which is the order the
         // in-memory fold walks its flat arrays: the accumulator sees the same records in the same order,
@@ -232,6 +265,19 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex
             while (postings.TryReadEntry(out int ordinal, out int frequency))
                 accumulator.Record(ordinal, weight.Weight(frequency, _lengths[ordinal]));
         }
+    }
+
+    private void Fold<TWeight>(
+        int[] ordinals,
+        int[] frequencies,
+        TWeight weight,
+        ScoreAccumulator accumulator)
+        where TWeight : struct, IPostingWeight
+    {
+        var lengths = _lengths;
+
+        for (int i = 0; i < ordinals.Length; i++)
+            accumulator.Record(ordinals[i], weight.Weight(frequencies[i], lengths[ordinals[i]]));
     }
 
     /// <summary>The document with this id, or <c>null</c>. Reads through the same cache as the others.</summary>
