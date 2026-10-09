@@ -220,6 +220,16 @@ workflow.
 
 ### Changed
 
+- **A source-backed posting reader feeds several blocks from one fetch.**
+
+  The reader over a source that cannot be viewed (a memory-mapped segment) fetched a 2 KB window at
+  every block boundary, so a head-term walk of 313 blocks paid 313 reads. It now fetches a window and
+  refetches only when a block could straddle its end, and the index's scratch grew to 8 KB so a window
+  holds more. Measured on the same corpus, query and host, the mapped fetch cost went from 359 to
+  58 µs and the mapped head search from 1 777 to 1 457 µs; every search still returns bit-identical
+  pages. The uncompressed decode is untouched, so the mapped gap to the in-memory index is now
+  dominated by the varint format, not by the mapping.
+
 - **The engine keeps its page by ordinal, and resolves a document only where one is needed.**
 
   The accumulation pass resolved every candidate document to offer it to the page window. For an

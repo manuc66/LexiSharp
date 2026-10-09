@@ -13,8 +13,8 @@ namespace LexiSharp.Indexing;
 /// A cursor rather than a decoded array, and that is the point of the format: a pruned pass reads the
 /// bound of a block, decides, and often moves on without touching its entries, and a mapped segment
 /// cannot hand out an array at all. Nothing here copies the region when it can be viewed, and nothing
-/// holds a whole postings list when it cannot — a source-backed reader fetches one block at a time into
-/// a buffer its caller owns.
+/// holds a whole postings list when it cannot, a source-backed reader fetches a window into
+/// a buffer its caller owns and feeds several blocks from it before fetching again.
 /// </para>
 /// <para>
 /// The cursor moves forward only: there is no going back to a block already passed, because the skip
@@ -36,6 +36,8 @@ internal ref struct PostingBlockReader
     private readonly ReadOnlySpan<byte> _skip;
     private readonly int _skipCount;
     private readonly int _blockCount;
+    private int _windowOffset;
+    private int _windowLength;
     private ReadOnlySpan<byte> _entries;
     private int _position;
     private int _blockIndex;
@@ -124,6 +126,8 @@ internal ref struct PostingBlockReader
         _blockIndex = -1;
         _previousOrdinal = 0;
         LastOrdinal = int.MinValue;
+        _windowOffset = 0;
+        _windowLength = window;
     }
 
     /// <summary>Bytes a source-backed reader fetches at a time; a block cannot exceed it.</summary>
@@ -132,6 +136,13 @@ internal ref struct PostingBlockReader
     /// block is under 1.4 KB and a 2 KB window always holds one.
     /// </remarks>
     private const int FetchWindow = 2048;
+
+    /// <summary>
+    /// Largest block the format can write: its six header varints (at most five bytes each) and 128
+    /// entries of two varints of at most five bytes. A window holds at least this much before a block
+    /// starts, which is why a walk can feed several blocks from one window.
+    /// </summary>
+    private const int MaxBlockBytes = 1536;
 
     /// <summary>Number of blocks the region holds.</summary>
     public int BlockCount => _blockCount;
@@ -229,6 +240,14 @@ internal ref struct PostingBlockReader
     }
 
     /// <summary>The bytes from <paramref name="position"/> on: the region when it can be viewed, a fetched window otherwise.</summary>
+    /// <remarks>
+    /// A fetched window feeds several blocks: the walk refetches only when a block could straddle the
+    /// window's end (<see cref="MaxBlockBytes"/> bytes of scrap), instead of copying the same bytes
+    /// again for every block — a head term of 313 blocks once paid 313 reads, each re-fetching the
+    /// window. The window is the caller's scratch, so it must be valid as `_scratch` and is read as
+    /// `_scratch`. A block that lands entirely inside the window is decoded from it; a block that
+    /// would start in the scrap gets a fresh window. A returned span is valid until the next load.
+    /// </remarks>
     private ReadOnlySpan<byte> Load(int position)
     {
         if (_source is null)
@@ -244,10 +263,20 @@ internal ref struct PostingBlockReader
         if (available <= 0)
             throw new InvalidDataException("a block starts outside the posting region");
 
-        int window = Math.Min(_scratch!.Length, available);
-        _source.Read(_regionOffset + position, window, _scratch);
+        int within = position - _windowOffset;
 
-        return _scratch.AsSpan(0, window);
+        // The walk holds the invariant that a block starts with at least MaxBlockBytes of its window
+        // ahead of it, so a block never straddles the window's end; once that scrap is gone, fetch.
+        if (_windowLength - within < MaxBlockBytes)
+        {
+            int window = Math.Min(_scratch!.Length, available);
+            _source.Read(_regionOffset + position, window, _scratch);
+            _windowOffset = position;
+            _windowLength = window;
+            within = 0;
+        }
+
+        return _scratch.AsSpan(within, _windowLength - within);
     }
 
     /// <summary>The window stored for skip entry <paramref name="entry"/>.</summary>
