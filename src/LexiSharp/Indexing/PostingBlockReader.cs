@@ -38,7 +38,11 @@ internal ref struct PostingBlockReader
     private readonly int _blockCount;
     private int _windowOffset;
     private int _windowLength;
-    private ReadOnlySpan<byte> _entries;
+    private ReadOnlySpan<byte> _deltaPlane;
+    private ReadOnlySpan<byte> _frequencyPlane;
+    private int _deltaBytes;
+    private int _frequencyBytes;
+    private int _entryCursor;
     private int _position;
     private int _blockIndex;
     private int _previousOrdinal;
@@ -71,14 +75,18 @@ internal ref struct PostingBlockReader
         _skipCount = skipCount;
         _skip = remaining[..skipBytes];
         _position = countBytes + skipBytes;
-        _entries = default;
+        _deltaPlane = default;
+        _frequencyPlane = default;
+        _deltaBytes = 1;
+        _frequencyBytes = 1;
+        _entryCursor = 0;
         _blockIndex = -1;
         _previousOrdinal = 0;
         LastOrdinal = int.MinValue;
     }
 
     /// <summary>
-    /// Positions the cursor before the first block of a region a source holds, fetching one block at a
+    /// Positions the cursor before the first block of a region a source holds, fetching a window at a
     /// time into <paramref name="scratch"/>.
     /// </summary>
     /// <exception cref="InvalidDataException">The region does not hold a postings list.</exception>
@@ -122,7 +130,11 @@ internal ref struct PostingBlockReader
         _blockCount = blockCount;
         _skipCount = skipCount;
         _position = countBytes + skipBytes;
-        _entries = default;
+        _deltaPlane = default;
+        _frequencyPlane = default;
+        _deltaBytes = 1;
+        _frequencyBytes = 1;
+        _entryCursor = 0;
         _blockIndex = -1;
         _previousOrdinal = 0;
         LastOrdinal = int.MinValue;
@@ -132,15 +144,15 @@ internal ref struct PostingBlockReader
 
     /// <summary>Bytes a source-backed reader fetches at a time; a block cannot exceed it.</summary>
     /// <remarks>
-    /// A block holds at most 128 entries, and an entry is two varints of at most five bytes each, so a
-    /// block is under 1.4 KB and a 2 KB window always holds one.
+    /// A block holds at most 128 entries in two planes, at most 16 bits per entry each, plus a header
+    /// of seven varints of at most five bytes — under 600 bytes, and a 2 KB window holds one.
     /// </remarks>
     private const int FetchWindow = 2048;
 
     /// <summary>
-    /// Largest block the format can write: its six header varints (at most five bytes each) and 128
-    /// entries of two varints of at most five bytes. A window holds at least this much before a block
-    /// starts, which is why a walk can feed several blocks from one window.
+    /// Largest block the format can write: its seven header varints (at most five bytes each) and two
+    /// planes of 128 16-bit entries. A window holds at least this much before a block starts, which is
+    /// why a walk can feed several blocks from one window.
     /// </summary>
     private const int MaxBlockBytes = 1536;
 
@@ -222,21 +234,30 @@ internal ref struct PostingBlockReader
     /// </summary>
     public bool TryReadEntry(out int ordinal, out int frequency)
     {
-        var entries = _entries;
+        int cursor = _entryCursor;
 
-        if (Varints.TryRead(ref entries, out int delta) && Varints.TryRead(ref entries, out frequency))
+        if ((uint)cursor >= (uint)Count)
         {
-            ordinal = _previousOrdinal + delta;
-            _previousOrdinal = ordinal;
-            _entries = entries;
+            ordinal = 0;
+            frequency = 0;
 
-            return true;
+            return false;
         }
 
-        ordinal = 0;
-        frequency = 0;
+        var deltas = _deltaPlane;
+        var frequencies = _frequencyPlane;
+        int delta = _deltaBytes == 1
+            ? deltas[cursor]
+            : BinaryPrimitives.ReadUInt16LittleEndian(deltas[(cursor * 2)..]);
 
-        return false;
+        ordinal = _previousOrdinal + delta;
+        _previousOrdinal = ordinal;
+        frequency = _frequencyBytes == 1
+            ? frequencies[cursor]
+            : BinaryPrimitives.ReadUInt16LittleEndian(frequencies[(cursor * 2)..]);
+        _entryCursor = cursor + 1;
+
+        return true;
     }
 
     /// <summary>The bytes from <paramref name="position"/> on: the region when it can be viewed, a fetched window otherwise.</summary>
@@ -296,7 +317,9 @@ internal ref struct PostingBlockReader
     {
         _position = SkipOffset(blockIndex / PostingBlocks.SkipEvery);
         _blockIndex = blockIndex - 1;
-        _entries = default;
+        _deltaPlane = default;
+        _frequencyPlane = default;
+        _entryCursor = 0;
         _previousOrdinal = 0;
         LastOrdinal = int.MinValue;
     }
@@ -340,12 +363,24 @@ internal ref struct PostingBlockReader
             !Varints.TryRead(ref remaining, out int lastDelta) ||
             !Varints.TryRead(ref remaining, out int maxFrequency) ||
             !Varints.TryRead(ref remaining, out int minLength) ||
+            !Varints.TryRead(ref remaining, out int form) ||
             count <= 0 ||
             count > PostingBlocks.BlockSpan ||
             window < 0 ||
             lastDelta < 0 ||
-            entryBytes < 2 ||
-            entryBytes > PostingBlocks.BlockSpan * 10)
+            form < 0 ||
+            form > 3)
+        {
+            consumed = 0;
+            return false;
+        }
+
+        int deltaBytes = 1 + (form >> 1);
+        int frequencyBytes = 1 + (form & 1);
+
+        // The planes are self-describing: this count at these widths must fill the length the header
+        // announces, and no more. A block whose planes do not add up is not a block this reader knows.
+        if (entryBytes != (count * deltaBytes) + (count * frequencyBytes))
         {
             consumed = 0;
             return false;
@@ -368,7 +403,11 @@ internal ref struct PostingBlockReader
         MaxFrequency = maxFrequency;
         MinDocumentLength = minLength;
         LastOrdinal = (window * PostingBlocks.BlockSpan) + lastDelta;
-        _entries = block.Slice(headerBytes, entryBytes);
+        _deltaPlane = block.Slice(headerBytes, count * deltaBytes);
+        _frequencyPlane = block.Slice(headerBytes + (count * deltaBytes), count * frequencyBytes);
+        _deltaBytes = deltaBytes;
+        _frequencyBytes = frequencyBytes;
+        _entryCursor = 0;
         _previousOrdinal = window * PostingBlocks.BlockSpan;
         consumed = headerBytes + entryBytes;
 

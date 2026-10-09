@@ -5,8 +5,9 @@ namespace LexiSharp.Indexing;
 
 /// <summary>
 /// The block layout one term's postings are written in: ordinals and frequencies grouped into
-/// document-aligned windows, delta- and varint-encoded, with the bound a pruned scoring pass needs
-/// per window and a skip table to reach a window without reading the ones before it.
+/// document-aligned windows, delta-encoded and packed into byte-aligned planes, with the bound a
+/// pruned scoring pass needs per window and a skip table to reach a window without reading the ones
+/// before it.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -30,13 +31,18 @@ namespace LexiSharp.Indexing;
 ///   blocks, in ascending window order:
 ///     varint windowIndex        ordinal window, = firstOrdinal / BlockSpan
 ///     varint count              entries in the block, 1 … BlockSpan
-///     varint entriesBytes       bytes the entries take — the block's own length
+///     varint entriesBytes       bytes the two planes take — the block's own length
 ///     varint lastOrdinalDelta   last entry's ordinal − windowIndex × BlockSpan
 ///     varint maxFrequency       largest term frequency in the block
 ///     varint minDocumentLength  smallest document length in the block
-///     count × ( varint ordinalDelta, varint frequency )
+///     varint planeForm          entry widths: 0 = u8/u8, 1 = u8/u16, 2 = u16/u8, 3 = u16/u16
+///     count × ordinal delta     packed at 8 or 16 bits, from the ordinal before, or the window base
+///     count × frequency         packed at 8 or 16 bits
 /// </code>
-/// where each ordinal delta is from the ordinal before it, or from the window base for the first.
+/// where each ordinal delta is from the ordinal before it, or from the window base for the first. The
+/// planes are byte-aligned and indexed, so decoding an entry is two aligned loads — no per-entry bit
+/// shuffling, which is the point of the format. A block may hold values larger than 255 in a plane:
+/// that plane widens to 16 bits for the whole block, which is the lossless floor of the trade.
 /// </para>
 /// <para>
 /// <see cref="BlockSpan"/> is 128 because a smaller window buys tighter bounds and pays for them in
@@ -185,7 +191,7 @@ internal static class PostingBlocks
     {
         int window = ordinals[start] / BlockSpan;
         (int maxFrequency, int minLength) = BlockBounds(ordinals, frequencies, lengths, start, end);
-        int entriesBytes = EntrySize(ordinals, frequencies, start, end, out int lastOrdinal);
+        (int entriesBytes, int form, int lastOrdinal) = EntryLayout(ordinals, frequencies, start, end);
 
         // The block carries its own length, which is what lets a reader reach the scoring entries
         // without first walking them to find where the block ends.
@@ -195,30 +201,43 @@ internal static class PostingBlocks
             + Varints.Size(lastOrdinal - (window * BlockSpan))
             + Varints.Size(maxFrequency)
             + Varints.Size(minLength)
+            + Varints.Size(form)
             + entriesBytes;
     }
 
-    /// <summary>Bytes the entries take, and the last ordinal they reach.</summary>
-    private static int EntrySize(
+    /// <summary>
+    /// Bytes the two entry planes take, how they are packed (<c>form</c>: 0 u8/u8, 1 u8/u16, 2 u16/u8,
+    /// 3 u16/u16), and the last ordinal they reach.
+    /// </summary>
+    private static (int EntriesBytes, int Form, int LastOrdinal) EntryLayout(
         ReadOnlySpan<int> ordinals,
         ReadOnlySpan<int> frequencies,
         int start,
-        int end,
-        out int lastOrdinal)
+        int end)
     {
         int window = ordinals[start] / BlockSpan;
         int previous = window * BlockSpan;
-        int size = 0;
+        int maxDelta = 0;
+        int maxFrequency = 0;
 
         for (int i = start; i < end; i++)
         {
-            size += Varints.Size(ordinals[i] - previous) + Varints.Size(frequencies[i]);
+            int delta = ordinals[i] - previous;
+
+            if (delta > maxDelta)
+                maxDelta = delta;
+
+            if (frequencies[i] > maxFrequency)
+                maxFrequency = frequencies[i];
+
             previous = ordinals[i];
         }
 
-        lastOrdinal = previous;
+        int deltaBytes = maxDelta <= byte.MaxValue ? 1 : 2;
+        int frequencyBytes = maxFrequency <= byte.MaxValue ? 1 : 2;
+        int form = ((deltaBytes - 1) * 2) + (frequencyBytes - 1);
 
-        return size;
+        return ((end - start) * (deltaBytes + frequencyBytes), form, previous);
     }
 
     private static (int MaxFrequency, int MinLength) BlockBounds(
@@ -255,7 +274,7 @@ internal static class PostingBlocks
     {
         int window = ordinals[start] / BlockSpan;
         (int maxFrequency, int minLength) = BlockBounds(ordinals, frequencies, lengths, start, end);
-        int entriesBytes = EntrySize(ordinals, frequencies, start, end, out int lastOrdinal);
+        (int entriesBytes, int form, int lastOrdinal) = EntryLayout(ordinals, frequencies, start, end);
 
         int written = Varints.Write(window, destination);
         written += Varints.Write(end - start, destination[written..]);
@@ -263,14 +282,36 @@ internal static class PostingBlocks
         written += Varints.Write(lastOrdinal - (window * BlockSpan), destination[written..]);
         written += Varints.Write(maxFrequency, destination[written..]);
         written += Varints.Write(minLength, destination[written..]);
+        written += Varints.Write(form, destination[written..]);
 
+        int deltaBytes = 1 + (form >> 1);
+        int frequencyBytes = 1 + (form & 1);
         int previous = window * BlockSpan;
 
         for (int i = start; i < end; i++)
         {
-            written += Varints.Write(ordinals[i] - previous, destination[written..]);
-            written += Varints.Write(frequencies[i], destination[written..]);
+            int delta = ordinals[i] - previous;
+
+            if (deltaBytes == 1)
+                destination[written++] = (byte)delta;
+            else
+            {
+                BinaryPrimitives.WriteUInt16LittleEndian(destination[written..], (ushort)delta);
+                written += sizeof(ushort);
+            }
+
             previous = ordinals[i];
+        }
+
+        for (int i = start; i < end; i++)
+        {
+            if (frequencyBytes == 1)
+                destination[written++] = (byte)frequencies[i];
+            else
+            {
+                BinaryPrimitives.WriteUInt16LittleEndian(destination[written..], (ushort)frequencies[i]);
+                written += sizeof(ushort);
+            }
         }
 
         return written;

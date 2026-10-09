@@ -56,7 +56,7 @@ internal static class SegmentWriter
     internal const uint Magic = 0x3153584C;
 
     /// <summary>Format version. A reader refuses anything else rather than guessing.</summary>
-    internal const int Version = 1;
+    internal const int Version = 2;
 
     /// <summary>Fixed header size: everything else in the file is reached through it.</summary>
     internal const int HeaderBytes = 4 + 4 + 4 + 4 + (3 * 8);
