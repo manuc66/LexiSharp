@@ -220,6 +220,23 @@ workflow.
 
 ### Changed
 
+- **A segment index can hold a bounded cache of decoded postings for the terms it is asked for.**
+
+  The compact form's per-entry decode is the whole gap between it and the in-memory index when a term
+  is queried repeatedly. The cache fills on demand and keeps a term's flat `(ordinal, frequency)` arrays
+  until an entry budget evicts it least-recently-used: a repeat look-up walks the same flat arrays in
+  the same ascending order as the block walk, so the page a warm cache serves is the plain page bit for
+  bit. It is opt-in through the index's internal constructor; the public story (who owns the budget,
+  per-segment or shared) is a design decision still open.
+
+  Measured on the same corpus, query and host: at 40k documents, the head query went from 965 to 636 µs
+  and the mid-tail one from 621 to 450 µs (−30 % and −27 %), with the workload's terms holding about
+  0.6 MB of arrays and a cold fill around one millisecond. At 1M documents the cache converged the
+  compact segment to the in-memory index's speed from a 15 MB array set against a 7.4 GB index — but
+  that run itself exceeded the host's memory (4 GB of swap), so those figures are indicative, not
+  clean. Rare queries gain nothing (their decode is a microsecond); the cache is a bet a workload
+  repeats its terms.
+
 - **The segment's postings move from varint entries to byte-aligned planes.**
 
   Each block now packs its ordinal deltas and its frequencies in two planes at 8 or 16 bits per entry,
