@@ -25,8 +25,8 @@ namespace LexiSharp.Indexing;
 /// </remarks>
 internal sealed class SegmentReader
 {
-    /// <summary>Bytes fetched when a source cannot be viewed; enough for the largest posting block.</summary>
-    private const int FetchWindow = 2048;
+    /// <summary>Bytes fetched when a source cannot be viewed; several posting blocks, so a walk refetches rarely.</summary>
+    private const int FetchWindow = 8192;
 
     private readonly SegmentSource _source;
     private readonly int _documentsTableOffset;
