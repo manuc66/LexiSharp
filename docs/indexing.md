@@ -269,6 +269,85 @@ stemmer that produced it.
 ## Index persistence (`LexiSharp.MessagePack`)
 
 Save and reload an `InMemoryTextIndex` as compact, LZ4-compressed MessagePack binary —
+documents (id, text, fields, category) **and tokenizer configuration**:
+
+```csharp
+// install once:  dotnet add package LexiSharp.MessagePack
+using LexiSharp.MessagePack;
+
+MessagePackTextIndexPersistence.Save(index, "corpus.bin");
+var reloaded = MessagePackTextIndexPersistence.Load("corpus.bin"); // identical statistics, no re-indexing
+```
+
+A `Tokenizer` (stop words, n-grams, single-char terms) is reconstructed automatically. A custom
+`ITokenizer` is not currently serialized: hand the same implementation to `Load` — a type-name
+check protects against rebuilding with the wrong pipeline. Stemmed tokenizers likewise require
+the original tokenizer at load time (stemmers are not currently serializable).
+
+The same package persists a sparse engine through `MessagePackSparseIndexPersistence`: the
+stored corpus is the documents **plus their learned weights**, so reloading bypasses the model —
+only queries need the `ISparseEmbeddingProvider` again:
+
+```csharp
+MessagePackSparseIndexPersistence.Save(sparseEngine, "splade.bin");
+var reloaded = MessagePackSparseIndexPersistence.Load("splade.bin", mySplade); // exact same search scores
+```
+
+### A segmented store: writes over an immutable index
+
+`InMemoryTextIndex` holds the whole corpus in memory and mutates it in place. A search server that
+must serve while it writes, or that must restart without re-tokenizing, needs the corpus on disk as
+immutable segments — and the writes to land somewhere a reader can still see them. `SegmentedTextIndex`
+is that: a directory of segments, a live overlay for the writes, and tombstones for the deletions.
+
+```csharp
+using LexiSharp.Indexing;
+
+var store = new SegmentedTextIndex("./corpus");   // opens, or creates an empty store
+
+store.Add(new SearchDocument("42", "the article body goes on about indexing"));
+store.Remove("17");                                // a tombstone, not a rewrite
+
+store.Commit();                                    // overlay + tombstones → one segment on disk
+```
+
+The page a query serves is the same page `InMemoryTextIndex` serves for the same corpus, bit for bit.
+That is the property the whole design rests on, and it is what makes a segment a storage engine rather
+than a second answer to the same question.
+
+Four things a caller has to know, and each one is a consequence of a measurement:
+
+- **A deletion removes a document from results and from `Count`, and touches nothing else.** The corpus
+  statistics — `StatisticDocumentCount`, `AverageDocumentLength`, `DocumentFrequency` — describe the
+  segments as they were written and stay frozen. This is not an oversight: BM25's inverse document
+  frequency reads `N` and its length normalisation reads the average, so any statistic a deletion moved
+  would move every score on the index. Measured on the same deletions over the same segment, a frozen
+  statistic left 0 of 401 scores unchanged and a corrected one moved all 401. A merge is the point at
+  which the statistics are rewritten and the scores move with them.
+- **A tombstone costs 1.18× a head query at 10 ‰ deleted, and less from there.** The fold tests it per
+  posting entry; the tax falls as the deletion rate rises, because a skipped posting is a `Record` the
+  accumulator never does. `ShouldMerge()` reports when the count has passed 1 % of the live documents,
+  which is where most of that tax sits. A merge at 40,000 documents costs 0.6-1.2 s and about 2.9 GB
+  allocated, so it is a batch operation a caller schedules.
+- **A write is visible to the very next search.** Adding a document is a tokenization and a dictionary
+  write, not a segment write; an overlay of 1,000 documents reads at 1.02× the same documents committed
+  into a segment. What an overlay is not is durable: it is lost on a crash. `Commit()` is what makes
+  the writes durable, and it writes one segment atomically — a crash mid-write leaves the previous
+  segment intact rather than a truncated one.
+- **Merging returns a new index rather than mutating this one.** A search in flight reads the segments,
+  their bases and the length array, and a write between those reads would fold half the old chain and
+  half the new one. Swapping the reference an engine holds is the pattern `AtomicEngineReference`
+  publishes for exactly this.
+
+The tokenizer must be the one the segments were written with: the dictionary holds normalized terms,
+so a lookup is by the normalized form. Mutations are not safe to interleave with a search in flight —
+apply them from one thread, the same contract `InMemoryTextIndex` documents.
+
+Not in this increment: a write-ahead log, so the overlay between writes is not durable; positions, so
+a phrase query over a store re-tokenizes; and fields, so a document reads back as its id and its text.
+
+
+Save and reload an `InMemoryTextIndex` as compact, LZ4-compressed MessagePack binary —
 documents (id, text, fields, category) **and** tokenizer configuration:
 
 ```csharp

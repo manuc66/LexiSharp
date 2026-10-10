@@ -20,6 +20,45 @@ workflow.
 
 ### Added
 
+- **`SegmentedTextIndex`, an index that can be written to and read back from disk.**
+
+  A search server needs to write to a corpus it serves, and it needs that corpus to survive a restart
+  without being re-tokenized. `InMemoryTextIndex` mutates a corpus held in memory; a segment is written
+  once and read many times. `SegmentedTextIndex` is both: a directory of immutable segments, a live
+  overlay the writes land in, and tombstones the deletions leave.
+
+  ```csharp
+  var store = new SegmentedTextIndex("./corpus");   // opens, or creates an empty store
+
+  store.Add(new SearchDocument("42", "the article body goes on about indexing"));
+  store.Remove("17");                                // a tombstone, not a rewrite
+  store.Commit();                                    // overlay + tombstones → one segment on disk
+  ```
+
+  The page a query serves is the page `InMemoryTextIndex` serves for the same corpus, bit for bit. Four
+  things a caller needs to know, each from a measurement:
+
+  - **A deletion removes a document from results and from `Count`, and touches nothing else.** The corpus
+    statistics are the segments' own and stay frozen, because BM25's idf reads `N` and its length
+    normalisation reads the average — any statistic a deletion moved would move every score. Measured on
+    the same deletions over the same segment, a frozen statistic left 0 of 401 scores unchanged and a
+    corrected one moved all 401. A merge rewrites them and the scores move with it.
+  - **A tombstone costs 1.18× a head query at 10 ‰ deleted, and less from there.** `ShouldMerge()`
+    reports when the count has passed 1 % of the live documents, which is where most of that tax sits. A
+    merge at 40,000 documents costs 0.6-1.2 s and about 2.9 GB allocated, so it is a batch operation.
+  - **A write is visible to the very next search**, and an overlay of 1,000 documents reads at 1.02× the
+    same documents committed into a segment. What an overlay is not is durable: it is lost on a crash.
+    `Commit()` writes one segment atomically, so a crash mid-write leaves the previous segment intact.
+  - **Merging returns a new index rather than mutating this one**, because a search in flight reads the
+    segments, their bases and the length array, and a write between those reads would fold half the old
+    chain and half the new one. Swapping the reference an engine holds is the pattern
+    `AtomicEngineReference` publishes.
+
+  The tokenizer must be the one the segments were written with, and mutations are not safe to interleave
+  with a search in flight — the same contract `InMemoryTextIndex` documents. Not in this increment: a
+  write-ahead log, so the overlay between writes is not durable; positions, so a phrase query over a
+  store re-tokenizes; and fields, so a document reads back as its id and its text.
+
 - **`ISpanTokenizer.TokenizeNormalized` and `NormalizedTerm` — tokenize without building a term that
   is already there.**
 
