@@ -184,6 +184,13 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     /// <inheritdoc />
     public int Count => _reader.DocumentCount;
 
+    /// <summary>
+    /// Every term this segment holds, in dictionary order. Internal so a chain can merge the
+    /// dictionaries of its generations rather than assuming the vocabularies are disjoint — which they
+    /// are not, when a corpus is split.
+    /// </summary>
+    internal IEnumerable<string> Terms => _reader.Terms;
+
     /// <inheritdoc />
     public int VocabularySize => _reader.TermCount;
 
@@ -305,17 +312,89 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     int IAccumulatingIndex.OrdinalSpace => Count;
 
     /// <inheritdoc />
-    SearchDocument? IAccumulatingIndex.DocumentAt(int ordinal) =>
+    SearchDocument? IAccumulatingIndex.DocumentAt(int ordinal) => DocumentAt(ordinal);
+
+    /// <inheritdoc />
+    int IAccumulatingIndex.OrdinalOf(string documentId) => OrdinalOf(documentId);
+
+    /// <summary>The document at <paramref name="ordinal"/>, or <c>null</c> when that slot is free.</summary>
+    /// <remarks>Internal so a chain can resolve across its generations; a segment has no gaps.</remarks>
+    internal SearchDocument? DocumentAt(int ordinal) =>
         ordinal >= 0 && ordinal < Count ? _reader.Document(ordinal) : null;
 
-    /// <inheritdoc />
-    int IAccumulatingIndex.OrdinalOf(string documentId) =>
+    /// <summary>The ordinal of the document with this id, or <c>-1</c>.</summary>
+    internal int OrdinalOf(string documentId) =>
         documentId is not null && _ordinals.TryGetValue(documentId, out int ordinal) ? ordinal : -1;
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Copies this segment's token counts into <paramref name="destination"/> at
+    /// <paramref name="offset"/>, so a chain reads a document's length at its global ordinal.
+    /// </summary>
+    internal void CopyLengthsInto(int[] destination, int offset)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+
+        if (offset < 0 || offset + Count > destination.Length)
+            throw new ArgumentException("the destination does not hold this segment at that offset", nameof(destination));
+
+        Array.Copy(_lengths, 0, destination, offset, Count);
+    }
+
+    /// <summary>
+    /// Writes this segment's postings for <paramref name="term"/> into <paramref name="destination"/>
+    /// as chain-wide ordinals, and returns how many it wrote.
+    /// </summary>
+    /// <remarks>
+    /// The candidate path's input: a chain unions a term's postings across its segments, and each
+    /// segment's local ordinals are shifted by the base the chain owns them at. Walking the blocks
+    /// here rather than in the chain keeps the source-backed reader's scratch buffer private to one
+    /// walk.
+    /// </remarks>
+    internal int CollectGlobalOrdinals(string term, int offset, Span<int> destination)
+    {
+        if (offset < 0)
+            throw new ArgumentOutOfRangeException(nameof(offset));
+
+        if (!_reader.TryFindTerm(term.AsSpan(), out _, out var postings))
+            return 0;
+
+        int written = 0;
+
+        while (postings.MoveNext())
+        {
+            while (postings.TryReadEntry(out int ordinal, out _))
+            {
+                if (written == destination.Length)
+                    throw new ArgumentException("the destination is smaller than the term's postings", nameof(destination));
+
+                destination[written++] = ordinal + offset;
+            }
+        }
+
+        return written;
+    }
 
     /// <inheritdoc />
-    void IAccumulatingIndex.Accumulate<TWeight>(TWeight weight, ScoreAccumulator accumulator)
+    void IAccumulatingIndex.Accumulate<TWeight>(TWeight weight, ScoreAccumulator accumulator) =>
+        Accumulate(weight, accumulator, 0, _lengths);
+
+    /// <summary>
+    /// Folds this segment's postings for one term into <paramref name="accumulator"/>, each entry
+    /// recorded at <c>segmentLocalOrdinal + <paramref name="offset"/></c>.
+    /// </summary>
+    /// <remarks>
+    /// The offset is what lets a chain present one ordinal space across its generations: every segment
+    /// owns a contiguous range of the chain's ordinals, so folding each segment at its base puts every
+    /// document in the whole chain at exactly one ordinal, and the accumulator's <c>Record</c> behaves
+    /// exactly as it does for a single index. <paramref name="lengths"/> is the chain's length array,
+    /// because a document's length is read at its global ordinal.
+    /// </remarks>
+    internal void Accumulate<TWeight>(
+        TWeight weight,
+        ScoreAccumulator accumulator,
+        int offset,
+        int[] lengths)
+        where TWeight : struct, IPostingWeight
     {
         if (!_reader.TryFindTerm(weight.Term.AsSpan(), out int df, out var postings))
             return;
@@ -323,11 +402,12 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
         // A decoded cache turns a repeat look-up of a hot term into exactly the in-memory index's
         // walk: the same flat arrays, the same ascending entry order, so the sums are bit-identical
         // to a fresh decode. The fill decodes once and reuses; the budget decides what stays.
+        // The cache holds segment-local ordinals, so the offset is applied on the way in.
         if (_decoded is { } decoded)
         {
             if (decoded.TryGet(weight.Term, out var ordinalsCache, out var frequenciesCache))
             {
-                Fold(ordinalsCache, frequenciesCache, weight, accumulator);
+                Fold(ordinalsCache, frequenciesCache, weight, accumulator, offset, lengths);
                 return;
             }
 
@@ -347,7 +427,7 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
             }
 
             decoded.Store(weight.Term, ordinals, frequencies);
-            Fold(ordinals, frequencies, weight, accumulator);
+            Fold(ordinals, frequencies, weight, accumulator, offset, lengths);
             return;
         }
 
@@ -357,7 +437,7 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
         while (postings.MoveNext())
         {
             while (postings.TryReadEntry(out int ordinal, out int frequency))
-                accumulator.Record(ordinal, weight.Weight(frequency, _lengths[ordinal]));
+                accumulator.Record(ordinal + offset, weight.Weight(frequency, lengths[ordinal + offset]));
         }
     }
 
@@ -365,13 +445,18 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
         int[] ordinals,
         int[] frequencies,
         TWeight weight,
-        ScoreAccumulator accumulator)
+        ScoreAccumulator accumulator,
+        int offset = 0,
+        int[]? lengths = null)
         where TWeight : struct, IPostingWeight
     {
-        var lengths = _lengths;
+        var effectiveLengths = lengths ?? _lengths;
 
         for (int i = 0; i < ordinals.Length; i++)
-            accumulator.Record(ordinals[i], weight.Weight(frequencies[i], lengths[ordinals[i]]));
+        {
+            int ordinal = ordinals[i] + offset;
+            accumulator.Record(ordinal, weight.Weight(frequencies[i], effectiveLengths[ordinal]));
+        }
     }
 
     /// <summary>The document with this id, or <c>null</c>. Reads through the same cache as the others.</summary>
