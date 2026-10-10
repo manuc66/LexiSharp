@@ -239,8 +239,11 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     /// <paramref name="ordinals"/> and <paramref name="frequencies"/> as chain-wide ordinals, and
     /// returns how many it wrote.
     /// </summary>
-    internal int CollectOverlayPostings(string term, Span<int> ordinals, Span<int> frequencies) =>
+    internal void CollectOverlayPostings(string term, List<int> ordinals, List<int> frequencies) =>
         _overlay.CollectGlobalPostings(term, _segmentOrdinalSpace, ordinals, frequencies);
+
+    /// <summary>How many documents of the overlay hold the term, distinct.</summary>
+    internal int OverlayPostingCount(string term) => _overlay.CountPostings(term);
 
     /// <summary>
     /// Writes the chain's live corpus as one new segment and returns it, leaving this chain untouched.
@@ -291,13 +294,24 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
 
     /// <summary>Whether the chain's tombstone count has passed a share of its documents.</summary>
     /// <remarks>
-    /// The threshold is measured. A tombstone costs the fold a membership test per posting entry, which
-    /// is <b>1.18× a head query at 10 ‰ deleted and falls from there</b> — so the first per cent of
-    /// deletions costs most of the tax, and merging past that buys little. The tax also goes slightly
-    /// negative at high rates, because a skipped posting is a <c>Record</c> the accumulator never does.
+    /// The share is of the <b>live</b> documents, not of the segments' own ordinal space: a chain whose
+    /// corpus sits in the overlay has an empty segment and would otherwise never merge at all, and a
+    /// chain whose segments are dense would merge far too readily. The threshold itself is measured —
+    /// a tombstone costs the fold a membership test per posting entry, which is <b>1.18× a head query at
+    /// 10 ‰ deleted and falls from there</b>, so the first per cent of deletions costs most of the tax.
     /// </remarks>
-    public bool ShouldMerge(double threshold = MergeThreshold) =>
-        _segmentOrdinalSpace > 0 && _dead.Count >= _segmentOrdinalSpace * threshold;
+    public bool ShouldMerge(double threshold = MergeThreshold)
+    {
+        if (threshold <= 0)
+            return true;
+
+        if (_dead.Count == 0)
+            return false;
+
+        int live = _segmentOrdinalSpace + _overlay.Count - _dead.Count;
+
+        return live > 0 && _dead.Count >= live * threshold;
+    }
 
     /// <summary>
     /// The default share of a segment's documents a tombstone count must pass before a merge is worth
@@ -400,12 +414,25 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     /// </remarks>
 
     /// <inheritdoc />
-    int IAccumulatingIndex.OrdinalSpace => StatisticDocumentCount;
+    /// <summary>
+    /// The size of the ordinal space the fold writes into, and the size the accumulator is rented at.
+    /// </summary>
+    /// <remarks>
+    /// This is <b>not</b> <see cref="StatisticDocumentCount"/>. A document removed from the overlay
+    /// frees its ordinal, and the overlay hands that ordinal to the next document rather than growing —
+    /// so the space the fold addresses is the segments plus the overlay's <i>capacity</i>, which can
+    /// exceed the live count. Using the live count here would address an ordinal outside the
+    /// accumulator, and the read path and the flush source would both index outside their arrays.
+    /// </remarks>
+    int IAccumulatingIndex.OrdinalSpace => _segmentOrdinalSpace + _overlay.OrdinalCapacity;
 
     /// <inheritdoc />
     SearchDocument? IAccumulatingIndex.DocumentAt(int ordinal)
     {
-        if (ordinal < 0 || ordinal >= StatisticDocumentCount)
+        // Bounded by the ordinal space the fold addresses, not by the live document count: a document
+        // removed from the overlay frees its ordinal but the space keeps it, so the live count is
+        // smaller than the range a valid ordinal can land in.
+        if (ordinal < 0 || ordinal >= _segmentOrdinalSpace + _overlay.OrdinalCapacity)
             return null;
 
         if (ordinal >= _segmentOrdinalSpace)
@@ -709,13 +736,19 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     }
 
     /// <summary>A live view over the chain's ordinal space: no document is decoded until it is asked for.</summary>
+    /// <remarks>
+    /// It walks the <b>ordinal space</b>, not the live document count. A document removed from the
+    /// overlay frees its ordinal but the space keeps it, so the live count is smaller than the range a
+    /// valid ordinal can land in — and iterating the count stops before the last document whenever one
+    /// has been removed.
+    /// </remarks>
     private sealed class ChainDocumentView(SegmentChain owner) : IReadOnlyCollection<SearchDocument>
     {
         public int Count => owner.Count;
 
         public IEnumerator<SearchDocument> GetEnumerator()
         {
-            for (int ordinal = 0; ordinal < owner.StatisticDocumentCount; ordinal++)
+            for (int ordinal = 0; ordinal < ((IAccumulatingIndex)owner).OrdinalSpace; ordinal++)
             {
                 if (((IAccumulatingIndex)owner).DocumentAt(ordinal) is { } document)
                     yield return document;

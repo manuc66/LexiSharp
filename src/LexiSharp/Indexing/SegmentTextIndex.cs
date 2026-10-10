@@ -185,6 +185,12 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     public int Count => _reader.DocumentCount;
 
     /// <summary>
+    /// The bytes this segment was read from, or <c>null</c> when the source does not hold them — a
+    /// memory-mapped segment fetched its blocks out of a mapping and kept nothing.
+    /// </summary>
+    internal byte[]? TryGetBytes() => _reader.TryGetBytes();
+
+    /// <summary>
     /// Every term this segment holds, in dictionary order. Internal so a chain can merge the
     /// dictionaries of its generations rather than assuming the vocabularies are disjoint — which they
     /// are not, when a corpus is split.
@@ -338,6 +344,62 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
             throw new ArgumentException("the destination does not hold this segment at that offset", nameof(destination));
 
         Array.Copy(_lengths, 0, destination, offset, Count);
+    }
+
+
+    /// <summary>
+    /// Finds <paramref name="term"/> in the dictionary and reports the cursor over its postings, the
+    /// same one <see cref="IAccumulatingIndex.Accumulate"/> would fold over.
+    /// </summary>
+    /// <remarks>
+    /// Exposed for the flush source, which walks a term's postings to write them back out. A cursor
+    /// returned here is valid only until the next one is taken on the same reader.
+    /// </remarks>
+    /// <summary>
+    /// Appends this segment's postings for <paramref name="term"/> to the caller's lists as chain-wide
+    /// ordinals.
+    /// </summary>
+    /// <remarks>
+    /// The whole walk lives here rather than in the caller, because a <see cref="PostingBlockReader"/>
+    /// is a <c>ref struct</c>: a cursor handed out across a call boundary is a copy whose state the
+    /// caller cannot safely hold, and a second walk taken while the first is live would disturb the
+    /// reader's scratch buffer.
+    /// </remarks>
+    internal void AppendGlobalPostings(
+        string term,
+        int offset,
+        List<int> ordinals,
+        List<int> frequencies)
+    {
+        if (!_reader.TryFindTerm(term.AsSpan(), out _, out var postings))
+            return;
+
+        while (postings.MoveNext())
+        {
+            while (postings.TryReadEntry(out int local, out int frequency))
+            {
+                ordinals.Add(local + offset);
+                frequencies.Add(frequency);
+            }
+        }
+    }
+
+    /// <summary>How many posting entries this segment holds for the term — one per occurrence.</summary>
+    /// <remarks>
+    /// A separate count from <see cref="DocumentFrequency"/>, which counts distinct documents. Sizing a
+    /// buffer on the latter under-counts every repeated term, which is most of them.
+    /// </remarks>
+    internal int CountPostings(string term)
+    {
+        if (!_reader.TryFindTerm(term.AsSpan(), out _, out var postings))
+            return 0;
+
+        int entries = 0;
+
+        while (postings.MoveNext())
+            entries += postings.Count;
+
+        return entries;
     }
 
     /// <summary>

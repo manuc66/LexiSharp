@@ -72,6 +72,9 @@ internal sealed class SegmentReader
         _termsTableOffset = TableOffset(32, TermCount, sizeof(int), "terms");
     }
 
+    /// <summary>The bytes this segment was read from, or <c>null</c> when the source does not hold them.</summary>
+    public byte[]? TryGetBytes() => _source is ArraySegmentSource source ? source.Bytes : null;
+
     /// <summary>Documents the segment holds.</summary>
     public int DocumentCount { get; }
 

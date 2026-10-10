@@ -45,6 +45,9 @@ internal abstract class SegmentSource
 /// <summary>A segment held in a byte array: every read is a slice of it.</summary>
 internal sealed class ArraySegmentSource(byte[] bytes) : SegmentSource
 {
+    /// <summary>The bytes this source reads, so a caller can write them out unchanged.</summary>
+    public byte[] Bytes => bytes;
+
     public override int Length => bytes.Length;
 
     public override int ReadInt32(int offset) => BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset));

@@ -196,24 +196,16 @@ internal sealed class SegmentOverlay
     /// Writes this overlay's postings for <paramref name="term"/> into <paramref name="ordinals"/> and
     /// <paramref name="frequencies"/> as chain-wide ordinals, and returns how many it wrote.
     /// </summary>
-    public int CollectGlobalPostings(string term, int offset, Span<int> ordinals, Span<int> frequencies)
+    public void CollectGlobalPostings(string term, int offset, List<int> ordinals, List<int> frequencies)
     {
         if (!_postings.TryGetValue(term, out var postings))
-            return 0;
-
-        int written = 0;
+            return;
 
         foreach (var (ordinal, frequency) in postings)
         {
-            if (written == ordinals.Length)
-                throw new ArgumentException("the destination is smaller than the term's postings", nameof(ordinals));
-
-            ordinals[written] = ordinal + offset;
-            frequencies[written] = frequency;
-            written++;
+            ordinals.Add(ordinal + offset);
+            frequencies.Add(frequency);
         }
-
-        return written;
     }
 
     /// <summary>The token count of the document with this id, or 0.</summary>
@@ -249,6 +241,10 @@ internal sealed class SegmentOverlay
         _ordinals.TryGetValue(documentId, out int ordinal)
             ? _termsByOrdinal[ordinal].Count(t => string.Equals(t, term, StringComparison.Ordinal))
             : 0;
+
+    /// <summary>How many posting entries the overlay holds for the term — one per occurrence.</summary>
+    public int CountPostings(string term) =>
+        _postings.TryGetValue(term, out var postings) ? postings.Count : 0;
 
     /// <summary>Total occurrences of the term across the overlay.</summary>
     public int CorpusFrequency(string term)
