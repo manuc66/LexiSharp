@@ -43,15 +43,21 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
         ArgumentNullException.ThrowIfNull(chain);
 
         _chain = chain;
-        _renumber = new int[chain.StatisticDocumentCount];
-        _lengths = new int[chain.StatisticDocumentCount];
+
+        // Bounded by the ordinal space the fold addresses, not by the live document count: a document
+        // removed from the overlay frees its ordinal but the space keeps it, so the live count is
+        // smaller than the range a valid ordinal can land in.
+        int space = ((IAccumulatingIndex)chain).OrdinalSpace;
+
+        _renumber = new int[space];
+        _lengths = new int[space];
 
         // The live documents, in chain order, renumbered densely. Tombstoned and freed ordinals map to
         // -1 and are skipped everywhere below.
-        _byLocal = new SearchDocument?[chain.StatisticDocumentCount];
+        _byLocal = new SearchDocument?[space];
         int local = 0;
 
-        for (int ordinal = 0; ordinal < chain.StatisticDocumentCount; ordinal++)
+        for (int ordinal = 0; ordinal < space; ordinal++)
         {
             var document = ((IAccumulatingIndex)chain).DocumentAt(ordinal);
 
@@ -117,6 +123,28 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
 
     public int CorpusFrequency(string term) => _chain.CorpusFrequency(term);
 
+    /// <summary>
+    /// Capacity for one term's postings, summed across the chain's sources.
+    /// </summary>
+    /// <remarks>
+    /// Summed as <b>occurrences</b>, not document frequencies: a segment's df counts distinct
+    /// documents while its postings hold one entry per occurrence, and a term appearing twice in a
+    /// document is two entries. This is measured by walking the postings, and the walk happens here
+    /// rather than in the caller so that the writer's own cursor over a term's region is not disturbed
+    /// by a second walk of the same segment.
+    /// </remarks>
+    private int PostingCapacity(string term)
+    {
+        int capacity = 0;
+
+        for (int s = 0; s < _chain.SegmentCount; s++)
+            capacity += _chain.SegmentsForTest[s].CountPostings(term);
+
+        capacity += _chain.OverlayPostingCount(term);
+
+        return capacity;
+    }
+
     public int TermFrequency(string documentId, string term) => _chain.TermFrequency(documentId, term);
 
     public int DocumentLength(string documentId) => _chain.DocumentLength(documentId);
@@ -148,53 +176,79 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
     void IAccumulatingIndex.Accumulate<TWeight>(TWeight weight, ScoreAccumulator accumulator) =>
         throw new NotSupportedException("a flush source is written, not searched");
 
+    /// <summary>
+    /// Resolves a term to its postings in the dense space, across every generation and the overlay.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One walk per source, in generation order then the overlay — the same order the fold sees them,
+    /// so the frequencies are the numbers the read path summed. The walk appends to a list rather than
+    /// into a pre-sized array: the size a term's postings will take is not known without walking them,
+    /// and a second walk to find out would disturb the reader's scratch.
+    /// </para>
+    /// <para>
+    /// A <see cref="SegmentReader"/> that cannot view its bytes fetches blocks into one scratch buffer,
+    /// so two walks of the same segment interleaved overwrite each other. Every walk here is finished
+    /// before the next begins.
+    /// </para>
+    /// </remarks>
     bool ISpanAccumulatingIndex.TryResolvePostings(ReadOnlySpan<char> term, out PostingView postings)
     {
         var encoded = term.ToString();
-        int df = _chain.DocumentFrequency(encoded);
+        var ordinals = new List<int>();
+        var frequencies = new List<int>();
 
-        if (df == 0)
-        {
-            postings = default;
-
-            return false;
-        }
-
-        var ordinals = new int[df];
-        var frequencies = new int[df];
-        int written = 0;
-
-        // Every generation, in order, then the overlay — the same order the fold sees them, so the
-        // frequencies are the same numbers the read path summed.
         for (int s = 0; s < _chain.SegmentCount; s++)
-            written += _chain.SegmentsForTest[s].CollectGlobalPostings(
+            _chain.SegmentsForTest[s].AppendGlobalPostings(
                 encoded,
                 _chain.BaseOf(s),
-                ordinals.AsSpan(written),
-                frequencies.AsSpan(written));
+                ordinals,
+                frequencies);
 
-        written += _chain.CollectOverlayPostings(encoded, ordinals.AsSpan(written), frequencies.AsSpan(written));
+        // The overlay's postings are held in memory, so they cost no fetch and no walk of a region.
+        _chain.CollectOverlayPostings(encoded, ordinals, frequencies);
 
-        // Renumber into the dense space, dropping the tombstoned and the freed.
-        var compacted = new int[written];
-        var compactedFrequencies = new int[written];
-        int kept = 0;
+        // Renumber into the dense space, dropping the tombstoned and the freed, and aggregate the
+        // occurrences a document holds into one entry: the layout stores one (ordinal, frequency) pair
+        // per document with an ascending, strictly distinct ordinal, and a document holding a term three
+        // times is one posting with a frequency of 3 — not three postings.
+        var compacted = new List<int>();
+        var compactedFrequencies = new List<int>();
 
-        for (int i = 0; i < written; i++)
+        for (int i = 0; i < ordinals.Count; i++)
         {
-            int local = _renumber[ordinals[i]];
+            int renumbered = _renumber[ordinals[i]];
 
-            if (local < 0)
+            if (renumbered < 0)
                 continue;
 
-            compacted[kept] = local;
-            compactedFrequencies[kept] = frequencies[i];
-            kept++;
+            int local = renumbered;
+
+            // The sources are walked in ascending ordinal order and each document's occurrences land
+            // consecutively, so the last entry written is this document's when the ordinals repeat.
+            if (compacted.Count > 0 && compacted[^1] == local)
+            {
+                compactedFrequencies[^1] += frequencies[i];
+
+                continue;
+            }
+
+            compacted.Add(local);
+            compactedFrequencies.Add(frequencies[i]);
+        }
+
+        if (compacted.Count == 0)
+        {
+            // Every document carrying the term is gone. The term still belongs in the dictionary —
+            // dropping it would change the vocabulary — so it is written with an empty posting list.
+            postings = new PostingView([], [], _lengths);
+
+            return true;
         }
 
         postings = new PostingView(
-            compacted.AsSpan(0, kept).ToArray(),
-            compactedFrequencies.AsSpan(0, kept).ToArray(),
+            System.Linq.Enumerable.ToArray(compacted),
+            System.Linq.Enumerable.ToArray(compactedFrequencies),
             _lengths);
 
         return true;
