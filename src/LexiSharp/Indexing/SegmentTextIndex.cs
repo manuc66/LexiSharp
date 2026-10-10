@@ -380,6 +380,42 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
 
     /// <summary>
     /// Folds this segment's postings for one term into <paramref name="accumulator"/>, each entry
+    /// recorded at <c>segmentLocalOrdinal + <paramref name="offset"/></c>, skipping the ordinals in
+    /// <paramref name="dead"/>.
+    /// </summary>
+    /// <remarks>
+    /// The tombstone test is one set lookup per posting entry, and that is the expensive part of a
+    /// versioned index: measured end to end it makes the head query <b>2.1-2.5× slower</b>, not the
+    /// 3 ns an isolated loop suggests. A per-block window bitmap was tried and bought nothing at
+    /// realistic deletion rates, because nearly every 128-ordinal window already holds a dead ordinal.
+    /// </remarks>
+    internal void Accumulate<TWeight>(
+        TWeight weight,
+        ScoreAccumulator accumulator,
+        int offset,
+        int[] lengths,
+        HashSet<int> dead)
+        where TWeight : struct, IPostingWeight
+    {
+        if (!_reader.TryFindTerm(weight.Term.AsSpan(), out _, out var postings))
+            return;
+
+        while (postings.MoveNext())
+        {
+            while (postings.TryReadEntry(out int ordinal, out int frequency))
+            {
+                int global = ordinal + offset;
+
+                if (dead.Contains(global))
+                    continue;
+
+                accumulator.Record(global, weight.Weight(frequency, lengths[global]));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Folds this segment's postings for one term into <paramref name="accumulator"/>, each entry
     /// recorded at <c>segmentLocalOrdinal + <paramref name="offset"/></c>.
     /// </summary>
     /// <remarks>
