@@ -341,6 +341,38 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     }
 
     /// <summary>
+    /// Writes this segment's postings for <paramref name="term"/> into <paramref name="ordinals"/> and
+    /// <paramref name="frequencies"/> as chain-wide ordinals, and returns how many it wrote.
+    /// </summary>
+    /// <remarks>
+    /// The flush path's input: a merge writes one segment from the union of the chain's generations and
+    /// needs each term's frequencies as well as its ordinals. Walking the blocks here rather than in
+    /// the writer keeps the source-backed reader's scratch buffer private to one walk.
+    /// </remarks>
+    internal int CollectGlobalPostings(string term, int offset, Span<int> ordinals, Span<int> frequencies)
+    {
+        if (!_reader.TryFindTerm(term.AsSpan(), out _, out var postings))
+            return 0;
+
+        int written = 0;
+
+        while (postings.MoveNext())
+        {
+            while (postings.TryReadEntry(out int ordinal, out int frequency))
+            {
+                if (written == ordinals.Length)
+                    throw new ArgumentException("the destination is smaller than the term's postings", nameof(ordinals));
+
+                ordinals[written] = ordinal + offset;
+                frequencies[written] = frequency;
+                written++;
+            }
+        }
+
+        return written;
+    }
+
+    /// <summary>
     /// Writes this segment's postings for <paramref name="term"/> into <paramref name="destination"/>
     /// as chain-wide ordinals, and returns how many it wrote.
     /// </summary>

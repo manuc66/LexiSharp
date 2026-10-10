@@ -144,9 +144,114 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
 
     /// <summary>
     /// The chain's segments, oldest first. Internal for the tests that assert a chain inherits a
-    /// segment's capabilities rather than reimplementing them.
+    /// segment's capabilities rather than reimplementing them, and for the flush source that writes
+    /// them back out.
     /// </summary>
     internal IReadOnlyList<SegmentTextIndex> SegmentsForTest => _segments;
+
+    /// <summary>The global ordinal at which the segment at <paramref name="index"/> starts.</summary>
+    internal int BaseOf(int index) => _bases[index];
+
+    /// <summary>
+    /// Every distinct term in the chain, in code-point order — the format's dictionary order.
+    /// </summary>
+    internal string[] CollectDistinctTerms()
+    {
+        var terms = new List<string>();
+        var cursors = new IEnumerator<string>[_segments.Length];
+        var current = new string?[_segments.Length];
+
+        try
+        {
+            for (int i = 0; i < _segments.Length; i++)
+            {
+                cursors[i] = _segments[i].Terms.GetEnumerator();
+                current[i] = cursors[i].MoveNext() ? cursors[i].Current : null;
+            }
+
+            string? last = null;
+
+            while (true)
+            {
+                // The smallest term any cursor holds; the ties are taken together, which is the dedup.
+                string? smallest = null;
+
+                for (int i = 0; i < current.Length; i++)
+                {
+                    if (current[i] is null)
+                        continue;
+
+                    if (smallest is null || string.CompareOrdinal(current[i], smallest) < 0)
+                        smallest = current[i];
+                }
+
+                if (smallest is null)
+                    break;
+
+                if (last is null || string.CompareOrdinal(smallest, last) != 0)
+                {
+                    terms.Add(smallest);
+                    last = smallest;
+                }
+
+                for (int i = 0; i < current.Length; i++)
+                {
+                    if (current[i] is not null && string.CompareOrdinal(current[i], smallest) == 0)
+                        current[i] = cursors[i].MoveNext() ? cursors[i].Current : null;
+                }
+            }
+
+            // The overlay's terms are not in the segments' order, so they are sorted and merged in
+            // rather than appended: appending would drop every overlay term that sorts before the last
+            // segment term, which is most of them.
+            var overlayTerms = new List<string>(_overlay.Terms);
+            overlayTerms.Sort(StringComparer.Ordinal);
+
+            int segment = 0;
+
+            foreach (string term in overlayTerms)
+            {
+                // Advance past every segment term that sorts strictly before this one.
+                while (segment < terms.Count && string.CompareOrdinal(terms[segment], term) < 0)
+                    segment++;
+
+                // Already counted from a segment's dictionary.
+                if (segment < terms.Count && string.CompareOrdinal(terms[segment], term) == 0)
+                    continue;
+
+                terms.Insert(segment, term);
+                segment++;
+            }
+
+            return [.. terms];
+        }
+        finally
+        {
+            foreach (var cursor in cursors)
+                cursor?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Writes the overlay's postings for <paramref name="term"/> into
+    /// <paramref name="ordinals"/> and <paramref name="frequencies"/> as chain-wide ordinals, and
+    /// returns how many it wrote.
+    /// </summary>
+    internal int CollectOverlayPostings(string term, Span<int> ordinals, Span<int> frequencies) =>
+        _overlay.CollectGlobalPostings(term, _segmentOrdinalSpace, ordinals, frequencies);
+
+    /// <summary>
+    /// Writes the chain's live corpus as one new segment and returns it, leaving this chain untouched.
+    /// </summary>
+    /// <remarks>
+    /// A write is a compaction: tombstoned documents drop out, the live ones are renumbered densely, and
+    /// every ordinal changes. The chain being written from is not modified — a caller swaps the new
+    /// segment in, which is what lets a reader see a consistent corpus while a write happens.
+    /// </remarks>
+    public SegmentTextIndex Flush() => new(SegmentWriter.Write((ITextIndex)new SegmentFlushSource(this)));
+
+    /// <summary>Removes the tombstone for the document at this global ordinal, and returns whether it was there.</summary>
+    internal bool DropTombstone(int globalOrdinal) => _dead.Remove(globalOrdinal);
 
     /// <summary>Documents removed from the segments and not yet merged away.</summary>
     public int TombstoneCount => _dead.Count;
@@ -207,7 +312,7 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     public int StatisticDocumentCount => _segmentOrdinalSpace + _overlay.Count;
 
     /// <inheritdoc />
-    public int VocabularySize => CountDistinctTerms();
+    public int VocabularySize => CollectDistinctTerms().Length;
 
     /// <inheritdoc />
     public long CorpusTokenCount => _segmentTokens + _overlay.TokenCount;
@@ -238,73 +343,6 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     /// The segments' dictionaries are each sorted by code point, so the union is a merge rather than a
     /// set — nothing proportional to the vocabulary is retained.
     /// </remarks>
-    private int CountDistinctTerms()
-    {
-        var cursors = new IEnumerator<string>[_segments.Length];
-        var current = new string?[_segments.Length];
-        int distinct = 0;
-        string? last = null;
-
-        try
-        {
-            for (int i = 0; i < _segments.Length; i++)
-            {
-                cursors[i] = _segments[i].Terms.GetEnumerator();
-                current[i] = cursors[i].MoveNext() ? cursors[i].Current : null;
-            }
-
-            while (true)
-            {
-                // The smallest term any cursor holds; the ties are taken together, which is the dedup.
-                string? smallest = null;
-
-                for (int i = 0; i < current.Length; i++)
-                {
-                    if (current[i] is null)
-                        continue;
-
-                    if (smallest is null || string.CompareOrdinal(current[i], smallest) < 0)
-                        smallest = current[i];
-                }
-
-                if (smallest is null)
-                    break;
-
-                if (last is null || string.CompareOrdinal(smallest, last) != 0)
-                {
-                    distinct++;
-                    last = smallest;
-                }
-
-                for (int i = 0; i < current.Length; i++)
-                {
-                    if (current[i] is not null && string.CompareOrdinal(current[i], smallest) == 0)
-                        current[i] = cursors[i].MoveNext() ? cursors[i].Current : null;
-                }
-            }
-
-            // The overlay's terms are not in the segments' order, so they are sorted and merged in
-            // separately: two of them may be the same term, and a term may already have been counted.
-            var overlayTerms = new List<string>(_overlay.Terms);
-            overlayTerms.Sort(StringComparer.Ordinal);
-
-            foreach (string term in overlayTerms)
-            {
-                if (last is not null && string.CompareOrdinal(term, last) <= 0)
-                    continue;
-
-                distinct++;
-                last = term;
-            }
-
-            return distinct;
-        }
-        finally
-        {
-            foreach (var cursor in cursors)
-                cursor?.Dispose();
-        }
-    }
 
     /// <inheritdoc />
     int IAccumulatingIndex.OrdinalSpace => StatisticDocumentCount;
