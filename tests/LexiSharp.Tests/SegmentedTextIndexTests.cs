@@ -405,7 +405,137 @@ public class SegmentedTextIndexTests
         return (memory, store.Commit(), engines);
     }
 
-    private static readonly string[] QuerySet = ["common", "rareword", "term0 term1", "term5"];
+    [Fact]
+    public void AMappedStoreServesTheSamePageAsAnArrayStore()
+    {
+        // The only thing that makes a second opening mode honest: the same page, bit for bit. A mapped
+        // source cannot be viewed, so the fold pays a copy out of the mapping per posting block and the
+        // engine takes the string path — and neither is allowed to move a score.
+        string array = NewDirectory();
+        string mapped = NewDirectory();
+
+        try
+        {
+            Seed(array);
+            Seed(mapped);
+
+            using var mappedStore = new SegmentedTextIndex(mapped, tokenizer: null, SegmentSourceMode.Mapped);
+            var arrayStore = new SegmentedTextIndex(array);
+
+            Assert.Equal(SegmentSourceMode.Mapped, mappedStore.Mode);
+            Assert.Equal(SegmentSourceMode.Array, arrayStore.Mode);
+            Assert.Equal(arrayStore.Count, mappedStore.Count);
+
+            var mappedEngine = new RankedTextSearchEngine(mappedStore, new Bm25Scorer());
+            var arrayEngine = new RankedTextSearchEngine(arrayStore, new Bm25Scorer());
+
+            foreach (string query in QuerySet)
+                AssertSamePage(query, arrayEngine.Search(query), mappedEngine.Search(query));
+        }
+        finally
+        {
+            if (Directory.Exists(array)) Directory.Delete(array, recursive: true);
+            if (Directory.Exists(mapped)) Directory.Delete(mapped, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AMappedStoreCommitsAndKeepsItsMode()
+    {
+        string directory = NewDirectory();
+
+        try
+        {
+            Seed(directory);
+
+            using var store = new SegmentedTextIndex(directory, tokenizer: null, SegmentSourceMode.Mapped);
+            var committed = store.Commit();
+
+            // The mode survives the commit, so a store that maps does not silently fall back to reading.
+            Assert.Equal(SegmentSourceMode.Mapped, committed.Mode);
+            Assert.Equal(1, committed.SegmentCount);
+
+            // And it is still searchable through the mapping the commit opened.
+            var engine = new RankedTextSearchEngine(committed, new Bm25Scorer());
+
+            foreach (string query in new[] { "common", "rareword", "term20 term25" })
+                Assert.NotEmpty(engine.Search(query));
+
+            committed.Dispose();
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AMappedStoreIsDisposableAndAnArrayStoreIsNot()
+    {
+        string directory = NewDirectory();
+
+        try
+        {
+            Seed(directory);
+
+            // An array store holds nothing that needs releasing, so disposing is a no-op and an
+            // undisposed one leaks nothing the garbage collector does not own.
+            var arrayStore = new SegmentedTextIndex(directory);
+            arrayStore.Dispose();
+            arrayStore.Dispose();
+
+            // A mapped store holds a view over a file. Dispose is idempotent.
+            var mappedStore = new SegmentedTextIndex(directory, tokenizer: null, SegmentSourceMode.Mapped);
+            mappedStore.Dispose();
+            mappedStore.Dispose();
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AMappedStoreTakesWritesAndServesThem()
+    {
+        string directory = NewDirectory();
+
+        try
+        {
+            Seed(directory);
+
+            using var store = new SegmentedTextIndex(directory, tokenizer: null, SegmentSourceMode.Mapped);
+            var engine = new RankedTextSearchEngine(store, new Bm25Scorer());
+
+            Assert.Empty(engine.Search("brandnewterm"));
+
+            store.Add(new SearchDocument("doc-new", "brandnewterm onlyhere"));
+
+            var found = engine.Search("brandnewterm");
+
+            Assert.Single(found);
+            Assert.Equal("doc-new", found[0].DocumentId);
+
+            Assert.True(store.Remove("doc-new"));
+            Assert.Empty(engine.Search("brandnewterm"));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static void Seed(string directory)
+    {
+        var store = new SegmentedTextIndex(directory);
+
+        foreach (var document in Build().Documents)
+            store.Add(document);
+
+        store.Commit();
+    }
+
+    private static readonly string[] QuerySet = ["common", "rareword", "term20 term25", "term39"];
 
     private static string NewDirectory() =>
         Path.Combine(Path.GetTempPath(), "lexisharp-store-" + System.Guid.NewGuid().ToString("N"));

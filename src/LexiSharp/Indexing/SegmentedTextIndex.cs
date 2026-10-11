@@ -62,17 +62,23 @@ namespace LexiSharp.Indexing;
 /// find the terms it indexed.
 /// </para>
 /// </remarks>
-public sealed class SegmentedTextIndex : ITextIndex
+public sealed class SegmentedTextIndex : ITextIndex, IDisposable
 {
     private readonly string _directory;
     private readonly ITokenizer _tokenizer;
+    private readonly SegmentSourceMode _mode;
+
+    /// <summary>Mappings this store opened and must release, empty unless <see cref="Mode"/> is Mapped.</summary>
+    private readonly List<IDisposable> _owners = [];
+
     private SegmentChain _chain;
 
-    private SegmentedTextIndex(string directory, ITokenizer tokenizer, SegmentChain chain)
+    private SegmentedTextIndex(string directory, ITokenizer tokenizer, SegmentChain chain, SegmentSourceMode mode)
     {
         _directory = directory;
         _tokenizer = tokenizer;
         _chain = chain;
+        _mode = mode;
     }
 
     /// <summary>
@@ -86,23 +92,42 @@ public sealed class SegmentedTextIndex : ITextIndex
     /// The tokenizer the segments were written with. Defaults to <see cref="Tokenizer.Default"/>, which
     /// is what an index built without one uses.
     /// </param>
+    /// <param name="mode">
+    /// How the store's existing segments are opened. <see cref="SegmentSourceMode.Array"/> reads each
+    /// segment into memory — the faster search, and the simpler lifetime.
+    /// <see cref="SegmentSourceMode.Mapped"/> maps it — the smaller heap. See
+    /// <see cref="SegmentSourceMode"/> for what each costs, measured.
+    /// </param>
     /// <exception cref="InvalidDataException">A segment in the directory is not one this reader knows.</exception>
-    public SegmentedTextIndex(string directory, ITokenizer? tokenizer = null)
+    public SegmentedTextIndex(string directory, ITokenizer? tokenizer = null, SegmentSourceMode mode = SegmentSourceMode.Array)
     {
         ArgumentNullException.ThrowIfNull(directory);
 
         _directory = directory;
         _tokenizer = tokenizer ?? Linguistics.Tokenizer.Default;
+        _mode = mode;
 
         var segments = new List<SegmentTextIndex>();
+        var owners = new List<IDisposable>();
 
         foreach (string path in SegmentFiles(directory))
-            segments.Add(new LexiSharp.Indexing.SegmentTextIndex(File.ReadAllBytes(path), _tokenizer));
+        {
+            var handle = OpenSegment(path, _tokenizer, mode);
 
+            segments.Add(handle.Index);
+
+            if (handle.Owner is not null)
+                owners.Add(handle.Owner);
+        }
+
+        _owners = owners;
         _chain = segments.Count == 0
             ? new SegmentChain([EmptySegment()], _tokenizer)
             : new SegmentChain(segments, _tokenizer);
     }
+
+    /// <summary>How this store's segments are opened. A commit keeps the mode it was opened with.</summary>
+    public SegmentSourceMode Mode => _mode;
 
     /// <summary>Documents indexed and not removed.</summary>
     public int Count => _chain.Count;
@@ -165,7 +190,7 @@ public sealed class SegmentedTextIndex : ITextIndex
     {
         SegmentChain merged = _chain.Merge();
 
-        return new SegmentedTextIndex(_directory, _tokenizer, merged);
+        return new SegmentedTextIndex(_directory, _tokenizer, merged, _mode);
     }
 
     /// <summary>
@@ -191,7 +216,7 @@ public sealed class SegmentedTextIndex : ITextIndex
         // written out. Compacting a second time to produce bytes that are a pure function of a corpus
         // that has not changed would pay the 0.6-1.2 s and ~2.9 GB twice for nothing.
         SegmentTextIndex merged = _chain.Flush();
-        var committed = new SegmentedTextIndex(_directory, _tokenizer, new SegmentChain([merged], _tokenizer));
+        var committed = new SegmentedTextIndex(_directory, _tokenizer, new SegmentChain([merged], _tokenizer), _mode);
 
         committed.WriteToDisk(merged);
 
@@ -245,6 +270,54 @@ public sealed class SegmentedTextIndex : ITextIndex
     /// <summary>The tokenizer this store reads and writes with.</summary>
     public ITokenizer Tokenizer => _tokenizer;
 
+    /// <summary>
+    /// Releases the mappings this store opened. Idempotent, and a store in
+    /// <see cref="SegmentSourceMode.Array"/> mode has nothing to release.
+    /// </summary>
+    /// <remarks>
+    /// A store in <see cref="SegmentSourceMode.Mapped"/> mode holds a view over a file, and its
+    /// <see cref="SegmentedTextIndex"/> is unusable after it is released — that is a statement about the
+    /// mapping rather than about the search. A store in <see cref="SegmentSourceMode.Array"/> mode holds
+    /// nothing that needs releasing, so disposing it is a no-op and an undisposed one leaks nothing but
+    /// the bytes the garbage collector owns. Set a mapped store on the <c>using</c> you would give any
+    /// other disposable resource.
+    /// </remarks>
+    public void Dispose()
+    {
+        foreach (var owner in _owners)
+            owner.Dispose();
+
+        _owners.Clear();
+    }
+
+    /// <summary>
+    /// Opens one segment file in the mode given, with anything that must be released alongside it.
+    /// </summary>
+    private static SegmentHandle OpenSegment(string path, ITokenizer tokenizer, SegmentSourceMode mode) =>
+        mode == SegmentSourceMode.Mapped
+            ? OpenMapped(path, tokenizer)
+            : new SegmentHandle(new LexiSharp.Indexing.SegmentTextIndex(File.ReadAllBytes(path), tokenizer), null);
+
+    /// <summary>
+    /// Maps one segment file. The mapping is the owner, and it is released when the store is disposed.
+    /// </summary>
+    private static SegmentHandle OpenMapped(string path, ITokenizer tokenizer)
+    {
+        // MappedSegment.Open releases the mapping itself if the index over it cannot be built, so by the
+        // time it returns the index depends on a live view.
+        var mapped = MappedSegment.Open(path, tokenizer);
+
+        return new SegmentHandle(mapped.Index, mapped);
+    }
+
+    /// <summary>One segment the store opened, and the mapping that must be released with it.</summary>
+    private readonly struct SegmentHandle(SegmentTextIndex index, IDisposable? owner)
+    {
+        public SegmentTextIndex Index { get; } = index;
+
+        public IDisposable? Owner { get; } = owner;
+    }
+
     /// <summary>The chain the store searches. Internal for the engine and the decorators.</summary>
     internal SegmentChain Chain => _chain;
 
@@ -289,10 +362,13 @@ public sealed class SegmentedTextIndex : ITextIndex
                 File.Delete(path);
         }
 
-        // Reopen from what is now on disk, so the returned store is the one the directory holds.
-        _chain = new SegmentChain(
-            [new LexiSharp.Indexing.SegmentTextIndex(File.ReadAllBytes(target), _tokenizer)],
-            _tokenizer);
+        // Reopen from what is now on disk, so the returned store is the one the directory holds, and in
+        // the mode it was opened with.
+        var handle = OpenSegment(target, _tokenizer, _mode);
+        _chain = new SegmentChain([handle.Index], _tokenizer);
+
+        if (handle.Owner is not null)
+            _owners.Add(handle.Owner);
     }
 
     private const string SegmentPrefix = "segment-";
