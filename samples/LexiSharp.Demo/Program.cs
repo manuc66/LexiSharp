@@ -112,6 +112,18 @@ app.MapGet("/api/meta", (DemoSearchService service, DemoCorpusSet active) => Res
     // Probed per request rather than captured at startup: which corpora are on disk is a property of
     // the machine, and the page loads this once anyway.
     availableCorpora = DemoCorpusCatalog.Describe(dataDirectory, app.Environment.ContentRootPath),
+    // What the segment lane cost: writing the corpus into the store, committing it to one segment, and
+    // reopening it from disk the way a restart would. Reported because a reader comparing the segment
+    // lane's latency with the lexical lane's has no way to judge the trade without knowing what the
+    // store cost to get there.
+    segment = new
+    {
+        indexMs = service.SegmentCost.IndexMs,
+        commitMs = service.SegmentCost.CommitMs,
+        openMs = service.SegmentCost.OpenMs,
+        documents = service.SegmentCost.Documents,
+        segments = service.SegmentCost.Segments,
+    },
     documentCount = service.DocumentCount,
     queries = active.SampleQueries,
 }));

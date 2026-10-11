@@ -32,6 +32,21 @@ public sealed class DemoSearchService
     private readonly HybridTextSearchEngine _hybrid;
     private readonly RerankedTextSearchEngine _rerank;
 
+    /// <summary>
+    /// The same corpus, served from a committed segment store rather than from memory.
+    /// </summary>
+    /// <remarks>
+    /// This lane exists to make one claim visible: the page a store serves is the page the in-memory
+    /// index serves, bit for bit, and the difference is latency. It is the property the whole segment
+    /// design rests on, and it has only ever been asserted against synthetic corpora — this is the
+    /// first place it is checked on a real one, beside the lane it has to match.
+    /// </remarks>
+    private readonly SegmentedTextIndex _segment;
+    private readonly RankedTextSearchEngine _segmentEngine;
+
+    /// <summary>What the segment lane cost to build, commit and reopen, in milliseconds.</summary>
+    private readonly DemoSegmentCost _segmentCost;
+
     /// <summary>Indexes <paramref name="corpus"/> and builds the five lanes over it.</summary>
     /// <param name="corpus">
     /// The documents every lane is built over. The built-in corpus makes the demo run from a fresh
@@ -88,11 +103,99 @@ public sealed class DemoSearchService
             _hybrid,
             new CrossEncoderReranker(new OverlapCrossEncoder(_tokenizer)));
 
+        // The segment lane: the same documents, the same tokenizer, written to a segment, committed,
+        // and reopened from disk. A caller of the demo sees the page it serves beside the lexical
+        // lane's, which is the parity claim made visible rather than asserted.
+        _segment = BuildSegmentStore(documents, _tokenizer, out DemoSegmentCost cost);
+        _segmentCost = cost;
+        _segmentEngine = new RankedTextSearchEngine(_segment, new Bm25Scorer(), _tokenizer);
+
         WarmUp(corpus);
     }
 
+    /// <summary>
+    /// Writes <paramref name="documents"/> to a segment store, commits it, reopens it from disk, and
+    /// reports what each step cost.
+    /// </summary>
+    /// <remarks>
+    /// The directory is per-process and deleted on exit: the lane's job is to demonstrate reading a
+    /// corpus back from disk, not to persist it between runs. A caller that wants a store on disk
+    /// commits it wherever it likes.
+    /// </remarks>
+    private static SegmentedTextIndex BuildSegmentStore(
+        IReadOnlyList<SearchDocument> documents,
+        ITokenizer tokenizer,
+        out DemoSegmentCost cost)
+    {
+        // A fresh directory per process, so two runs never read each other's segment.
+        string directory = Path.Combine(
+            Path.GetTempPath(),
+            "lexisharp-demo-" + Guid.NewGuid().ToString("N"));
+
+        Directory.CreateDirectory(directory);
+
+        var store = new SegmentedTextIndex(directory, tokenizer);
+
+        // The tokenizer has to be the one the segments are written with: the dictionary holds
+        // normalized terms, so a lookup is by the normalized form. Building the store with any other
+        // tokenizer would serve a page that differs from the lexical lane's in a way nothing here
+        // would notice.
+        var addStarted = Stopwatch.StartNew();
+        store.Index(documents);
+        addStarted.Stop();
+
+        var commitStarted = Stopwatch.StartNew();
+        SegmentedTextIndex committed = store.Commit();
+        commitStarted.Stop();
+
+        var openStarted = Stopwatch.StartNew();
+
+        // Reopen from the directory alone, the way a restart would, so the timing below is what a
+        // process pays to have the corpus searchable again.
+        using var reopened = new SegmentedTextIndex(directory, tokenizer);
+        openStarted.Stop();
+
+        cost = new DemoSegmentCost(
+            addStarted.Elapsed.TotalMilliseconds,
+            commitStarted.Elapsed.TotalMilliseconds,
+            openStarted.Elapsed.TotalMilliseconds,
+            committed.Count,
+            committed.SegmentCount);
+
+        return reopened;
+    }
+
+    /// <summary>What the segment lane cost, in milliseconds, and what it produced.</summary>
+    /// <param name="IndexMs">Writing the corpus into the store's overlay.</param>
+    /// <param name="CommitMs">Flushing the overlay and the tombstones into one segment on disk.</param>
+    /// <param name="OpenMs">Reopening that segment from the directory, as a restart would.</param>
+    /// <param name="Documents">Documents the committed segment holds.</param>
+    /// <param name="Segments">Segments on disk afterwards; a commit keeps it at one.</param>
+    private sealed record DemoSegmentCost(
+        double IndexMs,
+        double CommitMs,
+        double OpenMs,
+        int Documents,
+        int Segments);
+
     /// <summary>Number of indexed documents.</summary>
     public int DocumentCount => _lexical.Count;
+
+    /// <summary>What the segment lane cost to build, commit and reopen, in milliseconds.</summary>
+    public DemoSegmentCostDto SegmentCost => new(
+        _segmentCost.IndexMs,
+        _segmentCost.CommitMs,
+        _segmentCost.OpenMs,
+        _segmentCost.Documents,
+        _segmentCost.Segments);
+
+    /// <summary>The segment lane's cost, for <c>/api/meta</c>.</summary>
+    public sealed record DemoSegmentCostDto(
+        double IndexMs,
+        double CommitMs,
+        double OpenMs,
+        int Documents,
+        int Segments);
 
     /// <summary>Runs the five strategies and returns their pages side by side.</summary>
     public CompareResponse Compare(string query, int limit)
@@ -104,6 +207,7 @@ public sealed class DemoSearchService
             Measure("dense", "Dense · hashing embedding", "cosine over deterministic hashed vectors", () => DenseHits(query, limit)),
             Measure("hybrid", "Hybrid · RRF fusion", "lexical, semantic and dense fused by rank", () => HybridHits(query, limit)),
             Measure("rerank", "Hybrid + reranker", "query-term overlap reorders the hybrid shortlist", () => RerankHits(query, limit)),
+            Measure("segment", "Segment · BM25 from disk", "the same BM25, served from a committed segment", () => SegmentHits(query, limit)),
         };
 
         return new CompareResponse(query, lanes);
@@ -292,6 +396,32 @@ public sealed class DemoSearchService
         }
 
         return results;
+    }
+
+    private IReadOnlyList<HitResult> SegmentHits(string query, int limit)
+    {
+        var results = _segmentEngine.Search(query, new SearchOptions { Limit = limit });
+
+        var hits = new HitResult[results.Count];
+
+        for (int i = 0; i < results.Count; i++)
+        {
+            // The page has to be the lexical lane's page, and the scores have to be the same bits: the
+            // two lanes are the same corpus under the same scorer, and the store's whole claim is that
+            // being on disk changes none of it.
+            var expected = _lexical.Search(query, new LexiSharpQueryOptions(Limit: limit));
+
+            if (expected.Count != results.Count || expected[i].DocumentId != results[i].DocumentId ||
+                BitConverter.DoubleToInt64Bits(expected[i].Score) != BitConverter.DoubleToInt64Bits(results[i].Score))
+                throw new InvalidOperationException("the segment lane's page differs from the lexical lane's");
+
+            // No fields and no highlights: a segment holds a document's id and its text and nothing
+            // else, which is a stated limit of the format rather than a defect in the lane.
+            var hit = results[i];
+            hits[i] = ToHit(hit.DocumentId, hit.Score, hit.Document, null, null);
+        }
+
+        return hits;
     }
 
     private IReadOnlyList<HitResult> SemanticHits(string query, int limit)

@@ -45,7 +45,7 @@
   }
   .chip:hover { color: var(--text); border-color: var(--accent); }
   .meta { color: var(--muted); padding: 0 32px 12px; font-size: 13px; }
-  .lanes { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; padding: 8px 32px 32px; }
+  .lanes { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; padding: 8px 32px 32px; }
   @media (max-width: 1500px) { .lanes { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
   @media (max-width: 980px) { .lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 640px) { .lanes { grid-template-columns: 1fr; } }
@@ -152,7 +152,7 @@
 </aside>
 
 <script type="module">
-const laneColors = { lexical: "var(--accent)", semantic: "var(--accent-2)", dense: "var(--accent-4)", hybrid: "var(--accent-3)", rerank: "#f2789f" };
+const laneColors = { lexical: "var(--accent)", semantic: "var(--accent-2)", dense: "var(--accent-4)", hybrid: "var(--accent-3)", rerank: "#f2789f", segment: "#7ad0c0" };
 const $ = (id) => document.getElementById(id);
 
 function esc(value) {
