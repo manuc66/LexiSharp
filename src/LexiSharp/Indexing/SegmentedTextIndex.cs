@@ -62,7 +62,7 @@ namespace LexiSharp.Indexing;
 /// find the terms it indexed.
 /// </para>
 /// </remarks>
-public sealed class SegmentedTextIndex : ITextIndex, IDisposable
+public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IDisposable
 {
     private readonly string _directory;
     private readonly ITokenizer _tokenizer;
@@ -317,6 +317,14 @@ public sealed class SegmentedTextIndex : ITextIndex, IDisposable
 
         public IDisposable? Owner { get; } = owner;
     }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The union of the store's vocabularies, in code-point order. Without this capability the engine's
+    /// prefix and fuzzy atoms fall back to the atom's literal base term, which answers a different
+    /// question than the one asked without saying so.
+    /// </remarks>
+    IEnumerable<string> IVocabularyIndex.Vocabulary => _chain.CollectDistinctTerms();
 
     /// <summary>The chain the store searches. Internal for the engine and the decorators.</summary>
     internal SegmentChain Chain => _chain;

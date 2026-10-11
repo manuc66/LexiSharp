@@ -116,25 +116,49 @@ internal sealed class SegmentOverlay
 
         _documents[ordinal] = document;
 
+        // The flat view is the union of the body and every text field, exactly as the in-memory index
+        // builds it: a term that only appears in a title must still be reachable, and a document's
+        // length for length normalisation is the union's, not the body's. Tokenizing the body alone
+        // loses the field-only terms from the dictionary and shortens every length — which moves every
+        // score the document takes. The positions the in-memory index records are not recorded here,
+        // because a segment holds none; the term multiset and the total length are what the fold reads.
         var terms = _tokenizer.Tokenize(document.Text);
-        _lengths[ordinal] = terms.Count;
-        _tokens += terms.Count;
+        var allTerms = new List<string>(terms.Count);
+
+        for (int i = 0; i < terms.Count; i++)
+            allTerms.Add(terms[i]);
+
+        if (document.TextFields is { Count: > 0 } fields)
+        {
+            foreach (var (field, text) in fields)
+            {
+                TextFields.Validate(field, nameof(document));
+
+                var fieldTerms = _tokenizer.Tokenize(text);
+
+                for (int i = 0; i < fieldTerms.Count; i++)
+                    allTerms.Add(fieldTerms[i]);
+            }
+        }
+
+        _lengths[ordinal] = allTerms.Count;
+        _tokens += allTerms.Count;
 
         // The index's shared instances, not the tokenizer's: an overlay that retained one string per
         // occurrence would scale with the token count instead of the vocabulary.
-        var distinct = new string[terms.Count];
+        var distinct = new string[allTerms.Count];
 
-        for (int i = 0; i < terms.Count; i++)
-            distinct[i] = terms[i];
+        for (int i = 0; i < allTerms.Count; i++)
+            distinct[i] = allTerms[i];
 
         _termsByOrdinal[ordinal] = distinct;
 
-        for (int i = 0; i < terms.Count; i++)
+        for (int i = 0; i < allTerms.Count; i++)
         {
-            if (!_postings.TryGetValue(terms[i], out var postings))
+            if (!_postings.TryGetValue(allTerms[i], out var postings))
             {
                 postings = [];
-                _postings[terms[i]] = postings;
+                _postings[allTerms[i]] = postings;
             }
 
             // One entry per occurrence, in the order the tokenizer produced them: the frequency is what

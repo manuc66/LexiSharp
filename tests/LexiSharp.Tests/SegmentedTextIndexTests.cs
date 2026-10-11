@@ -525,6 +525,76 @@ public class SegmentedTextIndexTests
         }
     }
 
+    [Fact]
+    public void AStoreIndexesTextFieldContentLikeTheInMemoryIndex()
+    {
+        // The in-memory index's flat view is the union of the body and every text field, so a term that
+        // only appears in a title is reachable and a document's length is the union's. An overlay that
+        // tokenizes the body alone loses both: the field-only terms leave the dictionary and every
+        // length shortens, which moves every score the document takes.
+        //
+        // This was found by the demo's segment lane, whose parity guard refused the page on a corpus
+        // carrying titles — the first place the two lanes were compared on real data.
+        var index = new InMemoryTextIndex();
+
+        index.Add(new SearchDocument(
+            "doc-1",
+            "statin breast cancer survival",
+            TextFields: new Dictionary<string, string>(StringComparer.Ordinal)
+            { ["title"] = "Statin use and breast cancer survival" }));
+
+        string directory = NewDirectory();
+
+        try
+        {
+            var store = new SegmentedTextIndex(directory);
+            store.Index(index.Documents);
+
+            // Every term the in-memory index holds, including the title-only one.
+            foreach (string term in new[] { "statin", "breast", "cancer", "survival", "use" })
+                Assert.Equal(index.DocumentFrequency(term), store.DocumentFrequency(term));
+
+            // And the length is the union's, not the body's.
+            Assert.Equal(index.DocumentLength("doc-1"), store.DocumentLength("doc-1"));
+
+            // A stop word in a field is a stop word exactly as in the body: whatever the tokenizer does
+            // to the body it does to the field, because one tokenizer serves both.
+            Assert.Equal(index.DocumentFrequency("and"), store.DocumentFrequency("and"));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AStoreAnswersTheVocabularySoAPrefixAtomIsNotSilentlyNarrowed()
+    {
+        // Without IVocabularyIndex the engine's prefix and fuzzy atoms fall back to the atom's literal
+        // base term, which answers a different question than the one asked and says nothing.
+        string directory = NewDirectory();
+
+        try
+        {
+            Seed(directory);
+
+            using var store = new SegmentedTextIndex(directory);
+
+            Assert.True(store is IVocabularyIndex);
+
+            var engine = new RankedTextSearchEngine(store, new Bm25Scorer());
+            var expanded = engine.Search("term2*", new SearchOptions { Limit = 100 });
+            var literal = engine.Search("term2", new SearchOptions { Limit = 100 });
+
+            // The prefix reaches every term that starts with the stem, which is more than the stem.
+            Assert.True(expanded.Count > literal.Count, "a prefix atom reached nothing the stem did not");
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static void Seed(string directory)
     {
         var store = new SegmentedTextIndex(directory);
