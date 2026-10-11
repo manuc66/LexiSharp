@@ -59,6 +59,30 @@ workflow.
   write-ahead log, so the overlay between writes is not durable; positions, so a phrase query over a
   store re-tokenizes; and fields, so a document reads back as its id and its text.
 
+- **`SegmentSourceMode`, how a store opens the segments already in its directory.**
+
+  `Array` (the default) reads each segment into memory. `Mapped` maps it. Both were measured on the same
+  corpus and host, with the two variants alternated inside one loop:
+
+  | | `Array` (default) | `Mapped` |
+  |---|---|---|
+  | opening, 40 k / 200 k documents | 6425 / 49307 us | 6644 / 46991 us |
+  | search | 1.00x | 1.10-1.14x |
+  | heap per open, 40 k / 200 k | 15.3 / 75.9 MB | 3.2 / 15.9 MB |
+
+  Opening is at parity, which corrects an earlier figure in the plan that had a mapped source opening
+  2-3x slower - that was taken on a loaded host and does not reproduce. What mapping saves is the
+  segment's own bytes, about 300 a document, growing with segment size; what it costs is a constant
+  ~1.11x on every query and a lifetime, because a mapped store holds a view over a file and must be
+  disposed. `SegmentedTextIndex` becomes `IDisposable` for exactly that reason, and an `Array` store has
+  nothing to release.
+
+  The default is `Array`, and it is a convention rather than a fitted optimum: the saving only becomes
+  the deciding factor when a segment is large enough that its copy into memory stops the store fitting,
+  and which size that is depends on the machine and is not measured here. A store's mode survives a
+  commit, and a mapped store serves the same page bit for bit as an array store - asserted, because
+  that is the only thing that makes a second opening mode honest.
+
 - **`ISpanTokenizer.TokenizeNormalized` and `NormalizedTerm` — tokenize without building a term that
   is already there.**
 

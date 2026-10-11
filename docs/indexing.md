@@ -343,6 +343,27 @@ The tokenizer must be the one the segments were written with: the dictionary hol
 so a lookup is by the normalized form. Mutations are not safe to interleave with a search in flight —
 apply them from one thread, the same contract `InMemoryTextIndex` documents.
 
+### How a store opens its segments
+
+A store opens the segments already in its directory in one of two modes, and the choice is a measured
+trade rather than a matter of taste:
+
+```csharp
+using var store = new SegmentedTextIndex("./corpus", mode: SegmentSourceMode.Mapped);
+```
+
+| | `Array` (default) | `Mapped` |
+|---|---|---|
+| opening, 40 k / 200 k documents | 6425 / 49307 µs | 6644 / 46991 µs |
+| search | 1.00× | **1.10-1.14×** |
+| heap per open, 40 k / 200 k | 15.3 / 75.9 MB | 3.2 / 15.9 MB |
+
+Opening is at parity — a mapped source does *not* open slower, which corrects an earlier figure taken
+on a loaded host. What mapping saves is the segment's own bytes, about 300 a document, and that saving
+is what matters once a segment is large enough that its copy into memory stops the store fitting. What
+it costs is a constant ~1.11× on every query and a lifetime: a mapped store holds a view over a file and
+must be disposed, after which it is unusable. An `Array` store holds nothing that needs releasing.
+
 Not in this increment: a write-ahead log, so the overlay between writes is not durable; positions, so
 a phrase query over a store re-tokenizes; and fields, so a document reads back as its id and its text.
 
