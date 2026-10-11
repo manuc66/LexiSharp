@@ -153,17 +153,30 @@ internal sealed class SegmentOverlay
 
         _termsByOrdinal[ordinal] = distinct;
 
-        for (int i = 0; i < allTerms.Count; i++)
+        // One entry per (term, document), carrying the number of occurrences — not one entry per
+        // occurrence. The accumulator's first touch writes and every later touch adds, so per-occurrence
+        // entries would sum to the right term frequency; the score would still be wrong, because BM25's
+        // saturation is not linear. weight(1) + weight(1) is not weight(2): measured on the parity
+        // fixture, a document holding a term twice scored 0.4722 through one entry of frequency 2 and
+        // 0.6611 through two entries of frequency 1. Every walk over these lists — the fold, the
+        // document frequency, the corpus frequency — therefore expects at most one entry per document.
+        var occurrences = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (string term in allTerms)
         {
-            if (!_postings.TryGetValue(allTerms[i], out var postings))
+            occurrences.TryGetValue(term, out int count);
+            occurrences[term] = count + 1;
+        }
+
+        foreach (var (term, frequency) in occurrences)
+        {
+            if (!_postings.TryGetValue(term, out var postings))
             {
                 postings = [];
-                _postings[allTerms[i]] = postings;
+                _postings[term] = postings;
             }
 
-            // One entry per occurrence, in the order the tokenizer produced them: the frequency is what
-            // the weight reads, and a term appearing twice in a document is two contributions of one.
-            postings.Add((ordinal, 1));
+            postings.Add((ordinal, frequency));
         }
 
         return ordinal;
