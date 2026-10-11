@@ -595,6 +595,78 @@ public class SegmentedTextIndexTests
         }
     }
 
+    [Fact]
+    public void AStoreScoresARepeatedTermExactlyAsTheIndexDoes()
+    {
+        // The overlay holds one entry per (term, document) with the occurrence count, not one entry per
+        // occurrence. The accumulator's first touch writes and every later touch adds, so per-occurrence
+        // entries would reach the right term frequency; the score would still be wrong, because BM25's
+        // saturation is not linear. On this fixture the same document scored 0.4722 through one entry of
+        // frequency 2 and 0.6611 through two of frequency 1.
+        var index = new InMemoryTextIndex();
+
+        index.Add(new SearchDocument("doc-1", "alpha alpha alpha beta"));
+        index.Add(new SearchDocument("doc-2", "alpha gamma"));
+
+        string directory = NewDirectory();
+
+        try
+        {
+            var store = new SegmentedTextIndex(directory);
+
+            store.Index(index.Documents);
+
+            var memoryEngine = new RankedTextSearchEngine(index, new Bm25Scorer());
+            var storeEngine = new RankedTextSearchEngine(store, new Bm25Scorer());
+
+            foreach (string query in new[] { "alpha", "alpha beta", "alpha alpha beta" })
+                AssertSamePage(query, memoryEngine.Search(query), storeEngine.Search(query));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void TheEngineAccumulatesOverAStoreRatherThanScanningIt()
+    {
+        // Without the IAccumulatingIndex capability the engine takes its per-document loop, and for a
+        // segment-backed index that loop costs O(documents x document frequency): it asks for one term's
+        // frequency once per document, and a segment answers each by walking the term's postings. Measured
+        // on a 40,000-document corpus, a single near-universal term served 2.8 s that way.
+        var index = new InMemoryTextIndex();
+
+        for (int i = 0; i < 400; i++)
+            index.Add(new SearchDocument("doc-" + i.ToString("D4", CultureInfo.InvariantCulture), "term" + (i % 40) + " shared filler"));
+
+        string directory = NewDirectory();
+
+        try
+        {
+            var store = new SegmentedTextIndex(directory);
+
+            store.Index(index.Documents);
+
+            Assert.True(store is IAccumulatingIndex);
+            Assert.Equal(index.OrdinalSpace, ((IAccumulatingIndex)store).OrdinalSpace);
+
+            // And the page it serves is the in-memory index's, which is what makes the capability a
+            // forwarding rather than a second answer.
+            foreach (string query in new[] { "term0", "term1 shared", "term0 term1" })
+            {
+                AssertSamePage(
+                    query,
+                    new RankedTextSearchEngine(index, new Bm25Scorer()).Search(query),
+                    new RankedTextSearchEngine(store, new Bm25Scorer()).Search(query));
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static void Seed(string directory)
     {
         var store = new SegmentedTextIndex(directory);
