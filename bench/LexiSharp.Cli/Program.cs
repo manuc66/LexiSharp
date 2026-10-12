@@ -41,7 +41,11 @@ public static class Program
         + "  scores are reported as ties, not failures.\n"
         + "  --against <file>     The baseline to check against\n"
         + "  Other options: --queries, --qrels, --top-k, --limit, --configs\n"
-        + "  --help, -h           Show this help";
+        + "  --help, -h           Show this help\n"
+        + "\n"
+        + "Usage: lexisharp segment <build|add|remove|commit|search|info> ...\n"
+        + "  Build a corpus into a persistent store on disk, change it, and search it. Every\n"
+        + "  subcommand is durable on its own. Run 'lexisharp segment --help' for the options.";
 
     public static int Main(string[] args)
     {
@@ -50,11 +54,16 @@ public static class Program
         // someone reviews, never a button that accepts whatever the code now does.
         string command = "benchmark";
 
-        if (args.Length > 0 && args[0] is "benchmark" or "diff" or "baseline" or "verify")
+        if (args.Length > 0 && args[0] is "benchmark" or "diff" or "baseline" or "verify" or "segment")
         {
             command = args[0];
             args = args[1..];
         }
+
+        // The segment command has its own arguments and its own required set, so it parses them
+        // itself rather than sharing the corpus/query/qrels contract the four evaluation commands do.
+        if (command == "segment")
+            return SegmentCommands.Run(args);
 
         string? corpusDir = null;
         string? queriesPath = null;
@@ -461,7 +470,7 @@ public static class Program
         return 0;
     }
 
-    private static IReadOnlyList<SearchDocument> LoadCorpus(string corpusDir)
+    internal static IReadOnlyList<SearchDocument> LoadCorpus(string corpusDir)
     {
         var root = Path.GetFullPath(corpusDir);
 

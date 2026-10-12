@@ -45,6 +45,11 @@
          numbers, and the mistake only surfaces in a conclusion drawn from it. Excluded from
          coverage, being bench code, whose coverage would flatter the library's own figure. -->
     <ProjectReference Include="../../bench/LexiSharp.Eval/LexiSharp.Eval.csproj" ExcludeFromCodeCoverage="true" />
+    <!-- The persistent-store front end, referenced so its subcommand dispatch and the analysis it
+         records beside the segments are tested rather than trusted: a store searched with the wrong
+         tokenizer reads a different index without saying so, and the manifest is what prevents that.
+         Excluded from coverage, being bench code. -->
+    <ProjectReference Include="../../bench/LexiSharp.Cli/LexiSharp.Cli.csproj" ExcludeFromCodeCoverage="true" />
     <!-- The demo, referenced so its option resolution and corpus reading are tested rather than
          trusted: both decide what a reader is shown and what gets indexed, and a wrong answer in
          either produces a page that looks right. Excluded from coverage, being sample code, whose

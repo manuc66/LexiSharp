@@ -73,6 +73,14 @@ workflow.
   `LexiSharpIndexOptions<T>.Load` maps an id back to the caller's document for a store reopened without
   re-adding it; it defaults to the index's own document when `TDocument` is `SearchDocument`.
 
+- **`lexisharp segment`, a persistent store from the command line.** `build` indexes a corpus into a
+  `SegmentedTextIndex` and commits it, `add` and `remove` change it and commit, `commit` compacts it,
+  `search` ranks it and `info` reports its counts — each subcommand in its own process, because a
+  store's overlay is not durable until a commit. The analysis is recorded in `store.json` beside the
+  segments and every subcommand reads the recorded one: a store's dictionary holds normalized terms, so
+  a search with a different tokenizer would read a different index without saying so, and `build` is the
+  only subcommand that chooses the analyzer.
+
 - **`SegmentSourceMode`, how a store opens the segments already in its directory.**
 
   `Array` (the default) reads each segment into memory. `Mapped` maps it. Both were measured on the same
