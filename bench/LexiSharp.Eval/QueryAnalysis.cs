@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using LexiSharp.Core;
 using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
@@ -167,7 +168,7 @@ internal static class QueryAnalysis
     /// </remarks>
     public static IReadOnlyList<QueryCoverage> Describe(
         IReadOnlyList<EvaluatedQuery> queries,
-        InMemoryTextIndex index,
+        ITextIndex index,
         BeirCorpus corpus,
         ITokenizer tokenizer)
     {
