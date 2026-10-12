@@ -58,6 +58,46 @@ public sealed class LexiSharpIndexOptions<TDocument>
     /// </remarks>
     public Func<TDocument, IReadOnlyDictionary<string, string>?>? TextFields { get; set; }
 
+    /// <summary>
+    /// When set, the index is a <see cref="SegmentedTextIndex"/> over this directory rather than an
+    /// in-memory <see cref="InMemoryTextIndex"/>: the corpus is written to immutable segments and
+    /// survives a restart without being re-tokenized. <see cref="LexiSharpIndex{TDocument}.Commit"/>
+    /// makes the pending writes durable and <see cref="LexiSharpIndex{TDocument}.Merge"/> reclaims the
+    /// deleted ones. Default: <c>null</c> (in memory, nothing on disk).
+    /// </summary>
+    /// <remarks>
+    /// A store cannot carry <see cref="TermExpander"/> (its index-time expansion has no store to write
+    /// through) and it keeps no per-field statistics, so <see cref="TextFields"/> reaches a plain BM25
+    /// query but not a field-weighted scorer. A reopened store does not hold the caller's documents, so
+    /// set <see cref="Load"/> for any <typeparamref name="TDocument"/> other than
+    /// <see cref="SearchDocument"/>.
+    /// </remarks>
+    public string? Directory { get; set; }
+
+    /// <summary>
+    /// How a persistent index opens the segments already in <see cref="Directory"/>.
+    /// <see cref="SegmentSourceMode.Array"/> (the default) reads each segment into memory;
+    /// <see cref="SegmentSourceMode.Mapped"/> maps it and makes the index
+    /// <see cref="IDisposable"/>. Ignored without <see cref="Directory"/>.
+    /// </summary>
+    public SegmentSourceMode SourceMode { get; set; } = SegmentSourceMode.Array;
+
+    /// <summary>
+    /// Posting entries each segment of a persistent index may hold decoded, or <c>null</c> for none.
+    /// A repeat look-up of a hot term then walks flat arrays instead of decoding the block planes.
+    /// The budget is per segment. Ignored without <see cref="Directory"/>.
+    /// </summary>
+    public int? DecodedCacheEntries { get; set; }
+
+    /// <summary>
+    /// Maps a document id back to the caller's document, for a hit the facade does not hold — which is
+    /// every document a reopened store carries. When <typeparamref name="TDocument"/> is
+    /// <see cref="SearchDocument"/> it defaults to the index's own document; for any other type it is
+    /// required to search a store the caller did not add this session. Default: <c>null</c>.
+    /// </summary>
+    public Func<string, TDocument?>? Load { get; set; }
+
+
     /// <summary>The ranking strategy. Defaults to Okapi BM25 (<see cref="Bm25Scorer"/>).</summary>
     public ITextScorer Scorer { get; set; } = new Bm25Scorer();
 

@@ -371,6 +371,37 @@ the sequence the document was indexed with.
 Not in this increment: a write-ahead log, so the overlay between writes is not durable; and positions,
 so a phrase query over a store re-tokenizes.
 
+### The store through the typed facade
+
+`LexiSharpIndex<T>` can be a store instead of an in-memory index, so the same typed API gains
+persistence without the caller touching `SegmentedTextIndex`:
+
+```csharp
+using var search = new LexiSharpIndex<Article>(o =>
+{
+    o.Id = a => a.Id;
+    o.Text = a => a.Body;
+    o.Directory = "./corpus";                 // a SegmentedTextIndex, not an InMemoryTextIndex
+    o.Load = id => repository.Get(id);        // id → document, for a store reopened without re-adding
+});
+
+search.AddRange(articles);
+search.Commit();                              // the pending writes become one segment on disk
+```
+
+`Commit()` and `Merge()` each replace the store with a new one and rebuild the search pipeline around
+it, because a store returns a new instance rather than mutating the old. `Search` reads the current
+pipeline, so it always sees the committed corpus; `Engine` and `TextIndex` report the current instances
+too, and a caller that captured either before a commit must read it again. A
+`SegmentSourceMode.Mapped` index holds views over its segment files and must be disposed.
+
+Two combinations a store cannot serve, refused rather than silently degraded: an index-time
+`TermExpander` (its expansion writes through an in-memory base index, so the terms would never reach
+disk), and a field-weighted scorer (a store keeps no per-field statistics — its `TextFields` are
+searchable by a plain query but `BM25F` over it would read absent statistics). A reopened store does
+not hold the caller's documents, so `Load` maps an id back to a `TDocument`; it defaults to the index's
+own document when `TDocument` is `SearchDocument`.
+
 
 Save and reload an `InMemoryTextIndex` as compact, LZ4-compressed MessagePack binary —
 documents (id, text, fields, category) **and** tokenizer configuration:

@@ -1,4 +1,5 @@
 using LexiSharp.Core;
+using LexiSharp.Expansion;
 using Xunit;
 
 namespace LexiSharp.Tests;
@@ -322,5 +323,226 @@ public class LexiSharpIndexTests
 
         public IReadOnlyList<SearchResult> Rerank(string query, IReadOnlyList<SearchResult> candidates) =>
             candidates.Reverse().ToList();
+    }
+
+    /// <summary>An expander that adds nothing: enough to reach the constructor's refusal.</summary>
+    private sealed class NoOpExpander : ITermExpander
+    {
+        public IReadOnlyCollection<ExpandedTerm> Expand(IReadOnlyList<string> terms) => [];
+    }
+
+    /// <summary>A persistent facade whose documents live in a caller-owned dictionary, as a real one would.</summary>
+    private static (LexiSharpIndex<SampleDoc> Index, Dictionary<string, SampleDoc> Corpus) CreatePersistent(
+        string directory,
+        params (string Id, string Body, string Category, string[] Tags)[] docs)
+    {
+        var corpus = docs.ToDictionary(
+            d => d.Id, d => new SampleDoc(d.Id, d.Body, d.Category, d.Tags), StringComparer.Ordinal);
+
+        var index = new LexiSharpIndex<SampleDoc>(o =>
+        {
+            o.Id = d => d.Id;
+            o.Text = d => d.Body;
+            o.Directory = directory;
+            o.Load = id => corpus.GetValueOrDefault(id);
+        });
+
+        index.AddRange(corpus.Values);
+        return (index, corpus);
+    }
+
+    private static string NewDirectory() =>
+        Path.Combine(Path.GetTempPath(), "lexisharp-facade-" + Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public void PersistentIndex_CommitSurvivesReopen()
+    {
+        // The point of a store: the corpus is on disk, and a fresh facade over the same directory
+        // serves the same page without being handed the documents again. Only the id-to-document
+        // mapping has to come back, which is what Load is for.
+        string directory = NewDirectory();
+
+        try
+        {
+            var (index, corpus) = CreatePersistent(directory,
+                With("1", "alpha beta", "docs"),
+                With("2", "beta gamma", "docs"));
+
+            Assert.True(index.IsPersistent);
+
+            var before = index.Search("beta").Select(h => h.DocumentId).ToArray();
+            index.Commit();
+            index.Dispose();
+
+            var reopened = new LexiSharpIndex<SampleDoc>(o =>
+            {
+                o.Id = d => d.Id;
+                o.Text = d => d.Body;
+                o.Directory = directory;
+                o.Load = id => corpus.GetValueOrDefault(id);
+            });
+
+            try
+            {
+                Assert.Equal(2, reopened.Count);
+                Assert.Equal(before, reopened.Search("beta").Select(h => h.DocumentId).ToArray());
+
+                // The hit carries the caller's document, resolved through Load rather than held.
+                var hit = RequireSingle(reopened.Search("gamma"));
+                Assert.Equal("2", hit.DocumentId);
+                Assert.Equal(corpus["2"], hit.Document);
+            }
+            finally
+            {
+                reopened.Dispose();
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void PersistentIndex_SearchReadsTheStoreTheCommitReturned()
+    {
+        // Commit replaces the store with a new one, and the facade rebuilds the pipeline around it.
+        // A search after the commit must see the committed corpus, not the store it replaced — this
+        // is the lifecycle hazard the facade exists to hide.
+        string directory = NewDirectory();
+
+        try
+        {
+            var (index, _) = CreatePersistent(directory, With("1", "alpha beta", "docs"));
+
+            var engineBefore = index.Engine;
+            index.Commit();
+
+            Assert.NotSame(engineBefore, index.Engine);
+            Assert.Equal("1", RequireSingle(index.Search("alpha")).DocumentId);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void PersistentIndex_MergeReclaimsTombstonesWithoutWriting()
+    {
+        string directory = NewDirectory();
+
+        try
+        {
+            var (index, corpus) = CreatePersistent(directory,
+                With("1", "alpha beta", "docs"),
+                With("2", "beta gamma", "docs"));
+
+            index.Remove("1");
+            Assert.Equal(1, index.Count);
+
+            index.Merge();
+
+            Assert.Equal(1, index.Count);
+            Assert.Equal("2", RequireSingle(index.Search("gamma")).DocumentId);
+            Assert.Equal("2", corpus["2"].Id);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void PersistentIndex_RefusesATermExpander()
+    {
+        string directory = NewDirectory();
+
+        try
+        {
+            var error = Assert.Throws<ArgumentException>(() =>
+                new LexiSharpIndex<SampleDoc>(o =>
+                {
+                    o.Id = d => d.Id;
+                    o.Text = d => d.Body;
+                    o.Directory = directory;
+                    o.TermExpander = new NoOpExpander();
+                }));
+
+            Assert.Contains("term expander", error.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void PersistentIndex_AnUnresolvableHitNamesTheOption()
+    {
+        // A store carries documents this session never added; without Load there is no caller document
+        // to put in the hit, and a silent null would be a hit the caller cannot use.
+        string directory = NewDirectory();
+
+        try
+        {
+            var (writer, _) = CreatePersistent(directory, With("1", "alpha beta", "docs"));
+            writer.Commit();
+            writer.Dispose();
+
+            var reader = new LexiSharpIndex<SampleDoc>(o =>
+            {
+                o.Id = d => d.Id;
+                o.Text = d => d.Body;
+                o.Directory = directory;
+            });
+
+            try
+            {
+                var error = Assert.Throws<InvalidOperationException>(() => reader.Search("alpha"));
+                Assert.Contains("Load", error.Message, StringComparison.Ordinal);
+            }
+            finally
+            {
+                reader.Dispose();
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void PersistentIndex_WithSearchDocumentResolvesWithoutAResolver()
+    {
+        // SearchDocument is the one type the store can hand back itself, so a store of them needs no
+        // caller-side mapping.
+        string directory = NewDirectory();
+
+        try
+        {
+            var writer = new LexiSharpIndex<SearchDocument>(o => o.Directory = directory);
+            writer.Add(new SearchDocument("1", "alpha beta"));
+            writer.Commit();
+            writer.Dispose();
+
+            var reader = new LexiSharpIndex<SearchDocument>(o => o.Directory = directory);
+
+            try
+            {
+                var hit = RequireSingle(reader.Search("alpha"));
+                Assert.Equal("1", hit.DocumentId);
+                Assert.Equal("alpha beta", hit.Document.Text);
+            }
+            finally
+            {
+                reader.Dispose();
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
     }
 }
