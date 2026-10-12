@@ -16,6 +16,18 @@ public static class TextFields
     public const string Default = "";
 
     /// <summary>
+    /// Unused positions inserted between two token runs — the body to the first field, one field to
+    /// the next — so positions belonging to different fields are never adjacent and a phrase query
+    /// cannot span a field boundary.
+    /// </summary>
+    /// <remarks>
+    /// Shared, because every index that records positions has to place fields the same way or the
+    /// same document scores differently depending on which index read it. A store that recomputes
+    /// positions from a document's stored text reads this constant rather than its own copy.
+    /// </remarks>
+    public const int PositionGap = 2;
+
+    /// <summary>
     /// Whether a name can be used as a field. <see cref="Default"/> is the reserved default field
     /// and is valid; every other name must be non-empty, and null is never valid.
     /// </summary>

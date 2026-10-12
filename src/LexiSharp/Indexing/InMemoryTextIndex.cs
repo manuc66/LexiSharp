@@ -491,65 +491,31 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         // one string per distinct value rather than one per occurrence -- the tokenizer hands back
         // a fresh string every time, and retaining those is what made the corpus scale with token
         // count instead of vocabulary size.
-        var raw = _tokenizer.Tokenize(document.Text);
-        var mainTerms = new List<string>(raw.Count);
+        //
+        // The body and the text fields come from one layout, PositionedFields, so this index, the
+        // store's overlay and a segment all place a field's tokens at the same positions.
+        var runs = PositionedFields.Runs(_tokenizer, document);
+        var allTerms = new List<string>();
+        int length = 0;
 
-        for (int position = 0; position < raw.Count; position++)
-            mainTerms.Add(Post(document.Id, ordinal, raw[position], position));
-
-        RecordField(TextFields.Default, document.Id, mainTerms);
-
-        // Counted once, here, so the flat corpus total is right on both branches below. Every
-        // length-normalized scorer divides by it, so missing it silently rescales the whole
-        // ranking.
-        _totalTokens += mainTerms.Count;
-        _lengthsByOrdinal[ordinal] = mainTerms.Count;
-
-        if (document.TextFields is not { Count: > 0 })
+        foreach (var run in runs)
         {
-            _tokens[document.Id] = mainTerms;
-            return;
+            var terms = new List<string>(run.Terms.Count);
+
+            for (int i = 0; i < run.Terms.Count; i++)
+                terms.Add(Post(document.Id, ordinal, run.Terms[i], run.Start + i));
+
+            RecordField(run.Field, document.Id, terms);
+            allTerms.AddRange(terms);
+            length += terms.Count;
         }
 
-        // The flat view is the union of every field, so a document that only matches inside a
-        // TextField is still reachable by candidate generation and still scores. The list is only
-        // allocated when a document actually has text fields.
-        var allTerms = new List<string>(mainTerms);
-        int nextPosition = mainTerms.Count;
-
-        foreach (var (field, text) in document.TextFields)
-        {
-            TextFields.Validate(field, nameof(SearchDocument.TextFields));
-
-            var rawField = _tokenizer.Tokenize(text);
-            var fieldTerms = new List<string>(rawField.Count);
-
-            // A gap between the previous run and this one, so a quoted phrase can match inside
-            // one field but never bridge two of them.
-            nextPosition += FieldPositionGap;
-
-            for (int i = 0; i < rawField.Count; i++)
-                fieldTerms.Add(Post(document.Id, ordinal, rawField[i], nextPosition + i));
-
-            nextPosition += fieldTerms.Count;
-
-            RecordField(field, document.Id, fieldTerms);
-
-            allTerms.AddRange(fieldTerms);
-            _totalTokens += fieldTerms.Count;
-        }
-
+        // Counted once, here, so the flat corpus total is right: every length-normalized scorer
+        // divides by it, so missing it silently rescales the whole ranking.
+        _totalTokens += length;
+        _lengthsByOrdinal[ordinal] = length;
         _tokens[document.Id] = allTerms;
-        _lengthsByOrdinal[ordinal] = allTerms.Count;
     }
-
-    /// <summary>
-    /// Number of unused positions inserted between two token runs (main text to first field, field
-    /// to field), so positions belonging to different fields are never adjacent and a phrase
-    /// query cannot span a field boundary. Same idea, and same value, as
-    /// <see cref="ExpansionPositionOffset"/>.
-    /// </summary>
-    private const int FieldPositionGap = 2;
 
     /// <summary>
     /// Adds one occurrence of <paramref name="term"/> to the flat inverted lists at

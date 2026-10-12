@@ -250,24 +250,32 @@ internal sealed class SegmentOverlay
         _ordinals.TryGetValue(documentId, out int ordinal) ? _lengths[ordinal] : 0;
 
     /// <summary>The terms of the document with this id, in document order.</summary>
+    /// <remarks>
+    /// The union the document was indexed with, body then fields, read from the list this overlay
+    /// already holds — so it costs no tokenization and cannot disagree with the postings it wrote.
+    /// </remarks>
     public IReadOnlyList<string> TermsOf(string documentId) =>
         _ordinals.TryGetValue(documentId, out int ordinal)
-            ? _tokenizer.Tokenize(_documents[ordinal]!.Text)
+            ? _termsByOrdinal[ordinal]
             : [];
 
     /// <summary>Positions of the term in the document with this id, in document order.</summary>
+    /// <remarks>
+    /// Recomputed from the stored document, over the same field layout the postings were written
+    /// with, so a term that occurs in a title reports the title's positions too.
+    /// </remarks>
     public IReadOnlyList<int> PositionsOf(string documentId, string term)
     {
         if (!_ordinals.TryGetValue(documentId, out int ordinal))
             return [];
 
-        var terms = _tokenizer.Tokenize(_documents[ordinal]!.Text);
+        var positioned = PositionedFields.Positioned(_tokenizer, _documents[ordinal]!);
         var positions = new List<int>();
 
-        for (int i = 0; i < terms.Count; i++)
+        for (int i = 0; i < positioned.Count; i++)
         {
-            if (string.Equals(terms[i], term, StringComparison.Ordinal))
-                positions.Add(i);
+            if (string.Equals(positioned[i].Term, term, StringComparison.Ordinal))
+                positions.Add(positioned[i].Position);
         }
 
         return positions;

@@ -28,8 +28,11 @@ namespace LexiSharp.Indexing;
 /// <item><description>
 /// <b>Positions are recomputed, not stored.</b> A segment holds no positions, so
 /// <see cref="GetTermPositions"/> tokenizes the document's stored text and reports where the term
-/// landed. That is correct — the engine's phrase gate, <c>ProximityReranker</c> and <c>WindowBm25Scorer</c>
-/// all keep working — and it costs a tokenization per call, which is per candidate for a phrase query.
+/// landed, and it places each stored text field's tokens after the body with the same gap the
+/// in-memory index uses — the fields travel with the document precisely so this read reproduces the
+/// indexed sequence rather than a body-only one. That is correct — the engine's phrase gate,
+/// <c>ProximityReranker</c> and <c>WindowBm25Scorer</c> all keep working — and it costs a
+/// tokenization per call, which is per candidate for a phrase query.
 /// Storing positions in the format is the fix, and it is not this increment.
 /// </description></item>
 /// <item><description>
@@ -252,11 +255,25 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     {
         var document = Find(documentId);
 
-        return document is null ? Array.Empty<string>() : _tokenizer.Tokenize(document.Text);
+        if (document is null)
+            return Array.Empty<string>();
+
+        var positioned = PositionedTerms(document);
+        var terms = new string[positioned.Count];
+
+        for (int i = 0; i < positioned.Count; i++)
+            terms[i] = positioned[i].Term;
+
+        return terms;
     }
 
     /// <inheritdoc />
-    /// <remarks>Recomputed from the stored text, because a segment holds no positions.</remarks>
+    /// <remarks>
+    /// Recomputed from the stored text, because a segment holds no positions — the body's tokens,
+    /// then each text field's after a <see cref="TextFields.PositionGap"/> gap, in the same order and
+    /// at the same positions the in-memory index records them. A document that matches inside a title
+    /// therefore reports the title's positions here too, which is what a proximity window reads.
+    /// </remarks>
     public IReadOnlyList<int> GetTermPositions(string documentId, string term)
     {
         var document = Find(documentId);
@@ -264,17 +281,24 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
         if (document is null)
             return Array.Empty<int>();
 
-        var terms = _tokenizer.Tokenize(document.Text);
+        var positioned = PositionedTerms(document);
         var positions = new List<int>();
 
-        for (int i = 0; i < terms.Count; i++)
+        for (int i = 0; i < positioned.Count; i++)
         {
-            if (string.Equals(terms[i], term, StringComparison.Ordinal))
-                positions.Add(i);
+            if (string.Equals(positioned[i].Term, term, StringComparison.Ordinal))
+                positions.Add(positioned[i].Position);
         }
 
         return positions;
     }
+
+    /// <summary>
+    /// A document's terms paired with the position each was indexed at: the body, then every text
+    /// field after a gap, exactly as the in-memory index lays them out.
+    /// </summary>
+    private List<(string Term, int Position)> PositionedTerms(SearchDocument document) =>
+        PositionedFields.Positioned(_tokenizer, document);
 
     /// <inheritdoc />
     public int DocumentFrequency(string term) =>

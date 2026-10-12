@@ -55,9 +55,11 @@ workflow.
     `AtomicEngineReference` publishes.
 
   The tokenizer must be the one the segments were written with, and mutations are not safe to interleave
-  with a search in flight — the same contract `InMemoryTextIndex` documents. Not in this increment: a
-  write-ahead log, so the overlay between writes is not durable; positions, so a phrase query over a
-  store re-tokenizes; and fields, so a document reads back as its id and its text.
+  with a search in flight — the same contract `InMemoryTextIndex` documents. A segment stores the whole
+  document — id, text, metadata fields, category and text fields — so a document reads back as the
+  document that was written and a positional read reproduces the sequence it was indexed with. Not in
+  this increment: a write-ahead log, so the overlay between writes is not durable; and positions, so a
+  phrase query over a store re-tokenizes.
 
 - **`SegmentSourceMode`, how a store opens the segments already in its directory.**
 

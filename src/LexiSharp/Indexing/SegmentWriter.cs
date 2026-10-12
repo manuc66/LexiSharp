@@ -56,7 +56,7 @@ internal static class SegmentWriter
     internal const uint Magic = 0x3153584C;
 
     /// <summary>Format version. A reader refuses anything else rather than guessing.</summary>
-    internal const int Version = 2;
+    internal const int Version = 3;
 
     /// <summary>Fixed header size: everything else in the file is reached through it.</summary>
     internal const int HeaderBytes = 4 + 4 + 4 + 4 + (3 * 8);
@@ -109,6 +109,21 @@ internal static class SegmentWriter
             documentOffsets[ordinal] = HeaderBytes + body.WrittenCount;
             WriteLengthPrefixed(Encoding.UTF8.GetBytes(document.Id), body);
             WriteLengthPrefixed(Encoding.UTF8.GetBytes(document.Text), body);
+
+            // The whole document travels with it, not just its id and body. Each of the three is
+            // read back through a different path, and dropping any of them makes a segment answer a
+            // different question than the index it was written from:
+            //  - TextFields: a positional read recomputes a document's term positions from what it
+            //    stores, and the in-memory index places field tokens after the body with a gap
+            //    between runs, so a segment without them answers a proximity query over a different
+            //    token sequence than the one it indexed.
+            //  - Fields: the facet collector counts on document metadata, so a segment without it
+            //    returns empty buckets.
+            //  - Category: part of the document, and the one place a segment would otherwise be a
+            //    lossy copy of its source.
+            WriteDictionary(document.Fields, body);
+            WriteOptional(document.Category, body);
+            WriteDictionary(document.TextFields, body);
         }
 
         long documentsTableOffset = HeaderBytes + body.WrittenCount;
@@ -194,6 +209,40 @@ internal static class SegmentWriter
     {
         WriteInt32(value.Length, body);
         WriteBytes(value, body);
+    }
+
+    /// <summary>
+    /// A dictionary, or <c>-1</c> when there is none. Entries are written in key order, so the same
+    /// document written twice is the same bytes — a byte comparison of two segments is a check this
+    /// repository actually makes.
+    /// </summary>
+    private static void WriteDictionary(IReadOnlyDictionary<string, string>? values, ArrayBufferWriter<byte> body)
+    {
+        if (values is null)
+        {
+            WriteInt32(-1, body);
+            return;
+        }
+
+        WriteInt32(values.Count, body);
+
+        foreach (var (key, value) in values.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        {
+            WriteLengthPrefixed(Encoding.UTF8.GetBytes(key), body);
+            WriteLengthPrefixed(Encoding.UTF8.GetBytes(value), body);
+        }
+    }
+
+    /// <summary>A string, or <c>-1</c> when there is none.</summary>
+    private static void WriteOptional(string? value, ArrayBufferWriter<byte> body)
+    {
+        if (value is null)
+        {
+            WriteInt32(-1, body);
+            return;
+        }
+
+        WriteLengthPrefixed(Encoding.UTF8.GetBytes(value), body);
     }
 
     private static void WriteInt32(int value, ArrayBufferWriter<byte> body)
