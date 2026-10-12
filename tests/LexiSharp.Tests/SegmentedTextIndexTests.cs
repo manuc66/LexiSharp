@@ -540,6 +540,8 @@ public class SegmentedTextIndexTests
         index.Add(new SearchDocument(
             "doc-1",
             "statin breast cancer survival",
+            Fields: new Dictionary<string, string>(StringComparer.Ordinal) { ["journal"] = "bmj" },
+            Category: "research",
             TextFields: new Dictionary<string, string>(StringComparer.Ordinal)
             { ["title"] = "Statin use and breast cancer survival" }));
 
@@ -560,6 +562,43 @@ public class SegmentedTextIndexTests
             // A stop word in a field is a stop word exactly as in the body: whatever the tokenizer does
             // to the body it does to the field, because one tokenizer serves both.
             Assert.Equal(index.DocumentFrequency("and"), store.DocumentFrequency("and"));
+
+            // The terms and positions a positional read reports are the indexed ones: the body's, then
+            // the title's after the field gap. A read that tokenized the body alone would answer a
+            // proximity query over a different token sequence than the one that was indexed — this is
+            // the divergence the harness found on a proximity row before the fields were stored.
+            Assert.Equal(index.GetTerms("doc-1"), store.GetTerms("doc-1"));
+
+            foreach (string term in new[] { "statin", "survival", "use" })
+                Assert.Equal(index.GetTermPositions("doc-1", term), store.GetTermPositions("doc-1", term));
+
+            // The same read from the committed segment on disk, which is the path that recomputes
+            // positions from stored text rather than from the live overlay.
+            var committed = store.Commit();
+
+            try
+            {
+                Assert.Equal(index.GetTerms("doc-1"), committed.GetTerms("doc-1"));
+
+                foreach (string term in new[] { "statin", "survival", "use" })
+                    Assert.Equal(index.GetTermPositions("doc-1", term), committed.GetTermPositions("doc-1", term));
+
+                // The whole document round-trips, so a facet over the store sees the metadata a facet
+                // over the in-memory index sees, and the title field survives the write. Compared part
+                // by part: a record's generated equality compares the dictionaries by reference, so a
+                // whole-document Equal would fail on two dictionaries with identical contents.
+                Assert.True(committed.TryGetDocument("doc-1", out var roundTripped));
+                Assert.NotNull(roundTripped);
+                Assert.Equal("doc-1", roundTripped.Id);
+                Assert.Equal("statin breast cancer survival", roundTripped.Text);
+                Assert.Equal("research", roundTripped.Category);
+                Assert.Equal("bmj", roundTripped.Fields!["journal"]);
+                Assert.Equal("Statin use and breast cancer survival", roundTripped.TextFields!["title"]);
+            }
+            finally
+            {
+                committed.Dispose();
+            }
         }
         finally
         {

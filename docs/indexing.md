@@ -364,8 +364,12 @@ is what matters once a segment is large enough that its copy into memory stops t
 it costs is a constant ~1.11× on every query and a lifetime: a mapped store holds a view over a file and
 must be disposed, after which it is unusable. An `Array` store holds nothing that needs releasing.
 
-Not in this increment: a write-ahead log, so the overlay between writes is not durable; positions, so
-a phrase query over a store re-tokenizes; and fields, so a document reads back as its id and its text.
+A segment stores the whole document — its id, its text, its metadata fields, its category and its text
+fields — so a document reads back as the document that was written, and a positional read reproduces
+the sequence the document was indexed with.
+
+Not in this increment: a write-ahead log, so the overlay between writes is not durable; and positions,
+so a phrase query over a store re-tokenizes.
 
 
 Save and reload an `InMemoryTextIndex` as compact, LZ4-compressed MessagePack binary —

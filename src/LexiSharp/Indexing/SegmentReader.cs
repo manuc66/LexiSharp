@@ -113,17 +113,56 @@ internal sealed class SegmentReader
         return Encoding.UTF8.GetString(Slice(entry + sizeof(int), idLength, "id"));
     }
 
-    /// <summary>Reads the document at <paramref name="ordinal"/>, without its fields or category.</summary>
+    /// <summary>Reads the document at <paramref name="ordinal"/>, with its metadata and text fields.</summary>
     public SearchDocument Document(int ordinal)
     {
         ArgumentOutOfRange(ordinal);
 
         int entry = EntryOffset(_documentsTableOffset, ordinal);
 
-        string id = ReadLengthPrefixed(entry, out int afterId);
-        string text = ReadLengthPrefixed(afterId, out _);
+        string id = ReadLengthPrefixed(entry, out int at);
+        string text = ReadLengthPrefixed(at, out at);
+        var fields = ReadDictionary(ref at);
+        string? category = ReadOptional(ref at);
+        var textFields = ReadDictionary(ref at);
 
-        return new SearchDocument(id, text);
+        return new SearchDocument(id, text, fields, category, textFields);
+    }
+
+    /// <summary>A dictionary written by <see cref="SegmentWriter"/>, or <c>null</c> when it wrote none.</summary>
+    private Dictionary<string, string>? ReadDictionary(ref int at)
+    {
+        int count = ReadInt32(at, "dictionary count");
+        at += sizeof(int);
+
+        if (count < 0)
+            return null;
+
+        var values = new Dictionary<string, string>(count, StringComparer.Ordinal);
+
+        for (int i = 0; i < count; i++)
+        {
+            string key = ReadLengthPrefixed(at, out at);
+            string value = ReadLengthPrefixed(at, out at);
+
+            values[key] = value;
+        }
+
+        return values;
+    }
+
+    /// <summary>A string written by <see cref="SegmentWriter"/>, or <c>null</c> when it wrote none.</summary>
+    private string? ReadOptional(ref int at)
+    {
+        int length = ReadInt32(at, "optional string length");
+
+        if (length < 0)
+        {
+            at += sizeof(int);
+            return null;
+        }
+
+        return ReadLengthPrefixed(at, out at);
     }
 
     /// <summary>
