@@ -119,6 +119,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         _synonyms = ResolveSynonyms(synonyms);
         _telemetry = telemetry ?? RetrievalTelemetry.None;
         _resolveOrdinal = ResolveOrdinal;
+        _resolveId = index is IOrdinalIdIndex ids ? ids.IdAt : null;
     }
 
     /// <inheritdoc />
@@ -173,6 +174,16 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// <summary>The document for an ordinal, for the window's ties and page cut.</summary>
     private SearchDocument? ResolveOrdinal(int ordinal) =>
         _index is IAccumulatingIndex acc ? acc.DocumentAt(ordinal) : null;
+
+    /// <summary>
+    /// The id for an ordinal without decoding the document, when the index can answer it that way.
+    /// </summary>
+    /// <remarks>
+    /// The window's tie-break compares ids and only the page cut needs the document, so an index that
+    /// answers the id alone keeps a segment from decoding a stored document per comparison. Measured on
+    /// a corpus whose documents tie, that was the whole of a store's per-query allocation.
+    /// </remarks>
+    private readonly Func<int, string?>? _resolveId;
 
     /// <summary>The ordinal of a candidate document, or a refusal that says why it cannot be had.</summary>
     private int OrdinalOf(string documentId)
@@ -253,7 +264,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         // without ever materializing them. It declines — and the string path below then runs
         // unchanged — when the terms are not slices, when the scorer or the index cannot resolve them
         // as such, or when the query is too rare to amortize the accumulation buffer.
-        var top = new TopRankedWindow(options.Window, options.TieBreak, _resolveOrdinal);
+        var top = new TopRankedWindow(options.Window, options.TieBreak, _resolveOrdinal, _resolveId);
         var spanRun = TryRunSpanQuery(query, options, facets, top);
 
         if (spanRun is { } span)

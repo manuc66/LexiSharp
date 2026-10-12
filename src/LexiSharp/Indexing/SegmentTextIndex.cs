@@ -64,11 +64,22 @@ namespace LexiSharp.Indexing;
 /// reproduce the positions that tokenizer produced.
 /// </para>
 /// </remarks>
-internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex, ICandidateIndex
+internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex, ICandidateIndex, IOrdinalIdIndex
 {
     private readonly SegmentReader _reader;
     private readonly ITokenizer _tokenizer;
     private readonly Dictionary<string, int> _ordinals;
+
+    /// <summary>
+    /// Ordinal to the id string, so the window's tie-break costs a reference read rather than a decode.
+    /// </summary>
+    /// <remarks>
+    /// The strings are the ones <see cref="_ordinals"/> already holds as keys, built during open, so this
+    /// array is eight bytes a document and allocates no string of its own. Without it, every id the
+    /// tie-break asks for decodes the stored document and allocates a fresh string.
+    /// </remarks>
+    private readonly string[] _ids;
+
     private readonly int[] _lengths;
     private readonly DecodedPostingsCache? _decoded;
     private SearchDocument?[]? _documents;
@@ -94,13 +105,19 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
         _tokenizer = tokenizer ?? Tokenizer.Default;
         _decoded = decoded;
         _ordinals = new Dictionary<string, int>(_reader.DocumentCount, StringComparer.Ordinal);
+        _ids = new string[_reader.DocumentCount];
         _lengths = new int[_reader.DocumentCount];
 
         long tokens = 0;
 
         for (int ordinal = 0; ordinal < _reader.DocumentCount; ordinal++)
         {
-            _ordinals[_reader.DocumentId(ordinal)] = ordinal;
+            // One decode of each id, kept twice: as the dictionary key the read surface resolves through,
+            // and at the ordinal the window's tie-break asks for.
+            string id = _reader.DocumentId(ordinal);
+
+            _ordinals[id] = ordinal;
+            _ids[ordinal] = id;
             _lengths[ordinal] = _reader.DocumentLength(ordinal);
             tokens += _lengths[ordinal];
         }
@@ -331,6 +348,10 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     /// <summary>The ordinal of the document with this id, or <c>-1</c>.</summary>
     internal int OrdinalOf(string documentId) =>
         documentId is not null && _ordinals.TryGetValue(documentId, out int ordinal) ? ordinal : -1;
+
+    /// <inheritdoc />
+    string? IOrdinalIdIndex.IdAt(int ordinal) =>
+        ordinal >= 0 && ordinal < _ids.Length ? _ids[ordinal] : null;
 
     /// <summary>
     /// Copies this segment's token counts into <paramref name="destination"/> at

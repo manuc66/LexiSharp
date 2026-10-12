@@ -86,7 +86,7 @@ namespace LexiSharp.Indexing;
 /// interleaves them.
 /// </para>
 /// </remarks>
-internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICandidateIndex
+internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICandidateIndex, IOrdinalIdIndex
 {
     private readonly SegmentTextIndex[] _segments;
     private readonly int[] _bases;
@@ -425,6 +425,31 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     /// accumulator, and the read path and the flush source would both index outside their arrays.
     /// </remarks>
     int IAccumulatingIndex.OrdinalSpace => _segmentOrdinalSpace + _overlay.OrdinalCapacity;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// A tombstoned ordinal answers <c>null</c>, as <c>DocumentAt</c> does for the same slot. The id
+    /// comes from the segment that owns the ordinal, at the ordinal it owns it at.
+    /// </remarks>
+    string? IOrdinalIdIndex.IdAt(int ordinal)
+    {
+        if (ordinal < 0 || ordinal >= _segmentOrdinalSpace + _overlay.OrdinalCapacity)
+            return null;
+
+        if (ordinal >= _segmentOrdinalSpace)
+        {
+            var document = _overlay.DocumentAt(ordinal - _segmentOrdinalSpace);
+
+            return document?.Id;
+        }
+
+        if (_dead.Contains(ordinal))
+            return null;
+
+        int segment = SegmentIndexAt(ordinal);
+
+        return ((IOrdinalIdIndex)_segments[segment]).IdAt(ordinal - _bases[segment]);
+    }
 
     /// <inheritdoc />
     SearchDocument? IAccumulatingIndex.DocumentAt(int ordinal)

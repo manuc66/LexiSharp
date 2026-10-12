@@ -32,6 +32,18 @@ internal sealed class TopRankedWindow
     private readonly int _limit;
     private readonly TieBreak _tieBreak;
     private readonly Func<int, SearchDocument?> _resolve;
+
+    /// <summary>
+    /// The id of the document at an ordinal, without decoding it, when the index can answer it that way.
+    /// </summary>
+    /// <remarks>
+    /// The tie-break compares document ids, and a segment index costs a stored-document decode to answer
+    /// either; an <see cref="IOrdinalIdIndex"/> answers the id alone, which is what the comparison reads
+    /// and the page cut does not. Measured on a corpus whose documents tie, the difference is the whole
+    /// of a store's per-query allocation. When the index offers it, the id comes from here and the
+    /// document is decoded only for the rows the page keeps.
+    /// </remarks>
+    private readonly Func<int, string?>? _resolveId;
     private readonly (double Score, int DocumentOrdinal)[] _entries;
 
     /// <summary>
@@ -50,11 +62,21 @@ internal sealed class TopRankedWindow
     /// <param name="resolve">
     /// The document for an ordinal, called only on ties and at the page cut, never per candidate.
     /// </param>
-    public TopRankedWindow(int limit, TieBreak tieBreak, Func<int, SearchDocument?> resolve)
+    /// <param name="resolveId">
+    /// The id for an ordinal without decoding the document, when the index can answer it that way.
+    /// Called in exactly the places the tie-break reads an id, so a segment index decodes a document
+    /// only for the rows a page keeps.
+    /// </param>
+    public TopRankedWindow(
+        int limit,
+        TieBreak tieBreak,
+        Func<int, SearchDocument?> resolve,
+        Func<int, string?>? resolveId = null)
     {
         _limit = limit;
         _tieBreak = tieBreak;
         _resolve = resolve;
+        _resolveId = resolveId;
         _entries = limit <= 0 ? Array.Empty<(double, int)>() : new (double, int)[limit];
         _resolved = null;
         _ordinals = limit > 0 && tieBreak == TieBreak.InsertionOrder ? new long[limit] : null;
@@ -193,16 +215,38 @@ internal sealed class TopRankedWindow
         if (!ScoresAreTied(_entries[incumbent].Score, score))
             return false;
 
-        var incumbentDocument = Resolve(incumbent, _entries[incumbent].DocumentOrdinal);
-        var newcomer = resolved ?? _resolve(documentOrdinal)
-            ?? throw new InvalidOperationException($"the window held ordinal {documentOrdinal}, which its index cannot resolve");
+        var incumbentOrdinal = _entries[incumbent].DocumentOrdinal;
+        var incumbentId = _resolveId?.Invoke(incumbentOrdinal);
+        string newcomerId;
+
+        if (resolved is not null)
+        {
+            newcomerId = resolved.Id;
+        }
+        else if (_resolveId is not null)
+        {
+            newcomerId = _resolveId(documentOrdinal)
+                ?? throw new InvalidOperationException($"the window held ordinal {documentOrdinal}, which cannot resolve an id");
+        }
+        else
+        {
+            newcomerId = _resolve(documentOrdinal)?.Id
+                ?? throw new InvalidOperationException($"the window held ordinal {documentOrdinal}, which its index cannot resolve");
+        }
 
         return _tieBreak == TieBreak.InsertionOrder
             ? _ordinals![incumbent] < ordinal
-            : string.CompareOrdinal(incumbentDocument.Id, newcomer.Id) < 0;
+            : string.CompareOrdinal(incumbentId ?? Resolve(incumbent, incumbentOrdinal).Id, newcomerId) < 0;
     }
 
-    private string IdOf(int index) => Resolve(index, _entries[index].DocumentOrdinal).Id;
+    private string IdOf(int index)
+    {
+        int ordinal = _entries[index].DocumentOrdinal;
+
+        string id = _resolveId?.Invoke(ordinal) ?? Resolve(index, ordinal).Id;
+
+        return id ?? throw new InvalidOperationException($"the window held ordinal {ordinal}, which cannot resolve an id");
+    }
 
     /// <summary>
     /// Whether two scores are the same value. Bitwise equality on purpose, so this cannot be
