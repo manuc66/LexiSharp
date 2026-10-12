@@ -67,18 +67,27 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     private readonly string _directory;
     private readonly ITokenizer _tokenizer;
     private readonly SegmentSourceMode _mode;
+    private readonly int? _decodedCacheEntries;
+    private readonly List<DecodedPostingsCache> _caches = [];
 
     /// <summary>Mappings this store opened and must release, empty unless <see cref="Mode"/> is Mapped.</summary>
     private readonly List<IDisposable> _owners = [];
 
     private SegmentChain _chain;
 
-    private SegmentedTextIndex(string directory, ITokenizer tokenizer, SegmentChain chain, SegmentSourceMode mode)
+    private SegmentedTextIndex(
+        string directory,
+        ITokenizer tokenizer,
+        SegmentChain chain,
+        SegmentSourceMode mode,
+        int? decodedCacheEntries)
     {
         _directory = directory;
         _tokenizer = tokenizer;
         _chain = chain;
         _mode = mode;
+        _decodedCacheEntries = decodedCacheEntries;
+        _caches = [];
     }
 
     /// <summary>
@@ -98,21 +107,33 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     /// <see cref="SegmentSourceMode.Mapped"/> maps it — the smaller heap. See
     /// <see cref="SegmentSourceMode"/> for what each costs, measured.
     /// </param>
+    /// <param name="decodedCacheEntries">
+    /// Posting entries each segment may hold decoded, or <c>null</c> for none. A repeat look-up of a
+    /// hot term then walks flat arrays instead of decoding the block planes — the same arrays the
+    /// in-memory index folds, in the same ascending order, so a warm cache serves a page bit for bit.
+    /// The budget is <b>per segment</b>, never shared: a cache is keyed on the term, and the same term
+    /// exists in two segments with different postings.
+    /// </param>
     /// <exception cref="InvalidDataException">A segment in the directory is not one this reader knows.</exception>
-    public SegmentedTextIndex(string directory, ITokenizer? tokenizer = null, SegmentSourceMode mode = SegmentSourceMode.Array)
+    public SegmentedTextIndex(
+        string directory,
+        ITokenizer? tokenizer = null,
+        SegmentSourceMode mode = SegmentSourceMode.Array,
+        int? decodedCacheEntries = null)
     {
         ArgumentNullException.ThrowIfNull(directory);
 
         _directory = directory;
         _tokenizer = tokenizer ?? Linguistics.Tokenizer.Default;
         _mode = mode;
+        _caches = [];
 
         var segments = new List<SegmentTextIndex>();
         var owners = new List<IDisposable>();
 
         foreach (string path in SegmentFiles(directory))
         {
-            var handle = OpenSegment(path, _tokenizer, mode);
+            var handle = OpenSegment(path, _tokenizer, mode, decodedCacheEntries);
 
             segments.Add(handle.Index);
 
@@ -190,7 +211,7 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     {
         SegmentChain merged = _chain.Merge();
 
-        return new SegmentedTextIndex(_directory, _tokenizer, merged, _mode);
+        return new SegmentedTextIndex(_directory, _tokenizer, merged, _mode, _decodedCacheEntries);
     }
 
     /// <summary>
@@ -216,7 +237,7 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
         // written out. Compacting a second time to produce bytes that are a pure function of a corpus
         // that has not changed would pay the 0.6-1.2 s and ~2.9 GB twice for nothing.
         SegmentTextIndex merged = _chain.Flush();
-        var committed = new SegmentedTextIndex(_directory, _tokenizer, new SegmentChain([merged], _tokenizer), _mode);
+        var committed = new SegmentedTextIndex(_directory, _tokenizer, new SegmentChain([merged], _tokenizer), _mode, _decodedCacheEntries);
 
         committed.WriteToDisk(merged);
 
@@ -293,19 +314,29 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     /// <summary>
     /// Opens one segment file in the mode given, with anything that must be released alongside it.
     /// </summary>
-    private static SegmentHandle OpenSegment(string path, ITokenizer tokenizer, SegmentSourceMode mode) =>
-        mode == SegmentSourceMode.Mapped
-            ? OpenMapped(path, tokenizer)
-            : new SegmentHandle(new LexiSharp.Indexing.SegmentTextIndex(File.ReadAllBytes(path), tokenizer), null);
+    private SegmentHandle OpenSegment(string path, ITokenizer tokenizer, SegmentSourceMode mode, int? cacheEntries)
+    {
+        // One cache per segment, never one shared across the chain. A cache is keyed on the term, and the
+        // same term exists in two segments with different postings — a shared cache would serve one
+        // segment's postings for the other's. The budget is per segment for the same reason.
+        DecodedPostingsCache? cache = cacheEntries is { } entries ? new DecodedPostingsCache(entries) : null;
+
+        if (cache is not null)
+            _caches.Add(cache);
+
+        return mode == SegmentSourceMode.Mapped
+            ? OpenMapped(path, tokenizer, cache)
+            : new SegmentHandle(new LexiSharp.Indexing.SegmentTextIndex(new ArraySegmentSource(File.ReadAllBytes(path)), tokenizer, cache), null);
+    }
 
     /// <summary>
     /// Maps one segment file. The mapping is the owner, and it is released when the store is disposed.
     /// </summary>
-    private static SegmentHandle OpenMapped(string path, ITokenizer tokenizer)
+    private static SegmentHandle OpenMapped(string path, ITokenizer tokenizer, DecodedPostingsCache? cache)
     {
         // MappedSegment.Open releases the mapping itself if the index over it cannot be built, so by the
         // time it returns the index depends on a live view.
-        var mapped = MappedSegment.Open(path, tokenizer);
+        var mapped = MappedSegment.Open(path, tokenizer, cache);
 
         return new SegmentHandle(mapped.Index, mapped);
     }
@@ -412,7 +443,7 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
 
         // Reopen from what is now on disk, so the returned store is the one the directory holds, and in
         // the mode it was opened with.
-        var handle = OpenSegment(target, _tokenizer, _mode);
+        var handle = OpenSegment(target, _tokenizer, _mode, _decodedCacheEntries);
         _chain = new SegmentChain([handle.Index], _tokenizer);
 
         if (handle.Owner is not null)

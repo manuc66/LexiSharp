@@ -62,7 +62,7 @@ internal sealed class MappedSegment : IDisposable
     public SegmentTextIndex Index => _index;
 
     /// <summary>Maps the segment at <paramref name="path"/> and opens an index over it.</summary>
-    public static MappedSegment Open(string path, ITokenizer? tokenizer = null)
+    public static MappedSegment Open(string path, ITokenizer? tokenizer = null, DecodedPostingsCache? decoded = null)
     {
         ArgumentNullException.ThrowIfNull(path);
 
@@ -71,7 +71,7 @@ internal sealed class MappedSegment : IDisposable
 
         try
         {
-            return new MappedSegment(file, accessor, new SegmentTextIndex(new MappedSegmentSource(accessor), tokenizer));
+            return new MappedSegment(file, accessor, new SegmentTextIndex(new MappedSegmentSource(accessor), tokenizer, decoded));
         }
         catch
         {
