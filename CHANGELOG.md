@@ -61,6 +61,18 @@ workflow.
   this increment: a write-ahead log, so the overlay between writes is not durable; and positions, so a
   phrase query over a store re-tokenizes.
 
+- **The typed facade can be a store.** `LexiSharpIndex<T>` takes
+  `LexiSharpIndexOptions<T>.Directory`, builds a `SegmentedTextIndex` over it, and gains `Commit()`,
+  `Merge()`, `ShouldMerge()` and `Dispose()`, so the same typed API persists a corpus without the caller
+  touching the store. `Commit`/`Merge` replace the store with a new one and the facade rebuilds the
+  pipeline around it, which is what keeps `Engine` and `TextIndex` from serving the store that was
+  replaced — a caller that captured either before a commit must read it again, while `Search` reads the
+  current pipeline itself. Two combinations a store cannot serve are refused rather than degraded: an
+  index-time `TermExpander`, whose expansion writes through an in-memory base index and would never
+  reach disk, and a field-weighted scorer, which needs per-field statistics a store does not keep.
+  `LexiSharpIndexOptions<T>.Load` maps an id back to the caller's document for a store reopened without
+  re-adding it; it defaults to the index's own document when `TDocument` is `SearchDocument`.
+
 - **`SegmentSourceMode`, how a store opens the segments already in its directory.**
 
   `Array` (the default) reads each segment into memory. `Mapped` maps it. Both were measured on the same

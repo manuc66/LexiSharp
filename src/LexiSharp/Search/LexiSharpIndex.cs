@@ -1,4 +1,5 @@
 using System.Text;
+using System.Diagnostics.CodeAnalysis;
 using LexiSharp.Core;
 using LexiSharp.Expansion;
 using LexiSharp.Highlighting;
@@ -27,12 +28,23 @@ namespace LexiSharp;
 /// </example>
 /// <typeparam name="TDocument">The caller's document type; must be a reference type.</typeparam>
 /// <remarks>
+/// <para>
 /// The same single-writer contract as <see cref="ITextSearchEngine"/> applies:
-/// <see cref="Add"/>, <see cref="AddRange"/>, <see cref="Index"/>, <see cref="Remove"/> and
-/// <see cref="Clear"/> must not run concurrently with each other or with a
-/// <see cref="Search"/>; concurrent searches are safe.
+/// <see cref="Add"/>, <see cref="AddRange"/>, <see cref="Index"/>, <see cref="Remove"/>,
+/// <see cref="Clear"/>, <see cref="Commit"/> and <see cref="Merge"/> must not run concurrently with
+/// each other or with a <see cref="Search"/>; concurrent searches are safe.
+/// </para>
+/// <para>
+/// With <see cref="LexiSharpIndexOptions{TDocument}.Directory"/> set the index is a
+/// <see cref="SegmentedTextIndex"/>: <see cref="Commit"/> writes the pending writes as one segment and
+/// <see cref="Merge"/> reclaims the deleted ones, each returning a new store that this facade then
+/// wraps. <see cref="Engine"/> and <see cref="TextIndex"/> report the current ones, so a caller that
+/// captured either before a commit must read it again — <see cref="Search"/> reads the current pipeline
+/// itself and needs nothing. A <see cref="SegmentSourceMode.Mapped"/> index holds views over its
+/// segment files and must be <see cref="Dispose"/>d.
+/// </para>
 /// </remarks>
-public sealed class LexiSharpIndex<TDocument>
+public sealed class LexiSharpIndex<TDocument> : IDisposable
     where TDocument : class
 {
     private readonly Func<TDocument, string> _id;
@@ -43,13 +55,26 @@ public sealed class LexiSharpIndex<TDocument>
     private readonly bool _enableFuzzy;
     private readonly bool _fuzzyOnlyOutOfVocabulary;
 
-    private readonly ITextIndex _index;
     private readonly ITokenizer _tokenizer;
-    private readonly RankedTextSearchEngine _baseEngine;
-    private readonly ITextSearchEngine _engine;
     private readonly ISpanTokenizer? _spanTokenizer;
+    private readonly ITextScorer _scorer;
+    private readonly SynonymMap? _synonyms;
+    private readonly RetrievalTelemetry? _telemetry;
+    private readonly IReranker? _reranker;
+    private readonly int _rerankerMaxCandidates;
+    private readonly IQueryTransformer? _queryTransformer;
+    private readonly IChunkContextEnricher? _contextEnricher;
+    private readonly Func<string, TDocument?>? _load;
 
     private readonly Dictionary<string, TDocument> _documents = new(StringComparer.Ordinal);
+
+    // A store-backed facade owns a SegmentedTextIndex and the pipeline built over it. Both change
+    // identity on Commit()/Merge(), which return a new store rather than mutating this one, so
+    // neither is readonly: the facade rebuilds the pipeline around the new store in one step.
+    private SegmentedTextIndex? _store;
+    private ITextIndex _index;
+    private RankedTextSearchEngine _baseEngine;
+    private ITextSearchEngine _engine;
 
     /// <param name="configure">
     /// Optional configuration. <see cref="LexiSharpIndexOptions{TDocument}.Id"/> and
@@ -80,36 +105,93 @@ public sealed class LexiSharpIndex<TDocument>
         _spanTokenizer = tokenizer as ISpanTokenizer;
         _tokenizer = tokenizer;
 
-        // Index-time document transformation composes in layers: expansion (index-time
-        // widening) is applied first, inside the enriching index, so the enricher's own text
-        // is what the expander sees — the two never fight over the same document.
-        ITextIndex baseIndex = options.TermExpander is null
-            ? new InMemoryTextIndex(tokenizer)
-            : new ExpansionTextIndex(options.TermExpander, tokenizer);
-        _index = options.ContextEnricher is null
-            ? baseIndex
-            : new ContextEnrichingIndex(baseIndex, options.ContextEnricher);
+        _scorer = options.Scorer;
+        _synonyms = options.Synonyms;
+        _telemetry = options.Telemetry;
+        _reranker = options.Reranker;
+        _rerankerMaxCandidates = options.RerankerMaxCandidates;
+        _queryTransformer = options.QueryTransformer;
+        _contextEnricher = options.ContextEnricher;
+
+        if (options.Directory is not null)
+        {
+            if (options.TermExpander is not null)
+            {
+                throw new ArgumentException(
+                    "a persistent index cannot carry an index-time term expander: ExpansionTextIndex builds its "
+                    + "own in-memory base index and cannot wrap a store, so the expanded terms would never reach "
+                    + "disk. Use an in-memory index, or apply the expansion at query time.",
+                    nameof(configure));
+            }
+
+            _load = options.Load ?? (typeof(TDocument) == typeof(SearchDocument) ? LoadFromIndex : null);
+            _store = new SegmentedTextIndex(
+                options.Directory, tokenizer, options.SourceMode, options.DecodedCacheEntries);
+            _index = Decorate(_store);
+        }
+        else
+        {
+            // Index-time document transformation composes in layers: expansion (index-time
+            // widening) is applied first, inside the enriching index, so the enricher's own text
+            // is what the expander sees — the two never fight over the same document.
+            ITextIndex baseIndex = options.TermExpander is null
+                ? new InMemoryTextIndex(tokenizer)
+                : new ExpansionTextIndex(options.TermExpander, tokenizer);
+            _index = options.ContextEnricher is null
+                ? baseIndex
+                : new ContextEnrichingIndex(baseIndex, options.ContextEnricher);
+        }
+
+        BuildPipeline();
+    }
+
+    /// <summary>
+    /// Builds the search pipeline over <c>_index</c>: the ranked engine, then the optional reranker
+    /// and query transformer, in the order they decorate.
+    /// </summary>
+    /// <remarks>
+    /// A method rather than constructor-only code because <see cref="Commit"/> and <see cref="Merge"/>
+    /// replace the index with a new store, and every layer above it holds a reference to the one it
+    /// was built with. Rebuilding here is what keeps <see cref="Engine"/> from serving the store the
+    /// commit replaced.
+    /// </remarks>
+    [MemberNotNull(nameof(_baseEngine), nameof(_engine))]
+    private void BuildPipeline()
+    {
         _baseEngine = new RankedTextSearchEngine(
-            _index, options.Scorer, tokenizer, options.Synonyms, options.Telemetry);
-        _engine = options.Reranker is null
+            _index, _scorer, _tokenizer, _synonyms, _telemetry);
+        _engine = _reranker is null
             ? _baseEngine
             : new RerankedTextSearchEngine(
-                _baseEngine, options.Reranker, options.RerankerMaxCandidates, options.Telemetry);
+                _baseEngine, _reranker, _rerankerMaxCandidates, _telemetry);
 
         // The transformer decorates last, so every variant runs the full inner pipeline
         // (retrieval, rerank, routing) and the fusion sees each one's final page pool.
-        if (options.QueryTransformer is not null)
+        if (_queryTransformer is not null)
         {
             _engine = new TransformingTextSearchEngine(
-                _engine, options.QueryTransformer, telemetry: options.Telemetry);
+                _engine, _queryTransformer, telemetry: _telemetry);
         }
     }
+
+    private ITextIndex Decorate(ITextIndex baseIndex) =>
+        _contextEnricher is null ? baseIndex : new ContextEnrichingIndex(baseIndex, _contextEnricher);
+
+    private TDocument? LoadFromIndex(string documentId) =>
+        _index.TryGetDocument(documentId, out var document) ? (TDocument)(object)document : null;
+
 
     /// <summary>Number of indexed documents.</summary>
     public int Count => _index.Count;
 
-    /// <summary>The ids of every indexed document, in insertion order.</summary>
-    public IReadOnlyCollection<string> DocumentIds => _documents.Keys;
+    /// <summary>
+    /// The ids of every indexed document. In insertion order for an in-memory index; the store's own
+    /// live order for a persistent one, which is what a reopened store can report.
+    /// </summary>
+    public IReadOnlyCollection<string> DocumentIds =>
+        _store is null
+            ? _documents.Keys
+            : _index.Documents.Select(document => document.Id).ToArray();
 
     /// <summary>A snapshot of the corpus statistics (documents, vocabulary, tokens, ...).</summary>
     public TextIndexStatistics Statistics => _index.GetStatistics();
@@ -125,7 +207,93 @@ public sealed class LexiSharpIndex<TDocument>
     public ITextIndex TextIndex => _index;
 
     /// <summary>The underlying search engine, for callers that need the raw interface.</summary>
+    /// <remarks>
+    /// <b>Re-read this after <see cref="Commit"/> or <see cref="Merge"/>.</b> Both replace the store
+    /// with a new one, and this facade rebuilds the pipeline around it; an engine captured before the
+    /// call still points at the store that was replaced and would serve the page that store held.
+    /// <see cref="Search"/> always reads the current one, so a caller that searches through the facade
+    /// needs nothing here.
+    /// </remarks>
     public ITextSearchEngine Engine => _engine;
+
+    /// <summary>
+    /// Whether this index is a <see cref="SegmentedTextIndex"/> over
+    /// <see cref="LexiSharpIndexOptions{TDocument}.Directory"/> rather than an in-memory index.
+    /// </summary>
+    public bool IsPersistent => _store is not null;
+
+    /// <summary>
+    /// Whether the tombstone count has passed the share of documents that makes a merge worth it.
+    /// Always <c>false</c> for an in-memory index.
+    /// </summary>
+    public bool ShouldMerge() => _store?.ShouldMerge() ?? false;
+
+    /// <summary>
+    /// Makes the pending writes durable: the overlay and the tombstones are compacted and written as
+    /// one segment, and the pipeline is rebuilt around the store that results.
+    /// </summary>
+    /// <remarks>
+    /// This is the point at which the corpus statistics stop being frozen — the new segment's
+    /// <c>N</c>, average length and document frequencies are its own and no longer count the deleted
+    /// documents — so <b>every surviving score changes</b>. It is a batch operation, not something a
+    /// query triggers. A no-op on an in-memory index, which is already durable in the only sense it
+    /// has.
+    /// </remarks>
+    public void Commit()
+    {
+        if (_store is not null)
+            SwapStore(_store.Commit());
+    }
+
+    /// <summary>
+    /// Compacts the store in memory and rebuilds the pipeline around the result, without writing to
+    /// disk. A no-op on an in-memory index.
+    /// </summary>
+    /// <remarks>
+    /// Same effect on the scores as <see cref="Commit"/> — the statistics stop being frozen — without
+    /// the segment write. Use it when the tombstones are worth reclaiming but the bytes are not worth
+    /// writing yet.
+    /// </remarks>
+    public void Merge()
+    {
+        if (_store is not null)
+            SwapStore(_store.Merge());
+    }
+
+    /// <summary>
+    /// Replaces the store with <paramref name="next"/>, rebuilds the pipeline around it, and releases
+    /// the mappings the previous store held.
+    /// </summary>
+    /// <remarks>
+    /// The previous store is disposed because a <see cref="SegmentSourceMode.Mapped"/> store holds a
+    /// view over the segment files and nothing reads it once the pipeline points at the new one. The
+    /// caller's single-writer contract covers this: a commit must not run concurrently with a search,
+    /// so no search is reading the pipeline being replaced.
+    /// </remarks>
+    private void SwapStore(SegmentedTextIndex next)
+    {
+        var previous = _store;
+
+        _store = next;
+        _index = Decorate(next);
+        BuildPipeline();
+
+        if (!ReferenceEquals(previous, next))
+            previous?.Dispose();
+    }
+
+    /// <summary>
+    /// Releases the segment mappings a <see cref="SegmentSourceMode.Mapped"/> store holds. Idempotent,
+    /// and a no-op on an in-memory index or an <see cref="SegmentSourceMode.Array"/> store, neither of
+    /// which holds anything that needs releasing.
+    /// </summary>
+    public void Dispose()
+    {
+        var store = _store;
+
+        _store = null;
+        store?.Dispose();
+    }
 
     /// <summary>Adds a document to the index. Replacing an existing id is allowed.</summary>
     public void Add(TDocument document)
@@ -301,11 +469,33 @@ public sealed class LexiSharpIndex<TDocument>
             hits[i] = new LexiSharpHit<TDocument>(
                 result.DocumentId,
                 result.Score,
-                _documents[result.DocumentId],
+                Resolve(result.DocumentId),
                 highlighted);
         }
 
         return hits;
+    }
+
+    /// <summary>
+    /// The caller's document for a hit: the one this facade holds, or the one
+    /// <see cref="LexiSharpIndexOptions{TDocument}.Load"/> resolves for a store it did not index.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// Neither holds the id, so a hit cannot carry a document. A store that was reopened carries
+    /// documents this session never added, and mapping those back is the caller's to provide.
+    /// </exception>
+    private TDocument Resolve(string documentId)
+    {
+        if (_documents.TryGetValue(documentId, out var held))
+            return held;
+
+        if (_load?.Invoke(documentId) is { } loaded)
+            return loaded;
+
+        throw new InvalidOperationException(
+            $"The index returned '{documentId}', which this facade does not hold and "
+            + $"LexiSharpIndexOptions<{typeof(TDocument).Name}>.Load did not resolve. Set Load to map an id "
+            + "back to the caller's document when a store carries documents this session did not add.");
     }
 
     private static ITokenizer BuildDefaultTokenizer(LexiSharpIndexOptions<TDocument> options)

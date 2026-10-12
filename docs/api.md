@@ -94,7 +94,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | --- | --- | --- | --- |
 | `LexiSharpFacetedResult<TDocument>` | record | — | Ranked hits plus one facet bucket per requested field, as returned by LexiSharpIndex. |
 | `LexiSharpHit<TDocument>` | record | — | One search hit over a user document, as returned by LexiSharpIndex. |
-| `LexiSharpIndex<TDocument>` | class | — | The drop-in entry point of the library: an opinionated, typed search index that maps your own documents to the engine internals and back — from "a list of… |
+| `LexiSharpIndex<TDocument>` | class | `IDisposable` | The drop-in entry point of the library: an opinionated, typed search index that maps your own documents to the engine internals and back — from "a list of… |
 | `LexiSharpIndexOptions<TDocument>` | class | — | Configuration of a LexiSharpIndex: how caller documents map to indexable records, and which engine pieces to use. |
 | `LexiSharpQueryOptions` | record | — | Per-search options for LexiSharpIndex and friends. |
 
