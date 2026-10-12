@@ -88,8 +88,13 @@ internal static class Evaluation
     /// rather than taking every core, because a sweep that saturates the machine is a sweep nobody
     /// can run anything else on.
     /// </param>
-    public static (IReadOnlyList<ConfigResult> Results, string TunedDescription) Run(
-        BeirCorpus corpus, InMemoryTextIndex index, int topK, int? limit, ITokenizer tokenizer,
+    /// <returns>
+    /// The per-configuration results, a description of how the k1/b tuning went, and the
+    /// configurations that were skipped because this index cannot serve them — a capability the
+    /// corpus alone does not decide, so it is reported rather than left as a gap in the table.
+    /// </returns>
+    public static (IReadOnlyList<ConfigResult> Results, string TunedDescription, IReadOnlyList<string> Notes) Run(
+        BeirCorpus corpus, ITextIndex index, int topK, int? limit, ITokenizer tokenizer,
         bool excludeQueryDocument = false,
         NdcgGain ndcgGain = NdcgGain.Exponential,
         Bm25Parameters? referenceBm25 = null,
@@ -119,6 +124,13 @@ internal static class Evaluation
         // ArguAna carries no title, so a field-weighted configuration there would be the same three
         // rows over again with an inert weight. Say so instead of padding the table.
         bool anyTitle = corpus.Documents.Any(document => !string.IsNullOrEmpty(document.Title));
+
+        // Titles are a property of the corpus; per-field statistics are a property of the index. A
+        // field-weighted ranking needs both, and a store that keeps no field statistics refuses it by
+        // name rather than reading a silent zero — so the rows are gated on the capability the scorer
+        // actually reads, and their absence is reported rather than left as a gap in the table.
+        bool fieldStatistics = index is IFieldStatisticsIndex;
+        var notes = new List<string>();
 
         var builders = new (string Name, Func<ITextSearchEngine> Factory)[]
         {
@@ -161,7 +173,7 @@ internal static class Evaluation
             })
             .ToArray();
 
-        if (anyTitle)
+        if (anyTitle && fieldStatistics)
         {
             // Three weights rather than one: the question is whether weighting a title helps at all
             // here, and a single point cannot show a direction. BM25F neutral is included because it
@@ -175,6 +187,13 @@ internal static class Evaluation
                     ("BM25F (title 4.0)", () => Ranked(index, TitleWeighted(4.0), tokenizer)),
                 })
                 .ToArray();
+        }
+        else if (anyTitle)
+        {
+            notes.Add(
+                "BM25F (unweighted / title 2.0 / title 4.0) skipped: the corpus carries titles, but "
+                + $"{index.GetType().Name} keeps no per-field statistics (IFieldStatisticsIndex), and a "
+                + "field-weighted ranking over absent statistics would be wrong with no error to show for it.");
         }
 
         // Single-field BM25 variants, measured against the tuned BM25 row rather than the default
@@ -268,7 +287,7 @@ internal static class Evaluation
             tunedDescription += $"; {plusDelta}, {lDelta}";
         }
 
-        return (results, tunedDescription);
+        return (results, tunedDescription, notes);
     }
 
     /// <summary>
@@ -415,7 +434,7 @@ internal static class Evaluation
     }
 
     private static string RunTuned(
-        InMemoryTextIndex index,
+        ITextIndex index,
         BeirCorpus corpus,
         IReadOnlyList<EvaluatedQuery> queries,
         int topK,
@@ -464,7 +483,7 @@ internal static class Evaluation
     /// rather than the delta alone.
     /// </remarks>
     private static void RunTunedVariants(
-        InMemoryTextIndex index,
+        ITextIndex index,
         IReadOnlyList<EvaluatedQuery> queries,
         int topK,
         ITokenizer tokenizer,
@@ -539,7 +558,7 @@ internal static class Evaluation
     /// BM25 over the shared index, re-ranked by proximity. The first stage matches the BM25 row.
     /// </summary>
     private static ITextSearchEngine Proximity(
-        InMemoryTextIndex index,
+        ITextIndex index,
         double strength,
         ProximityMode mode,
         ITokenizer tokenizer)
@@ -560,12 +579,12 @@ internal static class Evaluation
     /// every row of the table, and tokenizing the corpus again per row was the single largest cost
     /// in a run before the index was shared.
     /// </summary>
-    private static ITextSearchEngine Ranked(InMemoryTextIndex index, ITextScorer scorer, ITokenizer tokenizer) =>
+    private static ITextSearchEngine Ranked(ITextIndex index, ITextScorer scorer, ITokenizer tokenizer) =>
         new RankedTextSearchEngine(index, scorer, tokenizer);
 
     /// <summary>Two lexical engines over one shared index, merged.</summary>
     private static ITextSearchEngine Hybrid(
-        InMemoryTextIndex index, IResultMerger merger, ITokenizer tokenizer)
+        ITextIndex index, IResultMerger merger, ITokenizer tokenizer)
     {
         var lexical = new RankedTextSearchEngine(index, new Bm25Scorer(1.5, 0.75), tokenizer);
         var languageModel = new RankedTextSearchEngine(index, new QueryLikelihoodScorer(0.2), tokenizer);

@@ -62,6 +62,7 @@ public static class Program
         // which of the two ran is part of what a number means.
         bool parseQuerySyntax = false;
         bool querySyntaxReference = false;
+        bool segment = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -147,6 +148,9 @@ public static class Program
                 case "--reference-index-statistics":
                     querySyntaxReference = true;
                     break;
+                case "--segment":
+                    segment = true;
+                    break;
                 case "--index-cache" when i + 1 < args.Length:
                     indexCache = args[++i];
                     break;
@@ -180,6 +184,17 @@ public static class Program
                     PrintHelp();
                     return 2;
             }
+        }
+
+        // A flag combination a store cannot honour, refused where a return code exists rather than
+        // reported as a number under a configuration the run did not use.
+        if (segment && querySyntaxReference)
+        {
+            Console.Error.WriteLine(
+                "--segment cannot run with --reference-index-statistics: a segment stores exact document " +
+                "lengths and has no quantized form, so the index conventions that reproduction needs are not " +
+                "ones a store can hold.");
+            return 2;
         }
 
         dataBaseDir = Path.GetFullPath(dataBaseDir);
@@ -265,7 +280,7 @@ public static class Program
                 excludeQueryDocument, fingerprintOnly, referenceBm25, queryFrequency, scoreRounding,
                 saturationConstant, singlePrecision, dense, denseSeq,
                 tuned, reranker, rerankCandidates, runPath, jobs, indexCache, parseQuerySyntax,
-                querySyntaxReference, analyzePath, analyzeBaseline, analyzeCandidate,
+                querySyntaxReference, segment, analyzePath, analyzeBaseline, analyzeCandidate,
                 expandDensities, expandRankings, annEfValues, annConnection);
             Console.WriteLine();
         }
@@ -377,7 +392,7 @@ public static class Program
         Bm25Parameters? referenceBm25, bool queryFrequency, bool scoreRounding, bool saturationConstant,
         bool singlePrecision, bool dense, int denseSeq, bool tuned,
         IReranker? reranker, int rerankCandidates, string? runPath, int jobs, string? indexCache,
-        bool parseQuerySyntax, bool referenceIndexStatistics,
+        bool parseQuerySyntax, bool referenceIndexStatistics, bool segment,
         string? analyzePath, string analyzeBaseline, string? analyzeCandidate,
         IReadOnlyList<double> expandDensities, IReadOnlyList<ExpansionRanking> expandRankings,
         IReadOnlyList<int> annEfValues, string? annConnection)
@@ -419,7 +434,27 @@ public static class Program
             $"{(tokenizerOptions.StripPossessives ? "possessives stripped before the stop list" : "possessives kept")}, " +
             $"{(tokenizerOptions.FoldDiacritics ? "diacritics folded" : "diacritics kept")}, avgdl {index.AverageDocumentLength:F6}.");
 
-        PrintFingerprint(dataset, index, analysisDescription);
+        // Scoring from a committed segment. The corpus is the same documents, the same analysis and the
+        // same scorer; what changes is where the bytes live. The page is bit-identical to the in-memory
+        // index's by construction — asserted in the library's own tests — and this mode is what puts that
+        // claim on the corpus the published figures come from rather than on a synthetic one.
+        ITextIndex runIndex = index;
+
+        if (segment)
+        {
+            var store = new SegmentedTextIndex(
+                Path.Combine(Path.GetTempPath(), "lexisharp-eval-segment-" + Guid.NewGuid().ToString("N")),
+                tokenizer);
+
+            store.Index(Evaluation.BuildDocuments(corpus));
+            runIndex = store.Commit();
+
+            Console.WriteLine(
+                $"Scoring from a committed segment: {runIndex.Count:N0} documents, "
+                + $"{(runIndex as SegmentedTextIndex)!.SegmentCount} segment on disk, exact lengths.");
+        }
+
+        PrintFingerprint(dataset, runIndex, analysisDescription);
 
         if (fingerprintOnly)
             return;
@@ -468,19 +503,22 @@ public static class Program
             queryExpansions.Add((name, learned));
         }
 
-        var (results, tunedDescription) = Evaluation.Run(
-            corpus, index, topK, limit, tokenizer, excludeQueryDocument, gain, referenceBm25,
+        var (results, tunedDescription, notes) = Evaluation.Run(
+            corpus, runIndex, topK, limit, tokenizer, excludeQueryDocument, gain, referenceBm25,
             queryFrequency, scoreRounding, saturationConstant, singlePrecision, denseVectors, tuned, reranker,
             rerankCandidates,
             jobs, parseQuerySyntax, captureOutcomes: analyzePath is not null, queryExpansions: queryExpansions);
 
+        foreach (string note in notes)
+            Console.WriteLine($"Note: {note}");
+
         if (analyzePath is not null)
-            WriteQueryAnalysis(analyzePath, analyzeBaseline, analyzeCandidate, corpus, index, tokenizer, results, topK, limit,
+            WriteQueryAnalysis(analyzePath, analyzeBaseline, analyzeCandidate, corpus, runIndex, tokenizer, results, topK, limit,
                 excludeQueryDocument, parseQuerySyntax);
 
         if (runPath is not null)
         {
-            WriteRun(runPath, corpus, index, tokenizer, topK, limit, excludeQueryDocument, queryFrequency, scoreRounding,
+            WriteRun(runPath, corpus, runIndex, tokenizer, topK, limit, excludeQueryDocument, queryFrequency, scoreRounding,
                 saturationConstant, singlePrecision,
                 referenceBm25 ?? new Bm25Parameters(0.9, 0.4), parseQuerySyntax);
         }
@@ -509,7 +547,7 @@ public static class Program
     /// figure would have been produced at.
     /// </remarks>
     private static void WriteRun(
-        string path, BeirCorpus corpus, InMemoryTextIndex index, ITokenizer tokenizer, int topK,
+        string path, BeirCorpus corpus, ITextIndex index, ITokenizer tokenizer, int topK,
         int? limit, bool excludeQueryDocument, bool queryFrequency, bool scoreRounding, bool saturationConstant,
         bool singlePrecision, Bm25Parameters bm25, bool parseQuerySyntax)
     {
@@ -577,7 +615,7 @@ public static class Program
         string baseline,
         string? candidate,
         BeirCorpus corpus,
-        InMemoryTextIndex index,
+        ITextIndex index,
         ITokenizer tokenizer,
         IReadOnlyList<ConfigResult> results,
         int topK,
@@ -977,6 +1015,12 @@ public static class Program
               --write           Accepted alongside --verify-reference and deliberately does not
                                 re-record: re-recording is a separate, reviewed act, not a flag that
                                 accepts whatever the code now does.
+              --segment         Build the corpus into a committed segment on disk and score every
+                                configuration from it, instead of from the in-memory index. The
+                                documents, analysis and scorer are unchanged; only where the bytes
+                                live is. Refused with --reference-index-statistics, because a
+                                segment stores exact lengths and cannot hold the quantized form that
+                                reproduction needs.
               --fingerprint     Print the index fingerprint (documents, non-empty documents, total
                                 terms) against the reference index, then stop. No scoring, no
                                 network beyond the corpus itself. Answers "did this run index the
