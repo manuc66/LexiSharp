@@ -62,7 +62,7 @@ namespace LexiSharp.Indexing;
 /// find the terms it indexed.
 /// </para>
 /// </remarks>
-public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumulatingIndex, IDisposable
+public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumulatingIndex, ICandidateIndex, IDisposable
 {
     private readonly string _directory;
     private readonly ITokenizer _tokenizer;
@@ -325,6 +325,20 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     /// question than the one asked without saying so.
     /// </remarks>
     IEnumerable<string> IVocabularyIndex.Vocabulary => _chain.CollectDistinctTerms();
+
+    /// <summary>
+    /// The documents containing at least one of the terms, each once, in ascending ordinal order.
+    /// </summary>
+    /// <remarks>
+    /// Forwarded, because the engine takes its per-document loop whenever the accumulating pass
+    /// declines — which is every query below the accumulation threshold — and without this capability
+    /// that loop walks <see cref="Documents"/>, which for a store decodes the whole corpus. Measured on
+    /// a 200,000-document store, a single term with a document frequency of 3 served 207 ms and allocated
+    /// 222 MB per search that way, against 13 µs and 928 B for the in-memory index it is supposed to
+    /// match.
+    /// </remarks>
+    IEnumerable<SearchDocument> ICandidateIndex.GetCandidateDocuments(IReadOnlyList<string> terms) =>
+        ((ICandidateIndex)_chain).GetCandidateDocuments(terms);
 
     /// <summary>
     /// The size of the ordinal space the chain folds into, and the size the engine rents its accumulator
