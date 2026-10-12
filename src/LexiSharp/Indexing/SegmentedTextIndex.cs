@@ -62,7 +62,7 @@ namespace LexiSharp.Indexing;
 /// find the terms it indexed.
 /// </para>
 /// </remarks>
-public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumulatingIndex, ICandidateIndex, IDisposable
+public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumulatingIndex, ICandidateIndex, IOrdinalIdIndex, IDisposable
 {
     private readonly string _directory;
     private readonly ITokenizer _tokenizer;
@@ -396,6 +396,15 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     /// </remarks>
     void IAccumulatingIndex.Accumulate<TWeight>(TWeight weight, ScoreAccumulator accumulator) =>
         ((IAccumulatingIndex)_chain).Accumulate(weight, accumulator);
+
+    /// <summary>
+    /// The id of the document at this ordinal, without decoding it.
+    /// </summary>
+    /// <remarks>
+    /// This is the capability that keeps the page window's tie-break from decoding a stored document per
+    /// comparison. See <see cref="IOrdinalIdIndex"/> for what the two cost differently.
+    /// </remarks>
+    string? IOrdinalIdIndex.IdAt(int ordinal) => ((IOrdinalIdIndex)_chain).IdAt(ordinal);
 
     /// <summary>The chain the store searches. Internal for the engine and the decorators.</summary>
     internal SegmentChain Chain => _chain;
