@@ -430,6 +430,31 @@ The same comparison is available in-process through `CorpusBenchmark.Run` over a
 `IReadOnlyCollection<SearchDocument>` and `BenchmarkQuery` set, with custom engines reachable
 through the public `BenchmarkConfig` constructor.
 
+### A persistent store from the CLI
+
+`segment` builds a corpus into a `SegmentedTextIndex` on disk, changes it, and searches it — each
+subcommand in its own process, so the store is what carries state between them:
+
+```bash
+dotnet run --project bench/LexiSharp.Cli -c Release -- segment build ./notes --store ./store
+dotnet run --project bench/LexiSharp.Cli -c Release -- segment search ./store --query "pagination window"
+dotnet run --project bench/LexiSharp.Cli -c Release -- segment remove ./store --id notes/paging.md
+dotnet run --project bench/LexiSharp.Cli -c Release -- segment info ./store
+```
+
+- `build <corpus-dir> --store <dir>` indexes the corpus and commits it. `--analyzer default|english`
+  selects the analysis; the default keeps stop words and does not stem.
+- `add <store-dir> --corpus <dir>` adds documents to the store's live overlay and commits.
+- `remove <store-dir> --id <doc-id>` tombstones a document and commits. The commit recompacts, so
+  **every surviving score can move** — the statistics stop being frozen.
+- `commit <store-dir>` compacts the store: it merges the tombstones and rewrites one segment.
+- `search <store-dir> --query <text> [--top-k <n>] [--json <path>]` ranks the committed corpus.
+- `info <store-dir>` reports the counts without searching.
+
+The analysis is recorded in `store.json` beside the segments, and every subcommand reads the recorded
+one — a store's dictionary holds normalized terms, so searching it with a different tokenizer would
+read a different index without saying so. `build` is the only subcommand that chooses the analyzer.
+
 ## Comparing two configurations, query by query
 
 A pair of means cannot tell you what a change actually did. Two configurations can land
