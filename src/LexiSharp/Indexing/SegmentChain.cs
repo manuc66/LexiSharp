@@ -97,6 +97,14 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     private readonly SegmentOverlay _overlay;
     private readonly ITokenizer _tokenizer;
 
+    /// <summary>
+    /// The live-document view, built once. A chain is immutable — a write goes into the overlay and a
+    /// removal into <see cref="_dead"/> — and the view reads through this chain, so one instance stays
+    /// correct for the chain's lifetime. Rebuilding it per access was a small allocation on the
+    /// full-scan fallback, which is the one path that reads it.
+    /// </summary>
+    private readonly ChainDocumentView _documents;
+
     /// <param name="segments">
     /// The chain's generations, oldest first. Each segment's ordinal space is appended to the previous
     /// one's, so a chain of two 20,000-document segments owns the global ordinals <c>[0, 40000)</c>.
@@ -139,6 +147,7 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
         _segmentTokens = tokens;
         _tokenizer = tokenizer ?? LexiSharp.Linguistics.Tokenizer.Default;
         _overlay = new SegmentOverlay(_tokenizer);
+        _documents = new ChainDocumentView(this);
     }
 
     /// <summary>Segments in the chain, oldest first.</summary>
@@ -480,7 +489,7 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     /// Enumerated on demand rather than materialized: a chain that decoded its whole corpus here would
     /// pay the 34-100 ms the laziness exists to avoid.
     /// </remarks>
-    public IReadOnlyCollection<SearchDocument> Documents => new ChainDocumentView(this);
+    public IReadOnlyCollection<SearchDocument> Documents => _documents;
 
     /// <summary>
     /// Every distinct term across the segments and the overlay, counted.
@@ -600,22 +609,7 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
             segment.Accumulate(weight, accumulator, _bases[i], lengths, dead);
         }
 
-        _overlay.Accumulate(weight, accumulator, _segmentOrdinalSpace, OverlayLengths());
-    }
-
-    /// <summary>
-    /// The overlay's lengths, indexed by overlay-local ordinal. Allocated per accumulation because the
-    /// overlay is small by construction — the commit threshold bounds it — and a cached array would
-    /// have to be invalidated on every write.
-    /// </summary>
-    private int[] OverlayLengths()
-    {
-        var lengths = new int[_overlay.OrdinalCapacity];
-
-        for (int ordinal = 0; ordinal < _overlay.OrdinalCapacity; ordinal++)
-            lengths[ordinal] = _overlay.LengthAt(ordinal);
-
-        return lengths;
+        _overlay.Accumulate(weight, accumulator, _segmentOrdinalSpace, _overlay.Lengths);
     }
 
     /// <inheritdoc />

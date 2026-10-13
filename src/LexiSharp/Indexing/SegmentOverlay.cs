@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using LexiSharp.Core;
 using LexiSharp.Linguistics;
 
@@ -76,6 +77,18 @@ internal sealed class SegmentOverlay
 
     /// <summary>The token count of the document at an overlay-local ordinal.</summary>
     public int LengthAt(int ordinal) => _lengths[ordinal];
+
+    /// <summary>
+    /// Every overlay-local document length, indexed by overlay-local ordinal — the overlay's own
+    /// array, not a copy.
+    /// </summary>
+    /// <remarks>
+    /// The accumulation pass needs a length per posting entry and reads it by ordinal. It used to be
+    /// handed a fresh <c>int[]</c> the chain built from these values on every query, which is a copy of
+    /// an array the overlay already owns; a span over the list is the same values with no copy. Valid
+    /// until the overlay is written to, which an accumulation never does.
+    /// </remarks>
+    public ReadOnlySpan<int> Lengths => CollectionsMarshal.AsSpan(_lengths);
 
     /// <summary>
     /// Adds or replaces a document, and returns the overlay-local ordinal it now holds.
@@ -315,7 +328,7 @@ internal sealed class SegmentOverlay
         TWeight weight,
         ScoreAccumulator accumulator,
         int offset,
-        int[] lengths)
+        ReadOnlySpan<int> lengths)
         where TWeight : struct, IPostingWeight
     {
         if (!_postings.TryGetValue(weight.Term, out var postings))
