@@ -96,12 +96,60 @@ internal static class PostingBlocks
         while (index < ordinals.Length)
         {
             int end = WindowEnd(ordinals, index);
-            total += BlockSize(ordinals, frequencies, lengths, positions, positionStart, index, end);
+            total += Layout(ordinals, frequencies, lengths, positions, positionStart, index, end).Size;
             positionStart += FrequencySum(frequencies, index, end);
             index = end;
         }
 
         return total;
+    }
+
+    /// <summary>
+    /// One block's layout, computed once from its entries: the widths it packs at, its bounds, where its
+    /// planes start and how many bytes it takes.
+    /// </summary>
+    /// <remarks>
+    /// This used to be recomputed at each of the three places a block is visited — once to size it, once
+    /// to place the skip table, once to encode it — and every input is a pure function of the entries.
+    /// The writer visits each block twice now and computes this once.
+    /// </remarks>
+    private readonly record struct BlockLayout(
+        int EntriesBytes,
+        int Form,
+        int LastOrdinal,
+        int MaxFrequency,
+        int MinLength,
+        int PositionsBytes,
+        int Size);
+
+    private static BlockLayout Layout(
+        ReadOnlySpan<int> ordinals,
+        ReadOnlySpan<int> frequencies,
+        ReadOnlySpan<int> lengths,
+        ReadOnlySpan<int> positions,
+        int positionStart,
+        int start,
+        int end)
+    {
+        int window = ordinals[start] / BlockSpan;
+        (int maxFrequency, int minLength) = BlockBounds(ordinals, frequencies, lengths, start, end);
+        (int entriesBytes, int form, int lastOrdinal) = EntryLayout(ordinals, frequencies, start, end);
+        (int positionsBytes, int positionWidth) = PositionLayout(frequencies, positions, positionStart, start, end);
+
+        form |= (positionWidth - 1) << 2;
+
+        int size = Varints.Size(window)
+            + Varints.Size(end - start)
+            + Varints.Size(entriesBytes)
+            + Varints.Size(lastOrdinal - (window * BlockSpan))
+            + Varints.Size(maxFrequency)
+            + Varints.Size(minLength)
+            + Varints.Size(form)
+            + entriesBytes
+            + Varints.Size(positionsBytes)
+            + positionsBytes;
+
+        return new BlockLayout(entriesBytes, form, lastOrdinal, maxFrequency, minLength, positionsBytes, size);
     }
 
     /// <summary>
@@ -130,9 +178,16 @@ internal static class PostingBlocks
             int index = 0;
             int positionStart = 0;
 
+            // Each block's layout, computed once and carried to the encoding below. This pass used to
+            // size a block and the encoding pass used to size it again.
+            var layouts = ArrayPool<BlockLayout>.Shared.Rent(blockCount == 0 ? 1 : blockCount);
+
             while (index < ordinals.Length)
             {
                 int end = WindowEnd(ordinals, index);
+                var layout = Layout(ordinals, frequencies, lengths, positions, positionStart, index, end);
+
+                layouts[block] = layout;
 
                 if (block % SkipEvery == 0)
                 {
@@ -140,7 +195,7 @@ internal static class PostingBlocks
                     skipOffsets[block / SkipEvery] = position;
                 }
 
-                position += BlockSize(ordinals, frequencies, lengths, positions, positionStart, index, end);
+                position += layout.Size;
                 positionStart += FrequencySum(frequencies, index, end);
                 index = end;
                 block++;
@@ -148,27 +203,36 @@ internal static class PostingBlocks
 
             int written = Varints.Write(blockCount, destination);
 
-            for (int i = 0; i < skipCount; i++)
+            try
             {
-                BinaryPrimitives.WriteUInt32LittleEndian(destination[written..], (uint)skipWindows[i]);
-                BinaryPrimitives.WriteUInt32LittleEndian(destination[(written + sizeof(uint))..], (uint)skipOffsets[i]);
-                written += SkipEntryBytes;
+                for (int i = 0; i < skipCount; i++)
+                {
+                    BinaryPrimitives.WriteUInt32LittleEndian(destination[written..], (uint)skipWindows[i]);
+                    BinaryPrimitives.WriteUInt32LittleEndian(destination[(written + sizeof(uint))..], (uint)skipOffsets[i]);
+                    written += SkipEntryBytes;
+                }
+
+                index = 0;
+                positionStart = 0;
+                block = 0;
+
+                while (index < ordinals.Length)
+                {
+                    int end = WindowEnd(ordinals, index);
+                    written += WriteBlock(
+                        ordinals, frequencies, positions, positionStart, index, end, layouts[block], destination[written..]);
+
+                    positionStart += FrequencySum(frequencies, index, end);
+                    index = end;
+                    block++;
+                }
+
+                return written;
             }
-
-            index = 0;
-            positionStart = 0;
-
-            while (index < ordinals.Length)
+            finally
             {
-                int end = WindowEnd(ordinals, index);
-                written += WriteBlock(
-                    ordinals, frequencies, lengths, positions, positionStart, index, end, destination[written..]);
-
-                positionStart += FrequencySum(frequencies, index, end);
-                index = end;
+                ArrayPool<BlockLayout>.Shared.Return(layouts);
             }
-
-            return written;
         }
         finally
         {
@@ -205,36 +269,6 @@ internal static class PostingBlocks
             end++;
 
         return end;
-    }
-
-    private static int BlockSize(
-        ReadOnlySpan<int> ordinals,
-        ReadOnlySpan<int> frequencies,
-        ReadOnlySpan<int> lengths,
-        ReadOnlySpan<int> positions,
-        int positionStart,
-        int start,
-        int end)
-    {
-        int window = ordinals[start] / BlockSpan;
-        (int maxFrequency, int minLength) = BlockBounds(ordinals, frequencies, lengths, start, end);
-        (int entriesBytes, int form, int lastOrdinal) = EntryLayout(ordinals, frequencies, start, end);
-        (int positionsBytes, int positionWidth) = PositionLayout(frequencies, positions, positionStart, start, end);
-
-        form |= (positionWidth - 1) << 2;
-
-        // The block carries its own length, which is what lets a reader reach the scoring entries
-        // without first walking them to find where the block ends.
-        return Varints.Size(window)
-            + Varints.Size(end - start)
-            + Varints.Size(entriesBytes)
-            + Varints.Size(lastOrdinal - (window * BlockSpan))
-            + Varints.Size(maxFrequency)
-            + Varints.Size(minLength)
-            + Varints.Size(form)
-            + entriesBytes
-            + Varints.Size(positionsBytes)
-            + positionsBytes;
     }
 
     /// <summary>Total term frequency of the entries in <c>[start, end)</c> — the positions plane's value count.</summary>
@@ -347,28 +381,25 @@ internal static class PostingBlocks
     private static int WriteBlock(
         ReadOnlySpan<int> ordinals,
         ReadOnlySpan<int> frequencies,
-        ReadOnlySpan<int> lengths,
         ReadOnlySpan<int> positions,
         int positionStart,
         int start,
         int end,
+        in BlockLayout layout,
         Span<byte> destination)
     {
         int window = ordinals[start] / BlockSpan;
-        (int maxFrequency, int minLength) = BlockBounds(ordinals, frequencies, lengths, start, end);
-        (int entriesBytes, int form, int lastOrdinal) = EntryLayout(ordinals, frequencies, start, end);
-        (int positionsBytes, int positionWidth) = PositionLayout(frequencies, positions, positionStart, start, end);
-
-        form |= (positionWidth - 1) << 2;
+        int form = layout.Form;
+        int positionWidth = 1 + ((form >> 2) & 1);
 
         int written = Varints.Write(window, destination);
         written += Varints.Write(end - start, destination[written..]);
-        written += Varints.Write(entriesBytes, destination[written..]);
-        written += Varints.Write(lastOrdinal - (window * BlockSpan), destination[written..]);
-        written += Varints.Write(maxFrequency, destination[written..]);
-        written += Varints.Write(minLength, destination[written..]);
+        written += Varints.Write(layout.EntriesBytes, destination[written..]);
+        written += Varints.Write(layout.LastOrdinal - (window * BlockSpan), destination[written..]);
+        written += Varints.Write(layout.MaxFrequency, destination[written..]);
+        written += Varints.Write(layout.MinLength, destination[written..]);
         written += Varints.Write(form, destination[written..]);
-        written += Varints.Write(positionsBytes, destination[written..]);
+        written += Varints.Write(layout.PositionsBytes, destination[written..]);
 
         int deltaBytes = 1 + ((form >> 1) & 1);
         int frequencyBytes = 1 + (form & 1);
