@@ -33,6 +33,9 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
     /// <summary>Dense local ordinal → the chain-wide ordinal that owns it, or -1 for a dead slot.</summary>
     private readonly int[] _renumber;
 
+    /// <summary>Whether the chain's ordinals renumber to themselves, in which case compaction is a copy.</summary>
+    private readonly bool _identity;
+
     private readonly int _count;
     private readonly int[] _lengths;
     private readonly string[] _terms;
@@ -56,6 +59,7 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
         // -1 and are skipped everywhere below.
         _byLocal = new SearchDocument?[space];
         int local = 0;
+        bool identity = true;
 
         for (int ordinal = 0; ordinal < space; ordinal++)
         {
@@ -64,16 +68,22 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
             if (document is null)
             {
                 _renumber[ordinal] = -1;
+                identity = false;
 
                 continue;
             }
 
             _renumber[ordinal] = local;
+            identity &= local == ordinal;
             _byLocal[local] = document;
             _lengths[local] = chain.DocumentLength(document.Id);
             local++;
         }
 
+        // Whether the renumbering is the identity — no tombstone, no freed ordinal, no gap. When it is,
+        // the compaction below has nothing to drop and nothing to merge, and the lists it builds are
+        // three of the six a term's resolution allocates.
+        _identity = identity;
         _count = local;
         _terms = chain.CollectDistinctTerms();
     }
@@ -209,6 +219,20 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
 
         // The overlay's postings are held in memory, so they cost no fetch and no walk of a region.
         _chain.CollectOverlayPostings(encoded, ordinals, frequencies, positions);
+
+        if (_identity)
+        {
+            // Nothing to drop and nothing to merge: the ordinals already ascend, strictly, in the dense
+            // space. The arrays are still copies, because a PostingView's span does not keep its source
+            // alive, but the three lists and their doubling growth are not.
+            postings = new PostingView(
+                System.Linq.Enumerable.ToArray(ordinals),
+                System.Linq.Enumerable.ToArray(frequencies),
+                _lengths,
+                positions is null ? null : System.Linq.Enumerable.ToArray(positions));
+
+            return true;
+        }
 
         // Renumber into the dense space, dropping the tombstoned and the freed, and aggregate the
         // occurrences a document holds into one entry: the layout stores one (ordinal, frequency) pair
