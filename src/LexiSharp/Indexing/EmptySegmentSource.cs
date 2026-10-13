@@ -73,7 +73,7 @@ internal sealed class EmptySegmentSource : ITextIndex, ISpanAccumulatingIndex, I
     void ITextIndex.Clear() =>
         throw new NotSupportedException("an empty source is written, not written to");
 
-    bool ISpanAccumulatingIndex.TryResolvePostings(ReadOnlySpan<char> term, out PostingView postings)
+    bool ISpanAccumulatingIndex.TryResolvePostings(ReadOnlySpan<char> term, bool withPositions, out PostingView postings)
     {
         postings = default;
 

@@ -880,77 +880,13 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// </summary>
     private bool MatchesPhrases(string documentId, IReadOnlyList<IReadOnlyList<string>> phrases)
     {
-        if (phrases.Count == 0)
-            return true;
-
-        // An index that recomputes positions pays a full tokenization per GetTermPositions call, and
-        // the gate needs every phrase term's positions. Asking for the document's positioned terms once
-        // and evaluating every phrase against that list replaces one tokenization per term per phrase —
-        // measured at 494 MB for one two-term phrase query over a 20,000-document store.
-        var positioned = (_index as IPositionedTermsIndex)?.GetPositionedTerms(documentId);
-
         for (int p = 0; p < phrases.Count; p++)
         {
-            bool matches = positioned is not null
-                ? MatchesPhrase(positioned, phrases[p])
-                : MatchesPhrase(documentId, phrases[p]);
-
-            if (!matches)
+            if (!MatchesPhrase(documentId, phrases[p]))
                 return false;
         }
 
         return true;
-    }
-
-    /// <summary>
-    /// Whether a phrase's terms sit at consecutive positions in a document's positioned terms.
-    /// </summary>
-    private static bool MatchesPhrase(
-        IReadOnlyList<(string Term, int Position)> terms, IReadOnlyList<string> phrase)
-    {
-        var anchors = PositionsOf(terms, phrase[0]);
-
-        if (phrase.Count == 1)
-            return anchors.Count > 0;
-
-        var followers = new List<int>[phrase.Count - 1];
-
-        for (int i = 1; i < phrase.Count; i++)
-            followers[i - 1] = PositionsOf(terms, phrase[i]);
-
-        for (int a = 0; a < anchors.Count; a++)
-        {
-            int start = anchors[a];
-            bool consecutive = true;
-
-            for (int i = 1; i < phrase.Count; i++)
-            {
-                if (!ContainsPosition(followers[i - 1], start + i))
-                {
-                    consecutive = false;
-                    break;
-                }
-            }
-
-            if (consecutive)
-                return true;
-        }
-
-        return false;
-    }
-
-    /// <summary>The positions one term occupies in a document's positioned terms.</summary>
-    private static List<int> PositionsOf(IReadOnlyList<(string Term, int Position)> terms, string term)
-    {
-        var positions = new List<int>();
-
-        for (int i = 0; i < terms.Count; i++)
-        {
-            if (string.Equals(terms[i].Term, term, StringComparison.Ordinal))
-                positions.Add(terms[i].Position);
-        }
-
-        return positions;
     }
 
     /// <summary>

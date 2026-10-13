@@ -31,7 +31,7 @@ public class SegmentRoundTripTests
 
         foreach (string term in ((IVocabularyIndex)index).Vocabulary)
         {
-            Assert.True(spanIndex.TryResolvePostings(term, out var expected), term);
+            Assert.True(spanIndex.TryResolvePostings(term, withPositions: true, out var expected), term);
             Assert.True(reader.TryFindTerm(term, out int frequency, out var postings), term);
 
             Assert.Equal(expected.Count, frequency);

@@ -189,50 +189,18 @@ public sealed class ProximityReranker : IReranker
         var occurrences = new List<PositionedTerm>(terms.Count * 4);
         bool everyTermPresent = true;
 
-        if (_index is IPositionedTermsIndex positionedIndex)
+        foreach (string term in terms)
         {
-            // One tokenization per candidate for every query term, instead of one per candidate per
-            // term: an index that recomputes positions tokenizes the document on each
-            // GetTermPositions call, so the term-major loop below paid C x T tokenizations where one
-            // pass per candidate pays C. See IPositionedTermsIndex.
-            var present = new bool[terms.Count];
+            var positions = CollectPositions(term, candidates);
+            var any = false;
 
-            for (int i = 0; i < candidates.Count; i++)
+            foreach (var (position, candidate) in positions)
             {
-                var positioned = positionedIndex.GetPositionedTerms(candidates[i].DocumentId);
-
-                for (int k = 0; k < positioned.Count; k++)
-                {
-                    for (int t = 0; t < terms.Count; t++)
-                    {
-                        if (!string.Equals(positioned[k].Term, terms[t], StringComparison.Ordinal))
-                            continue;
-
-                        occurrences.Add(new PositionedTerm(i, positioned[k].Position, terms[t]));
-                        present[t] = true;
-                        break;
-                    }
-                }
+                occurrences.Add(new PositionedTerm(candidate, position, term));
+                any = true;
             }
 
-            foreach (bool wasPresent in present)
-                everyTermPresent &= wasPresent;
-        }
-        else
-        {
-            foreach (string term in terms)
-            {
-                var positions = CollectPositions(term, candidates);
-                var any = false;
-
-                foreach (var (position, candidate) in positions)
-                {
-                    occurrences.Add(new PositionedTerm(candidate, position, term));
-                    any = true;
-                }
-
-                everyTermPresent &= any;
-            }
+            everyTermPresent &= any;
         }
 
         if (!everyTermPresent)

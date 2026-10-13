@@ -35,14 +35,24 @@ namespace LexiSharp.Indexing;
 ///     varint lastOrdinalDelta   last entry's ordinal − windowIndex × BlockSpan
 ///     varint maxFrequency       largest term frequency in the block
 ///     varint minDocumentLength  smallest document length in the block
-///     varint planeForm          entry widths: 0 = u8/u8, 1 = u8/u16, 2 = u16/u8, 3 = u16/u16
+///     varint planeForm          entry widths: bit0 frequency, bit1 ordinal, bit2 position (0 = u8)
 ///     count × ordinal delta     packed at 8 or 16 bits, from the ordinal before, or the window base
 ///     count × frequency         packed at 8 or 16 bits
+///     varint positionsBytes     bytes the positions plane takes
+///     Σ frequency × position    packed at 8 or 16 bits: each entry's first position, then deltas
 /// </code>
 /// where each ordinal delta is from the ordinal before it, or from the window base for the first. The
 /// planes are byte-aligned and indexed, so decoding an entry is two aligned loads — no per-entry bit
 /// shuffling, which is the point of the format. A block may hold values larger than 255 in a plane:
 /// that plane widens to 16 bits for the whole block, which is the lossless floor of the trade.
+/// </para>
+/// <para>
+/// <b>Positions.</b> The third plane holds, for every entry in order, that entry's term positions: the
+/// first absolute within the document, each later one a delta from the position before it. A segment
+/// that stores them answers <c>GetTermPositions</c> by decoding one entry instead of tokenizing the
+/// document, which is what the phrase gate and the proximity reranker ask for per candidate. A reader
+/// that does not want them never decodes the plane — the header says how many bytes it takes, so a
+/// block's length is known without summing the frequencies.
 /// </para>
 /// <para>
 /// <see cref="BlockSpan"/> is 128 because a smaller window buys tighter bounds and pays for them in
@@ -67,19 +77,27 @@ internal static class PostingBlocks
     /// <summary>Bytes <see cref="Write"/> would write for these postings.</summary>
     /// <remarks>
     /// <paramref name="ordinals"/> must be strictly ascending and <paramref name="lengths"/> indexed
-    /// by ordinal, which is what the index's flat copies are.
+    /// by ordinal, which is what the index's flat copies are. <paramref name="positions"/> holds, in
+    /// order, <c>frequencies[i]</c> positions for entry <c>i</c>, ascending within the entry — so its
+    /// length is the sum of <paramref name="frequencies"/>.
     /// </remarks>
-    public static int Measure(ReadOnlySpan<int> ordinals, ReadOnlySpan<int> frequencies, ReadOnlySpan<int> lengths)
+    public static int Measure(
+        ReadOnlySpan<int> ordinals,
+        ReadOnlySpan<int> frequencies,
+        ReadOnlySpan<int> lengths,
+        ReadOnlySpan<int> positions)
     {
         int blockCount = CountBlocks(ordinals);
         int total = Varints.Size(blockCount) + (SkipCount(blockCount) * SkipEntryBytes);
 
         int index = 0;
+        int positionStart = 0;
 
         while (index < ordinals.Length)
         {
             int end = WindowEnd(ordinals, index);
-            total += BlockSize(ordinals, frequencies, lengths, index, end);
+            total += BlockSize(ordinals, frequencies, lengths, positions, positionStart, index, end);
+            positionStart += FrequencySum(frequencies, index, end);
             index = end;
         }
 
@@ -94,6 +112,7 @@ internal static class PostingBlocks
         ReadOnlySpan<int> ordinals,
         ReadOnlySpan<int> frequencies,
         ReadOnlySpan<int> lengths,
+        ReadOnlySpan<int> positions,
         Span<byte> destination)
     {
         int blockCount = CountBlocks(ordinals);
@@ -109,6 +128,7 @@ internal static class PostingBlocks
             int position = header;
             int block = 0;
             int index = 0;
+            int positionStart = 0;
 
             while (index < ordinals.Length)
             {
@@ -120,7 +140,8 @@ internal static class PostingBlocks
                     skipOffsets[block / SkipEvery] = position;
                 }
 
-                position += BlockSize(ordinals, frequencies, lengths, index, end);
+                position += BlockSize(ordinals, frequencies, lengths, positions, positionStart, index, end);
+                positionStart += FrequencySum(frequencies, index, end);
                 index = end;
                 block++;
             }
@@ -135,11 +156,15 @@ internal static class PostingBlocks
             }
 
             index = 0;
+            positionStart = 0;
 
             while (index < ordinals.Length)
             {
                 int end = WindowEnd(ordinals, index);
-                written += WriteBlock(ordinals, frequencies, lengths, index, end, destination[written..]);
+                written += WriteBlock(
+                    ordinals, frequencies, lengths, positions, positionStart, index, end, destination[written..]);
+
+                positionStart += FrequencySum(frequencies, index, end);
                 index = end;
             }
 
@@ -186,12 +211,17 @@ internal static class PostingBlocks
         ReadOnlySpan<int> ordinals,
         ReadOnlySpan<int> frequencies,
         ReadOnlySpan<int> lengths,
+        ReadOnlySpan<int> positions,
+        int positionStart,
         int start,
         int end)
     {
         int window = ordinals[start] / BlockSpan;
         (int maxFrequency, int minLength) = BlockBounds(ordinals, frequencies, lengths, start, end);
         (int entriesBytes, int form, int lastOrdinal) = EntryLayout(ordinals, frequencies, start, end);
+        (int positionsBytes, int positionWidth) = PositionLayout(frequencies, positions, positionStart, start, end);
+
+        form |= (positionWidth - 1) << 2;
 
         // The block carries its own length, which is what lets a reader reach the scoring entries
         // without first walking them to find where the block ends.
@@ -202,7 +232,57 @@ internal static class PostingBlocks
             + Varints.Size(maxFrequency)
             + Varints.Size(minLength)
             + Varints.Size(form)
-            + entriesBytes;
+            + entriesBytes
+            + Varints.Size(positionsBytes)
+            + positionsBytes;
+    }
+
+    /// <summary>Total term frequency of the entries in <c>[start, end)</c> — the positions plane's value count.</summary>
+    private static int FrequencySum(ReadOnlySpan<int> frequencies, int start, int end)
+    {
+        int total = 0;
+
+        for (int i = start; i < end; i++)
+            total += frequencies[i];
+
+        return total;
+    }
+
+    /// <summary>
+    /// Bytes the positions plane takes and the width it is packed at: for every entry in order, its
+    /// first position absolute and each later one a delta from the position before it.
+    /// </summary>
+    private static (int Bytes, int Width) PositionLayout(
+        ReadOnlySpan<int> frequencies,
+        ReadOnlySpan<int> positions,
+        int positionStart,
+        int start,
+        int end)
+    {
+        int count = 0;
+        int max = 0;
+        int at = positionStart;
+
+        for (int i = start; i < end; i++)
+        {
+            int previous = 0;
+
+            for (int k = 0; k < frequencies[i]; k++)
+            {
+                int value = positions[at++];
+                int encoded = k == 0 ? value : value - previous;
+
+                if (encoded > max)
+                    max = encoded;
+
+                previous = value;
+                count++;
+            }
+        }
+
+        int width = max <= byte.MaxValue ? 1 : 2;
+
+        return (count * width, width);
     }
 
     /// <summary>
@@ -268,6 +348,8 @@ internal static class PostingBlocks
         ReadOnlySpan<int> ordinals,
         ReadOnlySpan<int> frequencies,
         ReadOnlySpan<int> lengths,
+        ReadOnlySpan<int> positions,
+        int positionStart,
         int start,
         int end,
         Span<byte> destination)
@@ -275,6 +357,9 @@ internal static class PostingBlocks
         int window = ordinals[start] / BlockSpan;
         (int maxFrequency, int minLength) = BlockBounds(ordinals, frequencies, lengths, start, end);
         (int entriesBytes, int form, int lastOrdinal) = EntryLayout(ordinals, frequencies, start, end);
+        (int positionsBytes, int positionWidth) = PositionLayout(frequencies, positions, positionStart, start, end);
+
+        form |= (positionWidth - 1) << 2;
 
         int written = Varints.Write(window, destination);
         written += Varints.Write(end - start, destination[written..]);
@@ -283,9 +368,11 @@ internal static class PostingBlocks
         written += Varints.Write(maxFrequency, destination[written..]);
         written += Varints.Write(minLength, destination[written..]);
         written += Varints.Write(form, destination[written..]);
+        written += Varints.Write(positionsBytes, destination[written..]);
 
-        int deltaBytes = 1 + (form >> 1);
+        int deltaBytes = 1 + ((form >> 1) & 1);
         int frequencyBytes = 1 + (form & 1);
+        int positionBytes = 1 + ((form >> 2) & 1);
         int previous = window * BlockSpan;
 
         for (int i = start; i < end; i++)
@@ -311,6 +398,29 @@ internal static class PostingBlocks
             {
                 BinaryPrimitives.WriteUInt16LittleEndian(destination[written..], (ushort)frequencies[i]);
                 written += sizeof(ushort);
+            }
+        }
+
+        int at = positionStart;
+
+        for (int i = start; i < end; i++)
+        {
+            int previousPosition = 0;
+
+            for (int k = 0; k < frequencies[i]; k++)
+            {
+                int value = positions[at++];
+                int encoded = k == 0 ? value : value - previousPosition;
+
+                previousPosition = value;
+
+                if (positionWidth == 1)
+                    destination[written++] = (byte)encoded;
+                else
+                {
+                    BinaryPrimitives.WriteUInt16LittleEndian(destination[written..], (ushort)encoded);
+                    written += sizeof(ushort);
+                }
             }
         }
 

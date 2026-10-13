@@ -22,16 +22,18 @@ public class PostingBlocksTests
         foreach (int count in new[] { 0, 1, 2, 127, 128, 129, 1_000, 10_000 })
         {
             var postings = Postings(count, 1_000_000, seed: count + 1);
-            int size = PostingBlocks.Measure(postings.Ordinals, postings.Frequencies, postings.Lengths);
+            int size = PostingBlocks.Measure(postings.Ordinals, postings.Frequencies, postings.Lengths, postings.Positions);
 
             // One byte more than measured, so an overrun lands in the buffer rather than past it.
             var region = new byte[size + 1];
-            int written = PostingBlocks.Write(postings.Ordinals, postings.Frequencies, postings.Lengths, region);
+            int written = PostingBlocks.Write(postings.Ordinals, postings.Frequencies, postings.Lengths, postings.Positions, region);
 
             Assert.Equal(size, written);
 
             var reader = new PostingBlockReader(region.AsSpan(0, written));
             int index = 0;
+            int positionIndex = 0;
+            var read = new int[8];
 
             while (reader.MoveNext())
             {
@@ -39,11 +41,21 @@ public class PostingBlocksTests
                 {
                     Assert.Equal(postings.Ordinals[index], ordinal);
                     Assert.Equal(postings.Frequencies[index], frequency);
+
+                    // The positions come back exactly, entry by entry.
+                    int positionCount = reader.ReadPositions(read);
+
+                    Assert.Equal(frequency, positionCount);
+
+                    for (int k = 0; k < positionCount; k++)
+                        Assert.Equal(postings.Positions[positionIndex++], read[k]);
+
                     index++;
                 }
             }
 
             Assert.Equal(count, index);
+            Assert.Equal(postings.Positions.Length, positionIndex);
         }
     }
 
@@ -69,7 +81,20 @@ public class PostingBlocksTests
             frequencies[i] = 200 + random.Next(10_000);
         }
 
-        var postings = (ordinals, frequencies, lengths);
+        var positions = new List<int>();
+
+        for (int i = 0; i < ordinals.Length; i++)
+        {
+            int position = random.Next(1_000);
+
+            for (int k = 0; k < frequencies[i]; k++)
+            {
+                positions.Add(position);
+                position += random.Next(1_000);
+            }
+        }
+
+        var postings = (ordinals, frequencies, lengths, positions.ToArray());
         var region = Region(postings);
         var reader = new PostingBlockReader(region);
         int index = 0;
@@ -219,8 +244,12 @@ public class PostingBlocksTests
         // Dense — every term in every document: the block header amortizes over 128 entries, and the
         // earlier measurement put the layout below a quarter of the flat arrays.
         var dense = Postings(10_000, 10_000, seed: 17);
-        long denseFlat = dense.Ordinals.Length * 2 * sizeof(int);
-        long denseBlocks = PostingBlocks.Measure(dense.Ordinals, dense.Frequencies, dense.Lengths);
+
+        // The flat side carries what the blocks carry: an ordinal and a frequency per entry, and a
+        // position per occurrence. Comparing the layout against only the first two would be comparing
+        // it against a representation that cannot answer a positional query at all.
+        long denseFlat = (dense.Ordinals.Length * 2 * sizeof(int)) + (dense.Positions.Length * sizeof(int));
+        long denseBlocks = PostingBlocks.Measure(dense.Ordinals, dense.Frequencies, dense.Lengths, dense.Positions);
 
         Assert.True(denseBlocks * 2 < denseFlat, $"dense: {denseBlocks} against {denseFlat}");
 
@@ -231,13 +260,14 @@ public class PostingBlocksTests
 
         foreach (string term in ((IVocabularyIndex)corpus).Vocabulary)
         {
-            Assert.True(((ISpanAccumulatingIndex)corpus).TryResolvePostings(term, out var postings), term);
+            Assert.True(((ISpanAccumulatingIndex)corpus).TryResolvePostings(term, withPositions: true, out var postings), term);
             var ordinals = postings.Ordinals.ToArray();
             var frequencies = postings.Frequencies.ToArray();
             var lengths = postings.Lengths.ToArray();
+            var positions = postings.Positions.ToArray();
 
-            flat += ordinals.Length * 2 * sizeof(int);
-            blocks += PostingBlocks.Measure(ordinals, frequencies, lengths);
+            flat += (ordinals.Length * 2 * sizeof(int)) + (positions.Length * sizeof(int));
+            blocks += PostingBlocks.Measure(ordinals, frequencies, lengths, positions);
         }
 
         Assert.True(blocks < flat, $"zipf: {blocks} against {flat}");
@@ -302,12 +332,14 @@ public class PostingBlocksTests
     }
 
     /// <summary>A synthetic posting list: ascending ordinals, small frequencies, per-document lengths.</summary>
-    private static (int[] Ordinals, int[] Frequencies, int[] Lengths) Postings(int count, int ordinalSpace, int seed)
+    private static (int[] Ordinals, int[] Frequencies, int[] Lengths, int[] Positions) Postings(
+        int count, int ordinalSpace, int seed)
     {
         var random = new Random(seed);
         var ordinals = new int[count];
         var frequencies = new int[count];
         var lengths = new int[ordinalSpace];
+        var positions = new List<int>();
 
         for (int i = 0; i < ordinalSpace; i++)
             lengths[i] = 1 + random.Next(400);
@@ -318,15 +350,23 @@ public class PostingBlocksTests
         {
             ordinals[i] = (i * step) + random.Next(step);
             frequencies[i] = 1 + random.Next(6);
+
+            int position = random.Next(4);
+
+            for (int k = 0; k < frequencies[i]; k++)
+            {
+                positions.Add(position);
+                position += 1 + random.Next(4);
+            }
         }
 
-        return (ordinals, frequencies, lengths);
+        return (ordinals, frequencies, lengths, positions.ToArray());
     }
 
-    private static byte[] Region((int[] Ordinals, int[] Frequencies, int[] Lengths) postings)
+    private static byte[] Region((int[] Ordinals, int[] Frequencies, int[] Lengths, int[] Positions) postings)
     {
-        var region = new byte[PostingBlocks.Measure(postings.Ordinals, postings.Frequencies, postings.Lengths)];
-        int written = PostingBlocks.Write(postings.Ordinals, postings.Frequencies, postings.Lengths, region);
+        var region = new byte[PostingBlocks.Measure(postings.Ordinals, postings.Frequencies, postings.Lengths, postings.Positions)];
+        int written = PostingBlocks.Write(postings.Ordinals, postings.Frequencies, postings.Lengths, postings.Positions, region);
 
         Assert.Equal(region.Length, written);
 

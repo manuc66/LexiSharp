@@ -46,12 +46,17 @@ internal ref struct PostingBlockReader
     private int _windowLength;
     private ReadOnlySpan<byte> _deltaPlane;
     private ReadOnlySpan<byte> _frequencyPlane;
+    private ReadOnlySpan<byte> _positionPlane;
     private int _deltaBytes;
     private int _frequencyBytes;
+    private int _positionBytes;
     private int _entryCursor;
     private int _position;
     private int _blockIndex;
     private int _previousOrdinal;
+    private int _positionCursor;
+    private int _entryPositionStart;
+    private int _entryFrequency;
 
     /// <summary>Positions the cursor before the first block of a region held in memory.</summary>
     /// <exception cref="InvalidDataException">The region does not hold a postings list.</exception>
@@ -265,7 +270,43 @@ internal ref struct PostingBlockReader
             : BinaryPrimitives.ReadUInt16LittleEndian(frequencies[(cursor * 2)..]);
         _entryCursor = cursor + 1;
 
+        // Where this entry's positions start in the plane, and how many it has. Tracked as the walk
+        // advances rather than summed on demand: the plane is only read when a caller asks for one
+        // entry's positions, and that caller must not have to walk the frequencies before it.
+        _entryFrequency = frequency;
+        _entryPositionStart = _positionCursor;
+        _positionCursor += frequency;
+
         return true;
+    }
+
+    /// <summary>
+    /// Reads the positions of the entry <see cref="TryReadEntry"/> last returned, in ascending order,
+    /// and returns how many there are. <paramref name="destination"/> must hold at least that many.
+    /// </summary>
+    /// <remarks>
+    /// A store holds a term's positions so that a positional query reads them instead of tokenizing the
+    /// document; a reader that never calls this never decodes the plane.
+    /// </remarks>
+    public int ReadPositions(Span<int> destination)
+    {
+        int count = _entryFrequency;
+        int at = _entryPositionStart * _positionBytes;
+        int previous = 0;
+
+        for (int i = 0; i < count; i++)
+        {
+            int encoded = _positionBytes == 1
+                ? _positionPlane[at]
+                : BinaryPrimitives.ReadUInt16LittleEndian(_positionPlane[at..]);
+
+            at += _positionBytes;
+
+            previous = i == 0 ? encoded : previous + encoded;
+            destination[i] = previous;
+        }
+
+        return count;
     }
 
     /// <summary>The bytes from <paramref name="position"/> on: the region when it can be viewed, a fetched window otherwise.</summary>
@@ -372,19 +413,22 @@ internal ref struct PostingBlockReader
             !Varints.TryRead(ref remaining, out int maxFrequency) ||
             !Varints.TryRead(ref remaining, out int minLength) ||
             !Varints.TryRead(ref remaining, out int form) ||
+            !Varints.TryRead(ref remaining, out int positionsBytes) ||
             count <= 0 ||
             count > PostingBlocks.BlockSpan ||
             window < 0 ||
             lastDelta < 0 ||
+            positionsBytes < 0 ||
             form < 0 ||
-            form > 3)
+            form > 7)
         {
             consumed = 0;
             return false;
         }
 
-        int deltaBytes = 1 + (form >> 1);
+        int deltaBytes = 1 + ((form >> 1) & 1);
         int frequencyBytes = 1 + (form & 1);
+        int positionBytes = 1 + ((form >> 2) & 1);
 
         // The planes are self-describing: this count at these widths must fill the length the header
         // announces, and no more. A block whose planes do not add up is not a block this reader knows.
@@ -395,8 +439,9 @@ internal ref struct PostingBlockReader
         }
 
         int headerBytes = block.Length - remaining.Length;
+        int positionsStart = headerBytes + entryBytes;
 
-        if (headerBytes + entryBytes > block.Length)
+        if (positionsStart + positionsBytes > block.Length)
         {
             consumed = 0;
             return false;
@@ -413,11 +458,16 @@ internal ref struct PostingBlockReader
         LastOrdinal = (window * PostingBlocks.BlockSpan) + lastDelta;
         _deltaPlane = block.Slice(headerBytes, count * deltaBytes);
         _frequencyPlane = block.Slice(headerBytes + (count * deltaBytes), count * frequencyBytes);
+        _positionPlane = block.Slice(positionsStart, positionsBytes);
         _deltaBytes = deltaBytes;
         _frequencyBytes = frequencyBytes;
+        _positionBytes = positionBytes;
         _entryCursor = 0;
+        _positionCursor = 0;
+        _entryFrequency = 0;
+        _entryPositionStart = 0;
         _previousOrdinal = window * PostingBlocks.BlockSpan;
-        consumed = headerBytes + entryBytes;
+        consumed = positionsStart + positionsBytes;
 
         return true;
     }

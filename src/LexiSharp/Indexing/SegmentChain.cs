@@ -86,7 +86,7 @@ namespace LexiSharp.Indexing;
 /// interleaves them.
 /// </para>
 /// </remarks>
-internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICandidateIndex, ICandidateIdIndex, IOrdinalIdIndex, IPositionedTermsIndex
+internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICandidateIndex, ICandidateIdIndex, IOrdinalIdIndex
 {
     private readonly SegmentTextIndex[] _segments;
     private readonly int[] _bases;
@@ -326,8 +326,12 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     /// <paramref name="ordinals"/> and <paramref name="frequencies"/> as chain-wide ordinals, and
     /// returns how many it wrote.
     /// </summary>
-    internal void CollectOverlayPostings(string term, List<int> ordinals, List<int> frequencies) =>
-        _overlay.CollectGlobalPostings(term, _segmentOrdinalSpace, ordinals, frequencies);
+    internal void CollectOverlayPostings(
+        string term,
+        List<int> ordinals,
+        List<int> frequencies,
+        List<int>? positions = null) =>
+        _overlay.CollectGlobalPostings(term, _segmentOrdinalSpace, ordinals, frequencies, positions);
 
     /// <summary>How many documents of the overlay hold the term, distinct.</summary>
     internal int OverlayPostingCount(string term) => _overlay.CountPostings(term);
@@ -727,23 +731,6 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
         }
 
         return _overlay.PositionsOf(documentId, term);
-    }
-
-    /// <inheritdoc />
-    public IReadOnlyList<(string Term, int Position)> GetPositionedTerms(string documentId)
-    {
-        for (int i = 0; i < _segments.Length; i++)
-        {
-            if (!_segments[i].Contains(documentId))
-                continue;
-
-            if (_dead.Contains(_bases[i] + _segments[i].OrdinalOf(documentId)))
-                break;
-
-            return _segments[i].GetPositionedTerms(documentId);
-        }
-
-        return _overlay.GetPositionedTerms(documentId);
     }
 
     /// <inheritdoc />

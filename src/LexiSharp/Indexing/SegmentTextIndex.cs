@@ -250,26 +250,17 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     /// <inheritdoc />
     public bool Contains(string documentId) => documentId is not null && _ordinals.ContainsKey(documentId);
 
-    /// <summary>
-    /// The document's tokens and the position each was indexed at, in one call.
-    /// </summary>
-    /// <remarks>
-    /// The phrase gate needs every phrase term's positions. Answering one term at a time means
-    /// tokenizing the stored text once per term, because a segment holds no positions; this returns the
-    /// whole sequence from one tokenization, and it is the same sequence
-    /// <see cref="GetTermPositions"/> filters.
-    /// </remarks>
-    public IReadOnlyList<(string Term, int Position)> GetPositionedTerms(string documentId)
-    {
-        var document = Find(documentId);
-
-        return document is null ? [] : PositionedFields.Positioned(_tokenizer, document);
-    }
-
     /// <inheritdoc />
     public IReadOnlyList<string> GetTerms(string documentId)
     {
-        var positioned = GetPositionedTerms(documentId);
+        var document = Find(documentId);
+
+        if (document is null)
+            return Array.Empty<string>();
+
+        // The union the document was indexed with, body then fields — the same layout
+        // GetTermPositions reads positions from, so a term here and a position there agree.
+        var positioned = PositionedFields.Positioned(_tokenizer, document);
         var terms = new string[positioned.Count];
 
         for (int i = 0; i < positioned.Count; i++)
@@ -287,16 +278,33 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     /// </remarks>
     public IReadOnlyList<int> GetTermPositions(string documentId, string term)
     {
-        var positioned = GetPositionedTerms(documentId);
-        var positions = new List<int>();
-
-        for (int i = 0; i < positioned.Count; i++)
+        if (!_ordinals.TryGetValue(documentId, out int ordinal) ||
+            !_reader.TryFindTerm(term.AsSpan(), out _, out var postings))
         {
-            if (string.Equals(positioned[i].Term, term, StringComparison.Ordinal))
-                positions.Add(positioned[i].Position);
+            return Array.Empty<int>();
         }
 
-        return positions;
+        // The positions are stored, so this reads the entry instead of tokenizing the document: one
+        // skip-table seek to the ordinal, then the entry's own positions. It is what the phrase gate
+        // and the proximity reranker ask for, per candidate, which is why the format carries them.
+        if (!postings.AdvanceTo(ordinal))
+            return Array.Empty<int>();
+
+        while (postings.TryReadEntry(out int candidate, out int frequency))
+        {
+            if (candidate == ordinal)
+            {
+                var positions = new int[frequency];
+                postings.ReadPositions(positions);
+
+                return positions;
+            }
+
+            if (candidate > ordinal)
+                break;
+        }
+
+        return Array.Empty<int>();
     }
 
     /// <inheritdoc />
@@ -422,10 +430,15 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
         string term,
         int offset,
         List<int> ordinals,
-        List<int> frequencies)
+        List<int> frequencies,
+        List<int>? positions)
     {
         if (!_reader.TryFindTerm(term.AsSpan(), out _, out var postings))
             return;
+
+        // One entry can hold more occurrences than a block has ordinals — a term repeated a hundred
+        // times in one document — so the buffer grows rather than being sized to the span.
+        int[]? scratch = null;
 
         while (postings.MoveNext())
         {
@@ -433,6 +446,17 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
             {
                 ordinals.Add(local + offset);
                 frequencies.Add(frequency);
+
+                if (positions is null)
+                    continue;
+
+                if (scratch is null || scratch.Length < frequency)
+                    scratch = new int[Math.Max(frequency, PostingBlocks.BlockSpan)];
+
+                int count = postings.ReadPositions(scratch);
+
+                for (int i = 0; i < count; i++)
+                    positions.Add(scratch[i]);
             }
         }
     }

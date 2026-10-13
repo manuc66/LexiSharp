@@ -56,7 +56,7 @@ internal static class SegmentWriter
     internal const uint Magic = 0x3153584C;
 
     /// <summary>Format version. A reader refuses anything else rather than guessing.</summary>
-    internal const int Version = 3;
+    internal const int Version = 4;
 
     /// <summary>Fixed header size: everything else in the file is reached through it.</summary>
     internal const int HeaderBytes = 4 + 4 + 4 + 4 + (3 * 8);
@@ -155,13 +155,13 @@ internal static class SegmentWriter
             // 200,000-document commit allocated, which was 94% of it. The spans point into arrays the
             // source holds for the duration of the write, so nothing is copied and nothing outlives its
             // source.
-            int size = PostingBlocks.Measure(view.Ordinals, view.Frequencies, view.Lengths);
+            int size = PostingBlocks.Measure(view.Ordinals, view.Frequencies, view.Lengths, view.Positions);
 
             postingsOffsets[i] = HeaderBytes + body.WrittenCount;
             postingsLengths[i] = size;
             frequencies[i] = view.Count;
 
-            int written = PostingBlocks.Write(view.Ordinals, view.Frequencies, view.Lengths, body.GetSpan(size));
+            int written = PostingBlocks.Write(view.Ordinals, view.Frequencies, view.Lengths, view.Positions, body.GetSpan(size));
             body.Advance(written);
         }
 
@@ -260,7 +260,7 @@ internal static class SegmentWriter
 
     /// <summary>A term the index lists in its vocabulary but cannot resolve is an index defect, not a segment one.</summary>
     private static PostingView Resolve(ISpanAccumulatingIndex index, string term) =>
-        index.TryResolvePostings(term, out var view)
+        index.TryResolvePostings(term, withPositions: true, out var view)
             ? view
             : throw new NotSupportedException($"the index lists the term '{term}' in its vocabulary but cannot resolve its postings");
 

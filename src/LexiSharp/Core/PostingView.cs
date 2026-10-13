@@ -12,12 +12,24 @@ namespace LexiSharp.Core;
 /// </remarks>
 internal readonly ref struct PostingView
 {
-    public PostingView(ReadOnlySpan<int> ordinals, ReadOnlySpan<int> frequencies, ReadOnlySpan<int> lengths)
+    public PostingView(
+        ReadOnlySpan<int> ordinals,
+        ReadOnlySpan<int> frequencies,
+        ReadOnlySpan<int> lengths,
+        int[]? positions = null)
     {
         Ordinals = ordinals;
         Frequencies = frequencies;
         Lengths = lengths;
+
+        // Held as the array, not only as the span: a span does not keep its array alive, and a source
+        // that materializes positions per call would hand back a view over something the collector is
+        // free to take.
+        _positions = positions;
+        Positions = positions ?? [];
     }
+
+    private readonly int[]? _positions;
 
     /// <summary>Document ordinals, ascending, one per document carrying the term.</summary>
     public ReadOnlySpan<int> Ordinals { get; }
@@ -27,6 +39,16 @@ internal readonly ref struct PostingView
 
     /// <summary>Token count per ordinal, in the layout the accumulation loop reads.</summary>
     public ReadOnlySpan<int> Lengths { get; }
+
+    /// <summary>
+    /// Every entry's term positions, in entry order: <c>Frequencies[i]</c> positions for entry
+    /// <c>i</c>, ascending within the entry. Its length is the sum of <see cref="Frequencies"/>.
+    /// </summary>
+    /// <remarks>
+    /// Empty when the caller has none to give — the accumulation loop never reads this, and a source
+    /// that only accumulates can leave it out.
+    /// </remarks>
+    public ReadOnlySpan<int> Positions { get; }
 
     /// <summary>Number of posting entries.</summary>
     public int Count => Ordinals.Length;
