@@ -86,7 +86,7 @@ namespace LexiSharp.Indexing;
 /// interleaves them.
 /// </para>
 /// </remarks>
-internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICandidateIndex, ICandidateIdIndex, IOrdinalIdIndex
+internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICandidateIndex, ICandidateIdIndex, IOrdinalIdIndex, ITermCursorIndex
 {
     private readonly SegmentTextIndex[] _segments;
     private readonly int[] _bases;
@@ -878,6 +878,58 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
         {
             ArrayPool<int>.Shared.Return(ordinals);
         }
+    }
+
+    /// <summary>
+    /// A term resolved once across the chain's generations, so a caller that asks for it at many
+    /// documents pays the term table's binary search once instead of once per document.
+    /// </summary>
+    private sealed class ChainTermCursor(
+        SegmentChain chain, string term, SegmentReader.TermRegion[] regions) : ITermCursor
+    {
+        public int Frequency(string documentId)
+        {
+            for (int i = 0; i < chain._segments.Length; i++)
+            {
+                var segment = chain._segments[i];
+
+                if (!segment.Contains(documentId))
+                    continue;
+
+                int ordinal = segment.OrdinalOf(documentId);
+
+                // A replaced document is tombstoned in its segment and lives in the overlay, so a dead
+                // ordinal is not the end of the question — the overlay's answer is.
+                if (chain._dead.Contains(chain._bases[i] + ordinal))
+                    break;
+
+                return regions[i].IsEmpty ? 0 : segment.FrequencyAt(regions[i], ordinal);
+            }
+
+            return chain._overlay.TermFrequency(documentId, term);
+        }
+    }
+
+    /// <inheritdoc />
+    public ITermCursor? ResolveTerm(string term)
+    {
+        ArgumentNullException.ThrowIfNull(term);
+
+        var regions = new SegmentReader.TermRegion[_segments.Length];
+        bool held = false;
+
+        for (int i = 0; i < _segments.Length; i++)
+        {
+            if (_segments[i].TryResolveTerm(term.AsSpan(), out regions[i]))
+                held = true;
+        }
+
+        // The overlay is searched by term, not resolved, so it is asked whether it holds the term at
+        // all; a term the chain does not hold anywhere is out of vocabulary.
+        if (!held && _overlay.DocumentFrequency(term) == 0)
+            return null;
+
+        return new ChainTermCursor(this, term, regions);
     }
 
     /// <summary>The segment owning a global ordinal: the last whose base is at or below it.</summary>

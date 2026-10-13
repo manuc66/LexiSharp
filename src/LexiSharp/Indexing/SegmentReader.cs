@@ -228,6 +228,75 @@ internal sealed class SegmentReader
         return false;
     }
 
+    /// <summary>A term's postings region, resolved once and reusable for any ordinal.</summary>
+    internal readonly record struct TermRegion(int PostingsOffset, int PostingsLength)
+    {
+        /// <summary>Whether the term has no postings at all — an out-of-vocabulary resolve.</summary>
+        public bool IsEmpty => PostingsLength <= 0;
+    }
+
+    /// <summary>
+    /// Resolves <paramref name="term"/> to its postings region, without building a reader. The term
+    /// table's binary search is the expensive half of a term look-up, and a caller that asks for the
+    /// same term at many ordinals pays it once through this.
+    /// </summary>
+    public bool TryResolveTerm(ReadOnlySpan<char> term, out TermRegion region)
+    {
+        Span<byte> encoded = term.Length <= 256 ? stackalloc byte[term.Length * 4] : new byte[term.Length * 4];
+        int length = Encoding.UTF8.GetBytes(term, encoded);
+        var wanted = encoded[..length];
+
+        int low = 0;
+        int high = TermCount - 1;
+
+        while (low <= high)
+        {
+            int middle = (low + high) / 2;
+            var entry = ReadTermEntry(middle, wanted, out int comparison);
+
+            if (comparison == 0)
+            {
+                region = new TermRegion(entry.PostingsOffset, entry.PostingsLength);
+
+                return true;
+            }
+
+            if (comparison < 0)
+                low = middle + 1;
+            else
+                high = middle - 1;
+        }
+
+        region = default;
+
+        return false;
+    }
+
+    /// <summary>
+    /// The frequency at <paramref name="ordinal"/> inside a region <see cref="TryResolveTerm"/>
+    /// returned — the seek and the block walk, with the binary search already paid.
+    /// </summary>
+    public int FrequencyAt(in TermRegion region, int ordinal)
+    {
+        var postings = _source.TryView(region.PostingsOffset, region.PostingsLength, out var view)
+            ? new PostingBlockReader(view)
+            : new PostingBlockReader(_source, region.PostingsOffset, region.PostingsLength, _scratch);
+
+        if (!postings.AdvanceTo(ordinal))
+            return 0;
+
+        while (postings.TryReadEntry(out int candidate, out int frequency))
+        {
+            if (candidate == ordinal)
+                return frequency;
+
+            if (candidate > ordinal)
+                break;
+        }
+
+        return 0;
+    }
+
     /// <summary>The term at <paramref name="index"/>, decoded — the vocabulary enumeration's read.</summary>
     private string ReadTerm(int index)
     {
