@@ -86,7 +86,7 @@ namespace LexiSharp.Indexing;
 /// interleaves them.
 /// </para>
 /// </remarks>
-internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICandidateIndex, IOrdinalIdIndex, IPositionedTermsIndex
+internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICandidateIndex, ICandidateIdIndex, IOrdinalIdIndex, IPositionedTermsIndex
 {
     private readonly SegmentTextIndex[] _segments;
     private readonly int[] _bases;
@@ -780,10 +780,47 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
         return EnumerateCandidates(terms);
     }
 
+    /// <inheritdoc />
+    public IEnumerable<string> GetCandidateIds(IReadOnlyList<string> terms)
+    {
+        ArgumentNullException.ThrowIfNull(terms);
+
+        if (terms.Count == 0 || Count == 0)
+            return [];
+
+        return EnumerateCandidateIds(terms);
+    }
+
     /// <summary>
-    /// The union of the query terms' postings across every segment and the overlay, each document once,
-    /// in ascending ordinal order — which is corpus order, because the chain's ordinal ranges are
-    /// contiguous and every document lives in exactly one of them.
+    /// The union of the query terms' postings across every segment and the overlay, as global ordinals,
+    /// deduplicated and ascending. <paramref name="ordinals"/> must hold at least the sum of the terms'
+    /// document frequencies; the return is how many entries were written.
+    /// </summary>
+    /// <remarks>
+    /// Shared by the document and the id enumerations so the union is built one way. The ids are the
+    /// cheaper of the two: a store decodes a document's text to yield it, and an id is a look-up in the
+    /// array it built at open.
+    /// </remarks>
+    private int CollectUnion(IReadOnlyList<string> terms, Span<int> ordinals)
+    {
+        int count = 0;
+
+        for (int i = 0; i < terms.Count; i++)
+        {
+            for (int s = 0; s < _segments.Length; s++)
+                count += _segments[s].CollectGlobalOrdinals(terms[i], _bases[s], ordinals[count..]);
+
+            count += _overlay.CollectGlobalOrdinals(terms[i], _segmentOrdinalSpace, ordinals[count..]);
+        }
+
+        ordinals[..count].Sort();
+
+        return count;
+    }
+
+    /// <summary>
+    /// The union's documents, each once, in ascending ordinal order — which is corpus order, because
+    /// the chain's ordinal ranges are contiguous and every document lives in exactly one of them.
     /// </summary>
     private IEnumerable<SearchDocument> EnumerateCandidates(IReadOnlyList<string> terms)
     {
@@ -797,23 +834,10 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
             yield break;
 
         int[] ordinals = ArrayPool<int>.Shared.Rent(capacity);
-        int count = 0;
+        int count = CollectUnion(terms, ordinals);
 
         try
         {
-            for (int i = 0; i < terms.Count; i++)
-            {
-                for (int s = 0; s < _segments.Length; s++)
-                    count += _segments[s].CollectGlobalOrdinals(terms[i], _bases[s], ordinals.AsSpan(count));
-
-                count += _overlay.CollectGlobalOrdinals(
-                    terms[i],
-                    _segmentOrdinalSpace,
-                    ordinals.AsSpan(count));
-            }
-
-            Array.Sort(ordinals, 0, count);
-
             int previous = -1;
 
             for (int i = 0; i < count; i++)
@@ -826,6 +850,41 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
 
                 if (DocumentAt(ordinals[i]) is { } document)
                     yield return document;
+            }
+        }
+        finally
+        {
+            ArrayPool<int>.Shared.Return(ordinals);
+        }
+    }
+
+    /// <summary>The union's document ids, each once, in the same order <see cref="EnumerateCandidates"/> yields them.</summary>
+    private IEnumerable<string> EnumerateCandidateIds(IReadOnlyList<string> terms)
+    {
+        int capacity = 0;
+
+        for (int i = 0; i < terms.Count; i++)
+            capacity += DocumentFrequency(terms[i]);
+
+        if (capacity == 0)
+            yield break;
+
+        int[] ordinals = ArrayPool<int>.Shared.Rent(capacity);
+        int count = CollectUnion(terms, ordinals);
+
+        try
+        {
+            int previous = -1;
+
+            for (int i = 0; i < count; i++)
+            {
+                if (ordinals[i] == previous)
+                    continue;
+
+                previous = ordinals[i];
+
+                if (IdAt(ordinals[i]) is { } id)
+                    yield return id;
             }
         }
         finally

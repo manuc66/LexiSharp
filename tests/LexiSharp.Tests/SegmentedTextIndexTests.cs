@@ -752,6 +752,45 @@ public class SegmentedTextIndexTests
     }
 
     [Fact]
+    public void AStoreScoresTheDocumentFreePathsAsTheInMemoryIndex()
+    {
+        // A plain query — no metadata filter, no facet — is served by id: the engine reads a
+        // candidate's id to score it and its ordinal to place it, and TopRankedWindow resolves the
+        // page's documents at the cut. Both arms of that path have to rank exactly as the in-memory
+        // index, which holds its documents and never materializes anything. The two arms are reached
+        // by coverage: a rare term takes the candidate enumeration, common terms take the full scan.
+        var memory = new InMemoryTextIndex();
+        memory.Add(new SearchDocument("rare", "quokka wombat common common common"));
+        memory.Add(new SearchDocument("a", "common common common alpha"));
+        memory.Add(new SearchDocument("b", "common common beta common"));
+        memory.Add(new SearchDocument("c", "common gamma common common"));
+
+        string directory = NewDirectory();
+
+        try
+        {
+            var store = new SegmentedTextIndex(directory);
+            store.Index(memory.Documents);
+            using var committed = store.Commit();
+
+            foreach (ITextScorer scorer in new ITextScorer[] { new Bm25Scorer(), new QueryLikelihoodScorer(0.2) })
+            {
+                var memoryEngine = new RankedTextSearchEngine(memory, scorer);
+                var storeEngine = new RankedTextSearchEngine(committed, scorer);
+
+                // "quokka" reaches one document — the candidate arm. "common alpha" and a bare
+                // "common" reach most of the corpus — the full-scan arm. Both are id-only.
+                foreach (string query in new[] { "quokka", "quokka common", "common alpha", "common" })
+                    AssertSamePage(query, memoryEngine.Search(query), storeEngine.Search(query));
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void AStoreGatesPhrasesExactlyAsTheInMemoryIndex()
     {
         // The phrase gate reads term positions, and a store holds none: it recomputes them from the
