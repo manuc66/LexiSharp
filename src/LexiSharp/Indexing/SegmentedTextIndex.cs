@@ -62,7 +62,7 @@ namespace LexiSharp.Indexing;
 /// find the terms it indexed.
 /// </para>
 /// </remarks>
-public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumulatingIndex, ICandidateIndex, ICandidateIdIndex, IOrdinalIdIndex, ITermCursorIndex, IDisposable
+public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumulatingIndex, ICandidateIndex, ICandidateIdIndex, IOrdinalIdIndex, ITermCursorIndex, IVocabularyPrefixIndex, IDisposable
 {
     private readonly string _directory;
     private readonly ITokenizer _tokenizer;
@@ -283,6 +283,9 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
 
     /// <inheritdoc />
     ITermCursor? ITermCursorIndex.ResolveTerm(string term) => _chain.ResolveTerm(term);
+
+    /// <inheritdoc />
+    IEnumerable<string> IVocabularyPrefixIndex.TermsWithPrefix(string prefix) => _chain.TermsWithPrefix(prefix);
 
     /// <inheritdoc />
     public bool TryGetDocument(string documentId, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out SearchDocument? document) =>

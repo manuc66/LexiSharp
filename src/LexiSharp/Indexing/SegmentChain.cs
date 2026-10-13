@@ -86,7 +86,7 @@ namespace LexiSharp.Indexing;
 /// interleaves them.
 /// </para>
 /// </remarks>
-internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICandidateIndex, ICandidateIdIndex, IOrdinalIdIndex, ITermCursorIndex
+internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICandidateIndex, ICandidateIdIndex, IOrdinalIdIndex, ITermCursorIndex, IVocabularyPrefixIndex
 {
     private readonly SegmentTextIndex[] _segments;
     private readonly int[] _bases;
@@ -878,6 +878,27 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
         {
             ArrayPool<int>.Shared.Return(ordinals);
         }
+    }
+
+    /// <inheritdoc />
+    public IEnumerable<string> TermsWithPrefix(string prefix)
+    {
+        ArgumentNullException.ThrowIfNull(prefix);
+
+        // The chain's vocabulary is the union of its generations', and a prefix's matches are small, so
+        // the set is what keeps them distinct without a k-way merge over ranges of different widths.
+        var terms = new SortedSet<string>(StringComparer.Ordinal);
+
+        for (int i = 0; i < _segments.Length; i++)
+        {
+            foreach (string term in _segments[i].TermsWithPrefix(prefix))
+                terms.Add(term);
+        }
+
+        foreach (string term in _overlay.TermsWithPrefix(prefix))
+            terms.Add(term);
+
+        return terms;
     }
 
     /// <summary>
