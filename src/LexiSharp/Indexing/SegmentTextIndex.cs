@@ -376,9 +376,13 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     int IAccumulatingIndex.OrdinalOf(string documentId) => OrdinalOf(documentId);
 
     /// <summary>The document at <paramref name="ordinal"/>, or <c>null</c> when that slot is free.</summary>
-    /// <remarks>Internal so a chain can resolve across its generations; a segment has no gaps.</remarks>
+    /// <remarks>
+    /// Internal so a chain can resolve across its generations; a segment has no gaps. The id comes from
+    /// the array this index built at open rather than from the reader: the reader would decode a second
+    /// string for the same value on every resolved result.
+    /// </remarks>
     internal SearchDocument? DocumentAt(int ordinal) =>
-        ordinal >= 0 && ordinal < Count ? _reader.Document(ordinal) : null;
+        ordinal >= 0 && ordinal < Count ? _reader.Document(ordinal, _ids[ordinal]) : null;
 
     /// <summary>The ordinal of the document with this id, or <c>-1</c>.</summary>
     internal int OrdinalOf(string documentId) =>
