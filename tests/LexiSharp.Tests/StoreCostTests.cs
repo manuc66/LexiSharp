@@ -133,6 +133,37 @@ public class StoreCostTests
         }
     }
 
+    /// <summary>
+    /// The overlay build, which is four times what the commit costs and was not pinned.
+    /// </summary>
+    /// <remarks>
+    /// A commit excludes this: <c>Index</c> builds the overlay and <c>Commit</c> writes it, and the
+    /// three pins beside this one only ever measured the second. Measured on a 100,000-document corpus,
+    /// loading is 12,644 ms of `Index` against 2,373 ms of `Commit` — so the guard was watching the
+    /// half that is 16% of the operation a caller actually performs. Like the others this pins bytes,
+    /// because bytes do not depend on the machine.
+    /// </remarks>
+    [Fact]
+    public void AnOverlayBuildAllocatesWithinItsBudget()
+    {
+        var store = new SegmentedTextIndex(
+            Path.Combine(Path.GetTempPath(), "lexisharp-cost-" + Guid.NewGuid().ToString("N")));
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        store.Index(Documents);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        _output.WriteLine($"index allocation: {allocated:N0} B");
+
+        Assert.True(
+            allocated < 800L * 1024 * 1024,
+            $"building the overlay over {DocumentCount:N0} documents allocated {allocated / (1024 * 1024)} MB, "
+            + "against an 800 MB pin. This corpus builds 721 MB — 2.5x the commit's 287 MB, and the side "
+            + "of loading a corpus the commit's pin does not see. 304 B per token is the figure to "
+            + "attack: the tokenizer allocates a string per token here, and Add hashes each one more "
+            + "than once.");
+    }
+
     [Fact]
     public void APhraseQueryAllocatesWithinItsBudget()
     {
