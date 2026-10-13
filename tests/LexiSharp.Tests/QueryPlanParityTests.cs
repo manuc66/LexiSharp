@@ -132,6 +132,52 @@ public class QueryPlanParityTests
     }
 
     /// <summary>
+    /// Query likelihood is deliberately absent from the accumulating theory above, and this pins why:
+    /// its score is not a sum of posting-local contributions.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>score(q, d) = Σ_t log P(t | d)</c> sums over <i>every</i> query term, and for a term the
+    /// document does not contain <c>P(t | d) = λ · cf(t) / C</c> is still non-zero — the smoothed
+    /// collection probability. BM25 and TF-IDF skip an absent term; query likelihood does not. So a
+    /// document matching one term also carries a contribution from every term it lacks, and a pass
+    /// that folds only the postings a document appears in cannot produce that number. Adding the
+    /// absent terms' total at the end gives the right <i>value</i> and the wrong <i>sum order</i>:
+    /// the doubles would differ in the last bits, and the parity the term-at-a-time path owes is
+    /// bit-for-bit.
+    /// </para>
+    /// <para>
+    /// This was measured, not assumed: adding query likelihood to the accumulating theory failed on
+    /// two cases with <c>-7.9686</c> against <c>-2.8110</c>, which is the absent-term contribution
+    /// and not a rounding difference. The cost is real — a store answers
+    /// <c>TermFrequency(documentId, term)</c> by walking the term's posting list, so this plan's
+    /// per-candidate lookup is <c>O(df)</c> — but it has to be fixed on the store's lookup, not by
+    /// making the plan accumulate.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void QueryLikelihoodIsNotAccumulableBecauseAbsentTermsContribute()
+    {
+        var scorer = new QueryLikelihoodScorer();
+        var index = BuildIndex();
+        var plan = ((IQueryPlannableScorer)scorer).CreatePlan(
+            index.Tokenizer.Tokenize("quick pangram"), index);
+
+        // Not eligible for the term-at-a-time path.
+        Assert.IsNotAssignableFrom<IAccumulatingQueryPlan>(plan);
+
+        // The property that makes it ineligible: a document that contains "quick" and not "pangram"
+        // scores differently under the two-term query than under "quick" alone, because the absent
+        // term still contributes its smoothed collection probability.
+        string documentId = index.Documents.First(d => d.Text.Contains("quick", StringComparison.Ordinal)).Id;
+
+        double withAbsentTerm = scorer.Score(documentId, ["quick", "pangram"], index);
+        double withoutIt = scorer.Score(documentId, ["quick"], index);
+
+        Assert.NotEqual(withoutIt, withAbsentTerm);
+    }
+
+    /// <summary>
     /// The two scoring paths must also agree on what the <i>engine</i> returns, page for page,
     /// including the order exact ties come out in.
     /// </summary>
