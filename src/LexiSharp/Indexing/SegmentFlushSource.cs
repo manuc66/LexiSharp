@@ -192,21 +192,23 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
     /// before the next begins.
     /// </para>
     /// </remarks>
-    bool ISpanAccumulatingIndex.TryResolvePostings(ReadOnlySpan<char> term, out PostingView postings)
+    bool ISpanAccumulatingIndex.TryResolvePostings(ReadOnlySpan<char> term, bool withPositions, out PostingView postings)
     {
         var encoded = term.ToString();
         var ordinals = new List<int>();
         var frequencies = new List<int>();
+        var positions = withPositions ? new List<int>() : null;
 
         for (int s = 0; s < _chain.SegmentCount; s++)
             _chain.SegmentsForTest[s].AppendGlobalPostings(
                 encoded,
                 _chain.BaseOf(s),
                 ordinals,
-                frequencies);
+                frequencies,
+                positions);
 
         // The overlay's postings are held in memory, so they cost no fetch and no walk of a region.
-        _chain.CollectOverlayPostings(encoded, ordinals, frequencies);
+        _chain.CollectOverlayPostings(encoded, ordinals, frequencies, positions);
 
         // Renumber into the dense space, dropping the tombstoned and the freed, and aggregate the
         // occurrences a document holds into one entry: the layout stores one (ordinal, frequency) pair
@@ -214,13 +216,21 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
         // times is one posting with a frequency of 3 — not three postings.
         var compacted = new List<int>();
         var compactedFrequencies = new List<int>();
+        var compactedPositions = withPositions ? new List<int>() : null;
+        int positionAt = 0;
 
         for (int i = 0; i < ordinals.Count; i++)
         {
             int renumbered = _renumber[ordinals[i]];
+            int frequency = frequencies[i];
+            int nextPositionAt = positionAt + frequency;
 
             if (renumbered < 0)
+            {
+                positionAt = nextPositionAt;
+
                 continue;
+            }
 
             int local = renumbered;
 
@@ -228,13 +238,25 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
             // consecutively, so the last entry written is this document's when the ordinals repeat.
             if (compacted.Count > 0 && compacted[^1] == local)
             {
-                compactedFrequencies[^1] += frequencies[i];
+                compactedFrequencies[^1] += frequency;
+
+                if (compactedPositions is not null)
+                    for (int k = positionAt; k < nextPositionAt; k++)
+                        compactedPositions.Add(positions![k]);
+
+                positionAt = nextPositionAt;
 
                 continue;
             }
 
             compacted.Add(local);
-            compactedFrequencies.Add(frequencies[i]);
+            compactedFrequencies.Add(frequency);
+
+            if (compactedPositions is not null)
+                for (int k = positionAt; k < nextPositionAt; k++)
+                    compactedPositions.Add(positions![k]);
+
+            positionAt = nextPositionAt;
         }
 
         if (compacted.Count == 0)
@@ -249,7 +271,8 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
         postings = new PostingView(
             System.Linq.Enumerable.ToArray(compacted),
             System.Linq.Enumerable.ToArray(compactedFrequencies),
-            _lengths);
+            _lengths,
+            compactedPositions is null ? null : System.Linq.Enumerable.ToArray(compactedPositions));
 
         return true;
     }

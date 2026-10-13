@@ -554,7 +554,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
                 if (distinct && NormalizedTerm.IsRepeated(terms, i, source))
                     continue;
 
-                if (!index.TryResolvePostings(terms[i].View(source), out var postings))
+                if (!index.TryResolvePostings(terms[i].View(source), withPositions: false, out var postings))
                     continue;
 
                 index.AccumulateResolved(postings, new Bm25ResolvedWeight(idf[i], shape), accumulator);

@@ -25,7 +25,14 @@ internal interface ISpanAccumulatingIndex : IAccumulatingIndex, IReadOnlyTextInd
     /// <c>false</c>, and leaves <paramref name="postings"/> default, when the term is out of
     /// vocabulary.
     /// </summary>
-    bool TryResolvePostings(ReadOnlySpan<char> term, out PostingView postings);
+    /// <param name="term">The term to resolve.</param>
+    /// <param name="withPositions">
+    /// Whether to fill <see cref="PostingView.Positions"/>. Only a segment write reads them, and
+    /// materializing them costs a walk of the term's occurrences, so the accumulation path — which
+    /// never touches the field — asks for them not to be.
+    /// </param>
+    /// <param name="postings">The resolved postings.</param>
+    bool TryResolvePostings(ReadOnlySpan<char> term, bool withPositions, out PostingView postings);
 
     /// <summary>
     /// Folds <paramref name="weight"/> over the posting entries of an already-resolved term, one

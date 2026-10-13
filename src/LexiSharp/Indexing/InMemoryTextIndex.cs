@@ -1045,17 +1045,51 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         _spanPostings.TryGetValue(term, out var posting) ? posting.ByDocument.Count : 0;
 
     /// <inheritdoc />
-    bool ISpanAccumulatingIndex.TryResolvePostings(ReadOnlySpan<char> term, out PostingView postings)
+    bool ISpanAccumulatingIndex.TryResolvePostings(ReadOnlySpan<char> term, bool withPositions, out PostingView postings)
     {
         if (_spanPostings.TryGetValue(term, out var posting))
         {
             var flat = FlatFor(posting);
-            postings = new PostingView(flat.Ordinals, flat.Frequencies, AccumulationLengths());
+            postings = new PostingView(
+                flat.Ordinals,
+                flat.Frequencies,
+                AccumulationLengths(),
+                withPositions ? FlatPositionsFor(posting, flat) : null);
             return true;
         }
 
         postings = default;
         return false;
+    }
+
+    /// <summary>
+    /// A term's positions flattened to the layout a segment writes: entry by entry, in the flat
+    /// ordinals' order, each entry's occurrences ascending.
+    /// </summary>
+    /// <remarks>
+    /// Built on demand, because only a segment write reads it: the accumulation path never touches
+    /// <see cref="PostingView.Positions"/>, and building it per term would put the corpus's whole
+    /// position count through the collector on every head query.
+    /// </remarks>
+    private int[] FlatPositionsFor(PostingList posting, FlatPosting flat)
+    {
+        int total = 0;
+
+        for (int i = 0; i < flat.Frequencies.Length; i++)
+            total += flat.Frequencies[i];
+
+        var positions = new int[total];
+        int at = 0;
+
+        for (int i = 0; i < flat.Ordinals.Length; i++)
+        {
+            string id = _byOrdinal[flat.Ordinals[i]]!.Id;
+
+            foreach (int position in posting.ByDocument[id].Positions)
+                positions[at++] = position;
+        }
+
+        return positions;
     }
 
     /// <inheritdoc />

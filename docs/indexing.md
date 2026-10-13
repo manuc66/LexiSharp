@@ -365,11 +365,15 @@ it costs is a constant ~1.11× on every query and a lifetime: a mapped store hol
 must be disposed, after which it is unusable. An `Array` store holds nothing that needs releasing.
 
 A segment stores the whole document — its id, its text, its metadata fields, its category and its text
-fields — so a document reads back as the document that was written, and a positional read reproduces
-the sequence the document was indexed with.
+fields — so a document reads back as the document that was written.
 
-Not in this increment: a write-ahead log, so the overlay between writes is not durable; and positions,
-so a phrase query over a store re-tokenizes.
+Each term's postings carry their **positions**, so a phrase or proximity query reads them instead of
+re-tokenizing the document: `GetTermPositions` seeks the entry and decodes it. The positions are the
+third plane of the posting block, and they cost about 15% of a segment on the measured corpus — against
+a segment that is already 72% document text. A segment written before this format is refused by the
+reader rather than misread.
+
+Not in this increment: a write-ahead log, so the overlay between writes is not durable.
 
 ### The store through the typed facade
 
