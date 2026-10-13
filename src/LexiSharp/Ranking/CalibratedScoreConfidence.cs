@@ -421,7 +421,7 @@ public sealed class CalibratedScoreConfidence
             // as predicted negative for one threshold, which no threshold can actually do, and
             // would report a J no real classifier attains. The run's first index is where the
             // suffix and the predicate agree.
-            if (i > 0 && sortedExamples[i].Score == sortedExamples[i - 1].Score)
+            if (i > 0 && Math.Abs(sortedExamples[i].Score - sortedExamples[i - 1].Score) < double.Epsilon)
                 continue;
 
             int predictedPositives = n - i;
