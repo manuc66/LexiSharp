@@ -32,6 +32,13 @@ namespace LexiSharp.Indexing;
 public sealed class ExpansionTextIndex : ITextIndex, IUnorderedCandidateIndex, IVocabularyIndex, IAccumulatingIndex, IFieldStatisticsIndex
 {
     private readonly InMemoryTextIndex _inner;
+
+    // The two capabilities InMemoryTextIndex implements explicitly, bound once. Its other members are
+    // public, so they are read off _inner directly; these two need the interface, and holding it as a
+    // field keeps the interface conversion out of every call site.
+    private readonly IAccumulatingIndex _accumulating;
+    private readonly IUnorderedCandidateIndex _unorderedCandidates;
+
     private readonly ITermExpander _expander;
 
     /// <summary>
@@ -47,6 +54,8 @@ public sealed class ExpansionTextIndex : ITextIndex, IUnorderedCandidateIndex, I
         ArgumentNullException.ThrowIfNull(termExpander);
         _expander = termExpander;
         _inner = new InMemoryTextIndex(tokenizer);
+        _accumulating = _inner;
+        _unorderedCandidates = _inner;
     }
 
     /// <summary>The tokenizer shared with <see cref="InMemoryTextIndex"/>.</summary>
@@ -209,7 +218,7 @@ public sealed class ExpansionTextIndex : ITextIndex, IUnorderedCandidateIndex, I
     IEnumerable<SearchDocument> IUnorderedCandidateIndex.GetCandidatesUnordered(IReadOnlyList<string> terms)
     {
         ArgumentNullException.ThrowIfNull(terms);
-        return ((IUnorderedCandidateIndex)_inner).GetCandidatesUnordered(terms);
+        return _unorderedCandidates.GetCandidatesUnordered(terms);
     }
 
     /// <inheritdoc />
@@ -220,19 +229,19 @@ public sealed class ExpansionTextIndex : ITextIndex, IUnorderedCandidateIndex, I
     /// per-document scoring loop while the plain index had moved on — the same silent gap
     /// <c>CandidateEnumerationOrderTests</c> guards for the candidate path.
     /// </remarks>
-    int IAccumulatingIndex.OrdinalSpace => ((IAccumulatingIndex)_inner).OrdinalSpace;
+    int IAccumulatingIndex.OrdinalSpace => _inner.OrdinalSpace;
 
     /// <inheritdoc />
     SearchDocument? IAccumulatingIndex.DocumentAt(int ordinal) =>
-        ((IAccumulatingIndex)_inner).DocumentAt(ordinal);
+        _inner.DocumentAt(ordinal);
 
     /// <inheritdoc />
     int IAccumulatingIndex.OrdinalOf(string documentId) =>
-        ((IAccumulatingIndex)_inner).OrdinalOf(documentId);
+        _inner.OrdinalOf(documentId);
 
     /// <inheritdoc />
     void IAccumulatingIndex.Accumulate<TWeight>(TWeight weight, ScoreAccumulator accumulator) =>
-        ((IAccumulatingIndex)_inner).Accumulate(weight, accumulator);
+        _accumulating.Accumulate(weight, accumulator);
 
     private void Expand(string documentId, IReadOnlyList<string> terms)
     {

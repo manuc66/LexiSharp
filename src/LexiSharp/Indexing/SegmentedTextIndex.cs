@@ -373,21 +373,21 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     /// match.
     /// </remarks>
     IEnumerable<SearchDocument> ICandidateIndex.GetCandidateDocuments(IReadOnlyList<string> terms) =>
-        ((ICandidateIndex)_chain).GetCandidateDocuments(terms);
+        _chain.GetCandidateDocuments(terms);
 
     /// <summary>
     /// The size of the ordinal space the chain folds into, and the size the engine rents its accumulator
     /// at. Forwarded, because a store the engine cannot accumulate would be served one document at a time.
     /// </summary>
-    int IAccumulatingIndex.OrdinalSpace => ((IAccumulatingIndex)_chain).OrdinalSpace;
+    int IAccumulatingIndex.OrdinalSpace => _chain.OrdinalSpace;
 
     /// <inheritdoc />
     SearchDocument? IAccumulatingIndex.DocumentAt(int ordinal) =>
-        ((IAccumulatingIndex)_chain).DocumentAt(ordinal);
+        _chain.DocumentAt(ordinal);
 
     /// <inheritdoc />
     int IAccumulatingIndex.OrdinalOf(string documentId) =>
-        ((IAccumulatingIndex)_chain).OrdinalOf(documentId);
+        _chain.OrdinalOf(documentId);
 
     /// <inheritdoc />
     /// <remarks>
@@ -399,7 +399,7 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     /// memory; with the capability forwarded it takes the term-at-a-time pass the chain already has.
     /// </remarks>
     void IAccumulatingIndex.Accumulate<TWeight>(TWeight weight, ScoreAccumulator accumulator) =>
-        ((IAccumulatingIndex)_chain).Accumulate(weight, accumulator);
+        _chain.Accumulate(weight, accumulator);
 
     /// <summary>
     /// The id of the document at this ordinal, without decoding it.
@@ -408,7 +408,7 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     /// This is the capability that keeps the page window's tie-break from decoding a stored document per
     /// comparison. See <see cref="IOrdinalIdIndex"/> for what the two cost differently.
     /// </remarks>
-    string? IOrdinalIdIndex.IdAt(int ordinal) => ((IOrdinalIdIndex)_chain).IdAt(ordinal);
+    string? IOrdinalIdIndex.IdAt(int ordinal) => _chain.IdAt(ordinal);
 
     /// <summary>The chain the store searches. Internal for the engine and the decorators.</summary>
     internal SegmentChain Chain => _chain;

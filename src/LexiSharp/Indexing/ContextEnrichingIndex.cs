@@ -49,6 +49,14 @@ namespace LexiSharp.Indexing;
 public sealed class ContextEnrichingIndex : ITextIndex, IUnorderedCandidateIndex, IVocabularyIndex, IAccumulatingIndex, IFieldStatisticsIndex
 {
     private readonly ITextIndex _inner;
+
+    // The capabilities the constructor proves the inner has, bound once as typed fields. The members
+    // below forward through these rather than casting the inner at every call site.
+    private readonly ICandidateIndex _candidates;
+    private readonly IUnorderedCandidateIndex _unorderedCandidates;
+    private readonly IVocabularyIndex _vocabulary;
+    private readonly IAccumulatingIndex _accumulating;
+
     private readonly IChunkContextEnricher _enricher;
 
     /// <summary>Document id → the caller's original document, the display side.</summary>
@@ -67,31 +75,35 @@ public sealed class ContextEnrichingIndex : ITextIndex, IUnorderedCandidateIndex
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(enricher);
 
-        if (index is not ICandidateIndex)
+        if (index is not ICandidateIndex candidates)
             throw new ArgumentException(
                 $"{index.GetType().Name} does not provide candidate enumeration " +
                 $"({nameof(ICandidateIndex)}), which the search engine's scoring paths rely on.",
                 nameof(index));
 
-        if (index is not IVocabularyIndex)
+        if (index is not IVocabularyIndex vocabulary)
             throw new ArgumentException(
                 $"{index.GetType().Name} does not expose its vocabulary " +
                 $"({nameof(IVocabularyIndex)}), which prefix/fuzzy query expansion reads.",
                 nameof(index));
 
-        if (index is not IUnorderedCandidateIndex)
+        if (index is not IUnorderedCandidateIndex unorderedCandidates)
             throw new ArgumentException(
                 $"{index.GetType().Name} does not provide the unordered candidate path, " +
                 $"which the engine prefers when it does not need corpus order.",
                 nameof(index));
 
-        if (index is not IAccumulatingIndex)
+        if (index is not IAccumulatingIndex accumulating)
             throw new ArgumentException(
                 $"{index.GetType().Name} does not provide the term-at-a-time accumulation path, " +
                 $"which the engine uses to score head queries.",
                 nameof(index));
 
         _inner = index;
+        _candidates = candidates;
+        _unorderedCandidates = unorderedCandidates;
+        _vocabulary = vocabulary;
+        _accumulating = accumulating;
         _enricher = enricher;
     }
 
@@ -247,7 +259,7 @@ public sealed class ContextEnrichingIndex : ITextIndex, IUnorderedCandidateIndex
     public TextIndexStatistics GetStatistics() => TextIndexStatistics.From(this);
 
     /// <inheritdoc />
-    public IEnumerable<string> Vocabulary => ((IVocabularyIndex)_inner).Vocabulary;
+    public IEnumerable<string> Vocabulary => _vocabulary.Vocabulary;
 
     /// <inheritdoc />
     /// <remarks>
@@ -260,7 +272,7 @@ public sealed class ContextEnrichingIndex : ITextIndex, IUnorderedCandidateIndex
     {
         ArgumentNullException.ThrowIfNull(terms);
 
-        return ResolveAll(((ICandidateIndex)_inner).GetCandidateDocuments(terms));
+        return ResolveAll(_candidates.GetCandidateDocuments(terms));
     }
 
     /// <inheritdoc />
@@ -268,7 +280,7 @@ public sealed class ContextEnrichingIndex : ITextIndex, IUnorderedCandidateIndex
     {
         ArgumentNullException.ThrowIfNull(terms);
 
-        return ResolveAll(((IUnorderedCandidateIndex)_inner).GetCandidatesUnordered(terms));
+        return ResolveAll(_unorderedCandidates.GetCandidatesUnordered(terms));
     }
 
     /// <summary>
@@ -288,22 +300,22 @@ public sealed class ContextEnrichingIndex : ITextIndex, IUnorderedCandidateIndex
     }
 
     /// <inheritdoc />
-    int IAccumulatingIndex.OrdinalSpace => ((IAccumulatingIndex)_inner).OrdinalSpace;
+    int IAccumulatingIndex.OrdinalSpace => _accumulating.OrdinalSpace;
 
     /// <inheritdoc />
     SearchDocument? IAccumulatingIndex.DocumentAt(int ordinal)
     {
-        var document = ((IAccumulatingIndex)_inner).DocumentAt(ordinal);
+        var document = _accumulating.DocumentAt(ordinal);
         return document is null ? null : Resolve(document);
     }
 
     /// <inheritdoc />
     int IAccumulatingIndex.OrdinalOf(string documentId) =>
-        ((IAccumulatingIndex)_inner).OrdinalOf(documentId);
+        _accumulating.OrdinalOf(documentId);
 
     /// <inheritdoc />
     void IAccumulatingIndex.Accumulate<TWeight>(TWeight weight, ScoreAccumulator accumulator) =>
-        ((IAccumulatingIndex)_inner).Accumulate(weight, accumulator);
+        _accumulating.Accumulate(weight, accumulator);
 
     /// <summary>
     /// The caller's original for an inner (enriched) document. The fallback — the document

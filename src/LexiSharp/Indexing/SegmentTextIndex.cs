@@ -134,7 +134,7 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     /// is corpus order here, because a segment holds no gaps. Every term's postings are walked before
     /// any document is decoded, and the ordinals are pooled, so the only allocation is the sort's.
     /// </remarks>
-    IEnumerable<SearchDocument> ICandidateIndex.GetCandidateDocuments(IReadOnlyList<string> terms)
+    public IEnumerable<SearchDocument> GetCandidateDocuments(IReadOnlyList<string> terms)
     {
         ArgumentNullException.ThrowIfNull(terms);
 
@@ -366,13 +366,7 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
 
     /// <inheritdoc />
     /// <remarks>A segment has no gaps: every slot below this holds a document.</remarks>
-    int IAccumulatingIndex.OrdinalSpace => Count;
-
-    /// <inheritdoc />
-    SearchDocument? IAccumulatingIndex.DocumentAt(int ordinal) => DocumentAt(ordinal);
-
-    /// <inheritdoc />
-    int IAccumulatingIndex.OrdinalOf(string documentId) => OrdinalOf(documentId);
+    public int OrdinalSpace => Count;
 
     /// <summary>The document at <paramref name="ordinal"/>, or <c>null</c> when that slot is free.</summary>
     /// <remarks>
@@ -380,15 +374,15 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     /// the array this index built at open rather than from the reader: the reader would decode a second
     /// string for the same value on every resolved result.
     /// </remarks>
-    internal SearchDocument? DocumentAt(int ordinal) =>
+    public SearchDocument? DocumentAt(int ordinal) =>
         ordinal >= 0 && ordinal < Count ? _reader.Document(ordinal, _ids[ordinal]) : null;
 
     /// <summary>The ordinal of the document with this id, or <c>-1</c>.</summary>
-    internal int OrdinalOf(string documentId) =>
+    public int OrdinalOf(string documentId) =>
         documentId is not null && _ordinals.TryGetValue(documentId, out int ordinal) ? ordinal : -1;
 
     /// <inheritdoc />
-    string? IOrdinalIdIndex.IdAt(int ordinal) =>
+    public string? IdAt(int ordinal) =>
         ordinal >= 0 && ordinal < _ids.Length ? _ids[ordinal] : null;
 
     /// <summary>
@@ -528,7 +522,8 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     }
 
     /// <inheritdoc />
-    void IAccumulatingIndex.Accumulate<TWeight>(TWeight weight, ScoreAccumulator accumulator) =>
+    public void Accumulate<TWeight>(TWeight weight, ScoreAccumulator accumulator)
+        where TWeight : struct, IPostingWeight =>
         Accumulate(weight, accumulator, 0, _lengths);
 
     /// <summary>
