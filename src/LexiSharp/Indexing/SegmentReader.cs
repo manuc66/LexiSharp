@@ -87,7 +87,7 @@ internal sealed class SegmentReader
         get
         {
             for (int i = 0; i < TermCount; i++)
-                yield return ReadTerm(i).Term;
+                yield return ReadTerm(i);
         }
     }
 
@@ -228,14 +228,24 @@ internal sealed class SegmentReader
         return false;
     }
 
-    private (string Term, int DocumentFrequency, int PostingsOffset, int PostingsLength) ReadTerm(int index) =>
-        ReadTermEntry(index, default, out _);
+    /// <summary>The term at <paramref name="index"/>, decoded — the vocabulary enumeration's read.</summary>
+    private string ReadTerm(int index)
+    {
+        int entry = EntryOffset(_termsTableOffset, index);
+        int termLength = ReadInt32(entry, "term length");
+
+        return Encoding.UTF8.GetString(Slice(entry + sizeof(int), termLength, "term"));
+    }
 
     /// <summary>
     /// Reads the entry at <paramref name="index"/>, comparing its term against <paramref name="wanted"/>
-    /// when one is given. Both the string and the comparison come out of one read of the entry.
+    /// when one is given.
     /// </summary>
-    private (string Term, int DocumentFrequency, int PostingsOffset, int PostingsLength) ReadTermEntry(
+    /// <remarks>
+    /// The term's bytes are compared in place and never decoded, because the binary search that calls
+    /// this reads only the comparison.
+    /// </remarks>
+    private (int DocumentFrequency, int PostingsOffset, int PostingsLength) ReadTermEntry(
         int index,
         ReadOnlySpan<byte> wanted,
         out int comparison)
@@ -246,11 +256,14 @@ internal sealed class SegmentReader
         var term = Slice(entry + sizeof(int), termLength, "term");
         comparison = wanted.IsEmpty ? 0 : term.SequenceCompareTo(wanted);
 
-        int frequency = ReadInt32(entry + sizeof(int) + termLength, "document frequency");
-        int postingsOffset = ReadInt32(entry + (2 * sizeof(int)) + termLength, "postings offset");
-        int postingsLength = ReadInt32(entry + (3 * sizeof(int)) + termLength, "postings length");
-
-        return (Encoding.UTF8.GetString(term), frequency, postingsOffset, postingsLength);
+        // The stored term is not decoded. A binary search calls this once per step and reads only the
+        // comparison, so decoding it allocated log2(vocabulary) strings per look-up — and decoding it
+        // after the reads below would read a scratch buffer they may have refilled. The bytes are
+        // compared in place, which is what the search needs.
+        return (
+            ReadInt32(entry + sizeof(int) + termLength, "document frequency"),
+            ReadInt32(entry + (2 * sizeof(int)) + termLength, "postings offset"),
+            ReadInt32(entry + (3 * sizeof(int)) + termLength, "postings length"));
     }
 
     private string ReadLengthPrefixed(int at, out int after)
