@@ -152,7 +152,7 @@ public sealed class DemoSearchService
 
         // Reopen from the directory alone, the way a restart would, so the timing below is what a
         // process pays to have the corpus searchable again.
-        using var reopened = new SegmentedTextIndex(directory, tokenizer);
+        var reopened = new SegmentedTextIndex(directory, tokenizer);
         openStarted.Stop();
 
         cost = new DemoSegmentCost(
