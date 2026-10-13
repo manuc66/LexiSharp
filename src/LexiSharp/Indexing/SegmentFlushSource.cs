@@ -36,6 +36,24 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
     /// <summary>Whether the chain's ordinals renumber to themselves, in which case compaction is a copy.</summary>
     private readonly bool _identity;
 
+    /// <summary>
+    /// The lists one term's resolution fills, kept across terms and cleared for each.
+    /// </summary>
+    /// <remarks>
+    /// The writer resolves every term in the dictionary, one after another, so the six lists a
+    /// resolution needs are the same six every time. Allocating them per term paid a `List` object and
+    /// its doubling growth once per term — 100,000 times for a corpus of 2M posting entries, where the
+    /// fixed cost of the machinery dwarfs the entries it carries. Measured with the benchmark's two
+    /// rows, the write is 89% of a commit's allocation and this is where most of it goes.
+    /// </remarks>
+    private readonly List<int> _ordinals = [];
+    private readonly List<int> _frequencies = [];
+    private readonly List<int> _compacted = [];
+    private readonly List<int> _compactedFrequencies = [];
+
+    private List<int>? _positions;
+    private List<int>? _compactedPositions;
+
     private readonly int _count;
     private readonly int[] _lengths;
     private readonly string[] _terms;
@@ -205,9 +223,13 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
     bool ISpanAccumulatingIndex.TryResolvePostings(ReadOnlySpan<char> term, bool withPositions, out PostingView postings)
     {
         var encoded = term.ToString();
-        var ordinals = new List<int>();
-        var frequencies = new List<int>();
-        var positions = withPositions ? new List<int>() : null;
+        var ordinals = _ordinals;
+        var frequencies = _frequencies;
+        var positions = withPositions ? _positions ??= [] : null;
+
+        ordinals.Clear();
+        frequencies.Clear();
+        positions?.Clear();
 
         for (int s = 0; s < _chain.SegmentCount; s++)
             _chain.SegmentsForTest[s].AppendGlobalPostings(
@@ -238,9 +260,13 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
         // occurrences a document holds into one entry: the layout stores one (ordinal, frequency) pair
         // per document with an ascending, strictly distinct ordinal, and a document holding a term three
         // times is one posting with a frequency of 3 — not three postings.
-        var compacted = new List<int>();
-        var compactedFrequencies = new List<int>();
-        var compactedPositions = withPositions ? new List<int>() : null;
+        var compacted = _compacted;
+        var compactedFrequencies = _compactedFrequencies;
+        var compactedPositions = withPositions ? _compactedPositions ??= [] : null;
+
+        compacted.Clear();
+        compactedFrequencies.Clear();
+        compactedPositions?.Clear();
         int positionAt = 0;
 
         for (int i = 0; i < ordinals.Count; i++)
