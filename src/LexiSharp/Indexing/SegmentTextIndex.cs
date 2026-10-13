@@ -307,6 +307,9 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
         return Array.Empty<int>();
     }
 
+    /// <summary>The terms starting with a prefix, over the sorted term table's range for it.</summary>
+    internal IEnumerable<string> TermsWithPrefix(string prefix) => _reader.TermsWithPrefix(prefix);
+
     /// <summary>Resolves a term once, so its frequency can be read at many ordinals without searching again.</summary>
     internal bool TryResolveTerm(ReadOnlySpan<char> term, out SegmentReader.TermRegion region) =>
         _reader.TryResolveTerm(term, out region);

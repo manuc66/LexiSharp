@@ -228,6 +228,50 @@ internal sealed class SegmentReader
         return false;
     }
 
+    /// <summary>
+    /// The terms starting with <paramref name="prefix"/>, in code-point order. The table is sorted, so
+    /// the matches are a contiguous range: one binary search finds its first term, and the walk decodes
+    /// until a term no longer starts with the prefix. The terms outside the range are never decoded.
+    /// </summary>
+    public IEnumerable<string> TermsWithPrefix(string prefix)
+    {
+        ArgumentNullException.ThrowIfNull(prefix);
+
+        for (int i = LowerBound(prefix); i < TermCount; i++)
+        {
+            string term = ReadTerm(i);
+
+            if (!term.StartsWith(prefix, StringComparison.Ordinal))
+                yield break;
+
+            yield return term;
+        }
+    }
+
+    /// <summary>Index of the first term at or after <paramref name="prefix"/> in code-point order.</summary>
+    private int LowerBound(string prefix)
+    {
+        Span<byte> encoded = prefix.Length <= 256 ? stackalloc byte[prefix.Length * 4] : new byte[prefix.Length * 4];
+        int length = Encoding.UTF8.GetBytes(prefix, encoded);
+        var wanted = encoded[..length];
+
+        int low = 0;
+        int high = TermCount;
+
+        while (low < high)
+        {
+            int middle = (low + high) / 2;
+            ReadTermEntry(middle, wanted, out int comparison);
+
+            if (comparison < 0)
+                low = middle + 1;
+            else
+                high = middle;
+        }
+
+        return low;
+    }
+
     /// <summary>A term's postings region, resolved once and reusable for any ordinal.</summary>
     internal readonly record struct TermRegion(int PostingsOffset, int PostingsLength)
     {

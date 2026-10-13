@@ -1135,10 +1135,13 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         // constant for a term. The order is the same either way; only the cost changes.
         var matches = new List<(string Term, int Frequency)>();
 
-        foreach (var term in index.Vocabulary)
+        // An index that keeps its dictionary sorted can answer the prefix as a range and decode only
+        // the terms inside it; walking the whole vocabulary is the fallback.
+        foreach (var term in index is IVocabularyPrefixIndex ranged
+            ? ranged.TermsWithPrefix(expansion.BaseTerm)
+            : EveryPrefixMatch(index.Vocabulary, expansion.BaseTerm))
         {
-            if (term.StartsWith(expansion.BaseTerm, StringComparison.Ordinal))
-                matches.Add((term, index.DocumentFrequency(term)));
+            matches.Add((term, index.DocumentFrequency(term)));
         }
 
         matches.Sort((a, b) =>
@@ -1151,6 +1154,16 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
         for (int i = 0; i < count; i++)
             terms.Add(matches[i].Term);
+    }
+
+    /// <summary>The vocabulary's terms starting with <paramref name="prefix"/>, for an unsorted index.</summary>
+    private static IEnumerable<string> EveryPrefixMatch(IEnumerable<string> vocabulary, string prefix)
+    {
+        foreach (string term in vocabulary)
+        {
+            if (term.StartsWith(prefix, StringComparison.Ordinal))
+                yield return term;
+        }
     }
 
     /// <summary>

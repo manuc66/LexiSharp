@@ -317,6 +317,16 @@ internal sealed class SegmentOverlay
         return positions;
     }
 
+    /// <summary>The overlay's terms starting with a prefix. The overlay is small by construction.</summary>
+    public IEnumerable<string> TermsWithPrefix(string prefix)
+    {
+        foreach (string term in _postings.Keys)
+        {
+            if (term.StartsWith(prefix, StringComparison.Ordinal))
+                yield return term;
+        }
+    }
+
     /// <summary>How many times the term appears in the document with this id.</summary>
     public int TermFrequency(string documentId, string term) =>
         _ordinals.TryGetValue(documentId, out int ordinal)
