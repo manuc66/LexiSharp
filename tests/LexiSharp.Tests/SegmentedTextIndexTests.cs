@@ -751,6 +751,55 @@ public class SegmentedTextIndexTests
         }
     }
 
+    [Fact]
+    public void AStoreGatesPhrasesExactlyAsTheInMemoryIndex()
+    {
+        // The phrase gate reads term positions, and a store holds none: it recomputes them from the
+        // stored text. This is the one read path where the two indexes could disagree, so it is checked
+        // against the in-memory index rather than trusted — including across a text field's gap, where a
+        // phrase must not bridge the body into a title.
+        var memory = new InMemoryTextIndex();
+
+        memory.Add(new SearchDocument("adjacent", "alpha beta gamma"));
+        memory.Add(new SearchDocument("reversed", "beta alpha gamma"));
+        memory.Add(new SearchDocument("apart", "alpha gamma beta"));
+        memory.Add(new SearchDocument(
+            "field-gap",
+            "alpha gamma",
+            TextFields: new Dictionary<string, string>(StringComparer.Ordinal) { ["title"] = "beta gamma" }));
+        memory.Add(new SearchDocument(
+            "title-only",
+            "gamma",
+            TextFields: new Dictionary<string, string>(StringComparer.Ordinal) { ["title"] = "alpha beta" }));
+
+        string directory = NewDirectory();
+
+        try
+        {
+            var store = new SegmentedTextIndex(directory);
+            store.Index(memory.Documents);
+            using var committed = store.Commit();
+
+            var memoryEngine = new RankedTextSearchEngine(memory, new Bm25Scorer());
+            var storeEngine = new RankedTextSearchEngine(committed, new Bm25Scorer());
+            var options = new SearchOptions(10, ParseQuerySyntax: true);
+
+            // Adjacency, reversal, a title, and a phrase that would only match by bridging the gap.
+            foreach (string query in new[] { "\"alpha beta\"", "\"beta gamma\"", "\"alpha gamma\"", "\"alpha beta gamma\"" })
+                AssertSamePage(query, memoryEngine.Search(query, options), storeEngine.Search(query, options));
+
+            // And the gate is not vacuous: the phrase that would need to bridge the body into the title
+            // matches the one document that spells it out in one field, and not the field-gap document.
+            var bridged = storeEngine.Search("\"alpha beta gamma\"", options);
+            Assert.Equal("adjacent", Assert.Single(bridged).DocumentId);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+
     private static void Seed(string directory)
     {
         var store = new SegmentedTextIndex(directory);

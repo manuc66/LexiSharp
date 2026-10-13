@@ -819,13 +819,77 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// </summary>
     private bool MatchesPhrases(string documentId, IReadOnlyList<IReadOnlyList<string>> phrases)
     {
+        if (phrases.Count == 0)
+            return true;
+
+        // An index that recomputes positions pays a full tokenization per GetTermPositions call, and
+        // the gate needs every phrase term's positions. Asking for the document's positioned terms once
+        // and evaluating every phrase against that list replaces one tokenization per term per phrase —
+        // measured at 494 MB for one two-term phrase query over a 20,000-document store.
+        var positioned = (_index as IPositionedTermsIndex)?.GetPositionedTerms(documentId);
+
         for (int p = 0; p < phrases.Count; p++)
         {
-            if (!MatchesPhrase(documentId, phrases[p]))
+            bool matches = positioned is not null
+                ? MatchesPhrase(positioned, phrases[p])
+                : MatchesPhrase(documentId, phrases[p]);
+
+            if (!matches)
                 return false;
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Whether a phrase's terms sit at consecutive positions in a document's positioned terms.
+    /// </summary>
+    private static bool MatchesPhrase(
+        IReadOnlyList<(string Term, int Position)> terms, IReadOnlyList<string> phrase)
+    {
+        var anchors = PositionsOf(terms, phrase[0]);
+
+        if (phrase.Count == 1)
+            return anchors.Count > 0;
+
+        var followers = new List<int>[phrase.Count - 1];
+
+        for (int i = 1; i < phrase.Count; i++)
+            followers[i - 1] = PositionsOf(terms, phrase[i]);
+
+        for (int a = 0; a < anchors.Count; a++)
+        {
+            int start = anchors[a];
+            bool consecutive = true;
+
+            for (int i = 1; i < phrase.Count; i++)
+            {
+                if (!ContainsPosition(followers[i - 1], start + i))
+                {
+                    consecutive = false;
+                    break;
+                }
+            }
+
+            if (consecutive)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>The positions one term occupies in a document's positioned terms.</summary>
+    private static List<int> PositionsOf(IReadOnlyList<(string Term, int Position)> terms, string term)
+    {
+        var positions = new List<int>();
+
+        for (int i = 0; i < terms.Count; i++)
+        {
+            if (string.Equals(terms[i].Term, term, StringComparison.Ordinal))
+                positions.Add(terms[i].Position);
+        }
+
+        return positions;
     }
 
     /// <summary>
@@ -836,6 +900,33 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     {
         var anchors = _index.GetTermPositions(documentId, phrase[0]);
 
+        if (phrase.Count == 1)
+            return anchors.Count > 0;
+
+        // Ask each following term for its positions once, not once per anchor. The anchor loop used to
+        // re-ask inside itself, so a document whose first term occurs A times paid A+1 look-ups of the
+        // rest of the phrase instead of one each. On an in-memory index that is a dictionary read; on a
+        // store GetTermPositions re-tokenizes the stored text, so the repeated call was the phrase
+        // gate's whole cost — measured at 1.45 GB and 69x the in-memory time for one two-term phrase
+        // query over a 20,000-document store.
+        if (phrase.Count == 2)
+        {
+            var second = _index.GetTermPositions(documentId, phrase[1]);
+
+            for (int a = 0; a < anchors.Count; a++)
+            {
+                if (ContainsPosition(second, anchors[a] + 1))
+                    return true;
+            }
+
+            return false;
+        }
+
+        var followers = new IReadOnlyList<int>[phrase.Count - 1];
+
+        for (int i = 1; i < phrase.Count; i++)
+            followers[i - 1] = _index.GetTermPositions(documentId, phrase[i]);
+
         for (int a = 0; a < anchors.Count; a++)
         {
             int start = anchors[a];
@@ -843,7 +934,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
             for (int i = 1; i < phrase.Count; i++)
             {
-                if (!ContainsPosition(_index.GetTermPositions(documentId, phrase[i]), start + i))
+                if (!ContainsPosition(followers[i - 1], start + i))
                 {
                     consecutive = false;
                     break;

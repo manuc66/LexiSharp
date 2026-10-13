@@ -250,15 +250,26 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     /// <inheritdoc />
     public bool Contains(string documentId) => documentId is not null && _ordinals.ContainsKey(documentId);
 
-    /// <inheritdoc />
-    public IReadOnlyList<string> GetTerms(string documentId)
+    /// <summary>
+    /// The document's tokens and the position each was indexed at, in one call.
+    /// </summary>
+    /// <remarks>
+    /// The phrase gate needs every phrase term's positions. Answering one term at a time means
+    /// tokenizing the stored text once per term, because a segment holds no positions; this returns the
+    /// whole sequence from one tokenization, and it is the same sequence
+    /// <see cref="GetTermPositions"/> filters.
+    /// </remarks>
+    public IReadOnlyList<(string Term, int Position)> GetPositionedTerms(string documentId)
     {
         var document = Find(documentId);
 
-        if (document is null)
-            return Array.Empty<string>();
+        return document is null ? [] : PositionedFields.Positioned(_tokenizer, document);
+    }
 
-        var positioned = PositionedTerms(document);
+    /// <inheritdoc />
+    public IReadOnlyList<string> GetTerms(string documentId)
+    {
+        var positioned = GetPositionedTerms(documentId);
         var terms = new string[positioned.Count];
 
         for (int i = 0; i < positioned.Count; i++)
@@ -276,12 +287,7 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     /// </remarks>
     public IReadOnlyList<int> GetTermPositions(string documentId, string term)
     {
-        var document = Find(documentId);
-
-        if (document is null)
-            return Array.Empty<int>();
-
-        var positioned = PositionedTerms(document);
+        var positioned = GetPositionedTerms(documentId);
         var positions = new List<int>();
 
         for (int i = 0; i < positioned.Count; i++)
@@ -292,13 +298,6 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
 
         return positions;
     }
-
-    /// <summary>
-    /// A document's terms paired with the position each was indexed at: the body, then every text
-    /// field after a gap, exactly as the in-memory index lays them out.
-    /// </summary>
-    private List<(string Term, int Position)> PositionedTerms(SearchDocument document) =>
-        PositionedFields.Positioned(_tokenizer, document);
 
     /// <inheritdoc />
     public int DocumentFrequency(string term) =>
