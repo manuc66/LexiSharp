@@ -429,7 +429,7 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
 
         // A replaced document must stop matching its old text, so its ordinal is tombstoned before the
         // new version is indexed — otherwise both versions would score.
-        if (((IAccumulatingIndex)this).OrdinalOf(document.Id) is int existing and >= 0 && existing < _segmentOrdinalSpace)
+        if (OrdinalOf(document.Id) is int existing and >= 0 && existing < _segmentOrdinalSpace)
             _dead.Add(existing);
 
         _overlay.Add(document);
@@ -443,7 +443,7 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
         if (_overlay.Remove(documentId))
             return true;
 
-        if (((IAccumulatingIndex)this).OrdinalOf(documentId) is int ordinal and >= 0 && ordinal < _segmentOrdinalSpace)
+        if (OrdinalOf(documentId) is int ordinal and >= 0 && ordinal < _segmentOrdinalSpace)
         {
             _dead.Add(ordinal);
 
@@ -511,14 +511,17 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     /// exceed the live count. Using the live count here would address an ordinal outside the
     /// accumulator, and the read path and the flush source would both index outside their arrays.
     /// </remarks>
-    int IAccumulatingIndex.OrdinalSpace => _segmentOrdinalSpace + _overlay.OrdinalCapacity;
+    public int OrdinalSpace => _segmentOrdinalSpace + _overlay.OrdinalCapacity;
 
-    /// <inheritdoc />
+    /// <summary>
+    /// The id at a global ordinal, or <c>null</c> when that slot is free — the id-only half of
+    /// <see cref="DocumentAt"/>, answered by a look-up rather than a decode.
+    /// </summary>
     /// <remarks>
     /// A tombstoned ordinal answers <c>null</c>, as <c>DocumentAt</c> does for the same slot. The id
     /// comes from the segment that owns the ordinal, at the ordinal it owns it at.
     /// </remarks>
-    string? IOrdinalIdIndex.IdAt(int ordinal)
+    public string? IdAt(int ordinal)
     {
         if (ordinal < 0 || ordinal >= _segmentOrdinalSpace + _overlay.OrdinalCapacity)
             return null;
@@ -535,11 +538,11 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
 
         int segment = SegmentIndexAt(ordinal);
 
-        return ((IOrdinalIdIndex)_segments[segment]).IdAt(ordinal - _bases[segment]);
+        return _segments[segment].IdAt(ordinal - _bases[segment]);
     }
 
     /// <inheritdoc />
-    SearchDocument? IAccumulatingIndex.DocumentAt(int ordinal)
+    public SearchDocument? DocumentAt(int ordinal)
     {
         // Bounded by the ordinal space the fold addresses, not by the live document count: a document
         // removed from the overlay frees its ordinal but the space keeps it, so the live count is
@@ -559,7 +562,7 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     }
 
     /// <inheritdoc />
-    int IAccumulatingIndex.OrdinalOf(string documentId)
+    public int OrdinalOf(string documentId)
     {
         // Oldest generation first, so the same id resolves to the ordinal the fold recorded it at.
         for (int i = 0; i < _segments.Length; i++)
@@ -589,7 +592,8 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     /// see the type's remarks for the measured cost and why the cheaper-looking alternatives do not
     /// help. The segments are not interleaved, which is what keeps one reader per segment safe.
     /// </remarks>
-    void IAccumulatingIndex.Accumulate<TWeight>(TWeight weight, ScoreAccumulator accumulator)
+    public void Accumulate<TWeight>(TWeight weight, ScoreAccumulator accumulator)
+        where TWeight : struct, IPostingWeight
     {
         var lengths = _lengths;
         var dead = _dead;
@@ -766,7 +770,7 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     }
 
     /// <inheritdoc />
-    IEnumerable<SearchDocument> ICandidateIndex.GetCandidateDocuments(IReadOnlyList<string> terms)
+    public IEnumerable<SearchDocument> GetCandidateDocuments(IReadOnlyList<string> terms)
     {
         ArgumentNullException.ThrowIfNull(terms);
 
@@ -820,7 +824,7 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
 
                 previous = ordinals[i];
 
-                if (((IAccumulatingIndex)this).DocumentAt(ordinals[i]) is { } document)
+                if (DocumentAt(ordinals[i]) is { } document)
                     yield return document;
             }
         }
@@ -862,9 +866,9 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
 
         public IEnumerator<SearchDocument> GetEnumerator()
         {
-            for (int ordinal = 0; ordinal < ((IAccumulatingIndex)owner).OrdinalSpace; ordinal++)
+            for (int ordinal = 0; ordinal < owner.OrdinalSpace; ordinal++)
             {
-                if (((IAccumulatingIndex)owner).DocumentAt(ordinal) is { } document)
+                if (owner.DocumentAt(ordinal) is { } document)
                     yield return document;
             }
         }

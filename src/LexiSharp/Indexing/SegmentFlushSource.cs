@@ -47,7 +47,7 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
         // Bounded by the ordinal space the fold addresses, not by the live document count: a document
         // removed from the overlay frees its ordinal but the space keeps it, so the live count is
         // smaller than the range a valid ordinal can land in.
-        int space = ((IAccumulatingIndex)chain).OrdinalSpace;
+        int space = chain.OrdinalSpace;
 
         _renumber = new int[space];
         _lengths = new int[space];
@@ -59,7 +59,7 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
 
         for (int ordinal = 0; ordinal < space; ordinal++)
         {
-            var document = ((IAccumulatingIndex)chain).DocumentAt(ordinal);
+            var document = chain.DocumentAt(ordinal);
 
             if (document is null)
             {
@@ -110,7 +110,7 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
                 if (_renumber[ordinal] < 0)
                     continue;
 
-                documents[_renumber[ordinal]] = ((IAccumulatingIndex)_chain).DocumentAt(ordinal)!;
+                documents[_renumber[ordinal]] = _chain.DocumentAt(ordinal)!;
             }
 
             return documents;
@@ -168,7 +168,7 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
 
     int IAccumulatingIndex.OrdinalOf(string documentId)
     {
-        int chainOrdinal = ((IAccumulatingIndex)_chain).OrdinalOf(documentId);
+        int chainOrdinal = _chain.OrdinalOf(documentId);
 
         return chainOrdinal < 0 ? -1 : _renumber[chainOrdinal];
     }
