@@ -62,7 +62,7 @@ namespace LexiSharp.Indexing;
 /// find the terms it indexed.
 /// </para>
 /// </remarks>
-public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumulatingIndex, ICandidateIndex, IOrdinalIdIndex, IPositionedTermsIndex, IDisposable
+public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumulatingIndex, ICandidateIndex, ICandidateIdIndex, IOrdinalIdIndex, IPositionedTermsIndex, IDisposable
 {
     private readonly string _directory;
     private readonly ITokenizer _tokenizer;
@@ -374,6 +374,10 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     /// </remarks>
     IEnumerable<SearchDocument> ICandidateIndex.GetCandidateDocuments(IReadOnlyList<string> terms) =>
         _chain.GetCandidateDocuments(terms);
+
+    /// <inheritdoc />
+    IEnumerable<string> ICandidateIdIndex.GetCandidateIds(IReadOnlyList<string> terms) =>
+        _chain.GetCandidateIds(terms);
 
     /// <summary>
     /// The size of the ordinal space the chain folds into, and the size the engine rents its accumulator

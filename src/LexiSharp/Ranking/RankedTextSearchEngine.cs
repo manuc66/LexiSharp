@@ -348,6 +348,41 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         }
         else
         {
+            // A candidate's document is read only by a metadata filter and by a facet counter. Scoring
+            // needs its id, the window needs its ordinal, and TopRankedWindow resolves the page's
+            // documents at the cut — so when neither of those readers is in play the engine takes ids
+            // and nothing else. That is the difference between decoding the candidate set and decoding
+            // the page: a query-likelihood search takes this path, and its latency was dominated by
+            // materializing documents it read one field of.
+            bool documentFree = options.Filters is not { Count: > 0 } && facets is null;
+
+            // The ids, from the candidate enumeration when the terms reach little enough of the corpus
+            // and from the ordinal space when they do not. Both are ids-only, so a store never decodes
+            // a document it is not returning; the two differ in which documents they visit, not in what
+            // they cost per visit. An index that cannot answer by id keeps the document path below.
+            IEnumerable<string>? candidateIds = null;
+
+            if (documentFree && _scorer is ITermOverlapScorer)
+            {
+                if (_index is ICandidateIdIndex idIndex &&
+                    CandidatesCoverFractionOfCorpus(reachableDocuments, _index.Count))
+                {
+                    candidateIds = idIndex.GetCandidateIds(distinctQueryTerms);
+                }
+                else if (_index is IAccumulatingIndex ordinalSpace && _index is IOrdinalIdIndex ordinalIds)
+                {
+                    candidateIds = EveryId(ordinalSpace, ordinalIds);
+                }
+            }
+
+            if (candidateIds is not null)
+            {
+                foreach (string documentId in candidateIds)
+                    ScoreCandidate(documentId, document: null);
+
+                return CutPage(options, top, ordinal, scoredDocuments, scoreStarted, started, instrumented);
+            }
+
             // Convention: a score of exactly 0 means "not a match".
             // When the index can enumerate the documents sharing at least one query term
             // (ICandidateIndex) and the scorer provably returns 0 for every document that
@@ -361,30 +396,36 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
                     : _index.Documents;
 
             foreach (var document in candidateDocuments)
-            {
-                // Structured filters gate the corpus before any relevance math is paid for.
-                if (!options.PassesFilters(document))
-                    continue;
+                ScoreCandidate(document.Id, document);
+        }
 
-                // Quoted segments are a hard positional gate: every phrase must appear at
-                // consecutive positions, checked before any relevance math is paid.
-                if (parsed is { HasPhrases: true } phrases && !MatchesPhrases(document.Id, phrases.Phrases))
-                    continue;
+        // Scores one candidate. `document` is null on the id-only path, where the gates that read a
+        // document are provably not in play and the page cut resolves it.
+        void ScoreCandidate(string documentId, SearchDocument? document)
+        {
+            // Structured filters gate the corpus before any relevance math is paid for.
+            if (document is not null && !options.PassesFilters(document))
+                return;
 
-                double score = plan is null
-                    ? _scorer.Score(document.Id, distinctQueryTerms, _index)
-                    : plan.Score(document.Id);
+            // Quoted segments are a hard positional gate: every phrase must appear at
+            // consecutive positions, checked before any relevance math is paid.
+            if (parsed is { HasPhrases: true } phrases && !MatchesPhrases(documentId, phrases.Phrases))
+                return;
 
-                scoredDocuments++;
+            double score = plan is null
+                ? _scorer.Score(documentId, distinctQueryTerms, _index)
+                : plan.Score(documentId);
 
-                if (double.IsNaN(score) || double.IsInfinity(score) || score == 0 || score < options.MinimumScore)
-                    continue;
+            scoredDocuments++;
 
+            if (double.IsNaN(score) || double.IsInfinity(score) || score == 0 || score < options.MinimumScore)
+                return;
+
+            if (document is not null)
                 facets?.Count(document);
 
-                top.Add(score, TryOrdinalOf(document.Id), document, ordinal);
-                ordinal++;
-            }
+            top.Add(score, TryOrdinalOf(documentId), document, ordinal);
+            ordinal++;
         }
 
         return CutPage(options, top, ordinal, scoredDocuments, scoreStarted, started, instrumented);
@@ -812,6 +853,26 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         index is IUnorderedCandidateIndex unordered
             ? unordered.GetCandidatesUnordered(queryTerms)
             : index.GetCandidateDocuments(queryTerms);
+
+    /// <summary>
+    /// Every live document's id, in corpus order, read from the ordinal space rather than by
+    /// enumerating documents — the id-only counterpart of <see cref="IReadOnlyTextIndex.Documents"/>.
+    /// </summary>
+    /// <remarks>
+    /// The full-scan path visits the whole corpus. An index that answers an ordinal with an id can
+    /// serve it without materializing anything, which is what a store needs: enumerating its
+    /// <c>Documents</c> decodes every document's text, and the engine reads one field of each.
+    /// </remarks>
+    private static IEnumerable<string> EveryId(IAccumulatingIndex accumulating, IOrdinalIdIndex ids)
+    {
+        int space = accumulating.OrdinalSpace;
+
+        for (int ordinal = 0; ordinal < space; ordinal++)
+        {
+            if (ids.IdAt(ordinal) is { } id)
+                yield return id;
+        }
+    }
 
     /// <summary>
     /// Whether every phrase appears at consecutive document positions; phrases are AND-ed
