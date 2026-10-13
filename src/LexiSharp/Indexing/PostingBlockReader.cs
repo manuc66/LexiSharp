@@ -36,6 +36,12 @@ internal ref struct PostingBlockReader
     private readonly ReadOnlySpan<byte> _skip;
     private readonly int _skipCount;
     private readonly int _blockCount;
+
+    /// <summary>
+    /// Bytes before the skip table in a source-backed region — the <c>blockCount</c> varint. Zero for
+    /// an in-memory region, where <see cref="_skip"/> is already sliced to the table.
+    /// </summary>
+    private readonly int _skipBase;
     private int _windowOffset;
     private int _windowLength;
     private ReadOnlySpan<byte> _deltaPlane;
@@ -73,6 +79,7 @@ internal ref struct PostingBlockReader
 
         _blockCount = blockCount;
         _skipCount = skipCount;
+        _skipBase = 0;
         _skip = remaining[..skipBytes];
         _position = countBytes + skipBytes;
         _deltaPlane = default;
@@ -129,6 +136,7 @@ internal ref struct PostingBlockReader
 
         _blockCount = blockCount;
         _skipCount = skipCount;
+        _skipBase = countBytes;
         _position = countBytes + skipBytes;
         _deltaPlane = default;
         _frequencyPlane = default;
@@ -304,13 +312,13 @@ internal ref struct PostingBlockReader
     private readonly int SkipWindow(int entry) =>
         _source is null
             ? (int)BinaryPrimitives.ReadUInt32LittleEndian(_skip.Slice(entry * PostingBlocks.SkipEntryBytes))
-            : _source.ReadInt32(_regionOffset + (entry * PostingBlocks.SkipEntryBytes));
+            : _source.ReadInt32(_regionOffset + _skipBase + (entry * PostingBlocks.SkipEntryBytes));
 
     /// <summary>The block offset stored for skip entry <paramref name="entry"/>, from the region's start.</summary>
     private readonly int SkipOffset(int entry) =>
         _source is null
             ? BinaryPrimitives.ReadInt32LittleEndian(_skip.Slice((entry * PostingBlocks.SkipEntryBytes) + sizeof(int)))
-            : _source.ReadInt32(_regionOffset + (entry * PostingBlocks.SkipEntryBytes) + sizeof(int));
+            : _source.ReadInt32(_regionOffset + _skipBase + (entry * PostingBlocks.SkipEntryBytes) + sizeof(int));
 
     /// <summary>Jumps the cursor to a block the skip table has an offset for.</summary>
     private void Seek(int blockIndex)

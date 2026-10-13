@@ -330,13 +330,24 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
             return 0;
         }
 
-        while (postings.MoveNext())
+        // Jump to the block that can hold the ordinal before decoding anything. The postings ascend,
+        // so walking from the first block is O(df) for one lookup — and the query-likelihood plan asks
+        // this once per candidate per query term, which is what made a store score that family
+        // O(candidates x terms x df). AdvanceTo uses the region's skip table and leaves the cursor on
+        // the first block whose last entry is at or after the ordinal; because every earlier block ends
+        // below it, the ordinal is in that block if it is present at all. The value returned is the same
+        // entry either way, so this changes the cost and not the answer.
+        if (!postings.AdvanceTo(ordinal))
+            return 0;
+
+        while (postings.TryReadEntry(out int candidate, out int frequency))
         {
-            while (postings.TryReadEntry(out int candidate, out int frequency))
-            {
-                if (candidate == ordinal)
-                    return frequency;
-            }
+            if (candidate == ordinal)
+                return frequency;
+
+            // Entries ascend within a block, so once past the ordinal it cannot reappear.
+            if (candidate > ordinal)
+                break;
         }
 
         return 0;
