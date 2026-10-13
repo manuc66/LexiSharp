@@ -42,17 +42,17 @@ internal sealed class SegmentOverlay
     private readonly List<SearchDocument?> _documents = [];
 
     /// <summary>
-    /// A document's positioned terms, computed when a segment write asks for them and dropped on the
-    /// next write to the overlay.
+    /// Every term's positions, in the same order as that term's <see cref="_postings"/> entries: entry
+    /// <c>i</c> owns the next <c>Frequencies[i]</c> of them.
     /// </summary>
     /// <remarks>
-    /// A write is term-major and the positions are document-major: without this the writer tokenizes a
-    /// document once per term it holds, which is O(entries x |d|) for a job whose positions are
-    /// O(tokens). Measured at 100,000 documents, a fresh commit allocated 191 GB that way against the
-    /// 335 MB it allocated before positions were stored. The cache costs the corpus token count in ints
-    /// once, which is what the positions on disk cost.
+    /// Term-major, because a segment write is: the writer resolves one term at a time and wants that
+    /// term's positions. Kept document-major instead — the natural shape when a document is added — the
+    /// write's transpose became a scan of every document once per term it holds, and measured at 20,632
+    /// ms of CPU for one 100,000-document commit against 948 ms from a segment: 22x, and two thirds of
+    /// the commit. The two layouts hold the same values; this is the one the reader asks for.
     /// </remarks>
-    private readonly Dictionary<int, List<(string Term, int Position)>> _positioned = [];
+    private readonly Dictionary<string, List<int>> _positionsByTerm = new(StringComparer.Ordinal);
     private readonly List<int> _free = [];
     private readonly List<int> _lengths = [];
     private readonly Dictionary<string, int> _ordinals = new(StringComparer.Ordinal);
@@ -141,7 +141,6 @@ internal sealed class SegmentOverlay
         }
 
         _documents[ordinal] = document;
-        _positioned.Clear();
 
         // The flat view is the union of the body and every text field, exactly as the in-memory index
         // builds it: a term that only appears in a title must still be reachable, and a document's
@@ -149,22 +148,23 @@ internal sealed class SegmentOverlay
         // loses the field-only terms from the dictionary and shortens every length — which moves every
         // score the document takes. The positions the in-memory index records are not recorded here,
         // because a segment holds none; the term multiset and the total length are what the fold reads.
-        var terms = _tokenizer.Tokenize(document.Text);
-        var allTerms = new List<string>(terms.Count);
+        var runs = PositionedFields.Runs(_tokenizer, document);
+        var allTerms = new List<string>();
 
-        for (int i = 0; i < terms.Count; i++)
-            allTerms.Add(terms[i]);
-
-        if (document.TextFields is { Count: > 0 } fields)
+        foreach (var run in runs)
         {
-            foreach (var (field, text) in fields)
+            for (int i = 0; i < run.Terms.Count; i++)
             {
-                TextFields.Validate(field, nameof(document));
+                string term = run.Terms[i];
+                allTerms.Add(term);
 
-                var fieldTerms = _tokenizer.Tokenize(text);
+                if (!_positionsByTerm.TryGetValue(term, out var termPositions))
+                {
+                    termPositions = [];
+                    _positionsByTerm[term] = termPositions;
+                }
 
-                for (int i = 0; i < fieldTerms.Count; i++)
-                    allTerms.Add(fieldTerms[i]);
+                termPositions.Add(run.Start + i);
             }
         }
 
@@ -221,7 +221,6 @@ internal sealed class SegmentOverlay
         _lengths[ordinal] = 0;
         _documents[ordinal] = null;
         _ordinals.Remove(documentId);
-        _positioned.Clear();
         _free.Add(ordinal);
         _live--;
 
@@ -271,32 +270,28 @@ internal sealed class SegmentOverlay
         if (!_postings.TryGetValue(term, out var postings))
             return;
 
+        if (positions is null)
+        {
+            foreach (var (ordinal, frequency) in postings)
+            {
+                ordinals.Add(ordinal + offset);
+                frequencies.Add(frequency);
+            }
+
+            return;
+        }
+
+        // The positions are already this term's, in entry order: the copy is the look-up.
+        var termPositions = _positionsByTerm[term];
+        int at = 0;
+
         foreach (var (ordinal, frequency) in postings)
         {
             ordinals.Add(ordinal + offset);
             frequencies.Add(frequency);
 
-            if (positions is null)
-                continue;
-
-            // The overlay holds no positions, so they are recomputed from the document it kept — once
-            // per document, not once per term it holds.
-            var document = _documents[ordinal];
-
-            if (document is null)
-                continue;
-
-            if (!_positioned.TryGetValue(ordinal, out var positioned))
-            {
-                positioned = PositionedFields.Positioned(_tokenizer, document);
-                _positioned[ordinal] = positioned;
-            }
-
-            for (int i = 0; i < positioned.Count; i++)
-            {
-                if (string.Equals(positioned[i].Term, term, StringComparison.Ordinal))
-                    positions.Add(positioned[i].Position);
-            }
+            for (int k = 0; k < frequency; k++)
+                positions.Add(termPositions[at++]);
         }
     }
 
@@ -428,12 +423,24 @@ internal sealed class SegmentOverlay
 
             for (int i = postings.Count - 1; i >= 0; i--)
             {
-                if (postings[i].Ordinal == ordinal)
-                    postings.RemoveAt(i);
+                if (postings[i].Ordinal != ordinal)
+                    continue;
+
+                // The entry's positions are the next Frequency of them, after every entry before it.
+                int start = 0;
+
+                for (int k = 0; k < i; k++)
+                    start += postings[k].Frequency;
+
+                _positionsByTerm[term].RemoveRange(start, postings[i].Frequency);
+                postings.RemoveAt(i);
             }
 
             if (postings.Count == 0)
+            {
                 _postings.Remove(term);
+                _positionsByTerm.Remove(term);
+            }
         }
 
         _termsByOrdinal[ordinal] = [];
