@@ -64,22 +64,35 @@ internal static class SegmentWriter
     /// <summary>Writes <paramref name="index"/> as a new segment and returns its bytes.</summary>
     public static byte[] Write(ITextIndex index)
     {
-        var destination = new ArrayBufferWriter<byte>(1 << 16);
-        Write(index, destination);
+        ArgumentNullException.ThrowIfNull(index);
 
-        return destination.WrittenSpan.ToArray();
+        // The header is forty bytes and only known once the body is assembled, so it is built on the
+        // stack and prepended to the body in the one array that is returned. Before this, the segment
+        // was materialized three times — the body buffer, a destination buffer, and the array copied out
+        // of the destination — and measured at 1.35 GB of allocation for a 270 MB segment.
+        Span<byte> header = stackalloc byte[HeaderBytes];
+        var body = new ArrayBufferWriter<byte>(1 << 16);
+
+        Build(index, body, header);
+
+        var segment = new byte[HeaderBytes + body.WrittenCount];
+        header.CopyTo(segment);
+        body.WrittenSpan.CopyTo(segment.AsSpan(HeaderBytes));
+
+        return segment;
     }
 
-    /// <summary>Writes <paramref name="index"/> as a new segment into <paramref name="destination"/>.</summary>
-    /// <returns>The number of bytes written.</returns>
+    /// <summary>
+    /// Assembles <paramref name="index"/>'s body into <paramref name="body"/> and its forty-byte header
+    /// into <paramref name="header"/>.
+    /// </summary>
     /// <exception cref="NotSupportedException">
     /// The index cannot be read through the capabilities a segment needs, or it holds a gap where a
     /// document was removed.
     /// </exception>
-    public static int Write(ITextIndex index, IBufferWriter<byte> destination)
+    private static void Build(ITextIndex index, ArrayBufferWriter<byte> body, Span<byte> header)
     {
         ArgumentNullException.ThrowIfNull(index);
-        ArgumentNullException.ThrowIfNull(destination);
 
         // One capability carries all three needs: the ordinal space and the document at an ordinal
         // (IAccumulatingIndex's view), the token count and the postings (the read view's).
@@ -95,8 +108,6 @@ internal static class SegmentWriter
             terms.Add(term);
 
         terms.Sort(CompareByCodePoint);
-
-        var body = new ArrayBufferWriter<byte>();
 
         // Documents: entries first, then the table that says where they are.
         var documentOffsets = new int[source.OrdinalSpace];
@@ -179,7 +190,6 @@ internal static class SegmentWriter
         foreach (int offset in termOffsets)
             WriteInt32(offset, body);
 
-        Span<byte> header = destination.GetSpan(HeaderBytes);
         BinaryPrimitives.WriteUInt32LittleEndian(header, Magic);
         BinaryPrimitives.WriteInt32LittleEndian(header[4..], Version);
         BinaryPrimitives.WriteInt32LittleEndian(header[8..], source.OrdinalSpace);
@@ -188,10 +198,6 @@ internal static class SegmentWriter
         BinaryPrimitives.WriteInt64LittleEndian(header[24..], lengthsOffset);
         BinaryPrimitives.WriteInt64LittleEndian(header[32..], termsTableOffset);
 
-        destination.Advance(HeaderBytes);
-        destination.Write(body.WrittenSpan);
-
-        return HeaderBytes + body.WrittenCount;
     }
 
     private static void WriteTermEntry(string term, int frequency, int postingsOffset, int postingsLength, ArrayBufferWriter<byte> body)
