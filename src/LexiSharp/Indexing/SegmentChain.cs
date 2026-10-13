@@ -86,7 +86,7 @@ namespace LexiSharp.Indexing;
 /// interleaves them.
 /// </para>
 /// </remarks>
-internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICandidateIndex, IOrdinalIdIndex
+internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICandidateIndex, IOrdinalIdIndex, IPositionedTermsIndex
 {
     private readonly SegmentTextIndex[] _segments;
     private readonly int[] _bases;
@@ -723,6 +723,23 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
         }
 
         return _overlay.PositionsOf(documentId, term);
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<(string Term, int Position)> GetPositionedTerms(string documentId)
+    {
+        for (int i = 0; i < _segments.Length; i++)
+        {
+            if (!_segments[i].Contains(documentId))
+                continue;
+
+            if (_dead.Contains(_bases[i] + _segments[i].OrdinalOf(documentId)))
+                break;
+
+            return _segments[i].GetPositionedTerms(documentId);
+        }
+
+        return _overlay.GetPositionedTerms(documentId);
     }
 
     /// <inheritdoc />

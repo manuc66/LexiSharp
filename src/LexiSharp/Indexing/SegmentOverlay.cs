@@ -279,10 +279,7 @@ internal sealed class SegmentOverlay
     /// </remarks>
     public IReadOnlyList<int> PositionsOf(string documentId, string term)
     {
-        if (!_ordinals.TryGetValue(documentId, out int ordinal))
-            return [];
-
-        var positioned = PositionedFields.Positioned(_tokenizer, _documents[ordinal]!);
+        var positioned = GetPositionedTerms(documentId);
         var positions = new List<int>();
 
         for (int i = 0; i < positioned.Count; i++)
@@ -293,6 +290,19 @@ internal sealed class SegmentOverlay
 
         return positions;
     }
+
+    /// <summary>
+    /// The document's tokens and the position each was indexed at, in one call.
+    /// </summary>
+    /// <remarks>
+    /// The overlay holds the document but not its positions, so answering a term at a time tokenizes it
+    /// once per term; this tokenizes once for the whole sequence. See
+    /// <see cref="LexiSharp.Core.IPositionedTermsIndex"/>.
+    /// </remarks>
+    public IReadOnlyList<(string Term, int Position)> GetPositionedTerms(string documentId) =>
+        _ordinals.TryGetValue(documentId, out int ordinal)
+            ? PositionedFields.Positioned(_tokenizer, _documents[ordinal]!)
+            : [];
 
     /// <summary>How many times the term appears in the document with this id.</summary>
     public int TermFrequency(string documentId, string term) =>
