@@ -169,84 +169,29 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     /// <summary>
     /// How many distinct terms the chain holds, without building the vocabulary.
     /// </summary>
-    /// <remarks>
-    /// <see cref="CollectDistinctTerms"/> returns the whole vocabulary, which is what an enumeration
-    /// needs and what a count does not: measuring a store's <c>VocabularySize</c> once was building and
-    /// discarding a <c>string[]</c> of every term. The two share one merge — a cursor per segment, the
-    /// smallest term taken, the ties taken together — and differ only in whether the loop appends or
-    /// counts.
-    /// </remarks>
     private int CountDistinctTerms()
     {
-        var cursors = new IEnumerator<string>[_segments.Length];
-        var current = new string?[_segments.Length];
-
-        try
-        {
-            for (int i = 0; i < _segments.Length; i++)
-            {
-                cursors[i] = _segments[i].Terms.GetEnumerator();
-                current[i] = cursors[i].MoveNext() ? cursors[i].Current : null;
-            }
-
-            int distinct = 0;
-            string? last = null;
-
-            while (true)
-            {
-                string? smallest = null;
-
-                for (int i = 0; i < current.Length; i++)
-                {
-                    if (current[i] is null)
-                        continue;
-
-                    if (smallest is null || string.CompareOrdinal(current[i], smallest) < 0)
-                        smallest = current[i];
-                }
-
-                if (smallest is null)
-                    break;
-
-                if (last is null || string.CompareOrdinal(smallest, last) != 0)
-                {
-                    distinct++;
-                    last = smallest;
-                }
-
-                for (int i = 0; i < current.Length; i++)
-                {
-                    if (current[i] is not null && string.CompareOrdinal(current[i], smallest) == 0)
-                        current[i] = cursors[i].MoveNext() ? cursors[i].Current : null;
-                }
-            }
-
-            // The overlay's terms are not in the segments' order, so they are sorted and merged the way
-            // CollectDistinctTerms does for the vocabulary itself.
-            var overlayTerms = new List<string>(_overlay.Terms);
-            overlayTerms.Sort(StringComparer.Ordinal);
-
-            foreach (string term in overlayTerms)
-            {
-                if (last is not null && string.CompareOrdinal(term, last) <= 0)
-                    continue;
-
-                distinct++;
-                last = term;
-            }
-
-            return distinct;
-        }
-        finally
-        {
-            foreach (var cursor in cursors)
-                cursor?.Dispose();
-        }
+        MergeDistinctTerms(null, out int count);
+        return count;
     }
 
     internal string[] CollectDistinctTerms()
     {
         var terms = new List<string>();
+        MergeDistinctTerms(terms, out _);
+        return [.. terms];
+    }
+
+    /// <summary>
+    /// Single k-way merge over the segment cursors and the overlay, shared by
+    /// <see cref="CountDistinctTerms"/> and <see cref="CollectDistinctTerms"/>.
+    /// When <paramref name="terms"/> is non-null, each distinct term is added to it;
+    /// otherwise only the count is tracked. Returns the number of distinct terms found.
+    /// </summary>
+    private int MergeDistinctTerms(List<string>? terms, out int count)
+    {
+        terms ??= [];
+        count = 0;
         var cursors = new IEnumerator<string>[_segments.Length];
         var current = new string?[_segments.Length];
 
@@ -280,6 +225,7 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
                 if (last is null || string.CompareOrdinal(smallest, last) != 0)
                 {
                     terms.Add(smallest);
+                    count++;
                     last = smallest;
                 }
 
@@ -304,15 +250,16 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
                 while (segment < terms.Count && string.CompareOrdinal(terms[segment], term) < 0)
                     segment++;
 
-                // Already counted from a segment's dictionary.
+                // Already emitted from a segment's dictionary.
                 if (segment < terms.Count && string.CompareOrdinal(terms[segment], term) == 0)
                     continue;
 
                 terms.Insert(segment, term);
+                count++;
                 segment++;
             }
 
-            return [.. terms];
+            return count;
         }
         finally
         {

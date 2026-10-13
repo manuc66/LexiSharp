@@ -16,6 +16,7 @@ public static class Program
             typeof(ScoringPathBenchmarks),
             typeof(LevenshteinBenchmarks),
             typeof(ClassificationBenchmarks),
+            typeof(StoreWriteBenchmarks),
         });
 
         switcher.Run(args);
