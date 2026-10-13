@@ -40,6 +40,19 @@ internal sealed class SegmentOverlay
 {
     private readonly ITokenizer _tokenizer;
     private readonly List<SearchDocument?> _documents = [];
+
+    /// <summary>
+    /// A document's positioned terms, computed when a segment write asks for them and dropped on the
+    /// next write to the overlay.
+    /// </summary>
+    /// <remarks>
+    /// A write is term-major and the positions are document-major: without this the writer tokenizes a
+    /// document once per term it holds, which is O(entries x |d|) for a job whose positions are
+    /// O(tokens). Measured at 100,000 documents, a fresh commit allocated 191 GB that way against the
+    /// 335 MB it allocated before positions were stored. The cache costs the corpus token count in ints
+    /// once, which is what the positions on disk cost.
+    /// </remarks>
+    private readonly Dictionary<int, List<(string Term, int Position)>> _positioned = [];
     private readonly List<int> _free = [];
     private readonly List<int> _lengths = [];
     private readonly Dictionary<string, int> _ordinals = new(StringComparer.Ordinal);
@@ -128,6 +141,7 @@ internal sealed class SegmentOverlay
         }
 
         _documents[ordinal] = document;
+        _positioned.Clear();
 
         // The flat view is the union of the body and every text field, exactly as the in-memory index
         // builds it: a term that only appears in a title must still be reachable, and a document's
@@ -207,6 +221,7 @@ internal sealed class SegmentOverlay
         _lengths[ordinal] = 0;
         _documents[ordinal] = null;
         _ordinals.Remove(documentId);
+        _positioned.Clear();
         _free.Add(ordinal);
         _live--;
 
@@ -264,14 +279,18 @@ internal sealed class SegmentOverlay
             if (positions is null)
                 continue;
 
-            // The overlay holds no positions, so they are recomputed from the document it kept — the
-            // same tokenization the read path used to do per query, now paid once at write time.
+            // The overlay holds no positions, so they are recomputed from the document it kept — once
+            // per document, not once per term it holds.
             var document = _documents[ordinal];
 
             if (document is null)
                 continue;
 
-            var positioned = PositionedFields.Positioned(_tokenizer, document);
+            if (!_positioned.TryGetValue(ordinal, out var positioned))
+            {
+                positioned = PositionedFields.Positioned(_tokenizer, document);
+                _positioned[ordinal] = positioned;
+            }
 
             for (int i = 0; i < positioned.Count; i++)
             {
