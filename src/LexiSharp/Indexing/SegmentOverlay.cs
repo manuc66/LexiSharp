@@ -52,7 +52,40 @@ internal sealed class SegmentOverlay
     /// ms of CPU for one 100,000-document commit against 948 ms from a segment: 22x, and two thirds of
     /// the commit. The two layouts hold the same values; this is the one the reader asks for.
     /// </remarks>
-    private readonly Dictionary<string, List<int>> _positionsByTerm = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TermPositions> _positionsByTerm = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// One term's state in the overlay: its positions, and where the document being added stopped.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The positions are term-major and in the same order as <see cref="_postings"/>' entries for the
+    /// term, so a look-up is a slice. <see cref="CurrentFrequency"/> is the count for the document
+    /// <see cref="LastOrdinal"/> names, which is what lets <see cref="Add"/> write that document's
+    /// posting entry without a second pass over its terms.
+    /// </para>
+    /// <para>
+    /// Before this, <c>Add</c> allocated a <c>Dictionary&lt;string, int&gt;</c> per document to count
+    /// them, filled it with a hashed insert per token, and walked the document's terms again to read it
+    /// back. Measured at 100,000 documents that was 11,912 ms of CPU against 904 ms for tokenizing the
+    /// same corpus: 93% of building an overlay was the bookkeeping around the tokens, and most of it was
+    /// that dictionary.
+    /// </para>
+    /// </remarks>
+    private sealed class TermPositions(string term)
+    {
+        /// <summary>The term, so a touched entry can be written without looking it up again.</summary>
+        public string Term { get; } = term;
+
+        /// <summary>The term's positions, ascending within a document and grouped by document.</summary>
+        public List<int> Positions { get; } = [];
+
+        /// <summary>The last document this term was seen in, or <c>-1</c>.</summary>
+        public int LastOrdinal { get; set; } = -1;
+
+        /// <summary>How many times the term occurs in <see cref="LastOrdinal"/>.</summary>
+        public int CurrentFrequency { get; set; }
+    }
     private readonly List<int> _free = [];
     private readonly List<int> _lengths = [];
     private readonly Dictionary<string, int> _ordinals = new(StringComparer.Ordinal);
@@ -149,7 +182,11 @@ internal sealed class SegmentOverlay
         // score the document takes. The positions the in-memory index records are not recorded here,
         // because a segment holds none; the term multiset and the total length are what the fold reads.
         var runs = PositionedFields.Runs(_tokenizer, document);
+
+        // The document's tokens, in order — _termsByOrdinal reads it — and the entries this document
+        // touched, so the posting entries below need no look-up at all.
         var allTerms = new List<string>();
+        var touched = new List<TermPositions>();
 
         foreach (var run in runs)
         {
@@ -158,13 +195,23 @@ internal sealed class SegmentOverlay
                 string term = run.Terms[i];
                 allTerms.Add(term);
 
-                if (!_positionsByTerm.TryGetValue(term, out var termPositions))
+                if (!_positionsByTerm.TryGetValue(term, out var entry))
                 {
-                    termPositions = [];
-                    _positionsByTerm[term] = termPositions;
+                    entry = new TermPositions(term);
+                    _positionsByTerm[term] = entry;
                 }
 
-                termPositions.Add(run.Start + i);
+                // A term's first occurrence in this document starts its count over; the entry is then
+                // touched once, and its count at the end is the posting entry's frequency.
+                if (entry.LastOrdinal != ordinal)
+                {
+                    entry.LastOrdinal = ordinal;
+                    entry.CurrentFrequency = 0;
+                    touched.Add(entry);
+                }
+
+                entry.Positions.Add(run.Start + i);
+                entry.CurrentFrequency++;
             }
         }
 
@@ -187,23 +234,15 @@ internal sealed class SegmentOverlay
         // fixture, a document holding a term twice scored 0.4722 through one entry of frequency 2 and
         // 0.6611 through two entries of frequency 1. Every walk over these lists — the fold, the
         // document frequency, the corpus frequency — therefore expects at most one entry per document.
-        var occurrences = new Dictionary<string, int>(StringComparer.Ordinal);
-
-        foreach (string term in allTerms)
+        foreach (var entry in touched)
         {
-            occurrences.TryGetValue(term, out int count);
-            occurrences[term] = count + 1;
-        }
-
-        foreach (var (term, frequency) in occurrences)
-        {
-            if (!_postings.TryGetValue(term, out var postings))
+            if (!_postings.TryGetValue(entry.Term, out var postings))
             {
                 postings = [];
-                _postings[term] = postings;
+                _postings[entry.Term] = postings;
             }
 
-            postings.Add((ordinal, frequency));
+            postings.Add((ordinal, entry.CurrentFrequency));
         }
 
         return ordinal;
@@ -282,7 +321,7 @@ internal sealed class SegmentOverlay
         }
 
         // The positions are already this term's, in entry order: the copy is the look-up.
-        var termPositions = _positionsByTerm[term];
+        var termPositions = _positionsByTerm[term].Positions;
         int at = 0;
 
         foreach (var (ordinal, frequency) in postings)
@@ -432,7 +471,7 @@ internal sealed class SegmentOverlay
                 for (int k = 0; k < i; k++)
                     start += postings[k].Frequency;
 
-                _positionsByTerm[term].RemoveRange(start, postings[i].Frequency);
+                _positionsByTerm[term].Positions.RemoveRange(start, postings[i].Frequency);
                 postings.RemoveAt(i);
             }
 
