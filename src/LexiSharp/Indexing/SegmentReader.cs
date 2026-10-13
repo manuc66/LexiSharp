@@ -100,8 +100,8 @@ internal sealed class SegmentReader
 
     /// <summary>The id of the document at <paramref name="ordinal"/>, without decoding its text.</summary>
     /// <remarks>
-    /// Separate from <see cref="Document"/> because a reader opening a segment builds an id to ordinal
-    /// map, and doing that through <see cref="Document"/> would decode every text in the corpus at open.
+    /// Separate from <see cref="Document(int)"/> because a reader opening a segment builds an id to ordinal
+    /// map, and doing that through <see cref="Document(int)"/> would decode every text in the corpus at open.
     /// </remarks>
     public string DocumentId(int ordinal)
     {
@@ -114,13 +114,36 @@ internal sealed class SegmentReader
     }
 
     /// <summary>Reads the document at <paramref name="ordinal"/>, with its metadata and text fields.</summary>
-    public SearchDocument Document(int ordinal)
+    public SearchDocument Document(int ordinal) =>
+        Document(ordinal, id: null);
+
+    /// <summary>
+    /// Reads the document at <paramref name="ordinal"/>, taking <paramref name="id"/> as the id rather
+    /// than decoding it, when the caller already holds it.
+    /// </summary>
+    /// <remarks>
+    /// A segment's reader keeps the id array it built at open, so an index that resolves a document by
+    /// ordinal already has the string. Decoding the stored copy would allocate a second one per result
+    /// for the same value, which is what this overload exists to avoid; the bytes are still skipped by
+    /// the id's length, so the rest of the entry is read at the same offset either way.
+    /// </remarks>
+    public SearchDocument Document(int ordinal, string? id)
     {
         ArgumentOutOfRange(ordinal);
 
         int entry = EntryOffset(_documentsTableOffset, ordinal);
+        int at;
 
-        string id = ReadLengthPrefixed(entry, out int at);
+        if (id is null)
+        {
+            id = ReadLengthPrefixed(entry, out at);
+        }
+        else
+        {
+            // The id's length is stored before its bytes; step over both without materializing them.
+            at = entry + sizeof(int) + ReadInt32(entry, "id length");
+        }
+
         string text = ReadLengthPrefixed(at, out at);
         var fields = ReadDictionary(ref at);
         string? category = ReadOptional(ref at);
