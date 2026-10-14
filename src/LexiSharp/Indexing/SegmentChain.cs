@@ -292,7 +292,7 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     /// reader see a consistent corpus while the write happens — see <see cref="Merge"/> for the
     /// switch-over.
     /// </remarks>
-    public SegmentTextIndex Flush(int expectedBodyBytes = 0) => new(SegmentWriter.Write((ITextIndex)new SegmentFlushSource(this), expectedBodyBytes));
+    public SegmentTextIndex Flush() => new(SegmentWriter.Write((ITextIndex)new SegmentFlushSource(this)));
 
     /// <summary>
     /// Collapses the chain to one segment and returns it, leaving this chain untouched.
@@ -309,11 +309,11 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     /// <c>AtomicEngineReference</c>, and it is what makes a merge invisible to a reader.
     /// </para>
     /// <para>
-    /// <b>What a merge costs, and what it buys.</b> At 40,000 documents a merge is <b>0.6-1.2 s and
-    /// about 2.9 GB allocated</b> against a 12.7 MB file, so it is a batch operation a caller
-    /// schedules. It buys the end of the <b>1.18× tombstone tax</b> on a head query, the end of the
-    /// overlay, and a smaller store to open. It does <b>not</b> buy latency: a chain of 2 and of 3
-    /// segments already measure the same as one.
+    /// <b>What a merge costs, and what it buys.</b> At 40,000 documents a merge is <b>about 0.9 s and
+    /// 126 MB allocated</b> for a 108 MB segment — a 100,000-term vocabulary, 124 tokens a document — so
+    /// it is a batch operation a caller schedules. It buys the end of the <b>1.18× tombstone tax</b> on
+    /// a head query, the end of the overlay, and a smaller store to open. It does <b>not</b> buy latency:
+    /// a chain of 2 and of 3 segments already measure the same as one.
     /// </para>
     /// <para>
     /// <b>And it moves every surviving score.</b> The tombstone freezes the statistics, so nothing
