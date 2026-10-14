@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace LexiSharp.Core;
 
 /// <summary>
@@ -153,9 +155,12 @@ public sealed class DocumentHierarchy
         Contains(documentId)
         && (!_childrenOf.TryGetValue(documentId, out var children) || children.Count == 0);
 
-    /// <summary>Reads the node's parent; false for roots and unknown ids.</summary>
-    public bool TryGetParent(string documentId, out string parentId) =>
-        _parentOf.TryGetValue(documentId, out parentId!);
+    /// <summary>
+    /// Reads the node's parent; false for roots and unknown ids. The parent id is not null when
+    /// this returns <c>true</c>.
+    /// </summary>
+    public bool TryGetParent(string documentId, [NotNullWhen(true)] out string? parentId) =>
+        _parentOf.TryGetValue(documentId, out parentId);
 
     /// <summary>
     /// The node's depth: the number of ancestors between it and the root. 0 for roots and
