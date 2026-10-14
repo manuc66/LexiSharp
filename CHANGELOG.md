@@ -45,7 +45,7 @@ workflow.
     corrected one moved all 401. A merge rewrites them and the scores move with it.
   - **A tombstone costs 1.18× a head query at 10 ‰ deleted, and less from there.** `ShouldMerge()`
     reports when the count has passed 1 % of the live documents, which is where most of that tax sits. A
-    merge at 40,000 documents costs 0.6-1.2 s and about 2.9 GB allocated, so it is a batch operation.
+    merge at 40,000 documents costs about 1.2 s and 593 MB allocated, so it is a batch operation.
   - **A write is visible to the very next search**, and an overlay of 1,000 documents reads at 1.02× the
     same documents committed into a segment. What an overlay is not is durable: it is lost on a crash.
     `Commit()` writes one segment atomically, so a crash mid-write leaves the previous segment intact.
