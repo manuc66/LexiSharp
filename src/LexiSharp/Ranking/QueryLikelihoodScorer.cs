@@ -225,6 +225,9 @@ public sealed class QueryLikelihoodScorer : ITermOverlapScorer, IQueryPlannableS
             {
                 int tf = _cursors is null
                     ? _index.TermFrequency(documentId, _terms[i])
+                    // The cursors were kept only when every term resolved, so a non-null array has
+                    // one in every slot: all of them, or none and the read above took the other path.
+                    // The `!` is that, and it stays because this is the per-term-per-document loop.
                     : _cursors[i]!.Frequency(documentId);
 
                 if (tf > 0)

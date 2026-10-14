@@ -1090,6 +1090,8 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
 
         for (int i = 0; i < flat.Ordinals.Length; i++)
         {
+            // A posting's ordinals name live documents: removal removes the postings with the slot
+            // it nulls. The `!` is that claim.
             string id = _byOrdinal[flat.Ordinals[i]]!.Id;
 
             foreach (int position in posting.ByDocument[id].Positions)
