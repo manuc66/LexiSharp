@@ -308,35 +308,41 @@ workflow.
 
 ### Changed
 
-- **A segment is measured before it is written, and assembled into the array it returns.**
+- **A segment is measured before it is written, assembled into the array it returns, and planned once.**
 
   The writer walked the corpus twice: once to assemble the body into a growing buffer and once to copy
   it out into the array a caller receives, because the forty-byte header is only known after the body.
-  `SegmentWriter.Measure` now computes the segment's exact length without writing a byte — every
-  region's size comes from the same primitive that sizes the span it is written into — the array is
-  allocated at that size, and `Build` assembles the body into it at offset 40 and patches the header in
-  place. One allocation, and no copy.
+  The plan computes the segment's exact length, its dictionary's order and each term's postings size
+  without writing a byte — every region's size comes from the same primitive that sizes the span it is
+  written into — the array is allocated at that size, and the build assembles the body into it at
+  offset 40 and patches the header in place. One allocation, no copy, and no walk repeated.
 
   Measured on a 100,000-document corpus whose segment is 267 MB, with the commit attributed per part in
   one run:
 
   | part of a commit | before | after |
   |---|---|---|
-  | the write, no disk write and no reopen | **1,203 MB** | **283 MB** (267 of it the segment itself) |
+  | the write, no disk write and no reopen | **1,203 MB** | **284 MB** (267 of it the segment itself) |
   | the reopen (`_ids` and `_ordinals`) | 275 MB | 275 MB |
   | the flush source's constructor | 5 MB | 5 MB |
-  | **the commit, end to end** | **1,487 MB** | **566 MB** — 2.6× less |
+  | **the commit, end to end** | **1,487 MB** | **567 MB** — 2.6× less |
 
-  The cost is stated with the figure, because it is not free: **the same commit spends 273 ms more
-  processor time, 2,481 → 2,754 ms, about 11%.** `Measure` resolves every term once more to size its
-  postings, and that second walk is what the saving costs. Allocation is what a caller heads their
-  process for; time is what a caller waits — this trade buys the first and pays the second.
+  The cost is stated with the figure, because a measure is a second walk: resolving every term to size
+  its postings measured 425 ms on this corpus, and the version that paid it in full spent **2,481 → 2,754
+  ms of processor time on the same commit, about 11 % more**. What shipped with it removes that. The
+  plan carries the measured sizes into the build, so a term's postings are measured once instead of
+  twice, and the same commit now measures **1,740 ms — 30 % less than the writer this replaced, at
+  567 MB against its 1,487 MB**. Both figures are min-of-N on the same host: the write spends a
+  full collection during itself, so its time depends on which write preceded it, and the minimum is
+  the figure that describes the code.
 
-  The two passes must agree exactly, and disagreeing could never have been silent: the destination is a
-  span the size of the measure, so a body that overruns it is stopped by the span's own bounds check and
-  a body that falls short is caught by the writer's own comparison. A measure and a build that disagree
-  fail the write, and the suite asserts they do not over 120 generated corpora — every UTF-8 byte width,
-  dictionary shapes, and postings whose planes widen past a byte.
+  The plan and the build must agree exactly, and disagreeing could never have been silent: the
+  destination is a span the size of the plan, so a body that overruns it is stopped by the span's own
+  bounds check and a body that falls short is caught by the writer's own comparison. A postings region
+  whose bytes differ from its planned size is caught by the same comparison, term by term. The suite
+  asserts the agreement over 120 generated corpora — every UTF-8 byte width, dictionary shapes, and
+  postings whose planes widen past a byte — and over two writes with a mutation between them, which is
+  what pins the plan to the call that built it.
 
 - **A segment index can hold a bounded cache of decoded postings for the terms it is asked for.**
 
