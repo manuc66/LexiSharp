@@ -872,6 +872,10 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     {
         if (_documents.TryGetValue(documentId, out int ordinal))
         {
+            // The `!` is not for the assignment, which the out's own type would accept: it is for the
+            // [NotNullWhen(true)] postcondition, which the compiler checks here (CS8762 without it).
+            // The list's element type is nullable because a removal nulls a slot, not because this
+            // path can observe one — an id in _documents names a live ordinal.
             document = _byOrdinal[ordinal]!;
             return true;
         }
@@ -921,7 +925,9 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
             yield break;
 
         // The ordinal rides in the posting value, so a candidate costs one array read rather than
-        // a string-hashed lookup of the id.
+        // a string-hashed lookup of the id. A posting references a live ordinal — removal removes the
+        // postings with the slot it nulls — so the `!` states an invariant rather than hiding a null,
+        // and the tidy alternative is worse: `is { }` would silently drop a candidate if it broke.
         var slots = _byOrdinal;
 
         foreach (var placed in posting.ByDocument.Values)
@@ -976,7 +982,8 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
             if (_postings.TryGetValue(term, out var posting))
             {
                 // Ordinal to document is an array read, so a candidate costs a reference add and a
-                // read — no string hash anywhere in the walk.
+                // read — no string hash anywhere in the walk. Same invariant as the single-term walk:
+                // a posting names a live ordinal, so the `!` is a claim, not a null in disguise.
                 foreach (var placed in posting.ByDocument.Values)
                     candidates.Add(slots[placed.Ordinal]!);
             }
