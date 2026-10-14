@@ -26,6 +26,13 @@ namespace LexiSharp.Ranking;
 /// id. Ids are unique, so the order never depends on the order candidates were produced in — which
 /// is what keeps a ranking reproducible across machines.
 /// </para>
+/// <para>
+/// Under <see cref="TieBreak.InsertionOrder"/> the tie is decided by the document's ordinal instead,
+/// which for a text index is the position the document was added at. That order is total too, and it
+/// is the same whichever path produced the candidates: every path supplies the document's ordinal,
+/// so a page served by the term-at-a-time pass and the same page served by the per-document loop
+/// agree among tied documents, at a given corpus size and across sizes.
+/// </para>
 /// </remarks>
 internal sealed class TopRankedWindow
 {
@@ -55,6 +62,19 @@ internal sealed class TopRankedWindow
     /// <summary>Arrival positions, allocated exactly when <see cref="_tieBreak"/> reads them.</summary>
     private readonly long[]? _ordinals;
 
+    /// <summary>
+    /// Whether the document ordinal handed to the window is the document's position in the index's
+    /// ordinal space — which for a text index is the order documents were added — and so decides a
+    /// tie under <see cref="TieBreak.InsertionOrder"/> on its own, without reading the order
+    /// candidates happened to arrive in.
+    /// </summary>
+    /// <remarks>
+    /// An index that cannot enumerate its ordinals passes <c>-1</c> for a document ordinal, and for
+    /// it this is false: the arrival position is the only insertion order such an index can offer,
+    /// and that is what it keeps.
+    /// </remarks>
+    private readonly bool _byDocumentOrdinal;
+
     private int _count;
 
     /// <param name="limit">Window size: the number of best entries to retain.</param>
@@ -67,11 +87,18 @@ internal sealed class TopRankedWindow
     /// Called in exactly the places the tie-break reads an id, so a segment index decodes a document
     /// only for the rows a page keeps.
     /// </param>
+    /// <param name="ordinalsAreInsertionPositions">
+    /// Whether the document ordinal this window is handed for each candidate is a position in the
+    /// index's ordinal space. When it is, <see cref="TieBreak.InsertionOrder"/> compares those
+    /// positions and the arrival order is not recorded at all — the document's own ordinal already
+    /// says where it was added.
+    /// </param>
     public TopRankedWindow(
         int limit,
         TieBreak tieBreak,
         Func<int, SearchDocument?> resolve,
-        Func<int, string?>? resolveId = null)
+        Func<int, string?>? resolveId = null,
+        bool ordinalsAreInsertionPositions = false)
     {
         _limit = limit;
         _tieBreak = tieBreak;
@@ -79,7 +106,8 @@ internal sealed class TopRankedWindow
         _resolveId = resolveId;
         _entries = limit <= 0 ? Array.Empty<(double, int)>() : new (double, int)[limit];
         _resolved = null;
-        _ordinals = limit > 0 && tieBreak == TieBreak.InsertionOrder ? new long[limit] : null;
+        _byDocumentOrdinal = ordinalsAreInsertionPositions;
+        _ordinals = limit > 0 && tieBreak == TieBreak.InsertionOrder && !_byDocumentOrdinal ? new long[limit] : null;
     }
 
     /// <summary>Number of entries currently retained (at most the window size).</summary>
@@ -97,7 +125,8 @@ internal sealed class TopRankedWindow
     /// </param>
     /// <param name="ordinal">
     /// Position of the candidate in the order the engine produced candidates. Only read under
-    /// <see cref="TieBreak.InsertionOrder"/>, where it is what makes the order total.
+    /// <see cref="TieBreak.InsertionOrder"/> when the index has no ordinal space, where it is what
+    /// makes the order total.
     /// </param>
     public void Add(double score, int documentOrdinal, SearchDocument? resolved = null, long ordinal = 0)
     {
@@ -198,7 +227,7 @@ internal sealed class TopRankedWindow
             return false;
 
         return _tieBreak == TieBreak.InsertionOrder
-            ? _ordinals![left] < _ordinals[right]
+            ? InsertionKeyOf(left) < InsertionKeyOf(right)
             : string.CompareOrdinal(IdOf(left), IdOf(right)) < 0;
     }
 
@@ -235,9 +264,21 @@ internal sealed class TopRankedWindow
         }
 
         return _tieBreak == TieBreak.InsertionOrder
-            ? _ordinals![incumbent] < ordinal
+            ? InsertionKeyOf(incumbent) < InsertionKeyOf(documentOrdinal, ordinal)
             : string.CompareOrdinal(incumbentId ?? Resolve(incumbent, incumbentOrdinal).Id, newcomerId) < 0;
     }
+
+    /// <summary>
+    /// The position that decides a tie under <see cref="TieBreak.InsertionOrder"/> for a retained
+    /// entry: the document's own ordinal when the index has an ordinal space — the position it holds
+    /// in it, which is where it was added — and the position the engine produced it in otherwise.
+    /// </summary>
+    private long InsertionKeyOf(int slot) =>
+        _byDocumentOrdinal ? _entries[slot].DocumentOrdinal : _ordinals![slot];
+
+    /// <summary>The same position for a candidate the window has not retained.</summary>
+    private long InsertionKeyOf(int documentOrdinal, long arrival) =>
+        _byDocumentOrdinal ? documentOrdinal : arrival;
 
     private string IdOf(int index)
     {

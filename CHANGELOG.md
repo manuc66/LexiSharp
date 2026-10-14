@@ -274,6 +274,47 @@ workflow.
 
 ### Fixed
 
+- **`TieBreak.InsertionOrder` ordered tied documents by a position that moved with the corpus.**
+
+  The option documents the order documents were added, and what it read was the position the engine
+  *produced* each candidate in — a different quantity on every path. The term-at-a-time pass walks the
+  posting lists and records a document at its first touch, so a query whose two terms alternate
+  through the corpus records every document of the first term before it reaches the second; the
+  per-document loop walks the union of the terms' candidates below the accumulation floor and the
+  whole corpus once that union covers half of it. Which path served a query is a function of corpus
+  size and term frequency, so the same documents, tied the same way, came back in two different
+  orders at two corpus sizes — with nothing the caller did changing.
+
+  Demonstrated on a fixture where documents alternate `alpha` and `beta` at consecutive ordinals and
+  every candidate scores the same double, with ids descending in insertion order: below the
+  accumulation floor the page was `doc-z, doc-y, doc-x, doc-w, doc-v, …` and above it `doc-z, doc-x,
+  doc-v, doc-t, …, doc-y, doc-w, …` — the same scores in a different order. The full scan and a
+  segment's candidate path already produced ordinal order; the three now agree because the tie reads
+  the **document's ordinal**, the position it occupies in the index's ordinal space, which for a text
+  index is the order documents were added.
+
+  `TopRankedWindow` compares those ordinals instead of arrival positions, and no longer allocates the
+  arrival-position array at all for an index that has an ordinal space. Measured on a 200-document
+  corpus whose documents tie, a `Limit: 10` search under this option allocates **784 → 680 bytes** —
+  104 of them the `long[10]` the arrival buffer costs, which is the whole of the difference, the
+  comparison itself reading a field the window already holds. Both builds ran through the same probe
+  in one session on one host, mean of five rounds of 20,000 searches, no spread in either figure. Two
+  behaviours are pinned rather than changed: a document removed frees its ordinal and the next
+  document added takes it, so a re-added document sorts at the slot it was handed rather than at the
+  end; and an index that cannot enumerate its ordinals — a backend, or a caller's own — has no
+  ordinal to read, so the order follows the order it enumerates its documents in, which is the only
+  insertion order such an index can state.
+
+  `InsertionOrderTieBreakTests` covers the accumulation pass, both sides of the candidate boundary,
+  seven corpus sizes over the same tied documents, a filtered and a faceted query, the
+  remove-and-re-add case, a store committed and overlaid, and the ordinal-less fallback. Each fixture
+  asserts the path it exercised before asserting the page, so a fixture that quietly fell back could
+  not pass for the wrong reason.
+
+  The guard that keeps a filtered query on the per-document loop under a tie-break other than
+  `DocumentId` is unchanged. The two paths return the same page, so the guard is a choice about which
+  loop serves a filtered query; lifting it turns on the price of the pass rather than on the answer.
+
 - **Youden's J was computed on a threshold no classifier can produce.**
 
   The search walked candidate thresholds and scored each with a suffix over the examples at

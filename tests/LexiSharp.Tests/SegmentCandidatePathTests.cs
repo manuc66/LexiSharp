@@ -22,11 +22,10 @@ namespace LexiSharp.Tests;
 /// <para>
 /// The ordering is load-bearing and asserted directly. <see cref="ICandidateIndex.GetCandidateDocuments"/>
 /// promises the same relative order as <see cref="IReadOnlyTextIndex.Documents"/>, and a segment's
-/// ordinal space is dense and gapless, so ordinal order <i>is</i> corpus order. The engine prefers the
-/// unordered capability when an index has it, and a segment deliberately does not offer it, because
-/// the page a query produces under a tie-break that reads the arrival position depends on the order
-/// candidates arrive in — and a segment that broke that ordering would disagree with the index it was
-/// written from.
+/// ordinal space is dense and gapless, so ordinal order <i>is</i> corpus order — and the ordinal is
+/// what a tie under <see cref="Ranking.TieBreak.InsertionOrder"/> is decided on, so the two engines
+/// agree on the page whichever path served it. The engine prefers the unordered capability when an
+/// index has it; a segment does not offer it, and keeps the ordered contract instead.
 /// </para>
 /// </remarks>
 public class SegmentCandidatePathTests
@@ -117,11 +116,11 @@ public class SegmentCandidatePathTests
     }
 
     [Fact]
-    public void ATieBreakThatReadsArrivalOrderStillMatchesTheIndex()
+    public void ATieBreakThatReadsInsertionOrderStillMatchesTheIndex()
     {
-        // The reason the ordered contract is kept: under a tie-break that reads the arrival position,
-        // the order candidates are produced in decides the page. A segment must not disagree with the
-        // index it was written from.
+        // The ordered contract, checked against the index the segment was written from: under either
+        // tie-break the two engines return the same page, because the tie-break reads the document's
+        // ordinal and every path on both indexes produces candidates carrying it.
         foreach (var tieBreak in new[] { TieBreak.DocumentId, TieBreak.InsertionOrder })
         {
             var (memory, segment, engines) = Engines();
