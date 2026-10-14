@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace LexiSharp.Core;
 
 /// <summary>
@@ -35,7 +37,7 @@ public static class TextFields
     /// A quoted phrase matches inside a single field and never bridges two of them, so a field
     /// name has to be distinguishable from the default one to keep that guarantee.
     /// </remarks>
-    public static bool IsValidFieldName(string? field) =>
+    public static bool IsValidFieldName([NotNullWhen(true)] string? field) =>
         field is not null && (field.Length == 0 || field.Trim().Length > 0);
 
     /// <summary>
@@ -43,7 +45,7 @@ public static class TextFields
     /// </summary>
     /// <param name="field">The name to check.</param>
     /// <param name="parameterName">The parameter to name in the thrown exception.</param>
-    /// <returns>The validated name, unchanged.</returns>
+    /// <returns>The validated name, unchanged — never null when this returns.</returns>
     /// <exception cref="ArgumentException">The name is null or blank.</exception>
     public static string Validate(string? field, string parameterName)
     {
@@ -57,6 +59,8 @@ public static class TextFields
                 parameterName);
         }
 
-        return field!;
+        // IsValidFieldName is a NotNullWhen(true) predicate, so the compiler reads the null state
+        // of `field` out of the branch above rather than out of a suppression here.
+        return field;
     }
 }
