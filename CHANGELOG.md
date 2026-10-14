@@ -311,10 +311,6 @@ workflow.
   asserts the path it exercised before asserting the page, so a fixture that quietly fell back could
   not pass for the wrong reason.
 
-  The guard that keeps a filtered query on the per-document loop under a tie-break other than
-  `DocumentId` is unchanged. The two paths return the same page, so the guard is a choice about which
-  loop serves a filtered query; lifting it turns on the price of the pass rather than on the answer.
-
 - **Youden's J was computed on a threshold no classifier can produce.**
 
   The search walked candidate thresholds and scored each with a suffix over the examples at
@@ -359,6 +355,32 @@ workflow.
   suffix per threshold fails it.
 
 ### Changed
+
+- **A filtered query under a tie-break other than `DocumentId` is served by the accumulation pass.**
+
+  The guard that sent such a request to the per-document loop existed because the two paths ordered
+  tied documents differently, and the ordinal tie-break ended that. `AccumulateFilteredQueries:
+  false` is now the only thing that asks for the loop.
+
+  Measured on the three indexed BEIR corpora — test split of each, literal queries, a filter that
+  rejects nothing, `Limit: 10`, three rounds of every query with the configurations interleaved inside
+  one loop, one host, one session. Per search, p50 then mean:
+
+  | corpus | loop | pass | gain, on the mean |
+  |---|---|---|---|
+  | arguana, 1,406 queries | 134,793 / 150,523 µs | 1,058 / 1,369 µs | **110x** |
+  | scifact, 300 | 3,985 / 4,095 µs | 141 / 139 µs | **29x** |
+  | nfcorpus, 323 | 133 / 621 µs | 8.7 / 32 µs | **19x** |
+
+  The tie-break costs the pass nothing: the same query under `DocumentId` and under `InsertionOrder`
+  measured 0.844-0.978x of each other, which is the host's drift rather than a difference. The page is
+  the same either way on the raw score bits — measured over 1,023 queries across the three corpora in
+  that session, and the equivalence is pinned in `InsertionOrderTieBreakTests` on a fixture whose
+  documents tie exactly, with a budget that fails if the loop is ever served again.
+
+  The regime where the pass loses is unchanged and still stated in the option's remarks: a filter
+  that discards almost everything leaves the pass paying for postings it will not return, and on the
+  same three corpora the loop wins there by 1.2-2.5x. That caller sets the option `false`.
 
 - **`DocumentHierarchy.TryGetParent` and `SegmentOverlay.TryGetPostings` declare the out argument they can hand back as null.**
 

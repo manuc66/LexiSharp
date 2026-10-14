@@ -96,14 +96,11 @@ namespace LexiSharp.Core;
 /// loses is expected to widen as the corpus grows. A query that is broad <i>and</i> filtered down to
 /// almost nothing is the case to watch; that caller sets this <c>false</c>.
 /// </para>
-/// <para>A request that combines this with <see cref="TieBreak"/> other than
-/// <see cref="Ranking.TieBreak.DocumentId"/> keeps the per-document loop whatever this is set to. The
-/// two paths produce candidates in different orders — a full scan is corpus order, the accumulation
+/// <para>A filtered query is served by this pass whatever its <see cref="TieBreak"/> is. The two
+/// paths produce candidates in different orders — a full scan is corpus order, the accumulation
 /// pass is posting order — and they return the same page, because a tie-break other than
-/// <see cref="Ranking.TieBreak.DocumentId"/> reads the document's ordinal, which both paths carry. The
-/// guard is therefore a choice about which loop serves a filtered query, and lifting it turns on the
-/// price of the pass rather than on the answer.
-/// </para>
+/// <see cref="Ranking.TieBreak.DocumentId"/> reads the document's ordinal, which both paths carry.
+/// Setting this <c>false</c> is the only thing that asks for the loop.</para>
 /// </param>
 public sealed record SearchOptions(
     int Limit = 10,
