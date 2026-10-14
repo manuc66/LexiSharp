@@ -55,6 +55,21 @@ internal sealed class SegmentOverlay
     private readonly Dictionary<string, TermPositions> _positionsByTerm = new(StringComparer.Ordinal);
 
     /// <summary>
+    /// Looks a term up without materializing it, so a document's tokens cost a reference each rather
+    /// than a string each.
+    /// </summary>
+    /// <remarks>
+    /// The tokenizer allocates a string per token and this store keeps one per distinct term, so the
+    /// other 12.3M of a 100,000-document build were created and immediately dropped — measured at
+    /// 69.81% of the build's CPU in the collector. A term is materialized here only when it is new,
+    /// which is once per vocabulary entry.
+    /// </remarks>
+    private readonly Dictionary<string, TermPositions>.AlternateLookup<ReadOnlySpan<char>> _spanPositions;
+
+    /// <summary>The destination one run's normalized terms are written into, grown as needed.</summary>
+    private NormalizedTerm[] _normalized = new NormalizedTerm[256];
+
+    /// <summary>
     /// One term's state in the overlay: its positions, and where the document being added stopped.
     /// </summary>
     /// <remarks>
@@ -102,6 +117,7 @@ internal sealed class SegmentOverlay
     public SegmentOverlay(ITokenizer? tokenizer = null)
     {
         _tokenizer = tokenizer ?? Tokenizer.Default;
+        _spanPositions = _positionsByTerm.GetAlternateLookup<ReadOnlySpan<char>>();
     }
 
     /// <summary>Documents the overlay holds.</summary>
@@ -181,39 +197,13 @@ internal sealed class SegmentOverlay
         // loses the field-only terms from the dictionary and shortens every length — which moves every
         // score the document takes. The positions the in-memory index records are not recorded here,
         // because a segment holds none; the term multiset and the total length are what the fold reads.
-        var runs = PositionedFields.Runs(_tokenizer, document);
-
         // The document's tokens, in order — _termsByOrdinal reads it — and the entries this document
         // touched, so the posting entries below need no look-up at all.
         var allTerms = new List<string>();
         var touched = new List<TermPositions>();
 
-        foreach (var run in runs)
-        {
-            for (int i = 0; i < run.Terms.Count; i++)
-            {
-                string term = run.Terms[i];
-                allTerms.Add(term);
-
-                if (!_positionsByTerm.TryGetValue(term, out var entry))
-                {
-                    entry = new TermPositions(term);
-                    _positionsByTerm[term] = entry;
-                }
-
-                // A term's first occurrence in this document starts its count over; the entry is then
-                // touched once, and its count at the end is the posting entry's frequency.
-                if (entry.LastOrdinal != ordinal)
-                {
-                    entry.LastOrdinal = ordinal;
-                    entry.CurrentFrequency = 0;
-                    touched.Add(entry);
-                }
-
-                entry.Positions.Add(run.Start + i);
-                entry.CurrentFrequency++;
-            }
-        }
+        if (!AddSpans(document, ordinal, allTerms, touched))
+            AddStrings(document, ordinal, allTerms, touched);
 
         _lengths[ordinal] = allTerms.Count;
         _tokens += allTerms.Count;
@@ -451,6 +441,171 @@ internal sealed class SegmentOverlay
     }
 
     /// <summary>Drops every posting the document at this ordinal holds.</summary>
+    /// <summary>
+    /// Records the document's tokens through the span tokenizer, which names each term as a slice of the
+    /// text it came from. Returns <c>false</c> when the analysis cannot be served that way — a stemmer,
+    /// a stop list, an n-gram pass — and writes nothing, so the caller can use the string path instead.
+    /// </summary>
+    /// <remarks>
+    /// The run layout is the string path's: the body at position zero, then each text field after
+    /// <see cref="TextFields.PositionGap"/>. It is asserted against the string path rather than assumed —
+    /// see SpanTokenizationParityTests — because a stored position that disagrees with the one
+    /// GetTermPositions recomputes is a store that answers a different question than it indexed.
+    /// </remarks>
+    private bool AddSpans(
+        SearchDocument document,
+        int ordinal,
+        List<string> allTerms,
+        List<TermPositions> touched)
+    {
+        if (_tokenizer is not ISpanTokenizer tokenizer)
+            return false;
+
+        var fields = document.TextFields is { Count: > 0 } present ? present : null;
+
+        // One destination sized for the widest text in the document, so a run that would overflow the
+        // buffer cannot be mistaken for an analysis that cannot be served.
+        int widest = document.Text.Length;
+
+        if (fields is not null)
+        {
+            foreach (var (_, text) in fields)
+                widest = Math.Max(widest, text.Length);
+        }
+
+        if (_normalized.Length < widest + 8)
+            _normalized = new NormalizedTerm[Math.Max(widest + 8, _normalized.Length * 2)];
+
+        int next = 0;
+
+        if (!AppendSpans(tokenizer, document.Text.AsSpan(), next, ordinal, allTerms, touched))
+            return false;
+
+        next += CountSpans(tokenizer, document.Text, _normalized);
+
+        if (fields is null)
+            return true;
+
+        foreach (var (field, text) in fields)
+        {
+            TextFields.Validate(field, nameof(document));
+
+            next += TextFields.PositionGap;
+
+            if (!AppendSpans(tokenizer, text.AsSpan(), next, ordinal, allTerms, touched))
+                return false;
+
+            next += CountSpans(tokenizer, text, _normalized);
+        }
+
+        return true;
+    }
+
+    /// <summary>Appends one run's terms at <paramref name="start"/>, or returns false if the analysis declines.</summary>
+    private bool AppendSpans(
+        ISpanTokenizer tokenizer,
+        ReadOnlySpan<char> text,
+        int start,
+        int ordinal,
+        List<string> allTerms,
+        List<TermPositions> touched)
+    {
+        int count = CountSpans(tokenizer, text, _normalized);
+
+        if (count < 0)
+            return false;
+
+        for (int i = 0; i < count; i++)
+        {
+            var term = _normalized[i];
+
+            // The materialized string is the rare case; a term whose normalized form is a slice is
+            // looked up without one, and materialized only when it is new to the vocabulary.
+            TermPositions entry;
+
+            if (term.Materialized is { } materialized)
+            {
+                if (!_positionsByTerm.TryGetValue(materialized, out entry!))
+                {
+                    entry = new TermPositions(materialized);
+                    _positionsByTerm[materialized] = entry;
+                }
+            }
+            else
+            {
+                entry = EntryFor(text.Slice(term.Start, term.Length));
+            }
+
+            allTerms.Add(entry.Term);
+            Touch(entry, ordinal, touched);
+            entry.Positions.Add(start + i);
+            entry.CurrentFrequency++;
+        }
+
+        return true;
+    }
+
+    /// <summary>The term's entry, materializing its string only when it is new to the vocabulary.</summary>
+    private TermPositions EntryFor(ReadOnlySpan<char> term)
+    {
+        if (_spanPositions.TryGetValue(term, out var entry))
+            return entry;
+
+        // Once per distinct term, not once per token: this is where the 12.3M dropped strings were.
+        string created = term.ToString();
+        entry = new TermPositions(created);
+        _positionsByTerm[created] = entry;
+
+        return entry;
+    }
+
+    private static int CountSpans(ISpanTokenizer tokenizer, ReadOnlySpan<char> text, NormalizedTerm[] destination)
+    {
+        int count = tokenizer.TokenizeNormalized(text, destination);
+
+        return count;
+    }
+
+    /// <summary>The string path, for an analysis the span tokenizer declines.</summary>
+    private void AddStrings(
+        SearchDocument document,
+        int ordinal,
+        List<string> allTerms,
+        List<TermPositions> touched)
+    {
+        var runs = PositionedFields.Runs(_tokenizer, document);
+
+        foreach (var run in runs)
+        {
+            for (int i = 0; i < run.Terms.Count; i++)
+            {
+                string term = run.Terms[i];
+
+                if (!_positionsByTerm.TryGetValue(term, out var entry))
+                {
+                    entry = new TermPositions(term);
+                    _positionsByTerm[term] = entry;
+                }
+
+                allTerms.Add(entry.Term);
+                Touch(entry, ordinal, touched);
+                entry.Positions.Add(run.Start + i);
+                entry.CurrentFrequency++;
+            }
+        }
+    }
+
+    /// <summary>Starts a term's count over the first time this document sees it.</summary>
+    private static void Touch(TermPositions entry, int ordinal, List<TermPositions> touched)
+    {
+        if (entry.LastOrdinal == ordinal)
+            return;
+
+        entry.LastOrdinal = ordinal;
+        entry.CurrentFrequency = 0;
+        touched.Add(entry);
+    }
+
     private void RemovePostings(int ordinal)
     {
         string[] terms = _termsByOrdinal[ordinal];
