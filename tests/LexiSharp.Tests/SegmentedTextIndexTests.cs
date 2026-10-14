@@ -484,10 +484,22 @@ public class SegmentedTextIndexTests
             arrayStore.Dispose();
             arrayStore.Dispose();
 
-            // A mapped store holds a view over a file. Dispose is idempotent.
+            // A no-op is observable as the store still serving the corpus it opened over, which is
+            // the half of the name that says an array store is not disposable.
+            var arrayEngine = new RankedTextSearchEngine(arrayStore, new Bm25Scorer());
+
+            Assert.NotEmpty(arrayEngine.Search("common"));
+
+            // A mapped store holds a view over a file. Dispose is idempotent, and the view is gone
+            // afterwards: a read goes through the released mapping, not through the search — the same
+            // contract SynchronizedTextSearchEngine documents for its own wrapped engine.
             var mappedStore = new SegmentedTextIndex(directory, tokenizer: null, SegmentSourceMode.Mapped);
             mappedStore.Dispose();
             mappedStore.Dispose();
+
+            var mappedEngine = new RankedTextSearchEngine(mappedStore, new Bm25Scorer());
+
+            Assert.Throws<ObjectDisposedException>(() => mappedEngine.Search("common"));
         }
         finally
         {
