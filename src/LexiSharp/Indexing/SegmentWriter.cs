@@ -62,7 +62,7 @@ internal static class SegmentWriter
     internal const int HeaderBytes = 4 + 4 + 4 + 4 + (3 * 8);
 
     /// <summary>Writes <paramref name="index"/> as a new segment and returns its bytes.</summary>
-    public static byte[] Write(ITextIndex index)
+    public static byte[] Write(ITextIndex index, int expectedBodyBytes = 0)
     {
         ArgumentNullException.ThrowIfNull(index);
 
@@ -71,7 +71,7 @@ internal static class SegmentWriter
         // was materialized three times — the body buffer, a destination buffer, and the array copied out
         // of the destination — and measured at 1.35 GB of allocation for a 270 MB segment.
         Span<byte> header = stackalloc byte[HeaderBytes];
-        var body = new ArrayBufferWriter<byte>(StartingCapacity(index));
+        var body = new ArrayBufferWriter<byte>(StartingCapacity(index, expectedBodyBytes));
 
         Build(index, body, header);
 
@@ -97,8 +97,14 @@ internal static class SegmentWriter
     /// characters in it — so the estimate is deliberately coarse and the grower is the safety net.
     /// </para>
     /// </remarks>
-    private static int StartingCapacity(ITextIndex index)
+    private static int StartingCapacity(ITextIndex index, int expectedBodyBytes)
     {
+        // What the caller already knows beats what can be estimated: a store's next commit writes a
+        // segment of a similar shape to its last one, so the size of that segment is the answer. The
+        // estimate is the fallback for a first write, and it is coarse enough that the grower runs once.
+        if (expectedBodyBytes > 0)
+            return (int)Math.Clamp(expectedBodyBytes, 1 << 16, 1 << 30);
+
         long documents = index.Count;
         long tokens = index.CorpusTokenCount;
         long terms = index is IVocabularyIndex vocabulary ? vocabulary.VocabularySize : 0;
