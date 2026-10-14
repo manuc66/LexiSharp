@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using LexiSharp.Core;
 using LexiSharp.Linguistics;
 
@@ -86,6 +87,7 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     private readonly int[] _lengths;
     private readonly DecodedPostingsCache? _decoded;
     private SearchDocument?[]? _documents;
+    private bool _documentsComplete;
 
     /// <param name="bytes">A segment written by <see cref="SegmentWriter"/>.</param>
     /// <param name="tokenizer">
@@ -231,20 +233,36 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     {
         get
         {
-            if (_documents is null)
-            {
-                var documents = new SearchDocument[Count];
+            // A document lookup resolves one slot and leaves the rest open, so "the array exists" is
+            // not "every slot is resolved" — the flag is what says the array is complete. Checking it
+            // keeps this getter O(1) after the first fill: it is read once per query on the scoring
+            // path (see RankedTextSearchEngine's full-corpus scan).
+            if (!_documentsComplete)
+                FillDocuments();
 
-                for (int ordinal = 0; ordinal < Count; ordinal++)
-                    documents[ordinal] = _reader.Document(ordinal);
-
-                _documents = documents;
-            }
-
-            // Every slot is filled before this returns; the element type is nullable only because Find
-            // fills them one at a time.
+            // Every slot is resolved by the time this reads. The `!` covers the array's element
+            // type, which is nullable only because <see cref="Find"/> fills one slot at a time; the
+            // array itself is not null, and each element has been read out of the segment.
             return _documents!;
         }
+    }
+
+    /// <summary>Creates the document array when there is none and resolves every slot in it.</summary>
+    /// <remarks>
+    /// A slot another path already resolved is read rather than re-decoded, so filling after
+    /// lookups costs only the slots still open. The attribute is checked: a path that leaves the
+    /// field null is a build failure, not a suppressed warning.
+    /// </remarks>
+    [MemberNotNull(nameof(_documents))]
+    private void FillDocuments()
+    {
+        var documents = _documents ?? new SearchDocument?[Count];
+        _documents = documents;
+
+        for (int ordinal = 0; ordinal < Count; ordinal++)
+            documents[ordinal] ??= _reader.Document(ordinal);
+
+        _documentsComplete = true;
     }
 
     /// <inheritdoc />

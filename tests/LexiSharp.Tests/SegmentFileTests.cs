@@ -53,6 +53,36 @@ public class SegmentFileTests
     }
 
     [Fact]
+    public void Documents_ResolvesEverySlotALookupLeftOpen()
+    {
+        var index = new InMemoryTextIndex();
+        index.Add(new SearchDocument("a", "alpha beta gamma"));
+        index.Add(new SearchDocument("b", "delta epsilon"));
+        index.Add(new SearchDocument("c", "zeta eta theta"));
+
+        string path = Path.Combine(Path.GetTempPath(), "lexisharp-segment-" + Guid.NewGuid().ToString("N") + ".lxs");
+
+        try
+        {
+            SegmentFile.Write(index, path);
+
+            var reopened = SegmentFile.Open(path);
+
+            // A lookup resolves the one slot it needs and leaves the rest of the array open, which
+            // is the same array Documents returns.
+            Assert.True(reopened.TryGetDocument("a", out var document));
+            Assert.Equal("a", document!.Id);
+
+            foreach (var held in reopened.Documents)
+                Assert.NotNull(held);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void AFileThatIsNotASegmentIsRefused()
     {
         string path = Path.Combine(Path.GetTempPath(), "lexisharp-not-a-segment-" + Guid.NewGuid().ToString("N") + ".lxs");
