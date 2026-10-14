@@ -198,24 +198,18 @@ internal sealed class SegmentOverlay
         // score the document takes. The positions the in-memory index records are not recorded here,
         // because a segment holds none; the term multiset and the total length are what the fold reads.
         // The document's tokens, in order — _termsByOrdinal reads it — and the entries this document
-        // touched, so the posting entries below need no look-up at all.
-        var allTerms = new List<string>();
-        var touched = new List<TermPositions>();
+        // touched, so the posting entries below need no look-up at all. Both are arrays sized by the
+        // tokenization rather than lists that grow: a list and its ToArray were two allocations per
+        // document for one array's worth of values, 200,000 of them over a 100,000-document build.
+        if (!AddSpans(document, ordinal, out string[] allTerms, out TermPositions[] touched, out int touchedCount))
+            AddStrings(document, ordinal, out allTerms, out touched, out touchedCount);
 
-        if (!AddSpans(document, ordinal, allTerms, touched))
-            AddStrings(document, ordinal, allTerms, touched);
+        _lengths[ordinal] = allTerms.Length;
+        _tokens += allTerms.Length;
 
-        _lengths[ordinal] = allTerms.Count;
-        _tokens += allTerms.Count;
-
-        // The index's shared instances, not the tokenizer's: an overlay that retained one string per
-        // occurrence would scale with the token count instead of the vocabulary.
-        var distinct = new string[allTerms.Count];
-
-        for (int i = 0; i < allTerms.Count; i++)
-            distinct[i] = allTerms[i];
-
-        _termsByOrdinal[ordinal] = distinct;
+        // The index's shared instances, not the tokenizer's: the array holds the entries' own strings,
+        // so it is the document's term list rather than a copy of it.
+        _termsByOrdinal[ordinal] = allTerms;
 
         // One entry per (term, document), carrying the number of occurrences — not one entry per
         // occurrence. The accumulator's first touch writes and every later touch adds, so per-occurrence
@@ -224,8 +218,10 @@ internal sealed class SegmentOverlay
         // fixture, a document holding a term twice scored 0.4722 through one entry of frequency 2 and
         // 0.6611 through two entries of frequency 1. Every walk over these lists — the fold, the
         // document frequency, the corpus frequency — therefore expects at most one entry per document.
-        foreach (var entry in touched)
+        for (int i = 0; i < touchedCount; i++)
         {
+            var entry = touched[i];
+
             if (!_postings.TryGetValue(entry.Term, out var postings))
             {
                 postings = [];
@@ -455,50 +451,63 @@ internal sealed class SegmentOverlay
     private bool AddSpans(
         SearchDocument document,
         int ordinal,
-        List<string> allTerms,
-        List<TermPositions> touched)
+        out string[] allTerms,
+        out TermPositions[] touched,
+        out int touchedCount)
     {
+        allTerms = [];
+        touched = [];
+        touchedCount = 0;
+
         if (_tokenizer is not ISpanTokenizer tokenizer)
             return false;
 
         var fields = document.TextFields is { Count: > 0 } present ? present : null;
 
-        // Sized for the whole document, not for its widest text. A run's term count cannot exceed the
-        // characters it came from — a term whose normalized form is not a source slice carries its own
-        // string instead — so with this destination no run can overflow, and -1 can only mean that the
-        // analysis declines, which the body's probe settles below before anything is recorded.
-        int total = document.Text.Length;
+        // Sized for the whole document: a run's term count cannot exceed the characters it came from, so
+        // with this destination no run can overflow and -1 can only mean the analysis declines.
+        int widest = document.Text.Length;
 
         if (fields is not null)
         {
             foreach (var (_, text) in fields)
-                total += text.Length;
+                widest += text.Length;
         }
 
-        if (_normalized.Length < total + 8)
-            _normalized = new NormalizedTerm[Math.Max(total + 8, _normalized.Length * 2)];
+        if (_normalized.Length < widest + 8)
+            _normalized = new NormalizedTerm[Math.Max(widest + 8, _normalized.Length * 2)];
 
-        // Every run is probed before any is recorded. The decline is not a property of the analysis
-        // alone: a tokenizer may serve one text as spans and not another, so the body answering is not
-        // evidence about the fields. A field that declined after the body had been appended would leave
-        // the body's terms half-recorded, and the caller's string fallback would then record every one
-        // of them again — doubled frequencies and duplicated positions, with no error to show for it.
-        if (CountSpans(tokenizer, document.Text, _normalized) < 0)
+        // Probed before anything is recorded. The decline is not a property of the analysis — a tokenizer
+        // may serve one text and not another — so every run is asked first, and the counts it gives size
+        // the arrays the terms go into.
+        int bodyCount = CountSpans(tokenizer, document.Text, _normalized);
+
+        if (bodyCount < 0)
             return false;
+
+        int total = bodyCount;
 
         if (fields is not null)
         {
             foreach (var (_, text) in fields)
             {
-                if (CountSpans(tokenizer, text, _normalized) < 0)
+                int count = CountSpans(tokenizer, text, _normalized);
+
+                if (count < 0)
                     return false;
+
+                total += count;
             }
         }
 
-        int next = 0;
+        allTerms = new string[total];
+        touched = new TermPositions[total];
 
-        AppendSpans(tokenizer, document.Text.AsSpan(), next, ordinal, allTerms, touched);
-        next += CountSpans(tokenizer, document.Text, _normalized);
+        int at = 0;
+
+        AppendSpans(tokenizer, document.Text.AsSpan(), 0, ordinal, allTerms, touched, ref at, ref touchedCount);
+
+        int next = bodyCount;
 
         if (fields is null)
             return true;
@@ -509,18 +518,32 @@ internal sealed class SegmentOverlay
 
             next += TextFields.PositionGap;
 
-            AppendSpans(tokenizer, text.AsSpan(), next, ordinal, allTerms, touched);
+            AppendSpans(tokenizer, text.AsSpan(), next, ordinal, allTerms, touched, ref at, ref touchedCount);
             next += CountSpans(tokenizer, text, _normalized);
         }
 
         return true;
     }
 
+    /// <summary>The term's entry, materializing its string only when it is new to the vocabulary.</summary>
+    private TermPositions EntryFor(ReadOnlySpan<char> term)
+    {
+        if (_spanPositions.TryGetValue(term, out var entry))
+            return entry;
+
+        // Once per distinct term, not once per token: this is where the 12.3M dropped strings were.
+        string created = term.ToString();
+        entry = new TermPositions(created);
+        _positionsByTerm[created] = entry;
+
+        return entry;
+    }
+
     /// <summary>
     /// Appends one run's terms at <paramref name="start"/>.
     /// </summary>
     /// <remarks>
-    /// Cannot decline: the caller probes the analysis and sizes the destination for the whole document
+    /// Cannot decline: the caller probes the analysis and sizes the destinations for the whole document
     /// before calling this, so nothing here can leave the overlay half-written.
     /// </remarks>
     private void AppendSpans(
@@ -528,8 +551,10 @@ internal sealed class SegmentOverlay
         ReadOnlySpan<char> text,
         int start,
         int ordinal,
-        List<string> allTerms,
-        List<TermPositions> touched)
+        string[] allTerms,
+        TermPositions[] touched,
+        ref int at,
+        ref int touchedCount)
     {
         int count = CountSpans(tokenizer, text, _normalized);
 
@@ -554,25 +579,18 @@ internal sealed class SegmentOverlay
                 entry = EntryFor(text.Slice(term.Start, term.Length));
             }
 
-            allTerms.Add(entry.Term);
-            Touch(entry, ordinal, touched);
+            allTerms[at++] = entry.Term;
+
+            if (entry.LastOrdinal != ordinal)
+            {
+                entry.LastOrdinal = ordinal;
+                entry.CurrentFrequency = 0;
+                touched[touchedCount++] = entry;
+            }
+
             entry.Positions.Add(start + i);
             entry.CurrentFrequency++;
         }
-    }
-
-    /// <summary>The term's entry, materializing its string only when it is new to the vocabulary.</summary>
-    private TermPositions EntryFor(ReadOnlySpan<char> term)
-    {
-        if (_spanPositions.TryGetValue(term, out var entry))
-            return entry;
-
-        // Once per distinct term, not once per token: this is where the 12.3M dropped strings were.
-        string created = term.ToString();
-        entry = new TermPositions(created);
-        _positionsByTerm[created] = entry;
-
-        return entry;
     }
 
     private static int CountSpans(ISpanTokenizer tokenizer, ReadOnlySpan<char> text, NormalizedTerm[] destination)
@@ -586,10 +604,22 @@ internal sealed class SegmentOverlay
     private void AddStrings(
         SearchDocument document,
         int ordinal,
-        List<string> allTerms,
-        List<TermPositions> touched)
+        out string[] allTerms,
+        out TermPositions[] touched,
+        out int touchedCount)
     {
         var runs = PositionedFields.Runs(_tokenizer, document);
+
+        int total = 0;
+
+        foreach (var run in runs)
+            total += run.Terms.Count;
+
+        allTerms = new string[total];
+        touched = new TermPositions[total];
+
+        int at = 0;
+        touchedCount = 0;
 
         foreach (var run in runs)
         {
@@ -603,23 +633,19 @@ internal sealed class SegmentOverlay
                     _positionsByTerm[term] = entry;
                 }
 
-                allTerms.Add(entry.Term);
-                Touch(entry, ordinal, touched);
+                allTerms[at++] = entry.Term;
+
+                if (entry.LastOrdinal != ordinal)
+                {
+                    entry.LastOrdinal = ordinal;
+                    entry.CurrentFrequency = 0;
+                    touched[touchedCount++] = entry;
+                }
+
                 entry.Positions.Add(run.Start + i);
                 entry.CurrentFrequency++;
             }
         }
-    }
-
-    /// <summary>Starts a term's count over the first time this document sees it.</summary>
-    private static void Touch(TermPositions entry, int ordinal, List<TermPositions> touched)
-    {
-        if (entry.LastOrdinal == ordinal)
-            return;
-
-        entry.LastOrdinal = ordinal;
-        entry.CurrentFrequency = 0;
-        touched.Add(entry);
     }
 
     private void RemovePostings(int ordinal)
