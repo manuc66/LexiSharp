@@ -292,7 +292,7 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     /// reader see a consistent corpus while the write happens — see <see cref="Merge"/> for the
     /// switch-over.
     /// </remarks>
-    public SegmentTextIndex Flush() => new(SegmentWriter.Write((ITextIndex)new SegmentFlushSource(this)));
+    public SegmentTextIndex Flush(int expectedBodyBytes = 0) => new(SegmentWriter.Write((ITextIndex)new SegmentFlushSource(this), expectedBodyBytes));
 
     /// <summary>
     /// Collapses the chain to one segment and returns it, leaving this chain untouched.
