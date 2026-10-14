@@ -327,8 +327,9 @@ Four things a caller has to know, and each one is a consequence of a measurement
 - **A tombstone costs 1.18× a head query at 10 ‰ deleted, and less from there.** The fold tests it per
   posting entry; the tax falls as the deletion rate rises, because a skipped posting is a `Record` the
   accumulator never does. `ShouldMerge()` reports when the count has passed 1 % of the live documents,
-  which is where most of that tax sits. A merge at 40,000 documents costs 0.6-1.2 s and about 2.9 GB
-  allocated, so it is a batch operation a caller schedules.
+  which is where most of that tax sits. A merge of 40,000 documents — 100,000-term vocabulary, 124
+  tokens each, writing a 108 MB segment — costs about 0.9 s and 126 MB allocated, so it is a batch
+  operation a caller schedules.
 - **A write is visible to the very next search.** Adding a document is a tokenization and a dictionary
   write, not a segment write; an overlay of 1,000 documents reads at 1.02× the same documents committed
   into a segment. What an overlay is not is durable: it is lost on a crash. `Commit()` is what makes

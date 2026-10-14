@@ -12,7 +12,7 @@ namespace LexiSharp.Indexing;
 /// <para>
 /// A segment is written once and read many times, so a write cannot land in one. It lands here, and
 /// this is what makes the overlay a *live* index rather than a segment: an <c>Add</c> is a tokenization
-/// and a dictionary write, not the 0.6-1.2 s and ~2.9 GB a segment write costs at 40,000 documents
+/// and a dictionary write, not the about 0.9 s and 126 MB a segment write costs at 40,000 documents
 /// (measured). What that buys is immediate visibility; what it costs is that nothing here is durable
 /// until a <c>Commit</c> flushes it into a segment.
 /// </para>
