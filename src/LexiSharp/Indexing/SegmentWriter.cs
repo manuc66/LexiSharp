@@ -244,7 +244,7 @@ internal static class SegmentWriter
 
         for (int ordinal = 0; ordinal < source.OrdinalSpace; ordinal++)
         {
-            var document = source.DocumentAt(ordinal)!;
+            var document = DocumentOf(source, ordinal);
             body.WriteInt32(source.DocumentLength(document.Id));
         }
 

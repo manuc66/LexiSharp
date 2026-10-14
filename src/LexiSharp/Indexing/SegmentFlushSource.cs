@@ -139,7 +139,11 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
                 if (_renumber[ordinal] < 0)
                     continue;
 
-                documents[_renumber[ordinal]] = _chain.DocumentAt(ordinal)!;
+                // The renumber table maps a chain ordinal to a compact slot only for a document that is
+                // live, so a null here is a broken table rather than a gap to skip.
+                documents[_renumber[ordinal]] = _chain.DocumentAt(ordinal)
+                    ?? throw new InvalidOperationException(
+                        $"the chain holds ordinal {ordinal}, which has no document behind it");
             }
 
             return documents;
@@ -296,9 +300,7 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
             {
                 compactedFrequencies[^1] += frequency;
 
-                if (compactedPositions is not null)
-                    for (int k = positionAt; k < nextPositionAt; k++)
-                        compactedPositions.Add(positions![k]);
+                AppendPositions(compactedPositions, positions, positionAt, nextPositionAt);
 
                 positionAt = nextPositionAt;
 
@@ -308,9 +310,7 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
             compacted.Add(local);
             compactedFrequencies.Add(frequency);
 
-            if (compactedPositions is not null)
-                for (int k = positionAt; k < nextPositionAt; k++)
-                    compactedPositions.Add(positions![k]);
+            AppendPositions(compactedPositions, positions, positionAt, nextPositionAt);
 
             positionAt = nextPositionAt;
         }
@@ -332,6 +332,23 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
             compactedPositions);
 
         return true;
+    }
+
+    /// <summary>
+    /// Copies <c>[from, to)</c> of <paramref name="source"/> into <paramref name="target"/>, when the
+    /// caller is compacting positions at all.
+    /// </summary>
+    /// <remarks>
+    /// The two lists exist under the same flag — both are held only while positions are being
+    /// resolved — so the read is checked on the pair rather than on one and an assumption about
+    /// the other. That is the whole content of the two <c>!</c> it replaces, and it is stated once
+    /// here instead of at each of the two places a document's positions land.
+    /// </remarks>
+    private static void AppendPositions(List<int>? target, List<int>? source, int from, int to)
+    {
+        if (target is { } into && source is { } positions)
+            for (int k = from; k < to; k++)
+                into.Add(positions[k]);
     }
 
     void ITextIndex.Index(IEnumerable<SearchDocument> documents) =>
