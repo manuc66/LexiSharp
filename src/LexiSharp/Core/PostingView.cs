@@ -16,20 +16,22 @@ internal readonly ref struct PostingView
         ReadOnlySpan<int> ordinals,
         ReadOnlySpan<int> frequencies,
         ReadOnlySpan<int> lengths,
-        int[]? positions = null)
+        ReadOnlySpan<int> positions = default,
+        object? positionsOwner = null)
     {
         Ordinals = ordinals;
         Frequencies = frequencies;
         Lengths = lengths;
 
-        // Held as the array, not only as the span: a span does not keep its array alive, and a source
-        // that materializes positions per call would hand back a view over something the collector is
-        // free to take.
-        _positions = positions;
-        Positions = positions ?? [];
+        // Held as the owner, not only as the span: a span does not keep its source alive, and a view
+        // handed back as spans over a reusable buffer would point at something a collector may take
+        // before the caller finished with it. A source whose positions live in an array it owns passes
+        // that array; one whose positions are shared passes the holder.
+        _positionsOwner = positionsOwner;
+        Positions = positions;
     }
 
-    private readonly int[]? _positions;
+    private readonly object? _positionsOwner;
 
     /// <summary>Document ordinals, ascending, one per document carrying the term.</summary>
     public ReadOnlySpan<int> Ordinals { get; }

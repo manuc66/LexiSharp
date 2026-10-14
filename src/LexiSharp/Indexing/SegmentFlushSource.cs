@@ -1,5 +1,6 @@
 using System;
 using System.Buffers;
+using System.Runtime.InteropServices;
 using System.Collections.Generic;
 using LexiSharp.Core;
 
@@ -247,11 +248,16 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
             // Nothing to drop and nothing to merge: the ordinals already ascend, strictly, in the dense
             // space. The arrays are still copies, because a PostingView's span does not keep its source
             // alive, but the three lists and their doubling growth are not.
+            // The lists are fields, reused term by term, and their spans are handed over instead of
+            // copied into arrays: three ToArray calls a term, over every term of the dictionary, were
+            // about 130 MB of a 100,000-document commit. The lists outlive the view, so the spans stay
+            // valid for the whole write.
             postings = new PostingView(
-                System.Linq.Enumerable.ToArray(ordinals),
-                System.Linq.Enumerable.ToArray(frequencies),
+                CollectionsMarshal.AsSpan(ordinals),
+                CollectionsMarshal.AsSpan(frequencies),
                 _lengths,
-                positions is null ? null : System.Linq.Enumerable.ToArray(positions));
+                positions is null ? default : CollectionsMarshal.AsSpan(positions),
+                positions);
 
             return true;
         }
@@ -319,10 +325,11 @@ internal sealed class SegmentFlushSource : ITextIndex, ISpanAccumulatingIndex, I
         }
 
         postings = new PostingView(
-            System.Linq.Enumerable.ToArray(compacted),
-            System.Linq.Enumerable.ToArray(compactedFrequencies),
+            CollectionsMarshal.AsSpan(compacted),
+            CollectionsMarshal.AsSpan(compactedFrequencies),
             _lengths,
-            compactedPositions is null ? null : System.Linq.Enumerable.ToArray(compactedPositions));
+            compactedPositions is null ? default : CollectionsMarshal.AsSpan(compactedPositions),
+            compactedPositions);
 
         return true;
     }
