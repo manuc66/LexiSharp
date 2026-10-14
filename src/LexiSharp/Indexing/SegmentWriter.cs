@@ -30,13 +30,19 @@ namespace LexiSharp.Indexing;
 /// orders a surrogate pair before <c>U+FFFD</c> where UTF-8 orders it after.
 /// </para>
 /// <para>
-/// The segment's length is known before its first byte is written. <see cref="Measure"/> walks the same
-/// corpus and writes nothing; <see cref="Write"/> then allocates one array of exactly that size and
-/// <see cref="Build"/> assembles the body into it at <see cref="HeaderBytes"/>, patching the header at
-/// zero once the offsets exist. The two passes must agree exactly — one byte more and the body overruns
-/// the array, one fewer and it leaves it partly uninitialized — so the agreement is asserted on every
-/// write, and asserted again for each postings region, which is sized by <see cref="PostingBlocks"/>'s
-/// own measure. A body that disagrees with its measure fails the write; it does not corrupt a file.
+/// The segment's length and its dictionary are known before its first byte is written.
+/// <see cref="Plan"/> walks the corpus once, resolves every term once, measures each term's postings
+/// once and sorts them into the dictionary's order, and carries all three to <see cref="Build"/>,
+/// which writes the body into the array <see cref="Write"/> allocated at that size and patches the
+/// header at zero once the offsets exist. The plan lives and dies inside one <see cref="Write"/> call:
+/// nothing is cached between writes, because the only thing that makes a size valid is that nothing
+/// changed between the pass that took it and the pass that used it.
+/// </para>
+/// <para>
+/// The plan and the build must agree exactly — one byte more and the body overruns the array, one
+/// fewer and it leaves it partly uninitialized — so the agreement is asserted on every write, and
+/// asserted again for each postings region, whose size the plan carries. A body that disagrees with
+/// its plan fails the write; it does not corrupt a file.
 /// </para>
 /// <para>
 /// Not carried, and what that costs: no positions (a phrase query cannot be served from a segment), no
@@ -72,21 +78,24 @@ internal static class SegmentWriter
     {
         ArgumentNullException.ThrowIfNull(index);
 
-        int total = Measure(index);
+        // One plan, one array. The plan is built and consumed inside this call and never kept, so the
+        // pass that sizes the corpus and the pass that writes it read the same corpus — and so a caller
+        // that writes again, having written to the index in between, gets a plan of its own.
+        var plan = Plan(index);
 
-        var segment = new byte[total];
+        var segment = new byte[plan.Total];
 
-        int written = Build(index, segment);
+        int written = Build(index, plan, segment);
 
         // Two directions of failure, and neither is silent. An overrun is stopped by the span's own
-        // bounds check inside Build, which has a destination the exact size of the measure. An
-        // underrun is what this catches: a body shorter than its measure would leave the tail of the
-        // array uninitialized and the segment one byte shorter than its own header claims, which is a
-        // file nobody can diagnose.
-        if (written != total)
+        // bounds check inside Build, which has a destination the exact size of the plan. An underrun is
+        // what this catches: a body shorter than its plan would leave the tail of the array
+        // uninitialized and the segment one byte shorter than its own header claims, which is a file
+        // nobody can diagnose.
+        if (written != plan.Total)
         {
             throw new InvalidOperationException(
-                $"the segment was measured at {total} bytes and built as {written}: the corpus does not encode to a stable size");
+                $"the segment was planned at {plan.Total} bytes and built as {written}: the corpus does not encode to a stable size");
         }
 
         return segment;
@@ -102,12 +111,43 @@ internal static class SegmentWriter
     /// which is what sizes the span <see cref="Body.WriteLengthPrefixed"/> encodes into; a postings
     /// region is <see cref="PostingBlocks.Measure"/>, which is what sizes the span
     /// <see cref="PostingBlocks.Write"/> encodes into. The tables are fixed width.
+    /// <para>
+    /// This builds the whole <see cref="SegmentPlan"/> and reports its total, so it pays the term sort
+    /// a caller who only wants a size did not need. It is the honest price of the plan being one
+    /// object: a measure that skipped it would be a second walk, which is what the plan exists to
+    /// remove.
+    /// </para>
     /// </remarks>
-    internal static int Measure(ITextIndex index)
+    internal static int Measure(ITextIndex index) => Plan(index).Total;
+
+    /// <summary>
+    /// What one write needs before its first byte: the terms in the order the format's dictionary
+    /// takes, the size each one's postings will occupy, and the length the segment will be.
+    /// </summary>
+    /// <remarks>
+    /// The plan is built and consumed within one <see cref="Write"/> call and is never kept anywhere.
+    /// Both passes read the corpus through it, and a plan that outlived the call that made it would
+    /// hand <see cref="Build"/> a size that belongs to a corpus which has since moved — the reason
+    /// there is no cache here is not that one would be slow to invalidate, it is that one would be
+    /// wrong the moment anything was written, and an index is written to between writes.
+    /// </remarks>
+    private static SegmentPlan Plan(ITextIndex index)
     {
         ArgumentNullException.ThrowIfNull(index);
 
         ISpanAccumulatingIndex source = Requires(index);
+        var vocabulary = (IVocabularyIndex)index;
+
+        var terms = new List<string>();
+
+        foreach (string term in vocabulary.Vocabulary)
+            terms.Add(term);
+
+        // The dictionary's order is a code point order, and the plan carries the terms in it: the
+        // writer used to sort them again inside the build, which is one walk, one list and one sort
+        // spent twice over the same vocabulary.
+        terms.Sort(CompareByCodePoint);
+
         long total = HeaderBytes;
 
         // Documents: each record, then the two int-per-ordinal tables that follow them. The records'
@@ -126,19 +166,22 @@ internal static class SegmentWriter
 
         total += 2L * sizeof(int) * source.OrdinalSpace;
 
-        // Postings, one region per term, and the term entry that indexes it; then the terms table.
-        var vocabulary = (IVocabularyIndex)index;
-        int terms = 0;
+        // Postings: one region per term, measured once and carried to the build. This was the single
+        // largest cost of the measure — a term's postings are walked to size them, and the build then
+        // walked the same postings a second time for the write itself.
+        var postingsSizes = new int[terms.Count];
 
-        foreach (string term in vocabulary.Vocabulary)
+        for (int i = 0; i < terms.Count; i++)
         {
-            var view = Resolve(source, term);
-            total += TermEntrySize(term)
-                + PostingBlocks.Measure(view.Ordinals, view.Frequencies, view.Lengths, view.Positions);
-            terms++;
+            var view = Resolve(source, terms[i]);
+
+            postingsSizes[i] = PostingBlocks.Measure(
+                view.Ordinals, view.Frequencies, view.Lengths, view.Positions);
+
+            total += TermEntrySize(terms[i]) + postingsSizes[i];
         }
 
-        total += (long)sizeof(int) * terms;
+        total += (long)sizeof(int) * terms.Count;
 
         if (total is > MaxSegmentBytes or < HeaderBytes)
         {
@@ -146,7 +189,7 @@ internal static class SegmentWriter
                 $"a segment's offsets are thirty-two bit, so it holds at most {MaxSegmentBytes} bytes; this corpus measures {total}");
         }
 
-        return (int)total;
+        return new SegmentPlan(terms, postingsSizes, (int)total);
     }
 
     /// <summary>
@@ -157,17 +200,10 @@ internal static class SegmentWriter
     /// The index cannot be read through the capabilities a segment needs, or it holds a gap where a
     /// document was removed.
     /// </exception>
-    private static int Build(ITextIndex index, Span<byte> segment)
+    private static int Build(ITextIndex index, in SegmentPlan plan, Span<byte> segment)
     {
         ISpanAccumulatingIndex source = Requires(index);
-        var vocabulary = (IVocabularyIndex)index;
-
-        var terms = new List<string>();
-
-        foreach (string term in vocabulary.Vocabulary)
-            terms.Add(term);
-
-        terms.Sort(CompareByCodePoint);
+        var terms = plan.Terms;
 
         var body = new Body(segment.Slice(HeaderBytes));
 
@@ -227,7 +263,11 @@ internal static class SegmentWriter
             // 200,000-document commit allocated, which was 94% of it. The spans point into arrays the
             // source holds for the duration of the write, so nothing is copied and nothing outlives its
             // source.
-            int size = PostingBlocks.Measure(view.Ordinals, view.Frequencies, view.Lengths, view.Positions);
+            //
+            // The size is the plan's, measured once against the same term's postings by the same
+            // function. Measuring it again here would walk the postings a second time, which measured at
+            // 325 ms for a 100,000-term corpus and was the whole of a write's extra processor time.
+            int size = plan.PostingsSizes[i];
 
             postingsOffsets[i] = HeaderBytes + body.Position;
             postingsLengths[i] = size;
@@ -239,10 +279,15 @@ internal static class SegmentWriter
             // The same measure that sizes the destination also bounds what is written into it: a region
             // that disagrees is a defect in the layout, not in this corpus, and it is caught here
             // rather than by a reader that decodes the wrong number of entries.
+            // The same size that sized the destination also bounds what is written into it: a region
+            // that disagrees is a defect in the layout, not in this corpus, and it is caught here
+            // rather than by a reader that decodes the wrong number of entries. This is what the plan
+            // is guarded by — a cached size that no longer matches the term's postings fails the write
+            // instead of truncating one.
             if (written != size)
             {
                 throw new InvalidOperationException(
-                    $"the postings of '{terms[i]}' were measured at {size} bytes and written as {written}");
+                    $"the postings of '{terms[i]}' were planned at {size} bytes and written as {written}");
             }
 
             body.Position += written;
@@ -262,8 +307,8 @@ internal static class SegmentWriter
         foreach (int offset in termOffsets)
             body.WriteInt32(offset);
 
-        // The header is written last and in place: its offsets are the ones the body measured, and it
-        // is the only part of the file that is known once the rest of it exists.
+        // The header is written last and in place: its offsets are the ones the body planned, and it is
+        // the only part of the file that is known once the rest of it exists.
         Span<byte> header = segment.Slice(0, HeaderBytes);
         BinaryPrimitives.WriteUInt32LittleEndian(header, Magic);
         BinaryPrimitives.WriteInt32LittleEndian(header[4..], Version);
@@ -276,9 +321,32 @@ internal static class SegmentWriter
         return HeaderBytes + body.Position;
     }
 
-    /// <summary>The capabilities a segment needs, and nothing more.</summary>
-    private static ISpanAccumulatingIndex Requires(ITextIndex index)
+    /// <summary>
+    /// What one write needs before its first byte is written: the terms in the order the format's
+    /// dictionary takes, the bytes each term's postings will occupy, and the length the segment will be.
+    /// </summary>
+    /// <remarks>
+    /// The plan is built and consumed within one <see cref="Write"/> call and is never held anywhere.
+    /// Both passes read the corpus through it — the pass that resolves and measures, and the pass that
+    /// resolves and writes — and a plan that outlived the call that made it would hand the second pass
+    /// a size belonging to a corpus which has since moved. There is no cache here and none is wanted:
+    /// the plan's value is that the two passes agree, and the only way they can is if nothing can change
+    /// between them.
+    /// </remarks>
+    private readonly ref struct SegmentPlan(List<string> terms, int[] postingsSizes, int total)
     {
+        /// <summary>The terms in code point order, which is the order the dictionary is written in.</summary>
+        public readonly List<string> Terms = terms;
+
+        /// <summary>Bytes each term's postings occupy, in the same order as <see cref="Terms"/>.</summary>
+        public readonly int[] PostingsSizes = postingsSizes;
+
+        /// <summary>The segment's exact length, header included.</summary>
+        public readonly int Total = total;
+    }
+
+    /// <summary>The capabilities a segment needs, and nothing more.</summary>
+    private static ISpanAccumulatingIndex Requires(ITextIndex index)    {
         // One capability carries all three needs: the ordinal space and the document at an ordinal
         // (IAccumulatingIndex's view), the token count and the postings (the read view's).
         if (index is not ISpanAccumulatingIndex source || index is not IVocabularyIndex)
