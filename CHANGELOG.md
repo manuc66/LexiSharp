@@ -45,7 +45,8 @@ workflow.
     corrected one moved all 401. A merge rewrites them and the scores move with it.
   - **A tombstone costs 1.18× a head query at 10 ‰ deleted, and less from there.** `ShouldMerge()`
     reports when the count has passed 1 % of the live documents, which is where most of that tax sits. A
-    merge at 40,000 documents costs about 1.2 s and 593 MB allocated, so it is a batch operation.
+    merge of 40,000 documents — 100,000-term vocabulary, 124 tokens each, writing a 108 MB segment —
+    costs about 0.9 s and 126 MB allocated, so it is a batch operation.
   - **A write is visible to the very next search**, and an overlay of 1,000 documents reads at 1.02× the
     same documents committed into a segment. What an overlay is not is durable: it is lost on a crash.
     `Commit()` writes one segment atomically, so a crash mid-write leaves the previous segment intact.
@@ -307,6 +308,36 @@ workflow.
 
 ### Changed
 
+- **A segment is measured before it is written, and assembled into the array it returns.**
+
+  The writer walked the corpus twice: once to assemble the body into a growing buffer and once to copy
+  it out into the array a caller receives, because the forty-byte header is only known after the body.
+  `SegmentWriter.Measure` now computes the segment's exact length without writing a byte — every
+  region's size comes from the same primitive that sizes the span it is written into — the array is
+  allocated at that size, and `Build` assembles the body into it at offset 40 and patches the header in
+  place. One allocation, and no copy.
+
+  Measured on a 100,000-document corpus whose segment is 267 MB, with the commit attributed per part in
+  one run:
+
+  | part of a commit | before | after |
+  |---|---|---|
+  | the write, no disk write and no reopen | **1,203 MB** | **283 MB** (267 of it the segment itself) |
+  | the reopen (`_ids` and `_ordinals`) | 275 MB | 275 MB |
+  | the flush source's constructor | 5 MB | 5 MB |
+  | **the commit, end to end** | **1,487 MB** | **566 MB** — 2.6× less |
+
+  The cost is stated with the figure, because it is not free: **the same commit spends 273 ms more
+  processor time, 2,481 → 2,754 ms, about 11%.** `Measure` resolves every term once more to size its
+  postings, and that second walk is what the saving costs. Allocation is what a caller heads their
+  process for; time is what a caller waits — this trade buys the first and pays the second.
+
+  The two passes must agree exactly, and disagreeing could never have been silent: the destination is a
+  span the size of the measure, so a body that overruns it is stopped by the span's own bounds check and
+  a body that falls short is caught by the writer's own comparison. A measure and a build that disagree
+  fail the write, and the suite asserts they do not over 120 generated corpora — every UTF-8 byte width,
+  dictionary shapes, and postings whose planes widen past a byte.
+
 - **A segment index can hold a bounded cache of decoded postings for the terms it is asked for.**
 
   The compact form's per-entry decode is the whole gap between it and the in-memory index when a term
@@ -543,6 +574,17 @@ workflow.
 
   Not a behaviour change for any existing caller — nothing in the repository returned
   `default(ScoreBoost)` from a boost, and a caller who did was excluding its documents already.
+
+### Withdrawn
+
+- **A segment write at 40,000 documents costing 2.9 GB allocated.** The figure is named because
+  `docs/indexing.md` carried it and a reader may have planned a batch around it. It was measured on the
+  writer that assembled the body in a growing buffer and copied it out again; the writer now measures
+  the segment first and assembles it into the one array it returns. Measured on a 100,000-term
+  vocabulary with 124 tokens a document, the merge of 40,000 documents is **126 MB against a 108 MB
+  segment** — 23× less than the figure this withdraws — and about 0.9 s, the one part of the published
+  number that still holds. The figure only ever lived in `[Unreleased]`, so no published release
+  asserted it.
 
 ## [0.8.0] — 2026-10-06
 

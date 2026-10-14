@@ -19,7 +19,7 @@ namespace LexiSharp.Indexing;
 /// </para>
 /// <para>
 /// Everything a write needs is already measured in this file's prototype: a segment write at 40,000
-/// documents costs <b>0.6-1.2 s and ~2.9 GB allocated</b>, against a 12.7 MB file. That is the number a
+/// documents costs <b>about 0.9 s and 126 MB allocated</b> for a 108 MB segment. That is the number a
 /// caller commits for, and it is why a commit is a batch operation.
 /// </para>
 /// <para>
