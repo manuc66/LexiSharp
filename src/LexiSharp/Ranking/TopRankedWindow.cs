@@ -273,8 +273,25 @@ internal sealed class TopRankedWindow
     /// entry: the document's own ordinal when the index has an ordinal space — the position it holds
     /// in it, which is where it was added — and the position the engine produced it in otherwise.
     /// </summary>
-    private long InsertionKeyOf(int slot) =>
-        _byDocumentOrdinal ? _entries[slot].DocumentOrdinal : _ordinals![slot];
+    private long InsertionKeyOf(int slot)
+    {
+        // The arrival array exists exactly where the second branch is reachable: the constructor
+        // records it for an insertion-order tie-break on a window whose ordinals are not insertion
+        // positions, and that combination is the only one that reads it. A missing array is therefore
+        // a broken window rather than a null to index — named here, as the invariants below are.
+        return _byDocumentOrdinal
+            ? _entries[slot].DocumentOrdinal
+            : ArrivalPositions()[slot];
+    }
+
+    /// <summary>
+    /// The arrival position recorded for each retained entry: what the engine handed the window, kept
+    /// because an index with no ordinal space has no other insertion order to read. Null until the
+    /// constructor allocates it, which it does only where this is the tie-break in force.
+    /// </summary>
+    private long[] ArrivalPositions() =>
+        _ordinals ?? throw new InvalidOperationException(
+            "the arrival order was not recorded, so an insertion-order tie-break has nothing to read");
 
     /// <summary>The same position for a candidate the window has not retained.</summary>
     private long InsertionKeyOf(int documentOrdinal, long arrival) =>

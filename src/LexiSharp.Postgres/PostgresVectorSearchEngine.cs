@@ -127,7 +127,18 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
             await using (var command = connection.CreateCommand())
             {
                 command.CommandText = $"SELECT COUNT(*) FROM {_options.QualifiedTableName}"; // NOSONAR:S2077
-                rowCount = (long)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
+
+                // IVFFlat needs rows before it can build, so the count is the one thing asked of the
+                // server here. A scalar that is not a long is worth naming, and the message is worth
+                // carrying the table: an unchecked cast raises InvalidCastException with neither.
+                var counted = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+
+                if (counted is not long rows)
+                    throw new InvalidOperationException(
+                        $"COUNT(*) on '{_options.QualifiedTableName}' returned " +
+                        $"{counted?.ToString() ?? "null"}, which is not a row count.");
+
+                rowCount = rows;
             }
 
             if (rowCount == 0)
