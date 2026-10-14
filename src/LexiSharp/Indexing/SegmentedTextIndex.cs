@@ -20,7 +20,7 @@ namespace LexiSharp.Indexing;
 /// </para>
 /// <para>
 /// <b>What a write costs, and what it does not.</b> Adding a document is a tokenization and a
-/// dictionary write — not the 0.6-1.2 s and ~2.9 GB a segment write costs at 40,000 documents — and it
+/// dictionary write — not the about 0.9 s and 126 MB a segment write costs at 40,000 documents — and it
 /// is visible to the very next search. Removing one is a hash insert. Replacing one tombstones the old
 /// ordinal and writes the new version, so a document stops matching its old text.
 /// </para>
@@ -235,8 +235,8 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     {
         // One merge, one write: the live corpus is compacted and the resulting segment's bytes are
         // written out. Compacting a second time to produce bytes that are a pure function of a corpus
-        // that has not changed would pay the 0.6-1.2 s and ~2.9 GB twice for nothing.
-        SegmentTextIndex merged = _chain.Flush(ExistingSegmentBytes());
+        // that has not changed would pay the about 0.9 s and 126 MB twice for nothing.
+        SegmentTextIndex merged = _chain.Flush();
         var committed = new SegmentedTextIndex(_directory, _tokenizer, new SegmentChain([merged], _tokenizer), _mode, _decodedCacheEntries);
 
         committed.WriteToDisk(merged);
@@ -426,7 +426,7 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     /// <remarks>
     /// The bytes come from the chain's own merged segment rather than a second compaction: a flush is
     /// a pure function of the live corpus, so compacting twice would produce the same bytes at twice
-    /// the cost — 0.6-1.2 s and ~2.9 GB allocated at 40,000 documents each time.
+    /// the cost — about 0.9 s and 126 MB allocated at 40,000 documents each time.
     /// </remarks>
     private void WriteToDisk(SegmentTextIndex merged)
     {
@@ -467,24 +467,6 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
 
         if (handle.Owner is not null)
             _owners.Add(handle.Owner);
-    }
-
-    /// <summary>
-    /// The size of the segment this store is replacing, or <c>0</c> when it holds none. A commit writes
-    /// a segment of a similar shape, so this is a better starting capacity for the body buffer than any
-    /// estimate from the corpus's counts — and a first write, or a corpus that has grown a lot, costs
-    /// one doubling rather than a chain of them.
-    /// </summary>
-    private int ExistingSegmentBytes()
-    {
-        // The newest, not the first: a store that has not been merged holds several segments and the
-        // last written is the closest to what the next commit produces.
-        string? newest = null;
-
-        foreach (string path in SegmentFiles(_directory))
-            newest = path;
-
-        return newest is null ? 0 : (int)Math.Min(new FileInfo(newest).Length, 1 << 30);
     }
 
     private const string SegmentPrefix = "segment-";
