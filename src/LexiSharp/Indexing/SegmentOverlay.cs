@@ -569,10 +569,16 @@ internal sealed class SegmentOverlay
 
             if (term.Materialized is { } materialized)
             {
-                if (!_positionsByTerm.TryGetValue(materialized, out entry!))
+                // The out is nullable and read in the branch the lookup returned true in, so
+                // neither the declaration nor the read needs a suppression.
+                if (!_positionsByTerm.TryGetValue(materialized, out TermPositions? known))
                 {
                     entry = new TermPositions(materialized);
                     _positionsByTerm[materialized] = entry;
+                }
+                else
+                {
+                    entry = known;
                 }
             }
             else
