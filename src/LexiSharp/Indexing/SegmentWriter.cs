@@ -71,7 +71,7 @@ internal static class SegmentWriter
         // was materialized three times — the body buffer, a destination buffer, and the array copied out
         // of the destination — and measured at 1.35 GB of allocation for a 270 MB segment.
         Span<byte> header = stackalloc byte[HeaderBytes];
-        var body = new ArrayBufferWriter<byte>(1 << 16);
+        var body = new ArrayBufferWriter<byte>(StartingCapacity(index));
 
         Build(index, body, header);
 
@@ -80,6 +80,32 @@ internal static class SegmentWriter
         body.WrittenSpan.CopyTo(segment.AsSpan(HeaderBytes));
 
         return segment;
+    }
+
+    /// <summary>
+    /// A starting capacity for the body buffer, from the index's own counts.
+    /// </summary>
+    /// <remarks>
+    /// The body is one <see cref="ArrayBufferWriter{T}"/> and it doubles: a 267 MB segment costs about
+    /// 530 MB of successive buffers to reach it, which measured at 1,448 MB allocated for a commit where
+    /// the segment itself is 267 MB. An estimate close to the answer removes most of that, and an
+    /// estimate that misses costs one doubling rather than a chain of them.
+    /// <para>
+    /// The three terms are the ones the segment is made of: a document's id and the per-document record
+    /// around its text, the text and postings that scale with the token count, and the dictionary entry
+    /// each term carries. None of them is the whole answer — the token count says nothing about the
+    /// characters in it — so the estimate is deliberately coarse and the grower is the safety net.
+    /// </para>
+    /// </remarks>
+    private static int StartingCapacity(ITextIndex index)
+    {
+        long documents = index.Count;
+        long tokens = index.CorpusTokenCount;
+        long terms = index is IVocabularyIndex vocabulary ? vocabulary.VocabularySize : 0;
+
+        long estimated = (documents * 96) + (tokens * 10) + (terms * 48);
+
+        return (int)Math.Clamp(estimated, 1 << 16, 1 << 30);
     }
 
     /// <summary>
