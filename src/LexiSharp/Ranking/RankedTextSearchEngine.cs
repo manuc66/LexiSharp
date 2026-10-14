@@ -591,7 +591,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         if (_scorer is not ITermOverlapScorer)
             return null;
 
-        if (options.Filters is { Count: > 0 } && (!options.AccumulateFilteredQueries || options.TieBreak != TieBreak.DocumentId))
+        if (options.Filters is { Count: > 0 } && !options.AccumulateFilteredQueries)
             return null;
 
         // A text can produce at most one term per character, and the tokenizer declines rather than
@@ -762,22 +762,18 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         FacetCollector? facets,
         TopRankedWindow top)
     {
-        // A metadata filter reaches this pass only through AccumulateFilteredQueries, and only for a
-        // request that keeps TieBreak.DocumentId. InsertionOrder breaks ties by the position the
-        // candidate arrived at, and the two paths do not produce candidates in the same order: a full
-        // scan is corpus order, this pass is posting order, first-touch per term. On a corpus where two
-        // documents tie exactly, a query whose term coverage interleaves — even ordinals hold one term,
-        // odd ordinals the other — comes back doc-00, doc-02, … here and doc-00, doc-01, … on the other
-        // path, at identical scores. That is the one use InsertionOrder exists to serve, so the option
-        // declines rather than silently changing what a caller reproduced.
+        // A metadata filter reaches this pass through AccumulateFilteredQueries alone. The tie-break
+        // no longer has anything to do with it: a tie is decided on the document id or on the
+        // document's ordinal, and both are carried by the ordinals this pass folds, so the page is
+        // the same whichever side served the query. Refusing the pass here would only move a
+        // filtered query from a fast loop to a slow one.
         bool filterWouldBeHonoured = options.Filters is { Count: > 0 };
 
         if (plan is not IAccumulatingQueryPlan accumulating ||
             _index is not IAccumulatingIndex index ||
             _scorer is not ITermOverlapScorer ||
             parsed is { HasPhrases: true } ||
-            (filterWouldBeHonoured &&
-                (!options.AccumulateFilteredQueries || options.TieBreak != TieBreak.DocumentId)))
+            (filterWouldBeHonoured && !options.AccumulateFilteredQueries))
         {
             return null;
         }

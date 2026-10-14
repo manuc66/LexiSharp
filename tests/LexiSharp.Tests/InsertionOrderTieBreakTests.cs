@@ -37,6 +37,11 @@ namespace LexiSharp.Tests;
 /// descend with the insertion order, so a tie-break that read ids would read as the reverse of the
 /// expected page. Without the exact tie the whole file would pass on any order at all.
 /// </para>
+/// <para>
+/// The last test covers the other half of the story: a filtered query under this option is served by
+/// the term-at-a-time pass, because the tie reads the ordinal rather than the position the engine
+/// produced the candidate in.
+/// </para>
 /// </remarks>
 public class InsertionOrderTieBreakTests
 {
@@ -336,6 +341,76 @@ public class InsertionOrderTieBreakTests
 
         AssertEveryScoreTies(page);
         Assert.Equal(order.Select(document => document.Id), IdsOf(page));
+    }
+
+    [Fact]
+    public void AFilteredQueryThatReachesThePassServesThePageTheLoopServes()
+    {
+        // A filter used to send a request under a non-DocumentId tie-break to the per-document loop,
+        // because the two paths ordered tied documents differently. They no longer do: the tie reads
+        // the document's ordinal, which both paths carry, so the pass serves a filtered query under
+        // either tie-break — and this fixture, whose documents tie exactly, is the case where a
+        // disagreement would show.
+        var (index, expected) = Fixture(pairs: 4);
+
+        AssertFixtureReachesAccumulation(index);
+
+        IReadOnlyList<MetadataFilter> admitsEveryDocument =
+            new[] { new MetadataFilter("tier", MetadataFilterOperator.Equal, "x") };
+
+        var options = new SearchOptions(
+            Limit: 50,
+            Filters: admitsEveryDocument,
+            TieBreak: TieBreak.InsertionOrder);
+
+        var page = Search(index, options);
+
+        AssertEveryScoreTies(page);
+        Assert.Equal(expected, IdsOf(page));
+
+        // The loop, asked for by name: same documents, same order, same score bits.
+        var loop = Search(index, options with { AccumulateFilteredQueries = false });
+
+        Assert.Equal(
+            page.Select(result => (result.DocumentId, result.Score)).ToArray(),
+            loop.Select(result => (result.DocumentId, result.Score)).ToArray());
+    }
+
+    [Fact]
+    public void AFilteredQueryUnderInsertionOrderIsServedByTheAccumulationPass()
+    {
+        // A sensor, not a benchmark. The two paths cost different amounts on the same fixture,
+        // exactly and with no clock involved, and the figure below is the pass's: measured here, a
+        // filtered search under this option allocates 1,272 bytes over 20,000 searches while the
+        // per-document loop allocates 1,976, because the loop hands the window a document per
+        // candidate and the pass keeps the page by ordinal. A budget between the two fails if the
+        // guard that sent this request to the loop ever comes back. Allocation is pinned rather than
+        // time because it is the one figure a machine does not change.
+        var (index, _) = Fixture(pairs: 4);
+
+        IReadOnlyList<MetadataFilter> admitsEveryDocument =
+            new[] { new MetadataFilter("tier", MetadataFilterOperator.Equal, "x") };
+
+        var options = new SearchOptions(
+            Limit: 50,
+            Filters: admitsEveryDocument,
+            TieBreak: TieBreak.InsertionOrder);
+
+        var engine = new RankedTextSearchEngine(index, new Bm25Scorer());
+
+        for (int i = 0; i < 5_000; i++)
+            engine.Search(Query, options);
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+
+        for (int i = 0; i < 20_000; i++)
+            engine.Search(Query, options);
+
+        long allocated = (GC.GetAllocatedBytesForCurrentThread() - before) / 20_000;
+
+        Assert.True(
+            allocated <= 1_400,
+            $"a filtered search under InsertionOrder allocated {allocated} bytes: the accumulation pass costs 1,272 here and the per-document loop 1,976, so this looks like the loop.");
     }
 
     private static (InMemoryTextIndex Index, IReadOnlyList<string> Expected) Fixture(int pairs, int filler = 0)
