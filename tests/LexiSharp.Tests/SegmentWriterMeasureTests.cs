@@ -129,6 +129,47 @@ public class SegmentWriterMeasureTests
     }
 
     /// <summary>
+    /// A write's plan is its own. Nothing is kept between calls, so a corpus that has moved since the
+    /// last write does not inherit a size that no longer describes it.
+    /// </summary>
+    /// <remarks>
+    /// The plan is a local inside <c>Write</c> — built by the call, consumed by the build, and gone
+    /// — so no caller can reach between the two passes, which is <i>why</i> a mutation can only be
+    /// tested from the outside: write, mutate, write again. What the test guards against is a cache
+    /// that made the plan reusable, which would hand the second write a size belonging to the corpus
+    /// before it grew, and would fail the writer's own comparison rather than write a short file.
+    /// </remarks>
+    [Fact]
+    public void APlanDoesNotSurviveTheWriteThatBuiltIt()
+    {
+        var index = new InMemoryTextIndex();
+        index.Add(new SearchDocument("1", "one two three"));
+
+        int before = SegmentWriter.Measure(index);
+
+        Assert.Equal(before, SegmentWriter.Write(index).Length);
+
+        // The corpus grows between two writes: more documents, and more terms in the dictionary.
+        index.Add(new SearchDocument("2", "four five six seven"));
+        index.Add(new SearchDocument("3", "eight nine ten"));
+
+        int after = SegmentWriter.Measure(index);
+
+        Assert.True(after > before, $"a larger corpus measured {after} bytes against {before}");
+        Assert.Equal(after, SegmentWriter.Write(index).Length);
+
+        index.Add(new SearchDocument("4", "eleven twelve thirteen"));
+
+        int again = SegmentWriter.Measure(index);
+
+        Assert.True(again > after, $"a corpus that grew again measured {again} bytes against {after}");
+        Assert.Equal(again, SegmentWriter.Write(index).Length);
+
+        // And the bytes are the corpus's, whichever write produced them.
+        Assert.Equal(SegmentWriter.Write(index), SegmentWriter.Write(index));
+    }
+
+    /// <summary>
     /// Many corpora of shapes no list would have thought of, each written and measured twice.
     /// </summary>
     /// <remarks>
