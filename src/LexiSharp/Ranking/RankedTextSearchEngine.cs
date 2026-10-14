@@ -264,7 +264,17 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         // without ever materializing them. It declines — and the string path below then runs
         // unchanged — when the terms are not slices, when the scorer or the index cannot resolve them
         // as such, or when the query is too rare to amortize the accumulation buffer.
-        var top = new TopRankedWindow(options.Window, options.TieBreak, _resolveOrdinal, _resolveId);
+        //
+        // The last argument is the same capability TryOrdinalOf tests: an index that enumerates its
+        // ordinals hands the window a document ordinal that is the document's position in it, which
+        // is the order documents were added. That is what TieBreak.InsertionOrder compares, so the
+        // order a tied page comes back in does not depend on which of the two passes ran.
+        var top = new TopRankedWindow(
+            options.Window,
+            options.TieBreak,
+            _resolveOrdinal,
+            _resolveId,
+            ordinalsAreInsertionPositions: _index is IAccumulatingIndex);
         var spanRun = TryRunSpanQuery(query, options, facets, top);
 
         if (spanRun is { } span)
@@ -739,7 +749,9 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// <para>
     /// The matched set arrives in posting order rather than corpus order. Nothing downstream
     /// depends on the difference: the gates are per document, the facet counts are increments, and
-    /// <see cref="TopRankedWindow"/> breaks ties on the document id rather than on arrival order.
+    /// under <see cref="SearchOptions.TieBreak"/> the tie is decided on the document id or on the
+    /// document's ordinal — both of which this pass takes from the accumulator, not from the order
+    /// the terms happened to be folded in.
     /// </para>
     /// </remarks>
     private AccumulatedCounts? TryRunAccumulatingQuery(

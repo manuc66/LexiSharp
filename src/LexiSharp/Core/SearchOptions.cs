@@ -51,9 +51,11 @@ namespace LexiSharp.Core;
 /// Two documents with the same score have no ranking between them, so something has to decide.
 /// <see cref="Ranking.TieBreak.DocumentId"/> — the default — orders them by ordinal document id, which
 /// is stable across machines and independent of how the corpus was loaded.
-/// <see cref="Ranking.TieBreak.InsertionOrder"/> orders them by the position the engine produced them
-/// in, which is what a system that breaks ties as documents are added does; use it to reproduce such a
-/// system, and expect the result to depend on the load order rather than only on the documents.
+/// <see cref="Ranking.TieBreak.InsertionOrder"/> orders them by the document's ordinal — the position
+/// it occupies in the index's ordinal space, which for a text index is the order documents were added;
+/// use it to reproduce a system that breaks ties as documents are added, and expect the result to
+/// depend on the load order rather than only on the documents. The order is the same whichever path
+/// served the query and at every corpus size.
 /// </param>
 /// <param name="Costs">
 /// Optional <see cref="SearchCosts"/> sheet to record what this query cost: the tokens it was
@@ -95,11 +97,12 @@ namespace LexiSharp.Core;
 /// almost nothing is the case to watch; that caller sets this <c>false</c>.
 /// </para>
 /// <para>A request that combines this with <see cref="TieBreak"/> other than
-/// <see cref="Ranking.TieBreak.DocumentId"/> keeps the per-document loop whatever this is set to.
-/// The two paths do not produce candidates in the same order — a full scan is corpus order, the
-/// accumulation pass is posting order — so under <see cref="Ranking.TieBreak.InsertionOrder"/> they
-/// order documents that tie exactly differently, which is the one thing that option exists to
-/// reproduce.
+/// <see cref="Ranking.TieBreak.DocumentId"/> keeps the per-document loop whatever this is set to. The
+/// two paths produce candidates in different orders — a full scan is corpus order, the accumulation
+/// pass is posting order — and they return the same page, because a tie-break other than
+/// <see cref="Ranking.TieBreak.DocumentId"/> reads the document's ordinal, which both paths carry. The
+/// guard is therefore a choice about which loop serves a filtered query, and lifting it turns on the
+/// price of the pass rather than on the answer.
 /// </para>
 /// </param>
 public sealed record SearchOptions(
