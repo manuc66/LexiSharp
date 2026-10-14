@@ -118,13 +118,15 @@ public static class MessagePackTextIndexPersistence
 
     private static StoredTokenizer DescribeTokenizer(ITokenizer tokenizer)
     {
+        string typeName = TokenizerTypeName(tokenizer);
+
         if (tokenizer is not Tokenizer lexishTokenizer)
-            return new StoredTokenizer(tokenizer.GetType().FullName!, false, 1, 1, false, null, false);
+            return new StoredTokenizer(typeName, false, 1, 1, false, null, false);
 
         TokenizerOptions options = lexishTokenizer.Options;
 
         return new StoredTokenizer(
-            tokenizer.GetType().FullName!,
+            typeName,
             options.RemoveStopWords,
             options.NGramMin,
             options.NGramMax,
@@ -133,6 +135,21 @@ public static class MessagePackTextIndexPersistence
                 ? null
                 : options.StopWords.OrderBy(word => word, StringComparer.Ordinal).ToList(),
             options.Stemmer is not null);
+    }
+
+    /// <summary>The tokenizer's type name, as stored and matched on the way back in.</summary>
+    /// <remarks>
+    /// <see cref="Type.FullName"/> is null for a type the runtime cannot fully name — a generic type
+    /// parameter, or a type built from one. A tokenizer is a concrete type, so this is about naming
+    /// an unnameable type rather than tolerating one, and <c>Name</c> is never null for a runtime type. The short name keeps a null out of the format's non-nullable field: a payload
+    /// written with a null in it restores as a mismatch, which is the honest answer for a type whose
+    /// full name nobody could write down.
+    /// </remarks>
+    private static string TokenizerTypeName(ITokenizer tokenizer)
+    {
+        Type type = tokenizer.GetType();
+
+        return type.FullName ?? type.Name;
     }
 
     private static ITokenizer RestoreTokenizer(StoredTokenizer stored, ITokenizer? provided)

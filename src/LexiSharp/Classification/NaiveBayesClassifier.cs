@@ -632,7 +632,14 @@ public sealed class NaiveBayesClassifier
             return logProbability;
 
         var tokens = query.Tokens;
-        var globalCounts = query.GlobalCounts!;
+
+        // The corpus-wide counts are resolved only when the complement model is on, which is the
+        // configuration that calls this — both read the same _options.Complement, from the same
+        // options this classifier holds. A missing array is therefore a broken classifier rather
+        // than a null to index, and saying which of the two is wrong beats a NullReferenceException.
+        if (query.GlobalCounts is not { } globalCounts)
+            throw new InvalidOperationException(
+                "the complement score needs the corpus-wide counts, which this query did not resolve");
 
         for (int i = 0; i < query.Count; i++)
         {
