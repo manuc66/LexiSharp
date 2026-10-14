@@ -345,7 +345,13 @@ internal sealed class SegmentOverlay
         if (!_ordinals.TryGetValue(documentId, out int ordinal))
             return [];
 
-        var positioned = PositionedFields.Positioned(_tokenizer, _documents[ordinal]!);
+        // The overlay nulls a slot and drops its postings together, so an ordinal it still names holds
+        // its document. Saying that beats a NullReferenceException if it ever stops being true.
+        var document = _documents[ordinal]
+            ?? throw new InvalidOperationException(
+                $"the overlay holds ordinal {ordinal} for '{documentId}', which has no document behind it");
+
+        var positioned = PositionedFields.Positioned(_tokenizer, document);
         var positions = new List<int>();
 
         for (int i = 0; i < positioned.Count; i++)

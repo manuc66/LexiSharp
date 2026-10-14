@@ -535,7 +535,12 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             // document, so the common case is the same answer with none of the resolution.
             if (needsDocument)
             {
-                var document = index.DocumentAt(candidate)!;
+                // The accumulator hands out ordinals for the candidates it has just scored, so the
+                // index resolves every one of them. A null here is a broken candidate set, and naming
+                // it beats a dereference on the result path.
+                var document = index.DocumentAt(candidate)
+                    ?? throw new InvalidOperationException(
+                        $"the accumulator produced candidate {candidate}, which the index cannot resolve");
 
                 if (!options.PassesFilters(document))
                     continue;
