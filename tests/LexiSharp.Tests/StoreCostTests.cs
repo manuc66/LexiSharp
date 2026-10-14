@@ -120,10 +120,10 @@ public class StoreCostTests
 
             _output.WriteLine($"commit allocation: {allocated:N0} B");
             Assert.True(
-                allocated < 340L * 1024 * 1024,
+                allocated < 270L * 1024 * 1024,
                 $"a commit of {DocumentCount:N0} documents allocated {allocated / (1024 * 1024)} MB, "
-                + "against a 340 MB pin. This corpus commits 287 MB; the pin is that plus headroom, "
-                + "because allocation is deterministic and the reference is 1,736 MB at 100,000 "
+                + "against a 270 MB pin. This corpus commits 224 MB; the pin is that plus headroom, "
+                + "because allocation is deterministic and the reference is 1,487 MB at 100,000 "
                 + "documents. A commit that allocates far more is the regression this exists for — one "
                 + "measured at 191,805 MB once.");
         }
@@ -156,7 +156,7 @@ public class StoreCostTests
         _output.WriteLine($"index allocation: {allocated:N0} B");
 
         Assert.True(
-            allocated < 800L * 1024 * 1024,
+            allocated < 460L * 1024 * 1024,
             $"building the overlay over {DocumentCount:N0} documents allocated {allocated / (1024 * 1024)} MB, "
             + "against an 800 MB pin. This corpus builds 721 MB — 2.5x the commit's 287 MB, and the side "
             + "of loading a corpus the commit's pin does not see. 304 B per token is the figure to "
@@ -187,7 +187,7 @@ public class StoreCostTests
 
             _output.WriteLine($"phrase allocation: {allocated:N0} B");
             Assert.True(
-                allocated < 1024L * 1024,
+                allocated < 512L * 1024,
                 $"a phrase query allocated {allocated} bytes, against a 1 MB pin. This corpus reads "
                 + "362 KB; before the segment stored positions the same query allocated 1.45 GB, because "
                 + "the gate re-tokenized the document for every candidate. The pin is that number's "
@@ -222,7 +222,7 @@ public class StoreCostTests
 
             _output.WriteLine($"prefix allocation: {allocated:N0} B");
             Assert.True(
-                allocated < 64L * 1024,
+                allocated < 48L * 1024,
                 $"a prefix query allocated {allocated} bytes, against a 64 KB pin. This corpus reads "
                 + "31,104 B; walking the whole vocabulary and decoding every term cost 6.9 MB at a "
                 + "100,000-term dictionary before the prefix range was added.");
