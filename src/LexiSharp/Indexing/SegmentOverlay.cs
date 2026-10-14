@@ -463,24 +463,41 @@ internal sealed class SegmentOverlay
 
         var fields = document.TextFields is { Count: > 0 } present ? present : null;
 
-        // One destination sized for the widest text in the document, so a run that would overflow the
-        // buffer cannot be mistaken for an analysis that cannot be served.
-        int widest = document.Text.Length;
+        // Sized for the whole document, not for its widest text. A run's term count cannot exceed the
+        // characters it came from — a term whose normalized form is not a source slice carries its own
+        // string instead — so with this destination no run can overflow, and -1 can only mean that the
+        // analysis declines, which the body's probe settles below before anything is recorded.
+        int total = document.Text.Length;
 
         if (fields is not null)
         {
             foreach (var (_, text) in fields)
-                widest = Math.Max(widest, text.Length);
+                total += text.Length;
         }
 
-        if (_normalized.Length < widest + 8)
-            _normalized = new NormalizedTerm[Math.Max(widest + 8, _normalized.Length * 2)];
+        if (_normalized.Length < total + 8)
+            _normalized = new NormalizedTerm[Math.Max(total + 8, _normalized.Length * 2)];
+
+        // Every run is probed before any is recorded. The decline is not a property of the analysis
+        // alone: a tokenizer may serve one text as spans and not another, so the body answering is not
+        // evidence about the fields. A field that declined after the body had been appended would leave
+        // the body's terms half-recorded, and the caller's string fallback would then record every one
+        // of them again — doubled frequencies and duplicated positions, with no error to show for it.
+        if (CountSpans(tokenizer, document.Text, _normalized) < 0)
+            return false;
+
+        if (fields is not null)
+        {
+            foreach (var (_, text) in fields)
+            {
+                if (CountSpans(tokenizer, text, _normalized) < 0)
+                    return false;
+            }
+        }
 
         int next = 0;
 
-        if (!AppendSpans(tokenizer, document.Text.AsSpan(), next, ordinal, allTerms, touched))
-            return false;
-
+        AppendSpans(tokenizer, document.Text.AsSpan(), next, ordinal, allTerms, touched);
         next += CountSpans(tokenizer, document.Text, _normalized);
 
         if (fields is null)
@@ -492,17 +509,21 @@ internal sealed class SegmentOverlay
 
             next += TextFields.PositionGap;
 
-            if (!AppendSpans(tokenizer, text.AsSpan(), next, ordinal, allTerms, touched))
-                return false;
-
+            AppendSpans(tokenizer, text.AsSpan(), next, ordinal, allTerms, touched);
             next += CountSpans(tokenizer, text, _normalized);
         }
 
         return true;
     }
 
-    /// <summary>Appends one run's terms at <paramref name="start"/>, or returns false if the analysis declines.</summary>
-    private bool AppendSpans(
+    /// <summary>
+    /// Appends one run's terms at <paramref name="start"/>.
+    /// </summary>
+    /// <remarks>
+    /// Cannot decline: the caller probes the analysis and sizes the destination for the whole document
+    /// before calling this, so nothing here can leave the overlay half-written.
+    /// </remarks>
+    private void AppendSpans(
         ISpanTokenizer tokenizer,
         ReadOnlySpan<char> text,
         int start,
@@ -511,9 +532,6 @@ internal sealed class SegmentOverlay
         List<TermPositions> touched)
     {
         int count = CountSpans(tokenizer, text, _normalized);
-
-        if (count < 0)
-            return false;
 
         for (int i = 0; i < count; i++)
         {
@@ -541,8 +559,6 @@ internal sealed class SegmentOverlay
             entry.Positions.Add(start + i);
             entry.CurrentFrequency++;
         }
-
-        return true;
     }
 
     /// <summary>The term's entry, materializing its string only when it is new to the vocabulary.</summary>

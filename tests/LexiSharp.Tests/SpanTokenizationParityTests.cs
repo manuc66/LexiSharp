@@ -1,4 +1,5 @@
 using LexiSharp.Core;
+using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
 using Xunit;
 
@@ -87,5 +88,62 @@ public class SpanTokenizationParityTests
 
         // And the string path still names the stemmed terms.
         Assert.Equal(new[] { "run", "quickli" }, stemmed.Tokenize("running quickly"));
+    }
+
+    [Fact]
+    public void ADocumentWhoseFieldDeclinesIsNotCountedTwice()
+    {
+        // The body's text can be served as spans and a field's cannot: the overlay has to fall back for
+        // the whole document, and the fallback must not add to what the span path already recorded. It
+        // did, before AddSpans probed the analysis before recording anything — the body's terms then
+        // doubled, their frequencies doubled with them, and no error was raised. One term, one
+        // position, and a frequency of one is the assertion that catches it.
+        string directory = Path.Combine(Path.GetTempPath(), "lexisharp-decline-" + Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            var store = new SegmentedTextIndex(directory, new FieldDecliningTokenizer());
+
+            store.Index(
+            [
+                new SearchDocument(
+                    "doc-1",
+                    "alpha beta",
+                    TextFields: new Dictionary<string, string>(StringComparer.Ordinal) { ["title"] = "decline gamma" }),
+            ]);
+
+            using var committed = store.Commit();
+
+            Assert.Equal(1, committed.TermFrequency("doc-1", "alpha"));
+            Assert.Equal(1, committed.TermFrequency("doc-1", "beta"));
+            Assert.Equal(1, committed.TermFrequency("doc-1", "decline"));
+            Assert.Equal(1, committed.TermFrequency("doc-1", "gamma"));
+
+            Assert.Equal([0], committed.GetTermPositions("doc-1", "alpha"));
+
+            // The title's terms are part of the length and of the flat view, as the string path has them.
+            Assert.Equal(4, committed.DocumentLength("doc-1"));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    /// <summary>A tokenizer that serves the body as spans and declines any text carrying a marker.</summary>
+    private sealed class FieldDecliningTokenizer : ISpanTokenizer
+    {
+        private static readonly Tokenizer Inner = Tokenizer.Default;
+
+        public IReadOnlyList<string> Tokenize(string text) => Inner.Tokenize(text);
+
+        public IReadOnlyList<string> Tokenize(ReadOnlySpan<char> text) => Inner.Tokenize(text);
+
+        public IReadOnlyList<TokenSpan> TokenizeWithSpans(string text) => Inner.TokenizeWithSpans(text);
+
+        public int TokenizeNormalized(ReadOnlySpan<char> text, Span<NormalizedTerm> destination) =>
+            text.Contains("decline", StringComparison.Ordinal)
+                ? -1
+                : Inner.TokenizeNormalized(text, destination);
     }
 }
