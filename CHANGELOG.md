@@ -327,14 +327,33 @@ workflow.
   | the flush source's constructor | 5 MB | 5 MB |
   | **the commit, end to end** | **1,487 MB** | **567 MB** — 2.6× less |
 
-  The cost is stated with the figure, because a measure is a second walk: resolving every term to size
-  its postings measured 425 ms on this corpus, and the version that paid it in full spent **2,481 → 2,754
-  ms of processor time on the same commit, about 11 % more**. What shipped with it removes that. The
-  plan carries the measured sizes into the build, so a term's postings are measured once instead of
-  twice, and the same commit now measures **1,740 ms — 30 % less than the writer this replaced, at
-  567 MB against its 1,487 MB**. Both figures are min-of-N on the same host: the write spends a
-  full collection during itself, so its time depends on which write preceded it, and the minimum is
-  the figure that describes the code.
+  A measure is a second walk, and the version that walked without sharing what it measured paid for it:
+  resolving every term to size its postings measured 425 ms on this corpus, and that version's commit
+  took **2,754 ms of processor time against the 2,481 ms of the writer this replaces — 11 % more.** The
+  plan is what removed both the walk and its cost, and the figures below are the result.
+
+  Allocation is the exact figure and it does not move between runs: **567 MB in every run, spread
+  zero** — 284 MB for the write (267 of it the segment itself), 275 MB for the reopen, 5 MB for the
+  flush source's constructor and 3 MB the parts do not account for.
+
+  Time does move, and the reason is inside the operation rather than on the host. Ten runs of each
+  writer, one corpus, one process, order alternating, both writers producing identical bytes:
+
+  | | allocated | min | **median** | mean | max | spread |
+  |---|---|---|---|---|---|---|
+  | the writer before the plan | 278 MB | 2,140 ms | **2,257 ms** | 2,261 ms | 2,423 ms | 13 % |
+  | the planned writer | 279 MB | 1,477 ms | **1,589 ms** | 1,587 ms | 1,696 ms | 14 % |
+
+  **The same heap is collected in both paths, so the collection profile is not the gain.** Each write
+  takes a gen-2 collection in five of ten runs, and that collection costs about 210 ms whichever path
+  it lands in — it is the size of the write rather than its code. What the plan removes is 670 ms of
+  median processor time that is there whether or not a collection lands: the second walk of every
+  term's postings. A minimum would be a lower bound; the median is the figure a caller plans a batch
+  from.
+
+  The commit, measured the same way over eight runs with a fresh store each time: **567 MB with no
+  spread, and 1,787 ms of median processor time** (1,708 min, 1,776 mean, 1,826 max, 7 % spread),
+  against 1,487 MB and 2,481 ms for the writer this replaced.
 
   The plan and the build must agree exactly, and disagreeing could never have been silent: the
   destination is a span the size of the plan, so a body that overruns it is stopped by the span's own
