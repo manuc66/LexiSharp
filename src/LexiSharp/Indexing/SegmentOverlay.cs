@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using LexiSharp.Core;
 using LexiSharp.Linguistics;
@@ -253,8 +254,8 @@ internal sealed class SegmentOverlay
     }
 
     /// <summary>Whether this overlay holds the term, and its postings if it does.</summary>
-    public bool TryGetPostings(string term, out List<(int Ordinal, int Frequency)> postings) =>
-        _postings.TryGetValue(term, out postings!);
+    public bool TryGetPostings(string term, [NotNullWhen(true)] out List<(int Ordinal, int Frequency)>? postings) =>
+        _postings.TryGetValue(term, out postings);
 
     /// <summary>Every term the overlay holds, in unspecified order.</summary>
     public IEnumerable<string> Terms => _postings.Keys;

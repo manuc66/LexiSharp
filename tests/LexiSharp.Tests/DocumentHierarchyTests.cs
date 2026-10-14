@@ -39,7 +39,11 @@ public class DocumentHierarchyTests
 
         Assert.True(tree.TryGetParent("chunk-a1", out var parent));
         Assert.Equal("sec-1a", parent);
-        Assert.False(tree.TryGetParent("book-1", out _));
+
+        // The contract the signature now states: a root has no parent, and the out is null rather
+        // than an uninitialized or defaulted id.
+        Assert.False(tree.TryGetParent("book-1", out var rootParent));
+        Assert.Null(rootParent);
     }
 
     [Fact]
