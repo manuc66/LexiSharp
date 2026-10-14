@@ -337,6 +337,17 @@ workflow.
   decorating, on ids differing only in accents or letter case. Both decorators now order through
   `ResultOrdering`, which compares ordinally.
 
+- **A segment's `Documents` enumeration held null elements after a document lookup.**
+
+  A lookup resolves the one slot it needs and leaves the rest of the segment's document array at their
+  defaults, and the getter checked only whether the array existed. Three documents written, one looked
+  up, and two nulls in the enumeration — on a collection the interface types as
+  `IReadOnlyCollection<SearchDocument>`. The getter now asks whether the array is *complete* rather
+  than whether it exists, and resolves whatever is still open, so a slot a lookup already decoded is
+  read rather than re-decoded. The check keeps the getter O(1) after the first fill; it is read once
+  per query on the full-corpus scoring path. `SegmentFileTests.Documents_ResolvesEverySlotALookupLeftOpen`
+  fails with two nulls before the change and passes after it.
+
 - **The Youden complexity test timed the host, and the host is not the algorithm.**
 
   `YoudenThreshold_searchIsLinearNotQuadratic` compared two stopwatches — 2 000 pairs
@@ -348,6 +359,18 @@ workflow.
   suffix per threshold fails it.
 
 ### Changed
+
+- **`DocumentHierarchy.TryGetParent` and `SegmentOverlay.TryGetPostings` declare the out argument they can hand back as null.**
+
+  Both declared their out as non-nullable and silenced the difference with a `!` — `parentId!`,
+  `postings!` — so a caller who ignored the return value was told by the compiler that it was usable.
+  Both bodies are a dictionary lookup, and a lookup that returns false leaves the out at its default,
+  which neither method reassigned. Both now declare the out as nullable and carry the postcondition
+  the code establishes, so the guarantee belongs to the signature: a caller who checks the return
+  reads a non-null value with no `!` of its own, and a caller who does not check is told the value
+  may be null. Source-compatible for every caller that checks the return; a caller that does not now
+  gets the warning the declaration was hiding. The runtime behaviour is unchanged — both returned
+  false with a null out before this.
 
 - **A segment is measured before it is written, assembled into the array it returns, and planned once.**
 
