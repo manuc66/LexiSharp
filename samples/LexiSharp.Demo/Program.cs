@@ -42,9 +42,9 @@ try
 }
 catch (DemoOptionException ex)
 {
-    Console.Error.WriteLine(ex.Message);
-    Console.Error.WriteLine();
-    Console.Error.WriteLine(Usage());
+    await Console.Error.WriteLineAsync(ex.Message);
+    await Console.Error.WriteLineAsync();
+    await Console.Error.WriteLineAsync(Usage());
     return 1;
 }
 
@@ -60,7 +60,7 @@ try
 }
 catch (Exception ex)
 {
-    Console.Error.WriteLine($"Failed to index {corpus.Label}: {ex.Message}");
+    await Console.Error.WriteLineAsync($"Failed to index {corpus.Label}: {ex.Message}");
     return 1;
 }
 
@@ -128,9 +128,9 @@ app.MapGet("/api/meta", (DemoSearchService service, DemoCorpusSet active) => Res
     queries = active.SampleQueries,
 }));
 
-app.Run();
+// The awaited host returns when it shuts down, and the value-returning entry point exits with it.
+await app.RunAsync();
 
-// app.Run returns when the host shuts down; the value-returning entry point needs it.
 return 0;
 
 static string Usage() =>
