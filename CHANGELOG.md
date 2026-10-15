@@ -344,6 +344,26 @@ workflow.
   per query on the full-corpus scoring path. `SegmentFileTests.Documents_ResolvesEverySlotALookupLeftOpen`
   fails with two nulls before the change and passes after it.
 
+- **A window sized past the end of the corpus asked the engine to build a working set no page needed.**
+
+  `SearchOptions.Window` is `Offset + Limit`, two numbers a caller owns, and `TopRankedWindow`
+  allocated its entry array at that size in its constructor — before a document had been considered.
+  `Offset: int.MaxValue` asked for 2 147 483 647 entries, which the CLR refuses outright rather than
+  allocating: `OutOfMemoryException`, "Array dimensions exceeded supported range", in 14 ms, for a
+  page that is empty either way. The minimal-API endpoint binds `Offset` from the query string, so a
+  single request reached it.
+
+  An engine now builds `min(Window, documentCount)`. A window is a working set the page is cut out
+  of, and it cannot usefully be larger than the corpus it is cut from: `Offset + Limit` past the last
+  document still produces the page it always did, an empty one, so the answer is unchanged and only
+  the working set is bounded. `WindowSizeTests` pins both halves — the empty page, and that an
+  oversized limit still returns every document a reachable one returns — for the ranked engine and
+  the vector engine alike.
+
+  Not fixed here, same class, unmeasured: `PostgresDocumentExclusion.FetchLimit` turns the same
+  window into a SQL `LIMIT`, and the Postgres engines hold no document count to bound it by without
+  an extra query.
+
 - **The Youden complexity test timed the host, and the host is not the algorithm.**
 
   `YoudenThreshold_searchIsLinearNotQuadratic` compared two stopwatches — 2 000 pairs

@@ -45,6 +45,30 @@ public class InMemoryVectorSearchEngineTests
     }
 
     [Fact]
+    public void APageStartingPastTheEndOfTheCorpusComesBackEmpty()
+    {
+        var engine = NewEngine(out _);
+
+        foreach (SearchDocument document in Corpus)
+            engine.Add(document);
+
+        // The same oversized window the ranked engine refuses to build for: the vector engine
+        // sizes its window at the corpus too (see WindowSizeTests), and the page a request for
+        // offset int.MaxValue can produce is empty.
+        Assert.Empty(engine.Search("oauth", new SearchOptions(Offset: int.MaxValue, Limit: 1)));
+
+        // And the oversized window did not truncate the page: a limit past the corpus returns
+        // exactly what a generous one returns, which for a vector engine is the document whose
+        // vector is near the query's.
+        var generous = engine.Search("oauth", new SearchOptions(Limit: 10));
+
+        Assert.NotEmpty(generous);
+        Assert.Equal(
+            generous.Count,
+            engine.Search("oauth", new SearchOptions(Limit: int.MaxValue)).Count);
+    }
+
+    [Fact]
     public void Dimension_ReportsTheProviderContract_AndNotTheBufferStride()
     {
         // The engine keeps a private row stride for its contiguous vector block, and it is 0 until a
