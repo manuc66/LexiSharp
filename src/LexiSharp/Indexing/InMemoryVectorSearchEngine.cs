@@ -263,7 +263,7 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
         // The slot is not the insertion order: slots are vacated by Remove and reused, so a slot number
 // orders by where a vector happens to sit now. Tie-breaking on that would be neither stable nor
 // meaningful, so this engine keeps the default and passes no ordinal.
-        var top = new TopRankedWindow(options.Window, TieBreak.DocumentId, _resolveDocument);
+        var top = new TopRankedWindow(options.WindowFor(Count), TieBreak.DocumentId, _resolveDocument);
         int stride = _stride;
         var data = _vectorData;
         var norms = _squaredNorms;

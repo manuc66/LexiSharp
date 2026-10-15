@@ -270,7 +270,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         // is the order documents were added. That is what TieBreak.InsertionOrder compares, so the
         // order a tied page comes back in does not depend on which of the two passes ran.
         var top = new TopRankedWindow(
-            options.Window,
+            options.WindowFor(_index.Count),
             options.TieBreak,
             _resolveOrdinal,
             _resolveId,

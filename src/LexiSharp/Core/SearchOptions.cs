@@ -161,6 +161,28 @@ public sealed record SearchOptions(
     public int Window => Offset > int.MaxValue - Limit ? int.MaxValue : Offset + Limit;
 
     /// <summary>
+    /// The window that is worth building for a corpus of <paramref name="documentCount"/>
+    /// documents: <see cref="Window"/>, and never more than the corpus itself.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A window is a working set — the page is cut out of it — so it cannot usefully be larger than
+    /// the corpus it is cut from. <c>Offset + Limit</c> past the last document still produces the
+    /// same page, an empty one. Both numbers are a caller's to set, and a window sized at the
+    /// request rather than at the corpus asks an engine to allocate for a page nobody can receive.
+    /// </para>
+    /// <para>
+    /// What that cost, measured here: <c>Offset: int.MaxValue</c> sized the top-ranked window's entry
+    /// array at 2 147 483 647 entries, which the CLR refuses outright rather than allocating —
+    /// <see cref="OutOfMemoryException"/>, "Array dimensions exceeded supported range", in 14 ms,
+    /// for a page that is empty either way. The minimal-API endpoint binds <c>Offset</c> from the
+    /// query string, so one request reached it.
+    /// </para>
+    /// </remarks>
+    public int WindowFor(int documentCount) =>
+        Math.Min(Window, documentCount < 0 ? 0 : documentCount);
+
+    /// <summary>
     /// Whether the document passes every configured filter and is not excluded by id. Documents
     /// always pass when neither is set.
     /// </summary>
