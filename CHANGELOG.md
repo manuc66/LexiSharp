@@ -360,9 +360,11 @@ workflow.
   oversized limit still returns every document a reachable one returns — for the ranked engine and
   the vector engine alike.
 
-  Not fixed here, same class, unmeasured: `PostgresDocumentExclusion.FetchLimit` turns the same
-  window into a SQL `LIMIT`, and the Postgres engines hold no document count to bound it by without
-  an extra query.
+  Not the same class, and measured rather than assumed: `PostgresDocumentExclusion.FetchLimit` turns
+  the same window into a SQL `LIMIT`, and an upper bound is not a demand — the server sends the rows
+  the corpus holds and no more. Measured against a live `pgvector/pgvector:pg16`: a page requested at
+  `Offset: int.MaxValue` comes back empty, and the same request with no offset returns the whole
+  corpus. Pinned in `PostgresTextSearchEngineTests.Search_Offset_PaginatesTheRanking`.
 
 - **The Youden complexity test timed the host, and the host is not the algorithm.**
 
