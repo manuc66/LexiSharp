@@ -202,6 +202,15 @@ public class PostgresTextSearchEngineTests
 
             Assert.Empty(engine.Search("alpha beta", new SearchOptions(Limit: 2, Offset: 5)));
             Assert.Empty(engine.Search("alpha beta", new SearchOptions(Limit: 2, Offset: -1)));
+
+            // The window is Offset + Limit, saturated, and FetchLimit turns it into a SQL LIMIT —
+            // an upper bound rather than a demand, so the server sends what the corpus holds and no
+            // more. Measured here: this request returns an empty page against a live server, and the
+            // same request with no offset returns the whole corpus, so the window past the end of the
+            // corpus neither floods nor truncates. (The in-memory engines asked for a working set at
+            // that size and paid for it before being clamped; see WindowSizeTests.)
+            Assert.Empty(engine.Search("alpha beta", new SearchOptions(Offset: int.MaxValue, Limit: 1)));
+            Assert.Equal(5, engine.Search("alpha beta", new SearchOptions(Limit: int.MaxValue)).Count);
         });
     }
 
