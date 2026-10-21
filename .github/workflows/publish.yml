@@ -34,7 +34,7 @@ jobs:
             || { echo "CI checks not all green for ${{ github.sha }}:"; echo "$checks" | jq -r '.[] | "\(.name): \(.status)/\(.conclusion)"'; exit 1; }
           echo "All CI checks passed for ${{ github.sha }}"
 
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
       # No dotnet-version here on purpose: setup-dotnet installs the version it is
       # given *as well as* the one in global.json, so naming one leaves the float.
 
