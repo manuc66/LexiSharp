@@ -229,7 +229,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: paradedb/paradedb:pg16@sha256:ac8ad72f57da6fa35738d346b9970811a4ab9ce0ba7f183bea27e0ad7b037222
+        image: paradedb/paradedb:pg16@sha256:03e274848a0f1a964e1d9cc27d1d3fa6c2b07ff5c6207a5f3936ecbc744d5ec2
         env:
           POSTGRES_PASSWORD: postgres  # NOSONAR:S2068 (local test container only; Sonar flags the dummy dev password)
           POSTGRES_DB: lexisharp
