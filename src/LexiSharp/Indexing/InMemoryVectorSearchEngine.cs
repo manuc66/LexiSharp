@@ -49,6 +49,11 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
     private readonly Dictionary<string, SearchDocument> _documents = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _slotById = new(StringComparer.Ordinal);
 
+    // Memoized query embeddings, invalidated on every mutation. Bounded: once full it is cleared
+    // rather than evicted entry-by-entry, which keeps the hot path allocation-free.
+    private readonly Dictionary<string, float[]> _queryEmbeddingCache = new(StringComparer.Ordinal);
+    private const int QueryEmbeddingCacheCapacity = 64;
+
     /// <summary>
     /// Document id → dense slot. The vectors themselves live in one contiguous
     /// <see cref="_vectorData"/> block of <see cref="_stride"/>-strided rows, so a scan walks
@@ -150,6 +155,8 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
         if (!_slotById.Remove(documentId, out int slot))
             return false;
 
+        _queryEmbeddingCache.Clear();
+
         _documents.Remove(documentId);
 
         // Clear the reference so a removed document can be collected; the float payload needs no
@@ -164,6 +171,7 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
     {
         _documents.Clear();
         _slotById.Clear();
+        _queryEmbeddingCache.Clear();
         _slotDocument = Array.Empty<SearchDocument?>();
         _vectorData = Array.Empty<float>();
         _squaredNorms = Array.Empty<float>();
@@ -239,9 +247,27 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
         if (_documents.Count == 0)
             return Array.Empty<SearchResult>();
 
-        var queryVector = await _embeddings
-            .GetTextEmbeddingAsync(query, EmbeddingUse.Query, cancellationToken)
-            .ConfigureAwait(false);
+        float[] queryVectorArray;
+
+        if (_queryEmbeddingCache.TryGetValue(query, out var cachedQueryVector))
+        {
+            queryVectorArray = cachedQueryVector;
+        }
+        else
+        {
+            var computed = await _embeddings
+                .GetTextEmbeddingAsync(query, EmbeddingUse.Query, cancellationToken)
+                .ConfigureAwait(false);
+
+            queryVectorArray = computed.ToArray();
+
+            if (_queryEmbeddingCache.Count >= QueryEmbeddingCacheCapacity)
+                _queryEmbeddingCache.Clear();
+
+            _queryEmbeddingCache[query] = queryVectorArray;
+        }
+
+        var queryVector = new ReadOnlyMemory<float>(queryVectorArray);
 
         if (queryVector.Length != _embeddings.Dimension)
         {
@@ -250,6 +276,16 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
         }
 
         var querySpan = queryVector.Span;
+
+        for (int i = 0; i < querySpan.Length; i++)
+        {
+            if (!float.IsFinite(querySpan[i]))
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(query),
+                    $"The embedding provider returned a non-finite query value ({querySpan[i]}) at index {i}.");
+            }
+        }
 
         // A zero query vector is orthogonal to everything: every document would score 0, which is
         // the « not a match » convention, so there is nothing to rank.
@@ -325,6 +361,18 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
             throw new InvalidOperationException(
                 $"The embedding provider returned a {vector.Length}-dimension vector for '{document.Id}' but declares Dimension={_embeddings.Dimension}.");
         }
+
+        for (int i = 0; i < vector.Length; i++)
+        {
+            if (!float.IsFinite(vector.Span[i]))
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(vector),
+                    $"The embedding provider returned a non-finite value ({vector.Span[i]}) at index {i} for '{document.Id}'.");
+            }
+        }
+
+        _queryEmbeddingCache.Clear();
 
         if (_documents.ContainsKey(document.Id))
             Remove(document.Id);
