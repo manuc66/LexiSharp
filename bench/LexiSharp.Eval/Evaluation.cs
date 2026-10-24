@@ -291,6 +291,36 @@ internal static class Evaluation
     }
 
     /// <summary>
+    /// Scores an engine that owns its own index, on the same queries and with the same metrics as
+    /// <see cref="Run"/>. A PostgreSQL backend is the case this exists for: nothing in it is an
+    /// <c>ITextIndex</c>, so it cannot be a row of that table, but the rankings it returns are
+    /// measurable by the same code and comparable as metrics.
+    /// </summary>
+    /// <param name="engine">Already connected; this method indexes nothing.</param>
+    /// <remarks>
+    /// Query syntax is passed as off. A backend that implements <c>IQuerySyntaxSupport</c> decides
+    /// that itself — the PostgreSQL engines always hand the text to <c>websearch_to_tsquery</c> — and
+    /// saying "off" here is the accurate statement that this harness asked for nothing.
+    /// </remarks>
+    public static ConfigResult RunEngine(
+        BeirCorpus corpus,
+        ITextSearchEngine engine,
+        string name,
+        int topK,
+        int? limit,
+        NdcgGain ndcgGain,
+        bool excludeQueryDocument = false,
+        int jobs = 1)
+    {
+        ArgumentNullException.ThrowIfNull(corpus);
+        ArgumentNullException.ThrowIfNull(engine);
+
+        List<EvaluatedQuery> queries = BuildQueries(corpus, limit, excludeQueryDocument);
+
+        return RunConfig(name, engine, queries, topK, ndcgGain, jobs, parseQuerySyntax: false);
+    }
+
+    /// <summary>
     /// The queries a run scores, in the order it scores them: every query with a test judgement,
     /// ordered by id so a run is reproducible from the corpus alone, cut to <paramref name="limit"/>.
     /// </summary>

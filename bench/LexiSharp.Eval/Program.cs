@@ -63,6 +63,15 @@ public static class Program
         var annEfValues = new List<int>();
         string? annConnection = null;
 
+        // The backend row is the same kind of lane for the same reasons: a live server, and a ranking
+        // function the in-memory table's scorer seam cannot express. Named separately from
+        // --ann-connection because the two lanes connect to different places in general, and one
+        // connection string standing for both would be a default nobody chose.
+        string? backendKind = null;
+        string? backendConnection = null;
+        string backendConfig = "simple";
+        Bm25Parameters? backendBm25 = null;
+
         // Off by default, because every query in a BEIR corpus is natural language and the published
         // figures apply no query language to it: the query string goes to the analyzer whole. Left on,
         // a straight double quote in an argument — 138 of ArguAna's 1,406 test queries, measured —
@@ -183,6 +192,18 @@ public static class Program
                 case "--ann-connection" when i + 1 < args.Length:
                     annConnection = args[++i];
                     break;
+                case "--backend" when i + 1 < args.Length:
+                    backendKind = args[++i];
+                    break;
+                case "--backend-connection" when i + 1 < args.Length:
+                    backendConnection = args[++i];
+                    break;
+                case "--backend-config" when i + 1 < args.Length:
+                    backendConfig = args[++i];
+                    break;
+                case "--backend-bm25" when i + 1 < args.Length:
+                    backendBm25 = ParseBm25Parameters(args[++i]);
+                    break;
                 case "--expand-density" when i + 1 < args.Length:
                     expandDensities.AddRange(ParseDensities(args[++i]));
                     break;
@@ -231,7 +252,42 @@ public static class Program
             return 2;
         }
 
+        // One lane, two flags, and a half-pair is refused here rather than discovered as a table with
+        // one fewer row than the caller asked for.
+        if ((backendKind is null) != (backendConnection is null))
+        {
+            Console.Error.WriteLine(
+                "--backend and --backend-connection must be given together: the first names the engine, " +
+                "the second is the only thing that says which server it runs on.");
+            return 2;
+        }
+
+        BackendLane? backendLane = null;
+
+        if (backendKind is not null && backendConnection is not null)
+        {
+            try
+            {
+                backendLane = BackendLane.Parse(backendKind, backendConnection, backendConfig, backendBm25);
+            }
+            catch (ArgumentException error)
+            {
+                Console.Error.WriteLine(error.Message);
+                return 2;
+            }
+        }
+
         dataBaseDir = Path.GetFullPath(dataBaseDir);
+
+        if (verifyAgainst is not null && backendLane is not null)
+        {
+            Console.Error.WriteLine(
+                "--backend cannot run with --verify-reference: pinned.json has no shape for a backend " +
+                "row (its pins are keyed on the analyzer and the BM25 parameters), and the pinned job has " +
+                "no PostgreSQL service, so a pin there could only ever skip. Measure the row with " +
+                "--backend on its own and record what it read in prose.");
+            return 2;
+        }
 
         // The regression net runs before anything else: a caller who asked to verify wants an answer,
         // not a table plus an answer.
@@ -316,7 +372,7 @@ public static class Program
                 tuned, reranker, rerankCandidates, runPath, jobs, indexCache, parseQuerySyntax,
                 querySyntaxReference, segment, analyzePath, analyzeBaseline, analyzeCandidate,
                 disagreementLeft, disagreementRight,
-                expandDensities, expandRankings, annEfValues, annConnection);
+                expandDensities, expandRankings, annEfValues, annConnection, backendLane);
             Console.WriteLine();
         }
 
@@ -442,7 +498,7 @@ public static class Program
         string? analyzePath, string analyzeBaseline, string? analyzeCandidate,
         string? disagreementLeft, string? disagreementRight,
         IReadOnlyList<double> expandDensities, IReadOnlyList<ExpansionRanking> expandRankings,
-        IReadOnlyList<int> annEfValues, string? annConnection)
+        IReadOnlyList<int> annEfValues, string? annConnection, BackendLane? backendLane)
     {
         Console.WriteLine($"== {dataset.Name} ==");
 
@@ -579,6 +635,42 @@ public static class Program
             "relative ordering of the configs above is meaningful within a run; the comparison to " +
             "the published reference is meaningful only under the analysis the reference used " +
             "(--analyzer english for the published figures).");
+
+        if (backendLane is not null)
+        {
+            RunBackendRow(backendLane, corpus, dataset, topK, limit, gain, excludeQueryDocument, jobs);
+        }
+    }
+
+    /// <summary>
+    /// Measures one backend row, or reports why there is none. A refused query is not a crash: the
+    /// engine declines the syntax by design, and the useful output is which dataset lost its row and
+    /// how many queries caused it.
+    /// </summary>
+    private static void RunBackendRow(
+        BackendLane lane, BeirCorpus corpus, BeirDataset dataset, int topK, int? limit,
+        NdcgGain gain, bool excludeQueryDocument, int jobs)
+    {
+        Console.WriteLine();
+
+        try
+        {
+            // Measured outside Evaluation.Run: the engine owns its index and its ranking function, so
+            // the only thing it shares with the table above is the query list, the qrels and the
+            // metric code.
+            BackendMeasurement measurement = PostgresBackendBenchmark.Measure(
+                lane, corpus, dataset.Name, topK, limit, gain, excludeQueryDocument, jobs);
+
+            Console.WriteLine(PostgresBackendBenchmark.Format(measurement, dataset.Name));
+
+            foreach (string caveat in measurement.Caveats)
+                Console.WriteLine($"Note: {caveat}");
+        }
+        catch (NotSupportedException refusal)
+        {
+            Console.WriteLine($"== {dataset.Name}, backend ==");
+            Console.WriteLine($"Not measured: {refusal.Message}");
+        }
     }
 
     /// <summary>
@@ -1010,6 +1102,8 @@ public static class Program
         Console.WriteLine("""
             Usage: LexiSharp.Eval [--data <dir>] [--dataset <name|all>] [--top-k <n>] [--limit <n>]
                      [--no-tuned] [--stem porter] [--dense] [--dense-seq <n>] [--rerank] [--rerank-top <n>]
+                     [--backend <lexical|paradedb> --backend-connection <s>]
+                     [--backend-bm25 <k1,b>] [--backend-config <name>]
 
               --data <dir>      Base directory for datasets (default: <project>/data).
                                 Downloaded and checksum-verified on first run.
@@ -1119,6 +1213,28 @@ public static class Program
                                 Npgsql connection string for --ann-ef, e.g.
                                 "Host=localhost;Port=5432;Username=...;Password=...;Database=...".
                                 The target database needs the vector extension.
+              --backend <name>  Add a retrieval-quality row measured through a SQL backend on the same
+                                corpus, queries and qrels: 'lexical' (tsvector + ts_rank_cd over stock
+                                PostgreSQL) or 'paradedb' (pg_search + pdb.score, Okapi BM25 computed
+                                by Tantivy; needs the paradedb image). Printed on its own, because the
+                                engine owns its index and its ranking function and the in-memory table
+                                is one index with many scorers. Needs --backend-connection.
+              --backend-connection <s>
+                                Npgsql connection string for --backend. The lane builds a table named
+                                lexisharp_eval_<dataset> and drops it afterwards, so it never reads or
+                                empties a table an application uses.
+              --backend-config <name>
+                                PostgreSQL text search configuration for the lexical backend (default:
+                                simple). This is the row's analysis: 'english' applies PostgreSQL's own
+                                Snowball stemmer and stop list, which is close to — and not identical
+                                with — the harness's --analyzer english. Not read by ParadeDB.
+              --backend-bm25 <k1,b>
+                                k1 and b the ParadeDB backend is indexed with, e.g. 0.9,0.4 — the
+                                parameters the published baselines were produced at. pg_search takes
+                                them per field at index creation, so the row is built at these values
+                                rather than re-weighted afterwards. Omitted, Tantivy's defaults
+                                (k1=1.2, b=0.75) apply. Refused with --backend lexical, whose
+                                ts_rank_cd has no such parameter.
               --analyze <file>  Write one row per query per configuration: the query's lexical coverage
                                 of its own judged documents, the metrics, and the per-query deltas
                                 against --analyze-baseline. Off by default — capturing a ranking per

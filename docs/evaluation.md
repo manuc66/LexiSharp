@@ -268,6 +268,67 @@ What it does **not** say:
 - ArguAna's BM25F 0.379 is **untested, not a result**: it is default-vs-default, and a tuned
   BM25 over its 1406 queries did not fit the compute available here.
 
+## The SQL backends, on the same corpora
+
+The two PostgreSQL engines that rank on their own are measured by the same harness, over the same
+test queries and qrels, through the same metric code at the same depth:
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
+  --backend paradedb --backend-connection "Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp"
+```
+
+`--backend lexical` measures `PostgresTextSearchEngine` (`tsvector` + `ts_rank_cd`);
+`--backend paradedb` measures `ParadeDBTextSearchEngine` (`pg_search` + `pdb.score`, Tantivy's BM25).
+The lane builds a table named `lexisharp_eval_<dataset>` and drops it when the run ends.
+
+nDCG@10, harness defaults (exponential gains — the convention of the **defaults** rows above). The
+first table is the comparison worth having: ParadeDB's k1 and b are index-time tokenizer arguments in
+`pg_search`, so `--backend-bm25 0.9,0.4` builds the index at the operating point the published
+baselines use, and the LexiSharp column is a run of this harness at the same parameters (Δ is
+ParadeDB minus LexiSharp):
+
+| Corpus | LexiSharp BM25 (0.9, 0.4) | ParadeDB `pdb.score` (0.9, 0.4) | Δ |
+|---|---:|---:|---:|
+| NFCorpus | 0.305 | 0.3055 | +0.0005 |
+| SciFact | 0.655 | 0.6633 | +0.0083 |
+
+Out of the box, each engine at its own defaults (`k1=1.5, b=0.75` here, `1.2, 0.75` for Tantivy):
+
+| Corpus | LexiSharp BM25 | ParadeDB `pdb.score` | PostgreSQL `ts_rank_cd` (`simple`) | `ts_rank_cd` (`english`) |
+|---|---:|---:|---:|---:|
+| NFCorpus | 0.308 | 0.3084 | 0.1864 | 0.2043 |
+| SciFact | 0.662 | 0.6619 | 0.0188 | not measured |
+| ArguAna | 0.320 | not measured | not measured | not measured |
+
+- **ParadeDB is a BM25 and reads where this library's BM25 reads.** At matched parameters the two
+  differ by 0.0005 on NFCorpus and 0.0083 on SciFact, which is analysis rather than ranking: the
+  index is built on `pdb.simple` with ASCII folding, the title is concatenated into the indexed
+  content because the `pg_search` index covers `content` alone, and the matcher is a disjunction
+  (`|||`) rather than this library's scored term loop. It is not a reproduction, and it is not
+  bit-identical.
+- **`ts_rank_cd` is not BM25** — it is coverage-based and takes no k1/b, so `--backend-bm25` is
+  refused with it rather than silently ignored. Most of its distance from the BM25 column is the
+  matching rule rather than the ranking: `websearch_to_tsquery` ANDs every term, so a match is a
+  document containing all of them. NFCorpus's test queries average 3.4 words and read 0.1864;
+  SciFact's average 13.1 and read 0.0188. PostgreSQL's own English analysis
+  (`--backend-config english`) moves NFCorpus 0.1864 → 0.2043, not closer.
+- **ArguAna has no row.** Both engines refuse query text their matcher reads as a prefix operator,
+  and 2 of the 1,406 test queries carry one. The run prints that refusal and its count instead of a
+  metric over the other 1,404, which would be a different query set from every row beside it.
+- **These rows are not pinned.** `reference/pinned.json` keys on the analyzer and the BM25
+  parameters, and the pinned job runs without a PostgreSQL service, so a pin there could only ever
+  skip — a gate that cannot fail. They are reproducible from the command above, and nothing catches
+  a drift in them.
+- **Scores are PostgreSQL-native and not numerically comparable** with `Bm25Scorer`; the metric
+  columns are. The analysis is PostgreSQL's own, not this library's tokenizer, which is why these
+  rows are not comparable with the published figures or with the aligned rows either — the
+  parameter-matched table above compares two analyses, not two implementations of one.
+
+What the lane does **not** cover: the vector, sparse and fuzzy engines. Their quality knob is an ANN
+index rather than a ranking, and the measurement that exists for them is the `ef_search` curve in
+[the backends page](backends.md), which reports recall against an exact top-k.
+
 ## Metrics
 
 `RetrievalMetrics` covers the standard set, so a number means here what it means in the
