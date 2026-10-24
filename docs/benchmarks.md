@@ -657,6 +657,33 @@ Two properties the shipped design carries, both of which the shape above forced:
   pointer-chasing walk remains in the write path. Replacing the authoritative
   `Dictionary<string, List<int>>` is a larger change than this one and is not attempted.
 
+#### The fold's cost is the scatter, not its arithmetic
+
+A posting entry costs ~13 ns at the head, and the divisions in it are not what fills that time. BM25
+evaluates one division per entry for the length normalization — `1 − b + b·dl/avgdl`, identical for
+every document of the same length — and a second for the saturation. Replacing the first with a
+length-keyed table built once per query measures **0.1980 ms against 0.1984 ms** on a query that
+folds 9 525 entries: seven launches of each build alternated in one loop, on minima that vary by
+2.5 % between launches of the same build. The table also costs 440 B per query, 65 % of the search's
+steady-state allocation, so the division stays.
+
+What the entry does cost is one dependent read of `lengths[ordinal]` and one write into
+`_scores[ordinal]`, scattered across a corpus-sized buffer, plus the per-entry bookkeeping. The
+out-of-order engine overlaps arithmetic with those reads, so an operation that is expensive in
+isolation is free in context.
+
+The same holds one level down, and the same measurement shape says so. The dense scan takes the
+square root of a document's stored squared norm once per document per query; storing the norm itself
+is bit-identical and removes 10 000 square roots per query, which measures inside the noise at 384
+dimensions (2.71 against 2.66 ms over 10 000 documents, distributions overlapping) and inside it
+again at 8 dimensions, where a document costs ~50 ns and the loop's branches and window insertion
+dominate an eight-wide dot product.
+
+So the distinction that decides these changes is not "arithmetic is cheap" but **how many times the
+operand repeats**: an operation once per iteration is overlapped and invisible, an operation once per
+*pair* — a norm recomputed for every (query token, document token) cosine — is multiplied by the
+pair count and is where the time is.
+
 ## Tokenizer (`TokenizerBenchmarks`)
 
 Tokenizing the same text under different normalizations. The `Ratio` column is only
