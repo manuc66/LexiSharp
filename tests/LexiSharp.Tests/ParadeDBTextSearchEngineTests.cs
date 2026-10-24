@@ -369,4 +369,31 @@ public class ParadeDBTextSearchEngineTests
             engine.DropSchema();
         }
     }
+
+    [SkippableFact]
+    public void Search_WithACancelledToken_Throws()
+    {
+        SkipIfUnavailable();
+
+        using var engine = NewEngine();
+
+        try
+        {
+            engine.Add(new SearchDocument("a", "alpha beta", null, "article"));
+
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+
+            // The engine cannot observe a token through Npgsql's blocking API, so PostgresCancellation
+            // registers NpgsqlCommand.Cancel; a token already cancelled is the deterministic half of
+            // that, checked on entry before any work starts.
+            Assert.Throws<OperationCanceledException>(
+                () => engine.Search("alpha beta", cancellationToken: cancellation.Token));
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
 }

@@ -504,11 +504,12 @@ workflow.
   instead of returning a result; `SearchCancellationTests` pins that, and the forwarding through a
   decorator.
 
-  **Not observed by the synchronous SQL engines.** `PostgresTextSearchEngine`,
-  `PostgresFuzzySearchEngine` and `ParadeDBTextSearchEngine` open their connection with the blocking
-  Npgsql API, which takes no token, so a search there runs to completion whatever the token says. On
-  those three paths the parameter is accepted and does nothing. Observing it means moving them to the
-  async API or registering `NpgsqlCommand.Cancel`.
+  The three synchronous SQL engines reach the server through `NpgsqlCommand.Cancel`, registered on the
+  token for the duration of the reader, because Npgsql's blocking API takes no token: a token
+  cancelled before the call is refused on entry, and one cancelled during it fires the command's
+  cancel on the cancelling thread, which is the thread Npgsql expects. `Cancel` on a command that is
+  not executing is a no-op — measured against `pgvector/pgvector:pg16`: no exception, and the command
+  still runs afterwards.
 
   Not claimed either: promptness on a large corpus. The 1 024-candidate interval bounds how long a
   pass can outlive a cancellation, and that is a property of the checkpoint rather than a figure.
