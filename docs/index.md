@@ -100,19 +100,22 @@ twice. Every figure below is reproducible with a command on the
 - **A claim withdrawn before it was published.** An earlier figure on ArguAna is not reproducible by
   any code path in this repository, and no release carried it; the measurement behind the withdrawal is
   in [evaluation](evaluation.md), the provenance in the [changelog](../CHANGELOG.md#withdrawn).
-- **Where the composed stack pays off.** On NFCorpus — the one corpus where every lane is
-  measured — a dense retriever alone lands at BM25 level (0.304), BM25+dense RRF fusion
-  reaches **0.333**, and adding a cross-encoder rerank **0.346**, about 2.1 points above
-  BEIR's BM25. Those two lanes are the only ones that use a real model, and the model comes
-  from the harness, not from the library.
+- **Where the composed stack pays off.** Fusing a dense retriever with BM25 beats both parents on
+  **all three** corpora: NFCorpus 0.333 against 0.308/0.304, SciFact **0.686** against
+  0.662/0.655, ArguAna 0.350 against 0.320/0.313. A cross-encoder on top is **corpus-dependent**:
+  on NFCorpus it improves every first stage (0.346, about 2.1 points above BEIR's BM25), while on
+  SciFact it helps one of three and costs the best fusion 0.022. Those two lanes are the only ones
+  that use a real model, and the model comes from the harness, not from the library.
 - **The SQL backends, on the same corpora.** The three PostgreSQL engines that rank on their own are
   scored over the same queries and qrels as the in-memory table: at matched k1=0.9/b=0.4, ParadeDB's
   Tantivy BM25 reads **0.3055** and **0.6633** on NFCorpus and SciFact against this library's
   **0.305** and **0.655**, `ts_rank_cd` reads **0.1864** and **0.0188** — mostly its matcher, which
   ANDs every term — and pgvector at `ef_search` 10/40/160 reads **0.2882 / 0.2960 / 0.3013** on
-  NFCorpus against the exact in-memory dense row's **0.304**, which is the index's cost in nDCG.
-  ArguAna produces no row, because both text engines reject 2 of its 1,406 test queries. The
-  analysis there is PostgreSQL's, not this library's, and those rows are not pinned.
+  NFCorpus against the exact in-memory dense row's **0.304**, and **0.5998 / 0.6528 / 0.6550** on
+  SciFact against **0.655**: that gap is the index's cost in nDCG. ArguAna produces no row from any
+  of the three: the text engines reject 2 of its 1,406 test queries, and the vector engine rejects
+  148 as phrases. None of these rows is pinned, and the text engines' analysis is PostgreSQL's
+  rather than this library's.
   See [evaluation](evaluation.md#the-sql-backends-on-the-same-corpora).
 - **Zero runtime dependencies in the core.** `LexiSharp` references no NuGet package at
   all: index, BM25, every scorer and every decorator are BCL only. The optional packages

@@ -194,10 +194,12 @@ is [Scope and limits](https://github.com/manuc66/LexiSharp/blob/main/docs/refere
   SciFact against this library's **0.305** and **0.655**, and `ts_rank_cd` reads **0.1864** and
   **0.0188**, which is mostly its matcher — it ANDs every term. ArguAna produces no row: both
   engines reject 2 of its 1,406 test queries' syntax, and these rows are not pinned. The **vector**
-  engine goes the same way over the cached embeddings, one row per `ef_search`: on NFCorpus 0.2882 at
-  10, 0.2960 at 40 and 0.3013 at 160, against the in-memory dense row's **0.304** — that gap is what
-  the index costs in nDCG. The **sparse** and **fuzzy** engines are still measured only by
-  integration tests
+  engine goes the same way over the cached embeddings, one row per `ef_search`: NFCorpus
+  0.2882 / 0.2960 / 0.3013 at 10 / 40 / 160 against the exact in-memory dense row's **0.304**, and
+  SciFact 0.5998 / 0.6528 / 0.6550 against **0.655** — that gap is what the index costs in nDCG.
+  ArguAna is not measurable for any of the three (the text engines reject 2 of its 1,406 test
+  queries, the vector engine 148), and the **sparse** and **fuzzy** engines are still measured only
+  by integration tests
   ([backends](https://github.com/manuc66/LexiSharp/blob/main/docs/backends.md),
   [evaluation](https://github.com/manuc66/LexiSharp/blob/main/docs/evaluation.md#the-sql-backends-on-the-same-corpora)).
 - **Not every combination is tested.** Engines, scorers, rerankers and mergers are tested

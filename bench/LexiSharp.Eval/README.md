@@ -204,7 +204,7 @@ What each row is, and is not:
   that cannot fail. These numbers are reproducible from the command above, and nothing catches a
   drift in them.
 - **Scores are PostgreSQL-native and not numerically comparable** to `Bm25Scorer`; the metric
-  columns are. Feed both backends to the
+  columns are. Feed any two of them to the
   [hybrid merger](../../docs/pipelines.md#hybrid-engine) when one ordering is needed.
 
 `--backend vector --backend-ef 10,40,160` measures the ANN engine, one row per `ef_search`, over one
@@ -582,6 +582,12 @@ Default tokenizer, **no stemming** — see [Stemming](#stemming) for the same ru
 | BM25 tuned (k1=1.5, b=1)           |   0.664 |  0.619 |  0.630 | 0.789 |
 | BM25+ tuned (k1=2, b=1, δ=0.25)    |   0.666 |  0.620 |  0.631 | 0.792 |
 | BM25L tuned (k1=2, b=1, δ=0.25)    |   0.668 |  0.623 |  0.633 | 0.792 |
+| Dense multilingual-e5-small        |   0.655 |  0.606 |  0.619 | 0.793 |
+| Hybrid BM25+Dense (weighted)       |   0.681 |  0.634 |  0.645 | 0.812 |
+| Hybrid BM25+Dense (RRF)            |   0.686 |  0.637 |  0.651 | 0.821 |
+| BM25 (top100) → cross-encoder      |   0.653 |  0.606 |  0.620 | 0.778 |
+| QL (top100) → cross-encoder        |   0.649 |  0.604 |  0.618 | 0.770 |
+| Hybrid RRF (top100) → cross-encoder |  0.664 |  0.614 |  0.626 | 0.804 |
 
 BM25 at 0.662 vs the 0.665 BEIR reference — within 0.5 % on a dataset whose claims use exact
 terminology, so the stemming gap (large on NFCorpus, see [Stemming](#stemming)) nearly disappears
@@ -590,6 +596,19 @@ here; the tuned k1=1.5/b=1 operating point reproduces the reference at 0.664.
 SciFact is the friendliest case for a title weight in this whole harness — BM25F at title 2.0
 reaches 0.665, level with the published BM25. It is still +0.003 over BM25's 0.662 on 300 queries,
 which is not a result; treat it as "weighting did not hurt here", not as "weighting helps".
+
+**The dense rows exist here now, and the cross-encoder loses on this corpus.** The e5-small
+retriever alone reads 0.655, just below BM25's 0.662; fusing the two reaches 0.681 (weighted) and
+**0.686** (RRF), the best non-reranked row here. Stacking the cross-encoder on that fusion **costs
+0.022** (0.664), on BM25 it costs 0.009 (0.653), and only on query likelihood does it help (+0.027,
+0.649). On NFCorpus the same reranker improved every first stage; here it improves one of three, so
+"the cross-encoder helps" is a corpus-dependent statement and this is the corpus that says so. The
+cost is visible in the run: 1,718–1,890 s for 300 queries, against 0.1 s for the lexical pass.
+
+The pgvector index over the same embeddings costs what its recall says it should: 0.5998 at
+`ef_search` 10, 0.6528 at 40 and 0.6550 at 160, against the exact in-process 0.655. That is
+**−0.055 / −0.002 / −0.000 nDCG@10** — the same shape as NFCorpus, where the low end of the curve is
+much more expensive.
 
 ## Results (ArguAna, k=10, 1406 test queries)
 
@@ -609,18 +628,41 @@ Default tokenizer, **no stemming** — see [Stemming](#stemming) for the same ru
 | BM25F (title 4.0)                  |   0.375 |  0.249 |  0.249 | 0.772 |
 | BM25+ (delta=1.0)                  |   0.269 |  0.172 |  0.172 | 0.578 |
 | BM25L (delta=0.5)                  |   0.276 |  0.178 |  0.178 | 0.587 |
+| BM25 tuned (k1=2, b=1)             |   0.363 |  0.240 |  0.240 | 0.751 |
+| BM25+ tuned (k1=2, b=1, δ=0)       |   0.363 |  0.240 |  0.240 | 0.751 |
+| BM25L tuned (k1=2, b=1, δ=0)       |   0.363 |  0.240 |  0.240 | 0.751 |
+| Dense multilingual-e5-small        |   0.313 |  0.208 |  0.208 | 0.647 |
+| Hybrid BM25+Dense (weighted)       |   0.349 |  0.231 |  0.231 | 0.725 |
+| Hybrid BM25+Dense (RRF)            |   0.350 |  0.229 |  0.229 | 0.731 |
 
-**The BM25+ / BM25L rows here are the worst the variants do anywhere, and the one measurement in
-this repository where the missing δ knob is most likely to matter.** At a fixed paper δ they lose
-0.051 and 0.044 against BM25 — roughly 15 % relative, the same order as the 13–17 % that 9bb7c92
-retracted, but for a different reason and on a different corpus. That retraction was a
-transcription error on NFCorpus and SciFact; these rows are correctly transcribed and simply lose.
-ArguAna is also the corpus where a δ floor should plausibly do most work and least easily be
-recovered: a 125-point search over 1406 queries whose documents are whole arguments, on a single
-relevant document per query, is hours of compute, so **this run was `--no-tuned` and the variant
-rows are untuned-vs-untuned only.** Whether tuning δ closes a 0.051 gap here is **unmeasured**, and
-the NFCorpus/SciFact results do not transfer — SciFact was the one corpus where δ helped at all.
-Do not read these rows as the variants' verdict; read them as untuned, which is all they are.
+**The BM25+ / BM25L rows here are the worst the variants do anywhere — and the tuned rows answer
+the question the untuned ones left open.** At a fixed paper δ they lose 0.051 and 0.044 against
+BM25, roughly 15 % relative. The 125-point grid has now been run on this corpus, and **both variant
+tuners choose δ = 0**, so their tuned rows are the tuned BM25's own 0.363, at the same k1=2, b=1:
+tuning closes the gap by removing the bound rather than by finding a better one. That is a negative
+result for the lower bound, consistent with NFCorpus and with SciFact's +0.002/+0.004, and it means
+the untuned 0.269/0.276 are what a fixed δ costs on this corpus, not what the formula costs when
+fitted.
+
+Two caveats on the tuned rows, both from the run itself. The winner sits at the **corner of the
+grid** (k1=2 is the largest k1 offered, b=1 the largest b), so the optimum may lie outside it —
+`Bm25ParameterTuner` does not expand its grid. And the tuners score their candidates with
+`SearchOptions` defaults, where `ParseQuerySyntax` is **on**, while the harness scores the chosen
+row with it **off**: on this corpus 148 of the 1,406 test queries are phrases under that detector,
+which the tuner reads as adjacency and the table reads as text. That convention is not a rounding
+detail here: running the whole harness with `--query-syntax` takes BM25 at the defaults from 0.320
+to **0.289**, a 0.031 drop, and that is the size of the disagreement above (0.363 against the
+tuner's 0.328 for the same δ=0 point). The tuned row is therefore a parameter choice made under one
+convention and reported under another; on NFCorpus and SciFact the two are identical, because no
+query in either carries syntax. The four tuners take no `SearchOptions`, which is the gap behind it.
+
+**Fusion beats both parents here too, and it is the second corpus where that holds.** Dense alone
+reads 0.313, just below BM25's 0.320; BM25+dense reaches **0.349** (weighted) and **0.350** (RRF),
+so the +0.029/+0.030 over BM25 is the same shape as NFCorpus and SciFact. No cross-encoder row:
+1,406 queries of ~200 words through the reranker at 100 candidates is an order of magnitude more
+compute than SciFact's 300 short ones, and it was not run — an `ef_search` curve for ArguAna is
+absent for a different reason: the vector engine refuses 148 of the 1,406 test queries as phrases,
+so the curve would be over a reduced query set.
 
 **The largest BM25F margin anywhere in this harness, and not because of the weighting — but also not
 established as a real gain.** 0.379 against BM25's 0.320 on 1406 queries, both under the library

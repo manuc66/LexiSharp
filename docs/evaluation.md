@@ -247,9 +247,10 @@ What that table says:
 
 - the **dense retriever alone** sits at BM25 level (0.304 vs 0.308) on a model it does not
   ship — the harness supplies `multilingual-e5-small` over ONNX;
-- **fusing beats both parents** (0.323–0.333 against 0.308 and 0.304), and the
+- **fusing beats both parents** (0.323–0.333 against 0.308 and 0.304), and **on this corpus** the
   **cross-encoder improves every first stage** it is stacked on: **0.346** for BM25+dense RRF
-  plus reranking, about +2.1 points over BEIR's published BM25;
+  plus reranking, about +2.1 points over BEIR's published BM25. SciFact is the counter-example —
+  there the same reranker helps one of three first stages and costs the best fusion 0.022;
 - **BM25F sits below BM25 here and the title weight moves nothing** — a negative result, and
   the reason is default parameters rather than the technique: tuned against tuned, the two
   are identical on the reference corpus. See
@@ -258,19 +259,24 @@ What that table says:
 What it does **not** say:
 
 - the dense and cross-encoder rows are the only ones that use a real model, and both belong
-  to the harness, not to the library. SciFact and ArguAna have no dense or cross-encoder
-  rows at all, so the full stack is measured on **one** of the three corpora, not three;
+  to the harness, not to the library. The **dense and fused rows exist on all three corpora**
+  (SciFact: 0.655 alone, 0.681/0.686 fused; ArguAna: 0.313 alone, 0.349/0.350 fused), so the
+  hybrid payoff is measured three times rather than once. The **cross-encoder** is measured on two
+  of the three — ArguAna's 1,406 queries of ~200 words were not run — and on SciFact it is a
+  **loss**: 0.653 on BM25, 0.649 on query likelihood and 0.664 on the RRF fusion, against 0.662,
+  0.622 and 0.686;
 - stemming is not settled either: `--stem porter` takes NFCorpus 0.308 → 0.322 and SciFact
   0.662 → 0.687, and is mixed on ArguAna 0.320 → 0.308 (BM25) / 0.302 → 0.312 (QL). That is why it stays opt-in — see
   [Tokenizer customization](indexing.md#tokenizer-customization). What that comparison leaves out is
   the stop word list, which is the larger half of the analysis: `--analyzer english` (Porter plus
   the conventional 33 words) takes SciFact to 0.692 and NFCorpus to 0.327;
-- ArguAna's BM25F 0.379 is **untested, not a result**: it is default-vs-default, and a tuned
-  BM25 over its 1406 queries did not fit the compute available here.
+- ArguAna's BM25F 0.379 is **still untested, not a result** — BM25F was never tuned there. A tuned
+  BM25 for that corpus now exists (**0.363**, k1=2/b=1), and the untuned BM25F reads *above* it,
+  which is an untuned-versus-tuned comparison in the other direction and settles nothing.
 
 ## The SQL backends, on the same corpora
 
-The two PostgreSQL engines that rank on their own are measured by the same harness, over the same
+The three PostgreSQL engines that rank on their own are measured by the same harness, over the same
 test queries and qrels, through the same metric code at the same depth:
 
 ```bash
@@ -279,8 +285,10 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-
 ```
 
 `--backend lexical` measures `PostgresTextSearchEngine` (`tsvector` + `ts_rank_cd`);
-`--backend paradedb` measures `ParadeDBTextSearchEngine` (`pg_search` + `pdb.score`, Tantivy's BM25).
-The lane builds a table named `lexisharp_eval_<dataset>` and drops it when the run ends.
+`--backend paradedb` measures `ParadeDBTextSearchEngine` (`pg_search` + `pdb.score`, Tantivy's BM25);
+`--backend vector` measures `PostgresVectorSearchEngine` over the cached dense embeddings, with one
+row per `ef_search`. The lane builds a table named `lexisharp_eval_<dataset>` and drops it when the
+run ends.
 
 nDCG@10, harness defaults (exponential gains — the convention of the **defaults** rows above). The
 first table is the comparison worth having: ParadeDB's k1 and b are index-time tokenizer arguments in
@@ -313,9 +321,11 @@ Out of the box, each engine at its own defaults (`k1=1.5, b=0.75` here, `1.2, 0.
   document containing all of them. NFCorpus's test queries average 3.4 words and read 0.1864;
   SciFact's average 13.1 and read 0.0188. PostgreSQL's own English analysis
   (`--backend-config english`) moves NFCorpus 0.1864 → 0.2043, not closer.
-- **ArguAna has no row.** Both text engines refuse query text their matcher reads as a prefix operator,
-  and 2 of the 1,406 test queries carry one. The run prints that refusal and its count instead of a
-  metric over the other 1,404, which would be a different query set from every row beside it.
+- **ArguAna has no row.** Both text engines refuse query text their matcher reads as a prefix
+  operator, and 2 of the 1,406 test queries carry one; the vector engine refuses the 148 whose text
+  it reads as a phrase, because an embedding has no phrase semantics to honour. The run prints
+  that refusal and its count instead of a metric over a reduced query set, which would be a
+  different query set from every row beside it.
 - **These rows are not pinned.** `reference/pinned.json` keys on the analyzer and the BM25
   parameters, and the pinned job runs without a PostgreSQL service, so a pin there could only ever
   skip — a gate that cannot fail. They are reproducible from the command above, and nothing catches
@@ -328,20 +338,24 @@ Out of the box, each engine at its own defaults (`k1=1.5, b=0.75` here, `1.2, 0.
 The vector engine is measured the same way, over the harness's cached embeddings, with one row per
 `ef_search` — `--backend vector --backend-ef 10,40,160`, which needs `--dense`:
 
-| NFCorpus, ef_search | nDCG@10 | MAP@10 | MRR@10 | R@10 |
+| corpus, ef_search | nDCG@10 | MAP@10 | MRR@10 | R@10 |
 |---|---:|---:|---:|---:|
-| 10 | 0.2882 | 0.2077 | 0.4589 | 0.1301 |
-| 40 | 0.2960 | 0.2127 | 0.4811 | 0.1388 |
-| 160 | 0.3013 | 0.2151 | 0.4928 | 0.1426 |
-| exact, in process (the in-memory dense row) | 0.304 | 0.216 | 0.502 | 0.144 |
+| NFCorpus 10 | 0.2882 | 0.2077 | 0.4589 | 0.1301 |
+| NFCorpus 40 | 0.2960 | 0.2127 | 0.4811 | 0.1388 |
+| NFCorpus 160 | 0.3013 | 0.2151 | 0.4928 | 0.1426 |
+| NFCorpus exact, in process | 0.304 | 0.216 | 0.502 | 0.144 |
+| SciFact 10 | 0.5998 | 0.5552 | 0.5670 | 0.7244 |
+| SciFact 40 | 0.6528 | 0.6053 | 0.6179 | 0.7861 |
+| SciFact 160 | 0.6550 | 0.6062 | 0.6188 | 0.7928 |
+| SciFact exact, in process | 0.655 | 0.606 | 0.619 | 0.793 |
 
 The in-memory dense row ranks the same vectors exactly, so the distance between the two is what the
-index costs in metric points: **0.0158 nDCG@10 at `ef_search` 10, 0.008 at 40, 0.0027 at 160** —
-recall translated into nDCG rather than left as a ratio. The residual at 160 is not attributed here:
-it is the same cosine computed by pgvector in single precision and in process, and on NFCorpus the
-planner may already answer with an exact scan at that value ([backends](backends.md)). NFCorpus is
-the only corpus this curve was taken on; the lane accepts the other two, and no figure is quoted for
-them because none was taken.
+index costs in metric points: **NFCorpus 0.0158 / 0.008 / 0.0027** and **SciFact 0.055 / 0.002 /
+0.0000** at `ef_search` 10 / 40 / 160 — recall translated into nDCG rather than left as a ratio. The
+residual at NFCorpus's 160 is not attributed: it is the same cosine computed by pgvector in single
+precision and in process, and on that corpus the planner may already answer with an exact scan at
+that value ([backends](backends.md)). ArguAna has no curve: the vector engine refuses 148 of its
+1,406 test queries as phrases, and a metric over the rest would be a different query set.
 
 What the lane does **not** cover: the **sparse** and **fuzzy** engines. No sparse model is wired into
 this harness, and trigram similarity is not a ranking of prose; the integration suite is what covers

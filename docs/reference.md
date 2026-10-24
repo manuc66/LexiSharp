@@ -105,9 +105,9 @@ was designed from:
   came back negative or null, and publishing that is the point:
   - *BM25+ and BM25L*, tuned on their own `δ`, **tie** a tuned BM25 on the reference corpus and
     NFCorpus, and edge it by 0.002–0.004 on SciFact — an in-sample margin, so an upper bound rather
-    than a result. On ArguAna, at a fixed `δ`, they **lose** 0.040–0.046, and no `δ`-tuned ArguAna
-    row exists, so whether tuning closes that gap is **unmeasured**. See
-    [BM25 variants](ranking.md#bm25-variants).
+    than a result. On ArguAna, at a fixed `δ`, they **lose** 0.040–0.046; tuned there, both pick
+    `δ = 0` and read the tuned BM25's 0.363, so the gap closes by removing the bound rather than by
+    finding a better one. See [BM25 variants](ranking.md#bm25-variants).
   - *BM25F*'s tuner reports `WeightingHelped = false` on every corpus tried, and on the reference
     corpus — re-fitted on the metric being reported — BM25F tuned trails BM25 tuned by 0.011. See
     [BM25F](ranking.md#bm25f-field-weighted-bm25).
