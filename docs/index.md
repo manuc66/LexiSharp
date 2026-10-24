@@ -41,7 +41,8 @@ foreach (var result in engine.Search("textual search"))
 
 `net10.0`, MIT. Optional packages: `LexiSharp.MessagePack` (binary index persistence),
 `LexiSharp.AspNetCore` (a `GET /search` endpoint), `LexiSharp.Postgres` (lexical, vector,
-sparse, fuzzy and true BM25 backends).
+sparse, fuzzy and true BM25 backends). The engine is also a .NET tool —
+`dotnet tool install -g LexiSharp.Cli`, then `lexisharp search ./docs --query "rank fusion"`.
 
 ## See it running
 

@@ -127,6 +127,34 @@ jobs:
           print(f"OK: {len(pdbs)} PDB(s) in {os.path.basename(snupkgs[0])}")
           PY
 
+      # The CLI ships as a .NET tool, and nothing else in this workflow packs it: a dropped
+      # PackAsTool or ToolCommandName would surface only at the tag, when publish.yml pushes a
+      # package that `dotnet tool install` cannot use. So pack it and check the shape a tool
+      # package needs -- the DotnetTool package type, the settings file that declares the
+      # command, and a managed assembly under tools/.
+      - name: CLI tool package
+        run: |
+          dotnet pack bench/LexiSharp.Cli/LexiSharp.Cli.csproj -c Release -o "$RUNNER_TEMP/tool"
+          python3 - "$RUNNER_TEMP/tool" <<'PY'
+          import glob, sys, zipfile
+
+          nupkgs = glob.glob(sys.argv[1] + "/*.nupkg")
+          if len(nupkgs) != 1:
+              sys.exit(f"expected exactly one .nupkg, got {nupkgs}")
+
+          z = zipfile.ZipFile(nupkgs[0])
+          names = z.namelist()
+          nuspec = z.read(next(n for n in names if n.endswith(".nuspec"))).decode()
+
+          if "DotnetTool" not in nuspec:
+              sys.exit("the package is not marked with the DotnetTool package type")
+          if not any(n.endswith("DotnetToolSettings.xml") for n in names):
+              sys.exit("no DotnetToolSettings.xml: the package declares no command")
+          if not any(n.startswith("tools/") and n.endswith(".dll") for n in names):
+              sys.exit("no managed assembly under tools/")
+          print(f"OK: {nupkgs[0]} is a tool package")
+          PY
+
       - name: Code shape manifests
         # The structural shape of every shipped assembly: per method, the length of its IL and its
         # decoded local signature, with no metadata token anywhere. Publishing it as an artifact is

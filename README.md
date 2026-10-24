@@ -56,6 +56,13 @@ code — reads the same figures off a run the harness writes.
 dotnet add package LexiSharp   # the core: index, scorers, engines, decorators — no dependencies
 ```
 
+Or from a terminal, without writing any code:
+
+```bash
+dotnet tool install -g LexiSharp.Cli
+lexisharp search ./docs --query "rank fusion"
+```
+
 `net10.0`, MIT. Optional: `LexiSharp.MessagePack` (binary index persistence),
 `LexiSharp.AspNetCore` (a `GET /search` minimal-API endpoint), `LexiSharp.Postgres` (lexical,
 vector, sparse, fuzzy and true BM25 backends) — [packages](#packages).
@@ -146,7 +153,8 @@ tokenize identically, so a demo figure is not a harness figure — compare by ru
 LexiSharp                core: index, scorers, fusion, reranking, metrics, traces — no dependencies
 ├── LexiSharp.Postgres   tsvector · pgvector · sparsevec · pg_trgm · pg_search (Tantivy) BM25
 ├── LexiSharp.MessagePack    binary persistence for the in-memory index
-└── LexiSharp.AspNetCore     a GET /search minimal-API endpoint over LexiSharpIndex<T>
+├── LexiSharp.AspNetCore     a GET /search minimal-API endpoint over LexiSharpIndex<T>
+└── LexiSharp.Cli            a dotnet tool: search a directory, build a store, benchmark a config
 ```
 
 `LexiSharp` also carries text analysis next to the search box: lexical similarity, keyword

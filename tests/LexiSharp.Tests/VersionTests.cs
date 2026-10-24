@@ -47,7 +47,7 @@ public partial class VersionTests
         }
     }
 
-    /// <summary>The shipped packages, by assembly name. All four are referenced by this project.</summary>
+    /// <summary>The four library packages, by assembly name. All four are referenced by this project.</summary>
     private static readonly string[] ShippedAssemblies =
     [
         "LexiSharp",

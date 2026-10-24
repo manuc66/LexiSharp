@@ -6,13 +6,30 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <IsPackable>false</IsPackable>
+    <!--
+      A .NET tool, so the first thing a reader can do with this repository is install it and
+      search a directory: no project to create, no code to compile. The packaging properties
+      are what make that possible; the project stays where it is because the same binary also
+      carries `baseline` and `verify`, the commands CI runs against the golden master.
+    -->
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>lexisharp</ToolCommandName>
+    <PackageId>LexiSharp.Cli</PackageId>
+    <Title>LexiSharp.Cli</Title>
+    <Description>Command-line tool for LexiSharp: index a directory into a persistent segment store, search a corpus from the terminal, and run the benchmark, diff and baseline commands. The core library is the LexiSharp package.</Description>
+    <Authors>manu</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>search;full-text-search;bm25;information-retrieval;cli;dotnet-tool</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <ServerGarbageCollection>true</ServerGarbageCollection>
     <RootNamespace>LexiSharp.Cli</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../src/LexiSharp/LexiSharp.csproj" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>
