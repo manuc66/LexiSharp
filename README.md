@@ -4,23 +4,51 @@
 [![CodeQL](https://github.com/manuc66/lexisharp/actions/workflows/codeql.yml/badge.svg)](https://github.com/manuc66/lexisharp/actions/workflows/codeql.yml)
 [![codecov](https://codecov.io/gh/manuc66/lexisharp/graph/badge.svg)](https://codecov.io/gh/manuc66/lexisharp)
 [![SonarCloud quality gate](https://img.shields.io/sonar/quality_gate/manuc66_lexisharp?server=https://sonarcloud.io)](https://sonarcloud.io/summary/new_code?id=manuc66_lexisharp)
-[![CodeFactor](https://www.codefactor.io/repository/github/manuc66/lexisharp/badge)](https://www.codefactor.io/repository/github/manuc66/lexisharp/issues)
 [![NuGet](https://img.shields.io/nuget/v/LexiSharp.svg)](https://www.nuget.org/packages/LexiSharp/)
 [![Docs](https://img.shields.io/badge/docs-manuc66.github.io/LexiSharp-blue)](https://manuc66.github.io/LexiSharp/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> A composable information retrieval toolkit for .NET — build, measure and inspect search
-> pipelines, from lexical BM25 to hybrid and reranked retrieval.
+**Search and retrieval for .NET — BM25, rank fusion and reranking in composable pipelines.**
 
-Index, retrieve, rank and **judge** a search pipeline: an in-memory inverted index, four
-ranking strategies and their BM25 variants, rank fusion, reranking, optional PostgreSQL
-backends, and **model-agnostic seams** for dense, learned-sparse and neural scoring — the
-models stay in your application. The core package references **no NuGet package at all**.
+Index a corpus, score it, fuse several retrievers by rank, rerank the result — then read back
+*why* each document landed where it did. The core is an in-memory inverted index, four ranking
+strategies and their BM25 variants, rank fusion, reranking, IR metrics and end-to-end search
+traces; the models stay in your application behind a seam you implement. It references **no
+NuGet package at all**.
 
-📖 **[Full documentation →](https://manuc66.github.io/LexiSharp/)** — the guide, the
-reference, and every measurement with the command that reproduces it. Published from
-[`docs/`](docs/); this README is the short version and the details are delegated to those
-pages.
+- **Nothing to host.** No vector database, no embedding API, no native library: the core is BCL
+  only. PostgreSQL, ASP.NET Core and MessagePack are separate, optional packages.
+- **The ranking can explain itself.** Every stage writes a `SearchTrace` — the score going in and
+  out — and `Explain` breaks a scorer down further, to its per-term contributions, so "why did
+  this rank here?" is a method call.
+- **Composition, not configuration.** The index owns corpus statistics, the scorer is a pure
+  strategy over it, the engine orchestrates. Hybrid retrieval and reranking are decorators over
+  the same `ITextSearchEngine`, so a pipeline is stages wrapping each other.
+- **Scored against published results.** The plain BM25 scorer is measured on three public BEIR
+  corpora and compared with the figures published for them; the numbers are pinned, and a
+  workflow replays every one of them on a push that touches the library or the harness, and
+  weekly.
+
+📖 **[Documentation →](https://manuc66.github.io/LexiSharp/)** — the guide, the reference, and
+every measurement with the command that reproduces it. This README is the short version.
+
+## Does it work?
+
+nDCG@10 on three public BEIR corpora, with the analysis, the BM25 parameters and the metric
+convention aligned to those the published figures were produced with:
+
+| Corpus | LexiSharp | Published | Δ |
+|---|---:|---:|---:|
+| NFCorpus | 0.3215 | 0.3218 | −0.0003 |
+| SciFact | 0.6788 | 0.6789 | −0.0001 |
+| ArguAna | 0.3970 | 0.3970 | 0.0000 |
+
+Under this library's own default analysis and parameters the same scorer reads 0.308 / 0.662 /
+0.320; that difference is the configuration, not the ranking. Corpora are md5-verified on
+download, and on ArguAna `trec_eval` — the standard evaluator, not this repository's metric
+code — reads the same figures off a run the harness writes.
+
+[The full tables, and the command that reproduces them →](https://github.com/manuc66/LexiSharp/blob/main/docs/evaluation.md)
 
 ## Install
 
@@ -29,8 +57,8 @@ dotnet add package LexiSharp   # the core: index, scorers, engines, decorators �
 ```
 
 `net10.0`, MIT. Optional: `LexiSharp.MessagePack` (binary index persistence),
-`LexiSharp.AspNetCore` (a `GET /search` minimal-API endpoint), `LexiSharp.Postgres`
-(lexical, vector, sparse, fuzzy and true BM25 backends) — [packages](docs/reference.md#packages).
+`LexiSharp.AspNetCore` (a `GET /search` minimal-API endpoint), `LexiSharp.Postgres` (lexical,
+vector, sparse, fuzzy and true BM25 backends) — [packages](#packages).
 
 ## Use it
 
@@ -58,9 +86,9 @@ foreach (var result in engine.Search("textual search"))
 ```
 
 That is the smallest thing the library does. The rest is composition: every engine above
-implements `ITextSearchEngine`, and a pipeline is stages wrapping each other. Given two
-engines over one index, `HashingEmbeddingProvider` standing in for your
-`IEmbeddingProvider` (no model, no service):
+implements `ITextSearchEngine`, and a pipeline is stages wrapping each other. Given two engines
+over one index, `HashingEmbeddingProvider` standing in for your `IEmbeddingProvider` (no model,
+no service):
 
 ```csharp
 var hybrid = new HybridTextSearchEngine(
@@ -71,13 +99,13 @@ ITextSearchEngine pipeline = new RerankedTextSearchEngine(
     hybrid, new ProximityReranker(index));   // ...or MMR, a cascade, MaxSim, a cross-encoder
 ```
 
-Replacing a piece is the whole extension model — a PostgreSQL, vector, sparse or fuzzy
-backend takes the same slot, and `IEmbeddingProvider`, `ISparseEmbeddingProvider` and
-`ICrossEncoderScorer` are yours to implement: [pipelines](docs/pipelines.md), and
-[backends](docs/backends.md).
+Replacing a piece is the whole extension model. A PostgreSQL, vector, sparse or fuzzy backend
+takes the same slot, and `IEmbeddingProvider`, `ISparseEmbeddingProvider` and
+`ICrossEncoderScorer` are yours to implement — [pipelines](https://github.com/manuc66/LexiSharp/blob/main/docs/pipelines.md),
+[backends](https://github.com/manuc66/LexiSharp/blob/main/docs/backends.md).
 
-`LexiSharpIndex<T>` is the typed facade over the same engine if you would rather hand it your
-own objects — [Getting started](docs/getting-started.md).
+`LexiSharpIndex<T>` is the typed facade over the same engine if you would rather hand it your own
+objects — [Getting started](https://github.com/manuc66/LexiSharp/blob/main/docs/getting-started.md).
 
 ## See it running
 
@@ -90,34 +118,44 @@ expansion, dense hashing embeddings, RRF fusion and a term-overlap rerank — wi
 latency, highlighting and a click-through "why did this rank here?" panel. No model, no
 external service.
 
-The corpus is the built-in one, written for the demo. `--corpus` runs the same five lanes over a
-BEIR corpus instead — `nfcorpus`, `scifact` or `arguana` — read from the evaluation harness's data
-directory, which the harness downloads on first use:
+![The demo comparing five retrieval strategies over one corpus — BM25, PMI expansion, hashing embeddings, RRF fusion and a term-overlap rerank, with per-lane latency and highlighting](https://raw.githubusercontent.com/manuc66/LexiSharp/main/docs/images/demo.png)
 
-```bash
-dotnet run --project samples/LexiSharp.Demo -- --corpus scifact
+Clicking a hit shows the `SearchTrace` for that document: the stages it passed through, and the
+score going in and out of each.
+
+```
+score   4.6925 -> 4.6925  BM25
+score   3.1642 -> 3.1642  BM25
+score   0.4867 -> 0.4867  Dense
+merge   0.0492 -> 0.0492  dense=0.4867 lexical=4.6925 semantic=3.1642
+rerank  0.0492 -> 100     CrossEncoder(QueryTermOverlap)
 ```
 
-The example queries come from the corpus's own `queries.jsonl`, restricted to the ones carrying a
-positive judgement in `qrels/test.tsv`. The demo builds a BEIR corpus's documents the way
-[the harness](bench/LexiSharp.Eval) does — title as a text field, body as the text — but it does
-not rank it identically, because the two tokenize differently: the demo removes stop words and the
-harness's default analysis does not. On NFCorpus, 5 of the 6 example queries come back with a
-different top-10 ordering, for a mean top-10 overlap of 6.67. Compare a demo figure against the
-harness by running the harness.
+Each lane states what backs it — the semantic lane uses `PmiTermExpander`, the dense lane a
+`HashingEmbeddingProvider`, the rerank lane a local term-overlap `ICrossEncoderScorer` — and all
+three are swappable for a real model behind their existing seam.
 
-`--segmentation` picks how a separator inside a word is treated: `uax29` (the default) or `flat`.
-Under `flat` every non-word character ends a word, so `1,000` indexes as the term `000` and
-`don't` as `don`; under `uax29` a comma between two digits and an apostrophe within one class stay
-in the token. It decides which tokens exist, so every lane uses it — a page comparing two lanes
-under two segmentations would be comparing tokenizers.
+`--corpus nfcorpus|scifact|arguana` runs the same five lanes over a BEIR corpus instead of the
+built-in one, read from the evaluation harness's data directory. The demo and the harness do not
+tokenize identically, so a demo figure is not a harness figure — compare by running the harness.
+[What the demo shows, and how to read it →](https://github.com/manuc66/LexiSharp/blob/main/docs/getting-started.md#reference-demo-sampleslexisharpdemo)
 
-![The demo comparing five retrieval strategies over one corpus — BM25, PMI expansion, hashing embeddings, RRF fusion and a term-overlap rerank, with per-lane latency and highlighting](https://raw.githubusercontent.com/manuc66/LexiSharp/main/docs/images/demo.png)
+## Packages
+
+```
+LexiSharp                core: index, scorers, fusion, reranking, metrics, traces — no dependencies
+├── LexiSharp.Postgres   tsvector · pgvector · sparsevec · pg_trgm · pg_search (Tantivy) BM25
+├── LexiSharp.MessagePack    binary persistence for the in-memory index
+└── LexiSharp.AspNetCore     a GET /search minimal-API endpoint over LexiSharpIndex<T>
+```
+
+`LexiSharp` also carries text analysis next to the search box: lexical similarity, keyword
+extraction and a Naive Bayes classifier — [text analysis](https://github.com/manuc66/LexiSharp/blob/main/docs/text-analysis.md).
 
 ## What it does not do
 
 Stated plainly, so nothing is implied. The full list, with the measurement behind each claim,
-is [Scope and limits](docs/reference.md#scope-and-limits).
+is [Scope and limits](https://github.com/manuc66/LexiSharp/blob/main/docs/reference.md#scope-and-limits).
 
 - **It matches the published BM25 baseline on all three corpora it can be compared on.** On NFCorpus
   and SciFact, with the analysis, the BM25 parameters and the metric convention aligned to those the
@@ -132,17 +170,17 @@ is [Scope and limits](docs/reference.md#scope-and-limits).
   the analyzer, the parameters and one task convention, not the ranking. Corpora are md5-verified on
   download, and the numbers are pinned and re-checked by the `Pinned reference` workflow, which
   replays every pinned configuration and exits non-zero on drift. It runs on a dispatch, on a push
-  that touches the library or the harness, and weekly — see [evaluation](docs/evaluation.md).
+  that touches the library or the harness, and weekly — see [evaluation](https://github.com/manuc66/LexiSharp/blob/main/docs/evaluation.md).
 - **An earlier figure published for ArguAna was withdrawn;** it is not reproducible by any code
-  path in this repository. See the [changelog](CHANGELOG.md).
+  path in this repository. See the [changelog](https://github.com/manuc66/LexiSharp/blob/main/CHANGELOG.md).
 - **No scorer here has a measured win over a tuned BM25.** BM25+ and BM25L, tuned on their own
   `δ`, **tie** a tuned BM25 on the reference corpus and NFCorpus and edge it by 0.002–0.004 on
   SciFact — an in-sample margin, so an upper bound rather than a result. On ArguAna, untuned,
   they lose, and no `δ`-tuned ArguAna row exists, so whether tuning closes that gap is
-  **unmeasured** ([ranking](docs/ranking.md#bm25-variants)).
+  **unmeasured** ([ranking](https://github.com/manuc66/LexiSharp/blob/main/docs/ranking.md#bm25-variants)).
 - **The SQL backends' retrieval quality is unmeasured.** The BEIR numbers come from the
   in-memory engines; the live integration tests cover schema, query paths and cosine
-  behaviour, not relevance ([backends](docs/backends.md)).
+  behaviour, not relevance ([backends](https://github.com/manuc66/LexiSharp/blob/main/docs/backends.md)).
 - **Not every combination is tested.** Engines, scorers, rerankers and mergers are tested
   individually *and* in the combinations described, but not every pairing — treat an unusual
   one as supported but unproven until you test it on your data.
@@ -166,7 +204,8 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --verify-reference
 ```
 
 Benchmarks, the evaluation harness and the behavioural gate:
-[Reference](docs/reference.md#building--testing) and [Benchmarks](docs/benchmarks.md).
+[Reference](https://github.com/manuc66/LexiSharp/blob/main/docs/reference.md#building--testing)
+and [Benchmarks](https://github.com/manuc66/LexiSharp/blob/main/docs/benchmarks.md).
 
 ## License
 

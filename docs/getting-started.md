@@ -158,3 +158,27 @@ dotnet run --project samples/LexiSharp.Demo
 ```
 
 See [See it running](index.md#see-it-running) for what this buys you and how to read the lanes.
+
+### Demo corpora and segmentation
+
+The corpus is the built-in one, written for the demo. `--corpus` runs the same five lanes over a
+BEIR corpus instead — `nfcorpus`, `scifact` or `arguana` — read from the evaluation harness's data
+directory, which the harness downloads on first use:
+
+```bash
+dotnet run --project samples/LexiSharp.Demo -- --corpus scifact
+```
+
+The example queries come from the corpus's own `queries.jsonl`, restricted to the ones carrying a
+positive judgement in `qrels/test.tsv`. The demo builds a BEIR corpus's documents the way
+[the harness](https://github.com/manuc66/LexiSharp/tree/main/bench/LexiSharp.Eval) does — title as
+a text field, body as the text — but it does not rank it identically, because the two tokenize
+differently: the demo removes stop words and the harness's default analysis does not. On NFCorpus,
+5 of the 6 example queries come back with a different top-10 ordering, for a mean top-10 overlap of
+6.67. Compare a demo figure against the harness by running the harness.
+
+`--segmentation` picks how a separator inside a word is treated: `uax29` (the default) or `flat`.
+Under `flat` every non-word character ends a word, so `1,000` indexes as the term `000` and `don't`
+as `don`; under `uax29` a comma between two digits and an apostrophe within one class stay in the
+token. It decides which tokens exist, so every lane uses it — a page comparing two lanes under two
+segmentations would be comparing tokenizers.
