@@ -87,6 +87,10 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --verify-reference
 
 # Cheap: what the index holds, against the reference index. No scoring.
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset all --fingerprint --analyzer english
+
+# A SQL backend on the same corpus, queries and qrels — see "SQL backends":
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
+  --backend paradedb --backend-connection "Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp"
 ```
 
 - Datasets live under `bench/LexiSharp.Eval/data/<name>/` (gitignored).
@@ -143,6 +147,68 @@ Runtime, no Python:
 - The reranker scores each candidate's *document text* (query and doc are tokenized as a
   BERT pair); scores are validated against the HuggingFace `CrossEncoder` reference on the
   same query–doc pairs (Spearman ρ ≈ 0.99 on NFCorpus candidates, top-10 overlap ≈ 0.9).
+
+## SQL backends (optional, needs PostgreSQL)
+
+`--backend` scores one of the PostgreSQL engines on the same corpus, the same test queries and the
+same qrels as the table above, through the same metric code at the same depth:
+
+| `--backend` | engine | ranking | needs |
+|---|---|---|---|
+| `lexical` | `PostgresTextSearchEngine` | `ts_rank_cd` | stock PostgreSQL (the lane installs `unaccent`) |
+| `paradedb` | `ParadeDBTextSearchEngine` | `pdb.score`, Tantivy's BM25 | `paradedb/paradedb:pg16` (`pg_search`) |
+
+The row is printed on its own rather than appended to the table: every row above is a different
+scorer over one shared in-memory index, and these engines own both their index and their ranking
+function. The lane builds a table named `lexisharp_eval_<dataset>` and drops it when the run ends,
+so it never reads or empties a table an application uses.
+
+`--backend-bm25 0.9,0.4` sets ParadeDB's k1/b. `pg_search` takes them as per-field tokenizer
+arguments, so the index is built at that operating point rather than re-weighted afterwards; omitted,
+Tantivy's defaults (k1=1.2, b=0.75) apply. nDCG@10 at the published operating point, against this
+harness at the same parameters and the same analysis (harness defaults, exponential gains):
+
+| corpus | LexiSharp BM25 (0.9, 0.4) | ParadeDB `pdb.score` (0.9, 0.4) | Δ |
+|---|---:|---:|---:|
+| NFCorpus | 0.305 | 0.3055 | +0.0005 |
+| SciFact | 0.655 | 0.6633 | +0.0083 |
+
+Out of the box, each engine at its own defaults:
+
+| corpus | LexiSharp BM25 (1.5, 0.75) | ParadeDB `pdb.score` (1.2, 0.75) | Postgres `ts_rank_cd` (`simple`) | `ts_rank_cd` (`english`) |
+|---|---:|---:|---:|---:|
+| NFCorpus | 0.308 | 0.3084 | 0.1864 | 0.2043 |
+| SciFact | 0.662 | 0.6619 | 0.0188 | not measured |
+| ArguAna | 0.320 | not measured | not measured | not measured |
+
+What each row is, and is not:
+
+- **ParadeDB is a BM25 and reads where this library's BM25 reads.** At matched parameters the two
+  differ by 0.0005 on NFCorpus and 0.0083 on SciFact, which is analysis rather than ranking: the
+  index is `pdb.simple` with ASCII folding, the title is concatenated into the indexed content
+  because the `pg_search` index covers `content` alone, and the matcher is a disjunction (`|||`)
+  rather than this library's scored term loop. Not a reproduction, and not bit-identical.
+- **`ts_rank_cd` is not BM25** — it is coverage-based and takes no k1/b, so `--backend-bm25` is
+  refused with it rather than silently ignored. Most of its distance from the BM25 column is the
+  *matching* rule rather than the ranking: `websearch_to_tsquery` ANDs every term, so its idea of a
+  match is a document containing all of them. NFCorpus's test queries average 3.4 words and read
+  0.1864; SciFact's average 13.1 and read 0.0188. PostgreSQL's own English analysis
+  (`--backend-config english`) moves NFCorpus 0.1864 → 0.2043, not closer.
+- **ArguAna has no row.** Both engines refuse query text their matcher would read as a prefix
+  operator, and 2 of the 1,406 test queries carry a `*` attached to a term. The lane prints that
+  refusal and its count instead of a metric over the other 1,404, which would be a different query
+  set from every row it sat beside.
+- **The rows are not pinned.** `reference/pinned.json` keys on the analyzer and the BM25 parameters,
+  and the pinned job runs without a PostgreSQL service, so a pin there could only ever skip — a gate
+  that cannot fail. These numbers are reproducible from the command above, and nothing catches a
+  drift in them.
+- **Scores are PostgreSQL-native and not numerically comparable** to `Bm25Scorer`; the metric
+  columns are. Feed both backends to the
+  [hybrid merger](../../docs/pipelines.md#hybrid-engine) when one ordering is needed.
+
+The vector and sparse engines are not in this lane. Their quality knob is not a ranking but an ANN
+index, and the lane that measures it is the `ef_search` curve (`--ann-ef`), which reports recall
+against an exact top-k rather than nDCG.
 
 ## Per-query analysis
 

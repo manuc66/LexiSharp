@@ -20,6 +20,25 @@ workflow.
 
 ### Added
 
+- **The evaluation harness scores the PostgreSQL backends on the BEIR corpora.**
+
+  `--backend lexical|paradedb --backend-connection <s>` adds a nDCG/MAP/MRR/recall row measured
+  through a real SQL engine, over the same corpus, test queries and qrels as the in-memory table
+  and through the same metric code at the same depth. The row is printed on its own rather than
+  appended to that table: every row there is a different scorer over one shared index, and these
+  engines own both their index and their ranking function. The lane builds a table named
+  `lexisharp_eval_<dataset>` and drops it afterwards, so it never reads or empties a table an
+  application uses.
+
+  ParadeDB's row is Tantivy's BM25, with `--backend-bm25` setting k1/b as index-time tokenizer
+  arguments and the title concatenated into the indexed content; the lexical row is `ts_rank_cd`,
+  whose `websearch_to_tsquery` matcher ANDs every term. ArguAna produces no row: both engines refuse
+  query text their matcher reads as a prefix operator, and 2 of its 1,406 test queries carry one, so
+  the run reports the refusal rather than a metric over a different query set. The measured figures
+  and what each one is comparable with are in `bench/LexiSharp.Eval/README.md` and
+  `docs/evaluation.md`; they are not pinned, because the pinned job runs without a PostgreSQL service
+  and a pin there could only ever skip.
+
 - **`LexiSharp.Cli` is a .NET tool, so the library can be tried without writing code.**
 
   `dotnet tool install -g LexiSharp.Cli` puts `lexisharp` on the path: `search` scans a directory
