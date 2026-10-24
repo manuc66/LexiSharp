@@ -155,19 +155,44 @@ public sealed class TextRankKeywordExtractor : IKeywordExtractor
 
     private double Sweep(double[][] weights, double[] outWeights, double[] scores, double[] next)
     {
+        int count = scores.Length;
+        double baseScore = (1 - _damping) / count;
+
+        // Accumulated by source node, so the inner loop walks one contiguous row of the adjacency
+        // matrix. The destination-outer form read a *column* of a jagged matrix once per node —
+        // n rows touched at one offset each, which on a graph of a few hundred terms is a strided
+        // walk over megabytes and misses on most of them. The sums are unchanged: for a given
+        // destination the contributions still arrive in ascending source order, and the text still
+        // multiplies the same quotient by the same score, so the result is the same double.
+        Array.Clear(next);
+
+        for (int source = 0; source < count; source++)
+        {
+            double outWeight = outWeights[source];
+
+            if (outWeight <= 0)
+                continue;
+
+            double score = scores[source];
+            double[] row = weights[source];
+
+            for (int destination = 0; destination < count; destination++)
+            {
+                if (destination == source)
+                    continue;
+
+                double weight = row[destination];
+
+                if (weight > 0)
+                    next[destination] += score * (weight / outWeight);
+            }
+        }
+
         double totalChange = 0;
 
-        for (int i = 0; i < scores.Length; i++)
+        for (int i = 0; i < count; i++)
         {
-            double incoming = 0;
-
-            for (int j = 0; j < scores.Length; j++)
-            {
-                if (j != i && weights[j][i] > 0 && outWeights[j] > 0)
-                    incoming += scores[j] * (weights[j][i] / outWeights[j]);
-            }
-
-            next[i] = ((1 - _damping) / scores.Length) + (_damping * incoming);
+            next[i] = baseScore + (_damping * next[i]);
             totalChange += Math.Abs(next[i] - scores[i]);
         }
 
