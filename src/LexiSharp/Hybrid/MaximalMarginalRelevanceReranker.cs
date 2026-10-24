@@ -84,17 +84,38 @@ public sealed class MaximalMarginalRelevanceReranker : IReranker
 
         var selected = new List<SearchResult>(pool.Count);
         var selectedVectors = new List<ReadOnlyMemory<float>>();
+        var selectedNorms = new List<float>();
+
+        // Every candidate's vector and norm resolved once, before the selection starts: both are
+        // loop-invariant across the whole greedy pass, and the inner loop is quadratic in the pool.
+        // A candidate with no vector stays `Present == false`, which is what keeps it out of the
+        // selected set and gives it a redundancy of 0 — the same two behaviours the dictionary
+        // lookups used to produce one pair at a time.
+        var poolVectors = new List<CandidateVector>(pool.Count);
+
+        foreach (var candidate in pool)
+        {
+            poolVectors.Add(_vectors.TryGetValue(candidate.DocumentId, out var vector)
+                ? new CandidateVector(vector, VectorSimilarity.Norm(vector.Span), present: true)
+                : default);
+        }
 
         while (pool.Count > 0 && (_limit is null || selected.Count < _limit))
         {
-            int bestIndex = SelectBestIndex(pool, selectedVectors, maxScore);
+            int bestIndex = SelectBestIndex(pool, poolVectors, selectedVectors, selectedNorms, maxScore);
 
             var pick = pool[bestIndex];
+            var pickVector = poolVectors[bestIndex];
+
             pool.RemoveAt(bestIndex);
+            poolVectors.RemoveAt(bestIndex);
             selected.Add(pick);
 
-            if (_vectors.TryGetValue(pick.DocumentId, out var vector))
-                selectedVectors.Add(vector);
+            if (pickVector.Present)
+            {
+                selectedVectors.Add(pickVector.Vector);
+                selectedNorms.Add(pickVector.Norm);
+            }
         }
 
         return selected;
@@ -102,7 +123,9 @@ public sealed class MaximalMarginalRelevanceReranker : IReranker
 
     private int SelectBestIndex(
         List<SearchResult> pool,
+        List<CandidateVector> poolVectors,
         List<ReadOnlyMemory<float>> selectedVectors,
+        List<float> selectedNorms,
         double maxScore)
     {
         int bestIndex = 0;
@@ -113,7 +136,7 @@ public sealed class MaximalMarginalRelevanceReranker : IReranker
             double relevance = maxScore > 0 ? pool[i].Score / maxScore : 0;
             double redundancy = selectedVectors.Count == 0
                 ? 0
-                : MaxSimilarity(pool[i], selectedVectors);
+                : MaxSimilarity(poolVectors[i], selectedVectors, selectedNorms);
 
             double mmr = (_lambda * relevance) - ((1 - _lambda) * redundancy);
 
@@ -128,21 +151,36 @@ public sealed class MaximalMarginalRelevanceReranker : IReranker
         return bestIndex;
     }
 
-    private double MaxSimilarity(SearchResult candidate, List<ReadOnlyMemory<float>> selectedVectors)
+    private static double MaxSimilarity(
+        CandidateVector candidate,
+        List<ReadOnlyMemory<float>> selectedVectors,
+        List<float> selectedNorms)
     {
-        if (!_vectors.TryGetValue(candidate.DocumentId, out var vector))
+        if (!candidate.Present)
             return 0;
 
+        ReadOnlySpan<float> vector = candidate.Vector.Span;
         double best = 0;
 
-        foreach (var selectedVector in selectedVectors)
+        for (int i = 0; i < selectedVectors.Count; i++)
         {
-            double similarity = VectorSimilarity.CosineSimilarity(vector.Span, selectedVector.Span);
+            double similarity = VectorSimilarity.CosineSimilarity(
+                vector, selectedVectors[i].Span, candidate.Norm, selectedNorms[i]);
 
             if (similarity > best)
                 best = similarity;
         }
 
         return best;
+    }
+
+    /// <summary>A candidate's vector, its norm, and whether the caller supplied one at all.</summary>
+    private readonly struct CandidateVector(ReadOnlyMemory<float> vector, float norm, bool present)
+    {
+        public ReadOnlyMemory<float> Vector => vector;
+
+        public float Norm => norm;
+
+        public bool Present => present;
     }
 }
