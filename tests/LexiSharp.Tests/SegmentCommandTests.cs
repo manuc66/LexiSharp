@@ -63,6 +63,28 @@ public class SegmentCommandTests
         }
     }
 
+    private static (int ExitCode, string Output) RunProgram(params string[] args)
+    {
+        var outWriter = new StringWriter();
+        var errorWriter = new StringWriter();
+        var originalOut = Console.Out;
+        var originalError = Console.Error;
+
+        try
+        {
+            Console.SetOut(outWriter);
+            Console.SetError(errorWriter);
+            int exitCode = LexiSharp.Cli.Program.Main(args);
+
+            return (exitCode, outWriter.ToString() + errorWriter.ToString());
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+            Console.SetError(originalError);
+        }
+    }
+
     [Fact]
     public void BuildThenSearchServesTheCommittedCorpus()
     {
@@ -208,8 +230,109 @@ public class SegmentCommandTests
     [Fact]
     public void AMissingArgumentIsAUsageError()
     {
-        Assert.Equal(2, Run("build", CorpusRoot()).ExitCode);
+        Assert.Equal(2, Run("build").ExitCode);
         Assert.Equal(2, Run("search", NewDirectory()).ExitCode);
         Assert.Equal(2, Run("nonsense").ExitCode);
+    }
+
+    // ---- where a search finds its store ---------------------------------------------------------
+
+    [Fact]
+    public void SearchUsesTheStoreInTheFolderItWasGiven()
+    {
+        // A store directory read as a corpus would index its own segment files, and `build` then
+        // `search` is the ordinary sequence, so the store wins over a scan of the folder holding it.
+        string folder = NewDirectory();
+        string store = Path.Combine(folder, ".lexisharp");
+
+        try
+        {
+            Assert.Equal(0, Run("build", CorpusRoot(), "--store", store).ExitCode);
+
+            var search = RunProgram("search", folder, "--query", "pagination window", "--top-k", "3");
+
+            Assert.Equal(0, search.ExitCode);
+            Assert.Contains("Store:", search.Output, StringComparison.Ordinal);
+            Assert.DoesNotContain("Corpus:", search.Output, StringComparison.Ordinal);
+            Assert.Contains("pagination-window.md", search.Output, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void SearchFindsTheStoreInTheCurrentFolderWhenNoDirectoryIsGiven()
+    {
+        string folder = NewDirectory();
+        string originalDirectory = Directory.GetCurrentDirectory();
+
+        try
+        {
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(
+                Path.Combine(folder, "note.txt"),
+                "reciprocal rank fusion merges several ranked lists");
+
+            Directory.SetCurrentDirectory(folder);
+            Assert.Equal(0, Run("build", folder).ExitCode);
+            Assert.True(File.Exists(Path.Combine(folder, ".lexisharp", "store.json")));
+
+            var search = RunProgram("search", "--query", "rank fusion", "--top-k", "3");
+
+            Assert.Equal(0, search.ExitCode);
+            Assert.Contains("Store:", search.Output, StringComparison.Ordinal);
+            Assert.Contains("note.txt", search.Output, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(originalDirectory);
+            if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void SearchScansTheFolderWhenThereIsNoStore()
+    {
+        string folder = NewDirectory();
+
+        try
+        {
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, "note.txt"), "reciprocal rank fusion merges ranked lists");
+
+            var search = RunProgram("search", folder, "--query", "rank fusion");
+
+            Assert.Equal(0, search.ExitCode);
+            Assert.Contains("Corpus:", search.Output, StringComparison.Ordinal);
+            Assert.Contains("note.txt", search.Output, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void SearchRefusesAnAnalyzerAgainstAStore()
+    {
+        // The store records the analyzer it was built with. A flag that quietly disagreed with it
+        // would read a different index, which is the failure the manifest exists to prevent.
+        string store = NewDirectory();
+
+        try
+        {
+            Assert.Equal(0, Run("build", CorpusRoot(), "--store", store).ExitCode);
+
+            var search = RunProgram("search", store, "--query", "pagination", "--analyzer", "english");
+
+            Assert.Equal(2, search.ExitCode);
+            Assert.Contains("--analyzer is not accepted", search.Output, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(store)) Directory.Delete(store, recursive: true);
+        }
     }
 }

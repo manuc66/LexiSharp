@@ -11,6 +11,11 @@ namespace LexiSharp.Cli;
 
 public static class Program
 {
+    private const string SearchUsage =
+        "Usage: lexisharp search [<dir>] --query <text> [--analyzer default|english] [--top-k <n>]\n"
+        + "  Search a folder, or the store built in it: <dir> itself when it holds a store, else\n"
+        + "  <dir>/.lexisharp, else <dir> is scanned in memory. <dir> defaults to '.'.\n";
+
     private const string Usage =
         "Usage: lexisharp benchmark <corpus-dir> --queries <file> --qrels <file> [options]\n"
         + "  --queries <file>    Labeled queries: a JSON object {\"id\": \"text\", ...} or a TSV 'id\\ttext'\n"
@@ -44,6 +49,8 @@ public static class Program
         + "  --against <file>     The baseline to check against\n"
         + "  Other options: --queries, --qrels, --top-k, --limit, --configs\n"
         + "  --help, -h           Show this help\n"
+        + "\n"
+        + SearchUsage
         + "\n"
         + "Usage: lexisharp segment <build|add|remove|commit|search|info> ...\n"
         + "  Build a corpus into a persistent store on disk, change it, and search it. Every\n"
@@ -430,9 +437,9 @@ public static class Program
 
     private static int RunSearch(string[] args)
     {
-        string? corpusDir = null;
+        string? target = null;
         string? query = null;
-        string analyzer = "default";
+        string? analyzer = null;
         int topK = 10;
 
         for (int i = 0; i < args.Length; i++)
@@ -450,11 +457,11 @@ public static class Program
                     break;
                 case "--help":
                 case "-h":
-                    Console.WriteLine("Usage: lexisharp search <corpus-dir> --query <text> [--analyzer default|english] [--top-k <n>]");
+                    Console.WriteLine(SearchUsage);
                     return 0;
                 default:
-                    if (corpusDir is null)
-                        corpusDir = args[i];
+                    if (target is null)
+                        target = args[i];
                     else
                     {
                         Console.Error.WriteLine($"Unknown argument: {args[i]}");
@@ -464,16 +471,47 @@ public static class Program
             }
         }
 
-        if (corpusDir is null || query is null)
+        // The folder is the default target: the case this is for is a store built in the folder the
+        // shell is already in, where naming the directory twice is the only thing to get wrong.
+        target ??= ".";
+
+        if (query is null)
         {
-            Console.Error.WriteLine("search requires <corpus-dir> and --query <text>.");
+            Console.Error.WriteLine("search requires --query <text>.");
+            Console.Error.WriteLine(SearchUsage);
             return 2;
         }
+
+        // A store in the folder wins over a scan of it: a store directory read as a corpus would
+        // index its own segments, and `build` followed by `search` is the ordinary sequence.
+        if (SegmentCommands.TryResolveStore(target, out string store))
+        {
+            if (analyzer is not null)
+            {
+                Console.Error.WriteLine(
+                    "--analyzer is not accepted when the target is a store: the store records the "
+                    + "analyzer it was built with, and searching it under another one reads a different index.");
+                return 2;
+            }
+
+            return SegmentCommands.Run(
+            [
+                "search",
+                store,
+                "--query",
+                query,
+                "--top-k",
+                topK.ToString(CultureInfo.InvariantCulture),
+            ]);
+        }
+
+        string corpusDir = target;
+        string analyzerName = analyzer ?? "default";
 
         try
         {
             var documents = LoadCorpus(corpusDir);
-            var tokenizer = analyzer switch
+            var tokenizer = analyzerName switch
             {
                 "default" => Tokenizer.Default,
                 "english" => new Tokenizer(new TokenizerOptions
@@ -483,7 +521,7 @@ public static class Program
                     StopWords = StopWords.EnglishFunction,
                     KeepSingleCharTerms = true,
                 }),
-                _ => throw new ArgumentException($"Unknown analyzer '{analyzer}'. Expected 'default' or 'english'."),
+                _ => throw new ArgumentException($"Unknown analyzer '{analyzerName}'. Expected 'default' or 'english'."),
             };
 
             var index = new InMemoryTextIndex(tokenizer);
@@ -492,7 +530,7 @@ public static class Program
 
             var results = engine.Search(query, new SearchOptions(topK));
 
-            Console.WriteLine($"Corpus: {corpusDir} ({documents.Count} documents, analyzer {analyzer})");
+            Console.WriteLine($"Corpus: {corpusDir} ({documents.Count} documents, analyzer {analyzerName})");
             Console.WriteLine($"Query:  {query}");
             Console.WriteLine();
 

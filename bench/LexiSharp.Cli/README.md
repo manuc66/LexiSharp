@@ -10,18 +10,24 @@ dotnet tool install -g LexiSharp.Cli
 ## Search a directory
 
 ```bash
-lexisharp search ./docs --query "rank fusion" --top-k 5
+lexisharp search --query "rank fusion"          # the current directory
+lexisharp search ./docs --query "rank fusion"   # one you name
 ```
 
 The directory is scanned and indexed in memory, then searched; nothing is written. Text files and
 Markdown are read, and `--analyzer default|english` picks the tokenizer.
 
+When the directory holds a store, the store is searched instead of the files: the directory
+itself if it is a store, else its `.lexisharp` subdirectory. The store records the analyzer it was
+built with, so `--analyzer` is refused against one rather than silently reading a different index.
+
 ## Keep the corpus on disk
 
 ```bash
-lexisharp segment build  ./docs --store ./index   # index and commit one segment
-lexisharp segment search ./index --query "bm25"   # search the committed store
-lexisharp segment info   ./index                  # counts, without searching
+lexisharp segment build  ./docs                    # into ./.lexisharp
+lexisharp segment build  ./docs --store ./index    # or wherever you like
+lexisharp segment search ./index --query "bm25"
+lexisharp segment info   ./index                   # counts, without searching
 ```
 
 `segment add`, `segment remove --id <doc-id>` and `segment commit` change an existing store. The

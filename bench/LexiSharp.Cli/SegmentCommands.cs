@@ -20,8 +20,9 @@ namespace LexiSharp.Cli;
 public static class SegmentCommands
 {
     internal const string Usage =
-        "Usage: lexisharp segment build <corpus-dir> --store <dir> [--analyzer <name>]\n"
-        + "  Index the corpus into a store and commit it. Analyzer: default (default) or english.\n"
+        "Usage: lexisharp segment build <corpus-dir> [--store <dir>] [--analyzer <name>]\n"
+        + "  Index the corpus into a store and commit it. The store defaults to .lexisharp in the\n"
+        + "  current directory, which is where 'lexisharp search' looks. Analyzer: default or english.\n"
         + "Usage: lexisharp segment add <store-dir> --corpus <dir>\n"
         + "  Add the corpus's documents to the store's live overlay and commit.\n"
         + "Usage: lexisharp segment remove <store-dir> --id <doc-id>\n"
@@ -149,11 +150,13 @@ public static class SegmentCommands
 
     private static int Build(string? corpusDir, string? storeDir, string analyzer)
     {
-        if (corpusDir is null || storeDir is null)
+        if (corpusDir is null)
         {
-            Console.Error.WriteLine("build requires <corpus-dir> and --store <dir>.");
+            Console.Error.WriteLine("build requires <corpus-dir>.");
             return 2;
         }
+
+        storeDir ??= NestedStoreDirectory;
 
         var documents = Program.LoadCorpus(corpusDir);
         var tokenizer = BuildTokenizer(analyzer);
@@ -342,6 +345,42 @@ public static class SegmentCommands
     };
 
     private static string ManifestPath(string storeDir) => Path.Combine(storeDir, "store.json");
+
+    /// <summary>
+    /// Where <c>build</c> puts a store when the caller names none, and where <c>search</c> looks when
+    /// the directory it was given is not a store itself.
+    /// </summary>
+    internal const string NestedStoreDirectory = ".lexisharp";
+
+    /// <summary>
+    /// The store a search should read, when the path names one: the directory itself, or the
+    /// <c>.lexisharp</c> directory inside it.
+    /// </summary>
+    /// <remarks>
+    /// The test is the manifest rather than a segment file, because the manifest is what records the
+    /// analyzer. A directory whose segments have no manifest cannot be opened without guessing an
+    /// analysis, so it is not a store this command can search — and reporting "not a store" about it
+    /// would be the wrong answer to the wrong question.
+    /// </remarks>
+    internal static bool TryResolveStore(string path, out string storeDirectory)
+    {
+        if (File.Exists(ManifestPath(path)))
+        {
+            storeDirectory = path;
+            return true;
+        }
+
+        string nested = Path.Combine(path, NestedStoreDirectory);
+
+        if (File.Exists(ManifestPath(nested)))
+        {
+            storeDirectory = nested;
+            return true;
+        }
+
+        storeDirectory = string.Empty;
+        return false;
+    }
 
     private static void WriteManifest(string storeDir, string analyzer, int documents)
     {
