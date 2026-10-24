@@ -45,7 +45,14 @@ namespace LexiSharp.Indexing;
 /// <para>
 /// <b>Durability, stated exactly.</b> Writes are visible immediately and live as long as the process.
 /// <see cref="Commit"/> makes them durable by writing one merged segment to the directory and swapping
-/// it in atomically, so a reader in flight never sees a half-written store. A crash after that rename
+/// it in atomically: the segment's bytes are flushed to the device before the rename, so a power loss
+/// cannot expose a final-named file whose content was never written. The <b>directory entry</b> is not
+/// fsynced — .NET has no portable API for it and this type does not call into libc — so the order in
+/// which the filesystem commits the rename and the cleanup of the replaced generation is the
+/// filesystem's: after a power loss the store may still show the previous generation, which is a lost
+/// commit rather than a corrupt one, and a directory that lost its segment entirely is refused rather
+/// than opened as an empty corpus. A reader in flight never sees a half-written store. A crash after
+/// that rename
 /// and before the cleanup can leave the replaced generation on disk beside its successor; the store
 /// opens <b>the newest generation only</b>, because the successor is the flush of everything live at
 /// commit time — chaining both would return every shared document twice and bring back the ones the
@@ -145,6 +152,18 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
 
         foreach (string path in SegmentFiles(directory))
             newest = path;
+
+        // No readable generation but a temporary segment means a commit was interrupted before its
+        // rename. Opening that as a new, empty store would answer "no documents" to every query,
+        // which is the one failure mode worse than an exception: a corpus that is still on disk,
+        // reported as absent.
+        if (newest is null
+            && Directory.Exists(directory)
+            && Directory.GetFiles(directory, SegmentPrefix + "*.lxs.tmp").Length > 0)
+        {
+            throw new InvalidDataException(
+                $"{directory} holds an interrupted commit: a temporary segment and no readable generation");
+        }
 
         if (newest is not null)
         {
@@ -476,7 +495,21 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
         string target = Path.Combine(_directory, SegmentPrefix + generation.ToString("D8", System.Globalization.CultureInfo.InvariantCulture) + ".lxs");
         string temporary = target + ".tmp";
 
-        File.WriteAllBytes(temporary, bytes);
+        // The bytes reach the device before the rename gives them their final name. Without this
+        // flush a power loss can leave a correctly named file whose content was never written: the
+        // reader refuses it — correctly — and the store cannot be opened at all, while the previous
+        // generation has already been deleted. A flush costs one fsync per commit, which is a batch
+        // operation by design.
+        //
+        // The directory entry itself is not fsynced: .NET has no portable API for it and this type
+        // does not call into libc, so the order in which the filesystem commits the rename and the
+        // cleanup below is the filesystem's to choose.
+        using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            stream.Write(bytes);
+            stream.Flush(flushToDisk: true);
+        }
+
         File.Move(temporary, target, overwrite: true);
 
         foreach (string path in SegmentFiles(_directory))
