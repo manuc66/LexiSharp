@@ -100,7 +100,7 @@ public static class CorpusBenchmark
                 continue;
 
             stopwatch.Restart();
-            var retrieved = engine.Search(query.Text, searchOptions).ToList();
+            var retrieved = engine.Search(query.Text, searchOptions, cancellationToken).ToList();
             stopwatch.Stop();
             elapsedTicks += stopwatch.ElapsedTicks;
 

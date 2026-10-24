@@ -97,7 +97,7 @@ public sealed class RoutedSearchEngine : IFacetedSearchEngine, IQueryCostProbe, 
     public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
-        return Search(query.AsSpan(), options);
+        return Search(query.AsSpan(), options, cancellationToken);
     }
 
     /// <inheritdoc />
