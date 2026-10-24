@@ -20,6 +20,18 @@ workflow.
 
 ### Added
 
+- **`LexiSharp.Cli` is a .NET tool, so the library can be tried without writing code.**
+
+  `dotnet tool install -g LexiSharp.Cli` puts `lexisharp` on the path: `search` scans a directory
+  and searches it, `segment build|add|remove|commit|search|info` keeps a corpus on disk between
+  runs, and `benchmark`, `diff`, `baseline` and `verify` are the evaluation commands over a corpus
+  with labelled queries. The package carries the core assembly inside itself rather than depending
+  on the `LexiSharp` package, so the install resolves nothing else.
+
+  `baseline` and `verify` are this repository's own regression commands and reach internal
+  reproduction switches through `InternalsVisibleTo`; they ship because they live in the same
+  binary, and they are tooling rather than a stable API.
+
 - **`SegmentedTextIndex`, an index that can be written to and read back from disk.**
 
   A search server needs to write to a corpus it serves, and it needs that corpus to survive a restart

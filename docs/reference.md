@@ -19,8 +19,11 @@ test and reproduce the numbers.
 | `LexiSharp.Postgres` | PostgreSQL providers: `tsvector`+`unaccent` (lexical), `pgvector` ANN (vector), `pgvector sparsevec` (sparse), `pg_trgm`+`fuzzystrmatch` (fuzzy), `pg_search`/Tantivy (true BM25) |
 | `LexiSharp.MessagePack` | MessagePack (binary) persistence for the in-memory index and the sparse engine |
 | `LexiSharp.AspNetCore` | a minimal-API `GET /search` endpoint over `LexiSharpIndex<T>` |
+| `LexiSharp.Cli` | a .NET tool — `lexisharp search`, `segment build|search|info`, `benchmark`, `diff`, `baseline`, `verify` |
 
-All four target `net10.0` and are on [nuget.org](https://www.nuget.org/packages/LexiSharp/).
+The four library packages target `net10.0` and are on [nuget.org](https://www.nuget.org/packages/LexiSharp/).
+`LexiSharp.Cli` is a tool rather than a library: it packs the core assembly inside itself, so
+`dotnet tool install -g LexiSharp.Cli` has no other package to resolve.
 The core package has **no** dependency; the others bring their own (MessagePack, Npgsql).
 
 ### Native AOT
