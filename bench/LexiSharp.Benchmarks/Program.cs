@@ -18,6 +18,7 @@ public static class Program
             typeof(TokenizerBenchmarks),
             typeof(IndexBenchmarks),
             typeof(SearchBenchmarks),
+            typeof(HybridTraceBenchmarks),
             typeof(QueryAllocationBreakdownBenchmarks),
             typeof(CandidateSearchBenchmarks),
             typeof(ScoringPathBenchmarks),

@@ -50,6 +50,28 @@ foreach (var step in trace.Steps)
 or formats anything. Pass one and each stage appends to it as it runs, so a decorated pipeline
 accumulates its whole chain.
 
+### The merge's own arithmetic
+
+A weighted merge turns two raw scores into one with `Σ wᵢ·sᵢ/divisorᵢ`, and the per-document rows
+above carry only `sᵢ`. So a merger that can explain itself — `WeightedScoreResultMerger` does —
+also records **one row per search**, with an empty document id:
+
+```
+// merge              NaN -> NaN  weights lexical=1 dense=1 | max lexical=6.2 dense=0.812 | pools lexical=50 dense=50
+```
+
+The row comes before the documents it explains, is labelled by the same source names the
+per-document detail uses (sorted, so two runs produce the same string), and turns a contribution
+into a checkable number: `1·4.82/6.2 + 1·0.81/0.812` reproduces the merged score rather than
+inviting you to trust it. A rank merger does not implement `IMergeExplainer` and records no such
+row — it reads order, never multiplies a score, and reporting weights it never applied would be a
+more confident lie than an absent row.
+
+Measured with `HybridTraceBenchmarks`, two engines over 2 000 documents: the untraced path
+allocates **exactly the same bytes** with and without this row (60.1 KB per search), because
+nothing below the `trace is null` guard executes; the traced path allocates **1.4 KB more**
+(71.0 → 72.4 KB), one step and one string per search against the ten already written per document.
+
 **Cost — what is measured and what is not.** Measured with BenchmarkDotNet's `MemoryDiagnoser` and
 stable across repeated runs: a saturated trace allocates **0 additional bytes** per search
 (1.34 KB either way), and a trace created per search costs **~0.47 KB** (the object plus its

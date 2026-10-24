@@ -66,6 +66,7 @@ are listed first.
 | `IVocabularyIndex` | `IReadOnlyTextIndex` | Capability for an index that can enumerate its vocabulary — the seam prefix/fuzzy query expansion reads at search time. | [guide](reference.md) |
 | `IWeightedPredictor` | — | Optional capability of a ITextClassifier that accepts WeightedTokens instead of raw text, bypassing internal tokenization. Detected with pattern matching… | [guide](reference.md) |
 | `ITermExpander` | — | Derives the additional terms to index for a document from its own tokenization. | [guide](embeddings.md) |
+| `IMergeExplainer` | — | A merger that can state the arithmetic behind the list it returned, without keeping any state between searches. | [guide](pipelines.md) |
 | `IResultMerger` | — | Strategy that turns several ranked result lists — one per source engine — into a single coherent, de-duplicated, ordered list. | [guide](pipelines.md) |
 | `IKeywordExtractor` | — | Strategy for pulling the most representative terms out of a single text — tag generation, query expansion seeds, summary highlights. | [guide](text-analysis.md) |
 | `ISpanTokenizer` | `ITokenizer` | A tokenizer that can also report where each normalized term sits in the source text — the basis for search-result highlighting. | [guide](text-analysis.md) |
@@ -153,6 +154,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `FacetBucket` | record | — | Value counts for one facet field. |
 | `FacetValue` | record | — | A distinct field value and how many counted documents carry it. |
 | `FacetedSearchResult` | record | — | Ranked results plus one bucket per requested facet field. |
+| `FieldType` | enum | — | The shape of a document field, used by MetadataFilter to interpret the stored string value when no explicit parsing is requested. |
 | `GraphAwareSearchEngine` | class | `IGraphSearchEngine`, `ITextSearchEngine` | A decorator that layers a IKnowledgeGraphBridge over an existing engine: searching and writing are forwarded unchanged, and the IGraphSearchEngine surface adds… |
 | `GraphContext` | record | — | The answer a IKnowledgeGraphBridge returns for a sub-graph query around a set of entities: the local facts that touch them, plus the community summaries the… |
 | `GraphHydratedResults` | record | — | The outcome of SearchWithGraphFacts: the ordinary ranked page plus the facts the IKnowledgeGraphBridge returned for the query's entities. |
@@ -161,6 +163,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `IndexRetrievalMetrics` | record | — | The latest observed size of one engine's index. |
 | `MetadataFilter` | record | — | A declarative, single-field predicate over Fields — the raw material of structured filtering (e.g. category = article, year &gt; 2023, tags containing nlp). |
 | `MetadataFilterOperator` | enum | — | Comparison applied by a MetadataFilter. |
+| `MoreLikeThis` | class | — | Builds a query from one already-indexed document and re-runs it through an engine, so the caller gets the documents most like it — the classic "more like this"… |
 | `ParsedQuery` | record | — | The structured form of a raw query: free terms, quoted phrase constraints, expansion atoms, and the combined literal term list a scorer starts from. |
 | `QueryExpansion` | record | — | A free-text query atom carrying a search-time expansion operator: the base term (already tokenized to exactly one term) is matched against the index vocabulary… |
 | `QueryExpansionKind` | enum | — | How a query atom expands against the index vocabulary. |
@@ -240,10 +243,11 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `HybridTextSearchEngine` | class | `IDetailedSearchEngine`, `ITextSearchEngine` | A federated search engine: queries a list of delegate engines, then merges their results into one coherent ordering through an IResultMerger. |
 | `MaxSimReranker` | class | `IReranker` | Late-interaction reranker (ColBERT-style): scores each candidate with MaxSim between the token-level embeddings of the query and of the document, then reorders… |
 | `MaximalMarginalRelevanceReranker` | class | `IReranker` | Diversity-preserving reranker: greedily re-orders candidates so that each next pick is both relevant to the query and different from what has already been… |
+| `MergeExplanation` | record | — | The arithmetic a weighted merge applied: one weight and one divisor per source engine. |
 | `ReciprocalRankFusionMerger` | class | `IResultMerger` | Merges ranked lists with Reciprocal Rank Fusion: each document accumulates the reciprocal of its rank (plus a constant k) across every engine that returned it. |
 | `RerankingResultMerger` | class | `IResultMerger` | Default merger: rebuilds a single temporary index from the union of candidate documents returned by every engine, then re-scores every candidate with one shared… |
 | `VectorSimilarity` | class | — | Pure vector math helpers used to compare embeddings. These are arithmetic utilities, not an embedding pipeline: vectors must already exist (see… |
-| `WeightedScoreResultMerger` | class | `IResultMerger` | Blends the native per-engine scores instead of re-ranking. Every engine's scores are normalized to [0, 1] (divided by that engine's maximum positive score),… |
+| `WeightedScoreResultMerger` | class | `IMergeExplainer`, `IResultMerger` | Blends the native per-engine scores instead of re-ranking. Every engine's scores are normalized to [0, 1] (divided by that engine's maximum positive score),… |
 
 #### `LexiSharp.Indexing`
 

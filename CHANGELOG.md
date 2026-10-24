@@ -300,6 +300,26 @@ workflow.
   serving time predicts where a fusion or a reranking stage helps, a question the harness can now
   answer per corpus. The per-corpus answer is an experiment, not a claim, and this entry makes none.
 
+- **`IMergeExplainer` and `MergeExplanation`: a weighted merge can state its own arithmetic.**
+
+  `DetailedSearchResult.Contributions` gives the raw score each engine assigned a document, and a
+  weighted blend's merged score is `Σ wᵢ·sᵢ/divisorᵢ` — with neither the weight nor the divisor
+  anywhere in the result, so the contributions were readable but not checkable. `WeightedScoreResultMerger`
+  now implements `IMergeExplainer`, returning the weights and the per-engine divisors (each engine's
+  largest finite score) for the same input `Merge` took. `Explain` recomputes rather than remembers:
+  a merger is shared across concurrent searches, and a stored "last explanation" would hand one
+  search another's numbers under load.
+
+  A traced hybrid search records that explanation as **one `Merge` step per search**, with an empty
+  document id and the sources labelled in the per-document steps' order: `weights lexical=1
+  dense=1 | max lexical=6.2 dense=0.812 | pools lexical=50 dense=50`. A rank merger implements no
+  such contract — it reads order and never multiplies a score — so its trace is unchanged.
+
+  Measured (`HybridTraceBenchmarks`, two engines over 2 000 documents): the untraced path allocates
+  the same bytes with and without the explanation (60.1 KB per search), and the traced path pays
+  1.4 KB more (71.0 → 72.4 KB) — one step per search against the ten per document already written.
+  The timing rows are not quoted: run-to-run drift on the measuring host exceeded the effect.
+
 ### Fixed
 
 - **`TieBreak.InsertionOrder` ordered tied documents by a position that moved with the corpus.**

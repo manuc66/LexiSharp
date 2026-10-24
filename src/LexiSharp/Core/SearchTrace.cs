@@ -8,7 +8,11 @@ public enum TraceStage
     /// <summary>An engine or decorator read the document's score and left it unchanged.</summary>
     Score = 0,
 
-    /// <summary>A result merger fused several engines' rankings for the document.</summary>
+    /// <summary>
+    /// A result merger fused several engines' rankings for the document — or, once per search with
+    /// an empty <see cref="TraceStep.DocumentId"/>, reported the merge itself: weights, divisors and
+    /// pool sizes, when the merger can explain them.
+    /// </summary>
     Merge = 1,
 
     /// <summary>A reranker re-scored the document.</summary>
@@ -26,8 +30,15 @@ public enum TraceStage
 /// the score going in, the score coming out, and a stage-specific detail string.
 /// </summary>
 /// <param name="Stage">Where in the pipeline the step was recorded.</param>
-/// <param name="DocumentId">Id of the document the step applies to; empty for <see cref="TraceStage.Route"/>.</param>
-/// <param name="Before">Score before the stage ran, or the router confidence for <see cref="TraceStage.Route"/>.</param>
+/// <param name="DocumentId">
+/// Id of the document the step applies to; empty for a query-level step — a <see cref="TraceStage.Route"/>,
+/// or the <see cref="TraceStage.Merge"/> summary recorded once per search when the merger can explain
+/// its own arithmetic.
+/// </param>
+/// <param name="Before">
+/// Score before the stage ran, or the router confidence for <see cref="TraceStage.Route"/>. NaN for a
+/// query-level merge summary, which carries no score: its detail is the explanation.
+/// </param>
 /// <param name="After">Score after the stage ran; equal to <paramref name="Before"/> for a pass-through stage.</param>
 /// <param name="Detail">Stage-specific breakdown (per-term contributions, source scores, route id, ...). Never parsed by LexiSharp.</param>
 public readonly record struct TraceStep(

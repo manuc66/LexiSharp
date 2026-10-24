@@ -219,7 +219,7 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
                     (contributionsByDocument.GetValueOrDefault(x.DocumentId) ?? new Dictionary<string, double>())))
             .ToList();
 
-        RecordMergeStage(options.Trace, page);
+        RecordMergeStage(options.Trace, perEngine, page);
 
         if (instrumented)
         {
@@ -242,10 +242,21 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
     /// both before and after: a merger is not a per-document transform but a re-ranking over the
     /// union, so there is no meaningful single before-score.
     /// </summary>
-    private static void RecordMergeStage(SearchTrace? trace, IReadOnlyList<DetailedSearchResult> page)
+    /// <remarks>
+    /// When the merger can explain itself, one query-level step precedes these — the weights, the
+    /// divisors and the pool sizes, with an empty document id. Without it the per-document
+    /// contributions are readable but not checkable: the arithmetic that turned two raw scores into
+    /// the merged one would be missing from the trace.
+    /// </remarks>
+    private void RecordMergeStage(
+        SearchTrace? trace,
+        IReadOnlyList<IReadOnlyList<SearchResult>> perEngine,
+        IReadOnlyList<DetailedSearchResult> page)
     {
         if (trace is null)
             return;
+
+        RecordMergeExplanation(trace, perEngine);
 
         for (int i = 0; i < page.Count; i++)
         {
@@ -257,6 +268,75 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
                 result.Score,
                 FormatContributions(result.Contributions)));
         }
+    }
+
+    /// <summary>
+    /// Records the merge's own arithmetic, once for the search. Nothing runs unless a trace is
+    /// attached and the merger implements <see cref="IMergeExplainer"/>.
+    /// </summary>
+    private void RecordMergeExplanation(
+        SearchTrace trace, IReadOnlyList<IReadOnlyList<SearchResult>> perEngine)
+    {
+        if (_merger is not IMergeExplainer explainer)
+            return;
+
+        trace.Record(new TraceStep(
+            TraceStage.Merge,
+            string.Empty,
+            double.NaN,
+            double.NaN,
+            FormatMergeExplanation(explainer.Explain(perEngine), perEngine)));
+    }
+
+    /// <summary>
+    /// Renders the merge's weights, divisors and pool sizes as one invariant, label-sorted string.
+    /// </summary>
+    /// <remarks>
+    /// Labelled rather than positional, and sorted by label like the per-document detail, so the two
+    /// readings join on the source name instead of on an order the reader has to reconstruct.
+    /// </remarks>
+    private string FormatMergeExplanation(
+        MergeExplanation explanation, IReadOnlyList<IReadOnlyList<SearchResult>> perEngine)
+    {
+        int[] order = Enumerable.Range(0, _sourceNames.Count).ToArray();
+        Array.Sort(order, (left, right) => string.CompareOrdinal(_sourceNames[left], _sourceNames[right]));
+
+        var builder = new System.Text.StringBuilder();
+
+        builder.Append("weights");
+
+        for (int position = 0; position < order.Length; position++)
+        {
+            int engine = order[position];
+            builder.Append(' ')
+                .Append(_sourceNames[engine])
+                .Append('=')
+                .Append(explanation.Weights[engine].ToString("0.####", CultureInfo.InvariantCulture));
+        }
+
+        builder.Append(" | max");
+
+        for (int position = 0; position < order.Length; position++)
+        {
+            int engine = order[position];
+            builder.Append(' ')
+                .Append(_sourceNames[engine])
+                .Append('=')
+                .Append(explanation.Normalization[engine].ToString("0.####", CultureInfo.InvariantCulture));
+        }
+
+        builder.Append(" | pools");
+
+        for (int position = 0; position < order.Length; position++)
+        {
+            int engine = order[position];
+            builder.Append(' ')
+                .Append(_sourceNames[engine])
+                .Append('=')
+                .Append(perEngine[engine].Count.ToString(CultureInfo.InvariantCulture));
+        }
+
+        return builder.ToString();
     }
 
     /// <summary>
