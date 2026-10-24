@@ -273,6 +273,11 @@ internal static class PostgresBackendBenchmark
         {
             try
             {
+                // Before the index is built: a query the engine will refuse is knowable from its
+                // declared syntax, and indexing 8,674 documents to then throw on the first query is
+                // work nobody gets back.
+                RefuseUnsupported(engine, Evaluation.BuildQueries(corpus, limit, excludeQueryDocument));
+
                 // One transaction, truncate first: both engines' Index does that, so a re-run cannot
                 // score a corpus plus whatever a failed run left in the table.
                 engine.Index(documents);
@@ -359,7 +364,13 @@ internal static class PostgresBackendBenchmark
             // Built once. HNSW accepts inserts and an index over a populated table alike, so the
             // table is loaded with the engine that does not read it and the reads below share it.
             using (var indexer = new PostgresVectorSearchEngine(lane.ConnectionString, provider, options))
+            {
+                // Same rule as the text lane: a query this engine will refuse is knowable from what
+                // it declares, and ArguAna is the corpus where that matters — 148 of its 1,406 test
+                // queries are a phrase to a parser and plain text to an encoder.
+                RefuseUnsupported(indexer, queries);
                 indexer.Index(documents);
+            }
 
             var rows = new List<BackendRow>(lane.EfValues.Count);
 
@@ -368,11 +379,18 @@ internal static class PostgresBackendBenchmark
                 using var engine = new PostgresVectorSearchEngine(
                     lane.ConnectionString, provider, options with { HnswEfSearch = efSearch });
 
-                rows.Add(new BackendRow(
-                    efSearch.ToString(CultureInfo.InvariantCulture),
-                    Evaluation.RunEngine(
-                        corpus, engine, $"pgvector HNSW (ef={efSearch})", topK, limit, ndcgGain,
-                        excludeQueryDocument, jobs)));
+                try
+                {
+                    rows.Add(new BackendRow(
+                        efSearch.ToString(CultureInfo.InvariantCulture),
+                        Evaluation.RunEngine(
+                            corpus, engine, $"pgvector HNSW (ef={efSearch})", topK, limit, ndcgGain,
+                            excludeQueryDocument, jobs)));
+                }
+                catch (Exception error) when (FindRefusal(error) is { } refusal)
+                {
+                    throw Refusal(refusal, engine, queries);
+                }
             }
 
             return new BackendMeasurement(lane.Description, table, documents.Count, rows, lane.Caveats);
@@ -388,6 +406,36 @@ internal static class PostgresBackendBenchmark
                 ? vector
                 : throw new InvalidOperationException(
                     "A query has no cached embedding, so it cannot be scored through the vector backend.");
+    }
+
+    /// <summary>
+    /// Refuses, before any indexing, a query whose syntax the engine declares it cannot read.
+    /// </summary>
+    /// <remarks>
+    /// The engine's own rule, asked ahead of time rather than discovered by running: an engine that
+    /// declares phrases rejects a prefix operator, and one that declares nothing rejects a quote,
+    /// because a phrase is syntax it will not read.
+    /// </remarks>
+    public static void RefuseUnsupported(ITextSearchEngine engine, IReadOnlyList<EvaluatedQuery> queries)
+    {
+        ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(queries);
+
+        if (engine is not IQuerySyntaxSupport support)
+            return;
+
+        try
+        {
+            foreach (EvaluatedQuery query in queries)
+            {
+                QuerySyntax.EnsureSupported(
+                    query.Query.Text, support.SupportedQueryFeatures, engine.GetType().Name);
+            }
+        }
+        catch (NotSupportedException refusal)
+        {
+            throw Refusal(refusal, engine, queries);
+        }
     }
 
     /// <summary>
