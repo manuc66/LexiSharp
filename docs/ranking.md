@@ -195,15 +195,16 @@ pairs. What it is not is a fair number: 300 queries, binary relevance, fitted in
 same 300 queries, best-of-125. A 0.004 lead under those conditions is an upper bound. Treat it as
 « δ was not obviously harmful here », not as evidence the formula helps.
 
-**ArguAna is the exception, and it is the row this page does not have.** It is also where the
-untuned variants do worst anywhere: at a fixed paper δ, BM25+ scores 0.269 and BM25L 0.276 against
+**ArguAna is the corpus that was missing, and the grid has now been run there.** It is also where
+the untuned variants do worst: at a fixed paper δ, BM25+ scores 0.269 and BM25L 0.276 against
 BM25's 0.320 — about 15 % relative, the same order as the figure 9bb7c92 retracted, but on a
-different corpus and with nothing mis-transcribed. ArguAna was run `--no-tuned`: a 125-point search
-over 1406 queries of whole arguments is hours of compute, so **there is no δ-tuned ArguAna row and
-the gap's fate under tuning is unmeasured.** Given that SciFact was the only corpus where δ helped
-at all, and ArguAna is where it hurts most, this is the corpus where the result is least settled in
-either direction. Run it yourself before concluding anything about δ on long-document
-counter-argument retrieval.
+different corpus and with nothing mis-transcribed. The 125-point search over its 1,406 queries now
+exists, and **both tuners choose δ = 0**: their tuned rows are the tuned BM25's 0.363 at the same
+k1=2, b=1. So the gap is closed by *removing* the bound rather than by finding a better one, which
+is the same answer as the reference corpus and NFCorpus and the opposite of SciFact's +0.004. Two
+caveats stand over that row: k1=2 and b=1 are both at the edge of the grid, so the optimum may lie
+outside it, and on this corpus the tuner's internal candidate scoring disagrees with the score the
+chosen row reports — see [the harness README](../bench/LexiSharp.Eval/README.md#results-arguana-k10-1406-test-queries).
 
 **Reading the tables against an unfitted number.** A +0.017 here comes from comparing BM25+ at a
 *default* `δ` against BM25 at a *fitted* `(k1, b)` — 0.8978 against 0.8812. The gap is the unfitted
@@ -304,8 +305,9 @@ nDCG@5: fitting on **F1@5**, which is flat on this corpus (0.3588 for every conf
 tuner no signal to fit and hands both the first grid point, which puts them equal at 0.8812 and hides
 the loss. So the comparison stands on the nDCG-fitted rows: no measured case where BM25F beats BM25
 after both are tuned. The ArguAna 0.379 stands as an
-**un-tuned** comparison: whether it survives a tuned BM25 is untested, and running that grid on 1406
-queries was not affordable here.
+**un-tuned** comparison: BM25F was never tuned there, and the tuned BM25 that exists for that corpus
+now reads 0.363, below the untuned BM25F — an untuned-versus-tuned comparison in the other
+direction, which settles nothing either way.
 
 **What the tuner adds is the negative answer, which is the useful one.** `Bm25FParameterTuner` reports
 `WeightingHelped = false` on the reference corpus: it searched the title weight and could not beat
