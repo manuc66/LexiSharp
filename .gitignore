@@ -17,3 +17,5 @@ cocoindex/run/
 cocoindex/*.sqlite
 # CocoIndex Code (ccc)
 /.cocoindex_code/
+# Serena MCP working directory
+/.serena/

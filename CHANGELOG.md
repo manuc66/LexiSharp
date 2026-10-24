@@ -378,6 +378,21 @@ workflow.
 
 ### Changed
 
+- **`ITextSearchEngine.Search` gains a `CancellationToken`, and no engine consults it.**
+
+  The signature is `Search(string query, SearchOptions? options = null, CancellationToken
+  cancellationToken = default)`. Source-compatible for callers, because the parameter has a default;
+  breaking for anyone implementing `ITextSearchEngine`, which is what puts it here.
+
+  No engine reads the token. The in-memory engine drops it before `RunQuery`, the PostgreSQL engines
+  open their connection without it, and the change that introduced the parameter touched signatures
+  only. `ThrowIfCancellationRequested` appears in this package on the benchmarking paths, not on the
+  search path. A caller who cancels the token passed to `Search` gets a normal result.
+
+  The token is forwarded through the decorators and never consulted at the leaves, so the declared
+  surface is wider than the behaviour. Stated because a signature alone would say otherwise, and a
+  cancellation parameter a caller cannot rely on is a guarantee the API does not keep.
+
 - **A filtered query under a tie-break other than `DocumentId` is served by the accumulation pass.**
 
   The guard that sent such a request to the per-document loop existed because the two paths ordered
