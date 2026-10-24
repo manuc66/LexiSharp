@@ -36,7 +36,7 @@ public class ContextualBoostTests
 
         public void Clear() { }
 
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
         {
             options ??= SearchOptions.Default;
             LastResults = _results
@@ -513,7 +513,7 @@ public class ContextualBoostTests
 
         public void Clear() { }
 
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
             options is { IsEmpty: false } ? _results : Array.Empty<SearchResult>();
     }
 

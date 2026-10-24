@@ -91,14 +91,14 @@ public sealed class TransformingTextSearchEngine : ITextSearchEngine, IQueryCost
     public void Clear() => _inner.Clear();
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
         return Search(query.AsSpan(), options);
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(ReadOnlySpan<char> query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(ReadOnlySpan<char> query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         var resolved = options ?? SearchOptions.Default;
 
@@ -125,7 +125,7 @@ public sealed class TransformingTextSearchEngine : ITextSearchEngine, IQueryCost
         for (int i = 0; i < variants.Count; i++)
         {
             long variantStarted = instrumented ? RetrievalTelemetry.StartTimer() : 0;
-            var results = _inner.Search(variants[i], resolved with { Offset = 0, Limit = candidateLimit });
+            var results = _inner.Search(variants[i], resolved with { Offset = 0, Limit = candidateLimit }, cancellationToken);
 
             if (instrumented)
                 _telemetry.StageCompleted(EngineName, $"variant-{i}", results.Count, variantStarted);

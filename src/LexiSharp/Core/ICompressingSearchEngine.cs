@@ -7,7 +7,7 @@ namespace LexiSharp.Core;
 /// </summary>
 /// <remarks>
 /// Implementing this interface is opt-in, like <see cref="IDetailedSearchEngine"/>: a plain
-/// engine keeps its single <see cref="ITextSearchEngine.Search(string, SearchOptions)"/>
+/// engine keeps its single <see cref="ITextSearchEngine.Search(string, SearchOptions?, CancellationToken)"/>
 /// contract, and <c>Search</c> returns the full text unchanged — the compressed variant is a
 /// separate surface, not a mutation of <see cref="SearchResult.Document"/>. A <c>Search</c>
 /// call and a <c>SearchCompressed</c> call on the same engine and options must agree on the
@@ -17,7 +17,7 @@ namespace LexiSharp.Core;
 public interface ICompressingSearchEngine : ITextSearchEngine
 {
     /// <summary>
-    /// Same search as <see cref="ITextSearchEngine.Search(string, SearchOptions)"/>, but each
+    /// Same search as <see cref="ITextSearchEngine.Search(string, SearchOptions?, CancellationToken)"/>, but each
     /// hit carries its text compressed to the query-relevant content (see
     /// <see cref="IContextCompressor"/>).
     /// </summary>

@@ -25,7 +25,7 @@ public sealed record QueryRoute(string RouteId, double Confidence);
 /// so a router can never break a search.
 /// <para>
 /// The method is asynchronous because a model-backed router is naturally async. A synchronous
-/// caller (e.g. <see cref="RoutingSearchEngine.Search(string, SearchOptions)"/>) blocks on it,
+/// caller (e.g. <see cref="RoutingSearchEngine.Search(string, SearchOptions?, CancellationToken)"/>) blocks on it,
 /// the same trade-off the PostgreSQL engines and the rerankers already make.
 /// </para>
 /// </remarks>

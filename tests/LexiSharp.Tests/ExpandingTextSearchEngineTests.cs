@@ -24,7 +24,7 @@ public class ExpandingTextSearchEngineTests
 
         public void Clear() { }
 
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
         {
             LastQuery = query;
             return Array.Empty<SearchResult>();
@@ -43,10 +43,10 @@ public class ExpandingTextSearchEngineTests
 
         public void Clear() { }
 
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
             Array.Empty<SearchResult>();
 
-        public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null)
+        public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
         {
             LastQuery = query;
             return [new DetailedSearchResult("doc", 5, new SearchDocument("doc", "gamma"), new Dictionary<string, double>())];
@@ -65,7 +65,7 @@ public class ExpandingTextSearchEngineTests
 
         public void Clear() { }
 
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
             Array.Empty<SearchResult>();
 
         public ScoreExplanation? Explain(string documentId, string query)
@@ -89,7 +89,7 @@ public class ExpandingTextSearchEngineTests
 
         public void Clear() { }
 
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
         {
             LastQuery = query;
             return Array.Empty<SearchResult>();

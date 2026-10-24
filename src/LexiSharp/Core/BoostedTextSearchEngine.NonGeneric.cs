@@ -64,8 +64,8 @@ public sealed class BoostedTextSearchEngine : ITextSearchEngine, IQueryCostProbe
     public void Clear() => _inner.Clear();
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
-        _inner.Search(query, options);
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
+        _inner.Search(query, options, cancellationToken);
 
     /// <inheritdoc />
     /// <remarks>

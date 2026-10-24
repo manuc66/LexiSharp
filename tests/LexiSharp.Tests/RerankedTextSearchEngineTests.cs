@@ -35,7 +35,7 @@ public class RerankedTextSearchEngineTests
         public bool Remove(string documentId) { RemoveCalls++; return true; }
         public void Clear() => ClearCalls++;
 
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
         {
             SearchCalls++;
             LastOptions = options;

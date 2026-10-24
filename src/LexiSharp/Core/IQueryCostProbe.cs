@@ -20,7 +20,7 @@ public interface IQueryCostProbe
     /// <paramref name="options"/>. Smaller is cheaper. May be zero (empty request or empty
     /// index) or an upper bound, but must be non-negative and deterministic for the same inputs.
     /// </summary>
-    /// <param name="query">Raw query text, as passed to <see cref="ITextSearchEngine.Search(string, SearchOptions)"/>.</param>
+    /// <param name="query">Raw query text, as passed to <see cref="ITextSearchEngine.Search(string, SearchOptions?, CancellationToken)"/>.</param>
     /// <param name="options">The options the search would run with.</param>
     long EstimateCandidateCount(ReadOnlySpan<char> query, SearchOptions options);
 }

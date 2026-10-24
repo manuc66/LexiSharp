@@ -141,7 +141,7 @@ public sealed class RoutingSearchEngine : ITextSearchEngine
     public void Clear() => throw new NotSupportedException(WriteMessage);
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
 
@@ -152,7 +152,7 @@ public sealed class RoutingSearchEngine : ITextSearchEngine
             return Array.Empty<SearchResult>();
 
         var route = SelectRoute(query, resolved.Trace);
-        return route.Engine.Search(query, MergeFilters(resolved, route.Filters));
+        return route.Engine.Search(query, MergeFilters(resolved, route.Filters), cancellationToken);
     }
 
     private SearchRoute SelectRoute(string query, SearchTrace? trace)

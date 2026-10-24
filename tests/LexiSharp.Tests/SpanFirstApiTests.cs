@@ -229,7 +229,7 @@ public class SpanFirstApiTests
 
         public void Clear() => throw new NotSupportedException();
 
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
             new[] { new SearchResult("1", 1, new SearchDocument("1", query)) };
 
         public FacetedSearchResult SearchWithFacets(

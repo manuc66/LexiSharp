@@ -13,7 +13,7 @@ namespace LexiSharp.Core;
 /// <remarks>
 /// <para>
 /// Writes (<see cref="Index"/>, <see cref="Add"/>, <see cref="Remove"/>, <see cref="Clear"/>)
-/// are forwarded to the inner engine unchanged. <see cref="Search(string, SearchOptions?)"/> runs
+/// are forwarded to the inner engine unchanged. <see cref="Search(string, SearchOptions?, CancellationToken)"/> runs
 /// the inner engine, applies the caller-supplied <see cref="ScoreBoost"/> to every candidate score
 /// (<c>score * Multiply + Add</c>), then re-sorts, re-applies the
 /// <see cref="SearchOptions.MinimumScore"/> and re-trims to <see cref="SearchOptions.Limit"/>.
@@ -90,7 +90,7 @@ public sealed class BoostedTextSearchEngine<TPayload> : IContextualSearchEngine<
     /// <c>boost</c> stage. Defaults to <see cref="RetrievalTelemetry.None"/>.
     /// </param>
     /// <param name="requirePayload">
-    /// Whether a search arriving through <see cref="ITextSearchEngine.Search(string, SearchOptions?)"/>
+    /// Whether a search arriving through <see cref="ITextSearchEngine.Search(string, SearchOptions?, CancellationToken)"/>
     /// — which offers no payload — should throw instead of running. Default <c>false</c>: the
     /// search proceeds and the boost sees <see cref="BoostContext{TPayload}.PayloadSupplied"/>
     /// as <c>false</c>.
@@ -152,8 +152,8 @@ public sealed class BoostedTextSearchEngine<TPayload> : IContextualSearchEngine<
     /// built on the payload fails at the call site that dropped it instead of quietly returning
     /// results the correction never touched.
     /// </remarks>
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
-        Search(query, options, default!, payloadSupplied: false);
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
+        Search(query, options, default!, payloadSupplied: false, cancellationToken);
 
     /// <inheritdoc />
     public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options, TPayload payload) =>
@@ -163,7 +163,8 @@ public sealed class BoostedTextSearchEngine<TPayload> : IContextualSearchEngine<
         string query,
         SearchOptions? options,
         TPayload payload,
-        bool payloadSupplied)
+        bool payloadSupplied,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
 
@@ -205,7 +206,7 @@ public sealed class BoostedTextSearchEngine<TPayload> : IContextualSearchEngine<
             Offset = 0,
             Limit = candidateLimit,
             MinimumScore = double.NegativeInfinity,
-        });
+        }, cancellationToken);
 
         if (instrumented)
             _telemetry.StageCompleted(EngineName, "retrieve", candidates.Count, retrieveStarted);

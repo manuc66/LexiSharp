@@ -368,7 +368,7 @@ internal sealed class DenseTextSearchEngine : ITextSearchEngine
         throw new NotSupportedException("DenseTextSearchEngine is read-only (precomputed embeddings).");
     }
 
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         if (!_queryEmbeddings.TryGetValue(query, out float[]? queryVector))
             return Array.Empty<SearchResult>();

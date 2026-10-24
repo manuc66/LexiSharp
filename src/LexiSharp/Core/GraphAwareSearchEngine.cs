@@ -18,7 +18,7 @@ namespace LexiSharp.Core;
 /// The bridge is async, and this synchronous surface blocks on it — the
 /// <see cref="RoutingSearchEngine"/>/<see cref="IQueryRouter"/> trade-off. A query that mines
 /// no entities skips the sub-graph request and carries an empty context. The flat
-/// <see cref="Search(string, SearchOptions)"/> never touches the bridge, so a graph outage
+/// <see cref="Search(string, SearchOptions?, CancellationToken)"/> never touches the bridge, so a graph outage
 /// degrades nothing by default; a bridge that throws fails the facts call that asked for it.
 /// </para>
 /// <para>
@@ -81,15 +81,15 @@ public sealed class GraphAwareSearchEngine : IGraphSearchEngine
     public void Clear() => _inner.Clear();
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
-        return _inner.Search(query, options);
+        return _inner.Search(query, options, cancellationToken);
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(ReadOnlySpan<char> query, SearchOptions? options = null) =>
-        _inner.Search(query, options);
+    public IReadOnlyList<SearchResult> Search(ReadOnlySpan<char> query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
+        _inner.Search(query, options, cancellationToken);
 
     /// <inheritdoc />
     public GraphHydratedResults SearchWithGraphFacts(string query, SearchOptions? options = null)
