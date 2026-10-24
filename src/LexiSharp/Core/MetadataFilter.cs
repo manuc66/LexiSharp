@@ -49,11 +49,28 @@ public sealed record MetadataFilter
     /// <summary>Value to compare against (never null; empty strings are allowed).</summary>
     public string Value { get; }
 
-    /// <summary>Creates a filter over one document field.</summary>
+    /// <summary>The shape of the field this filter applies to. Default: <see cref="Core.FieldType.String"/>.</summary>
+    public FieldType FieldType { get; }
+
+    /// <summary>Delimiter used to split a <see cref="Core.FieldType.StringArray"/> value.</summary>
+    public char ArrayDelimiter { get; }
+
+    /// <summary>Creates a filter over one document field, treated as a single string.</summary>
     /// <param name="field">Name of the document field the filter applies to.</param>
     /// <param name="operator">Comparison applied between the field value and <paramref name="value"/>.</param>
     /// <param name="value">Value to compare against (empty strings are allowed).</param>
     public MetadataFilter(string field, MetadataFilterOperator @operator, string value)
+        : this(field, @operator, value, FieldType.String, '|')
+    {
+    }
+
+    /// <summary>Creates a filter over one document field with an explicit field type.</summary>
+    /// <param name="field">Name of the document field the filter applies to.</param>
+    /// <param name="operator">Comparison applied between the field value and <paramref name="value"/>.</param>
+    /// <param name="value">Value to compare against (empty strings are allowed).</param>
+    /// <param name="fieldType">Shape of the field value.</param>
+    /// <param name="arrayDelimiter">Delimiter used to split a <see cref="Core.FieldType.StringArray"/> value.</param>
+    public MetadataFilter(string field, MetadataFilterOperator @operator, string value, FieldType fieldType, char arrayDelimiter = '|')
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(field);
         ArgumentNullException.ThrowIfNull(value);
@@ -61,6 +78,8 @@ public sealed record MetadataFilter
         Field = field;
         Operator = @operator;
         Value = value;
+        FieldType = fieldType;
+        ArrayDelimiter = arrayDelimiter;
     }
 
     /// <summary>
@@ -76,6 +95,21 @@ public sealed record MetadataFilter
 
         if (fields is null || !fields.TryGetValue(Field, out var fieldValue))
             return Operator == MetadataFilterOperator.NotEqual;
+
+        if (FieldType == FieldType.StringArray)
+        {
+            var elements = fieldValue.Split(ArrayDelimiter, StringSplitOptions.RemoveEmptyEntries);
+
+            return Operator switch
+            {
+                MetadataFilterOperator.Equal => elements.Any(e => string.Equals(e, Value, StringComparison.Ordinal)),
+                MetadataFilterOperator.NotEqual => !elements.Any(e => string.Equals(e, Value, StringComparison.Ordinal)),
+                MetadataFilterOperator.Contains => elements.Any(e => e.Contains(Value, StringComparison.Ordinal)),
+                MetadataFilterOperator.GreaterThan => elements.Any(e => Compare(e, Value) > 0),
+                MetadataFilterOperator.LessThan => elements.Any(e => Compare(e, Value) < 0),
+                _ => throw new InvalidOperationException($"Unknown filter operator {Operator}."),
+            };
+        }
 
         return Operator switch
         {
