@@ -335,6 +335,12 @@ Four things a caller has to know, and each one is a consequence of a measurement
   into a segment. What an overlay is not is durable: it is lost on a crash. `Commit()` is what makes
   the writes durable, and it writes one segment atomically — a crash mid-write leaves the previous
   segment intact rather than a truncated one.
+- **A commit interrupted between its rename and its cleanup opens the newest generation only.** The
+  successor is the flush of everything live at commit time, so the replaced file is a subset of it;
+  chaining both would return every shared document twice and bring back the ones the commit deleted.
+  The mapped-mode commit of that path is **unverified on Windows**: Windows refuses to delete a file
+  while a mapping is open, and every CI job here runs on Ubuntu. On Windows, dispose a mapped store
+  before committing it.
 - **Merging returns a new index rather than mutating this one.** A search in flight reads the segments,
   their bases and the length array, and a write between those reads would fold half the old chain and
   half the new one. Swapping the reference an engine holds is the pattern `AtomicEngineReference`

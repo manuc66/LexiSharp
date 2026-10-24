@@ -328,6 +328,22 @@ workflow.
 
 ### Fixed
 
+- **A commit interrupted after its rename served every document twice, and resurrected the deleted
+  ones.**
+
+  `SegmentedTextIndex.Commit` writes the merged segment to a temporary file, renames it into place,
+  and only then deletes the segments it replaced. A crash in that window leaves the previous
+  generation on disk beside its successor, and the constructor chained every `*.lxs` it found — so on
+  the next open each shared document was returned twice, and every document the commit had deleted
+  came back. The constructor now opens the newest generation only: the successor is the flush of
+  everything live at commit time, so the older file is a subset of it by construction. Two tests in
+  `SegmentRecoveryTests` pin it, one of them asserting that a document deleted before the commit stays
+  gone.
+
+  The mapped-mode variant of that path is **unverified on Windows**: Windows refuses to delete a file
+  while a mapping is open, and every CI job here runs on Ubuntu. Stated in `docs/indexing.md` rather
+  than fixed blind, with the workaround — dispose a mapped store before committing it.
+
 - **`TieBreak.InsertionOrder` ordered tied documents by a position that moved with the corpus.**
 
   The option documents the order documents were added, and what it read was the position the engine
