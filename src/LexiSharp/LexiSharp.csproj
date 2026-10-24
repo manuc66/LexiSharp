@@ -9,11 +9,11 @@
     <RootNamespace>LexiSharp</RootNamespace>
     <PackageId>LexiSharp</PackageId>
     <Title>LexiSharp</Title>
-    <Description>A composable information retrieval toolkit for .NET: in-memory inverted index, BM25/TF-IDF/query-likelihood/boolean scorers, rank fusion (RRF, cascade, MMR, MaxSim, cross-encoder) and model-agnostic dense/learned-sparse seams, plus IR metrics, BM25 tuning and end-to-end search traces. The core package has no runtime dependency.</Description>
+    <Description>Search and retrieval for .NET: in-memory inverted index, BM25 and its variants, TF-IDF, query-likelihood and boolean scorers, rank fusion (RRF, weighted, cascade, MMR, MaxSim, cross-encoder), model-agnostic dense and learned-sparse seams, IR metrics, BM25 tuning and end-to-end search traces. The core package has no runtime dependency.</Description>
     <Authors>manu</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryType>git</RepositoryType>
-    <PackageTags>search;text;lexical;tf-idf;bm25;classification;naive-bayes;incremental-learning;feedback;hybrid;federation;rrf;reranking</PackageTags>
+    <PackageTags>search;full-text-search;information-retrieval;bm25;tf-idf;ranking;reranking;hybrid-search;rank-fusion;rrf;vector-search;text-analysis</PackageTags>
     <IsPackable>true</IsPackable>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <!-- AOT EXPERIMENT (local, not for commit): turns on the trim/AOT analyzers. -->
