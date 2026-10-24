@@ -1,3 +1,4 @@
+using System.Buffers;
 using LexiSharp.Core;
 
 namespace LexiSharp.Hybrid;
@@ -83,29 +84,52 @@ public sealed class MaxSimReranker : IReranker
 
         var reranked = new List<SearchResult>(candidates.Count);
 
-        foreach (var candidate in candidates)
+        // One norm per query token, reused by every document, and one rented buffer for the
+        // document's: a cosine would otherwise recompute two of its three passes for every pair in
+        // the Q × D matrix, and the reused half is the larger one.
+        var queryNorms = new float[queryTokens.Count];
+        for (int i = 0; i < queryNorms.Length; i++)
+            queryNorms[i] = VectorSimilarity.Norm(queryTokens[i].Span);
+
+        float[]? documentNorms = null;
+
+        try
         {
-            if (!_documentVectors.TryGetValue(candidate.DocumentId, out var documentTokens)
-                || documentTokens.Count == 0)
+            foreach (var candidate in candidates)
             {
-                continue;
+                if (!_documentVectors.TryGetValue(candidate.DocumentId, out var documentTokens)
+                    || documentTokens.Count == 0)
+                {
+                    continue;
+                }
+
+                // A model trained on another embedding dimensionality is a data error, not a score:
+                // drop the candidate rather than throwing mid-rerank. Query tokens are assumed to be
+                // uniform (the model contract); each document token is checked instead.
+                if (!AllSameDimension(queryTokens, documentTokens))
+                    continue;
+
+                if (documentNorms is null || documentNorms.Length < documentTokens.Count)
+                    documentNorms = ArrayPool<float>.Shared.Rent(documentTokens.Count);
+
+                for (int i = 0; i < documentTokens.Count; i++)
+                    documentNorms[i] = VectorSimilarity.Norm(documentTokens[i].Span);
+
+                double score = MaxSim(queryTokens, queryNorms, documentTokens, documentNorms);
+
+                if (double.IsNaN(score) || double.IsInfinity(score) || score <= 0)
+                    continue;
+
+                if (score < _minimumScore)
+                    continue;
+
+                reranked.Add(candidate with { Score = score });
             }
-
-            // A model trained on another embedding dimensionality is a data error, not a score:
-            // drop the candidate rather than throwing mid-rerank. Query tokens are assumed to be
-            // uniform (the model contract); each document token is checked instead.
-            if (!AllSameDimension(queryTokens, documentTokens))
-                continue;
-
-            double score = MaxSim(queryTokens, documentTokens);
-
-            if (double.IsNaN(score) || double.IsInfinity(score) || score <= 0)
-                continue;
-
-            if (score < _minimumScore)
-                continue;
-
-            reranked.Add(candidate with { Score = score });
+        }
+        finally
+        {
+            if (documentNorms is not null)
+                ArrayPool<float>.Shared.Return(documentNorms);
         }
 
         return reranked
@@ -131,17 +155,22 @@ public sealed class MaxSimReranker : IReranker
 
     private static double MaxSim(
         IReadOnlyList<ReadOnlyMemory<float>> queryTokens,
-        IReadOnlyList<ReadOnlyMemory<float>> documentTokens)
+        float[] queryNorms,
+        IReadOnlyList<ReadOnlyMemory<float>> documentTokens,
+        float[] documentNorms)
     {
         double total = 0;
 
-        foreach (var queryToken in queryTokens)
+        for (int q = 0; q < queryTokens.Count; q++)
         {
+            ReadOnlySpan<float> queryToken = queryTokens[q].Span;
+            float queryNorm = queryNorms[q];
             float best = float.MinValue;
 
-            foreach (var documentToken in documentTokens)
+            for (int t = 0; t < documentTokens.Count; t++)
             {
-                float similarity = VectorSimilarity.CosineSimilarity(queryToken.Span, documentToken.Span);
+                float similarity = VectorSimilarity.CosineSimilarity(
+                    queryToken, documentTokens[t].Span, queryNorm, documentNorms[t]);
 
                 if (similarity > best)
                     best = similarity;

@@ -55,6 +55,32 @@ public static class VectorSimilarity
         return dot / (normA * normB);
     }
 
+    /// <summary>
+    /// Cosine similarity when both norms are already known — the same value
+    /// <see cref="CosineSimilarity(ReadOnlySpan{float}, ReadOnlySpan{float})"/> would divide by, not an estimate of it.
+    /// </summary>
+    /// <remarks>
+    /// Same arithmetic, same zero convention and same length check as
+    /// <see cref="CosineSimilarity(ReadOnlySpan{float}, ReadOnlySpan{float})"/>; only the two normalizations are supplied by the caller
+    /// instead of recomputed. That is worth a factor of three on a reranker's inner loop, where the
+    /// same document token is compared against every query token.
+    /// <para>
+    /// Internal because a caller that passes something other than <see cref="Norm"/> of the
+    /// corresponding span gets a wrong answer rather than a slower one, and that is a contract worth
+    /// keeping inside the library.
+    /// </para>
+    /// </remarks>
+    internal static float CosineSimilarity(ReadOnlySpan<float> a, ReadOnlySpan<float> b, float normA, float normB)
+    {
+        if (a.Length != b.Length)
+            throw new ArgumentException($"Vectors must have the same length (got {a.Length} and {b.Length}).");
+
+        if (normA == 0 || normB == 0)
+            return 0;
+
+        return DotProductUnchecked(a, b) / (normA * normB);
+    }
+
     /// <summary>The dot product of two equal-length vectors.</summary>
     public static float DotProduct(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
     {
@@ -208,7 +234,7 @@ public static class VectorSimilarity
     /// </summary>
     /// <remarks>
     /// A zero vector has no direction, so it is copied through as all zeros rather than becoming
-    /// NaN — the convention <see cref="CosineSimilarity"/> already uses, which reports <c>0</c>
+    /// NaN — the convention <see cref="CosineSimilarity(ReadOnlySpan{float}, ReadOnlySpan{float})"/> already uses, which reports <c>0</c>
     /// for a zero input. In-place with <paramref name="destination"/> is well defined.
     /// </remarks>
     public static void Normalize(ReadOnlySpan<float> vector, Span<float> destination)
@@ -238,7 +264,7 @@ public static class VectorSimilarity
     /// <remarks>
     /// <para>
     /// Both halves are fused so the subtraction is not materialized and read back. The result is
-    /// unit length, which <see cref="CosineSimilarity"/> would normalize to anyway — the
+    /// unit length, which <see cref="CosineSimilarity(ReadOnlySpan{float}, ReadOnlySpan{float})"/> would normalize to anyway — the
     /// difference is that the normalization now happens against the centered vector rather than
     /// the raw one, which is the whole point of the pair.
     /// </para>
