@@ -198,15 +198,16 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
 
         await using var command = connection.CreateCommand();
 
-        string tsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content");
+        string tsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content", "EXCLUDED.text_fields");
 
         string insertSql = $"""
-            INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, sparse)
-            VALUES (@id, @content, @category, @fields, @sparse::sparsevec)
+            INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, sparse)
+            VALUES (@id, @content, @category, @fields, @text_fields, @sparse::sparsevec)
             ON CONFLICT (id) DO UPDATE
                 SET content = EXCLUDED.content,
                     category = EXCLUDED.category,
                     fields = EXCLUDED.fields,
+                    text_fields = EXCLUDED.text_fields,
                     sparse = EXCLUDED.sparse,
                     tsv = {tsvExpr};
             """;
@@ -230,11 +231,23 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
             command.Parameters.AddWithValue("fields", DBNull.Value);
         }
 
+        if (document.TextFields is not null)
+        {
+            var textFieldsParameter = command.Parameters.AddWithValue("text_fields",
+                System.Text.Json.JsonSerializer.Serialize(document.TextFields, PostgresJsonContext.Default.IReadOnlyDictionaryStringString));
+            textFieldsParameter.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Jsonb;
+        }
+        else
+        {
+            var textFieldsParameter = command.Parameters.AddWithValue("text_fields", DBNull.Value);
+            textFieldsParameter.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Jsonb;
+        }
+
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
         return SearchAsync(query, options).GetAwaiter().GetResult();
@@ -273,7 +286,7 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
         filters.Apply(command);
 
         string searchSql = $"""
-            SELECT id, content, category, fields, {scoreExpression} AS score
+            SELECT id, content, category, fields, text_fields, {scoreExpression} AS score
             FROM {_options.QualifiedTableName}
             WHERE sparse IS NOT NULL{filters.Fragment}
             ORDER BY sparse {_options.Operator} @query::sparsevec
@@ -297,7 +310,7 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
         {
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                double score = reader.GetDouble(4);
+                double score = reader.GetDouble(5);
 
                 if (double.IsNaN(score) || double.IsInfinity(score) || score == 0)
                     continue;
@@ -352,8 +365,9 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
         string content = reader.GetString(1);
         string? category = reader.IsDBNull(2) ? null : reader.GetString(2);
         var fields = reader.IsDBNull(3) ? null : DeserializeFields(reader.GetString(3));
+        var textFields = reader.IsDBNull(4) ? null : DeserializeFields(reader.GetString(4));
 
-        return new SearchDocument(id, content, fields, category);
+        return new SearchDocument(id, content, fields, category, textFields);
     }
 
     private static IReadOnlyDictionary<string, string>? DeserializeFields(string? json)

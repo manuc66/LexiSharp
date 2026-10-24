@@ -42,7 +42,26 @@ public static class PostgresSchema
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>The tsvector expression used to derive <c>tsv</c> from a content reference.</summary>
-    public static string TsvExpression(PostgresIndexOptions options, string contentReference) =>
-        $"to_tsvector('{options.TextSearchConfig}', unaccent({contentReference}))";
+    /// <summary>
+    /// The tsvector expression used to derive <c>tsv</c> from a content reference.
+    /// </summary>
+    /// <remarks>
+    /// When <paramref name="textFieldsReference"/> is supplied, the values of the
+    /// <c>text_fields</c> jsonb column are flattened into the same tsvector, so a document's
+    /// named free-text sections (e.g. <c>title</c>) become searchable by the tsvector engine
+    /// instead of being stored but ignored. The two references are SQL fragments naming the
+    /// content and the text-fields column (or their <c>EXCLUDED.</c> counterparts on upsert);
+    /// passing <c>null</c> keeps the expression content-only, for callers that do not carry
+    /// text fields.
+    /// </remarks>
+    public static string TsvExpression(PostgresIndexOptions options, string contentReference, string? textFieldsReference = null)
+    {
+        if (string.IsNullOrEmpty(textFieldsReference))
+            return $"to_tsvector('{options.TextSearchConfig}', unaccent({contentReference}))";
+
+        // jsonb_each_text on a null column yields no rows, so the coalesce covers the
+        // "no text fields" case without a conditional.
+        string flattened = $"coalesce((select string_agg(value, ' ') from jsonb_each_text({textFieldsReference})), '')";
+        return $"to_tsvector('{options.TextSearchConfig}', unaccent({contentReference} || ' ' || {flattened}))";
+    }
 }

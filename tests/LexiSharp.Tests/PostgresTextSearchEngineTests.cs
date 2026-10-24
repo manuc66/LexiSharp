@@ -294,4 +294,24 @@ public class PostgresTextSearchEngineTests
                 With(new MetadataFilter("kind", MetadataFilterOperator.Equal, "missing"))));
         });
     }
+
+    [SkippableFact]
+    public void TextFields_AreSearchableAndRoundTrip()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        Run(engine =>
+        {
+            engine.Add(new SearchDocument("a", "body text about indexing",
+                TextFields: new Dictionary<string, string> { ["title"] = "searchable headline" }));
+
+            var results = engine.Search("headline");
+            Assert.Single(results);
+            Assert.Equal("a", results[0].DocumentId);
+            Assert.Equal("searchable headline", results[0].Document.TextFields!["title"]);
+
+            // content-only term still matches
+            Assert.Single(engine.Search("indexing"));
+        });
+    }
 }

@@ -15,3 +15,5 @@ bench/LexiSharp.Eval/data/
 cocoindex/.venv/
 cocoindex/run/
 cocoindex/*.sqlite
+# CocoIndex Code (ccc)
+/.cocoindex_code/

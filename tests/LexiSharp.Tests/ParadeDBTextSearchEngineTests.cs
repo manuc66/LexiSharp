@@ -198,6 +198,31 @@ public class ParadeDBTextSearchEngineTests
     }
 
     [SkippableFact]
+    public void Add_AndSearch_RoundTripsTextFields()
+    {
+        SkipIfUnavailable();
+
+        using var engine = NewEngine();
+
+        try
+        {
+            engine.Add(new SearchDocument(
+                "a",
+                "the quick brown fox",
+                TextFields: new Dictionary<string, string> { ["title"] = "headline words" }));
+
+            var results = engine.Search("fox");
+
+            Assert.Single(results);
+            Assert.Equal("headline words", results[0].Document.TextFields!["title"]);
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    [SkippableFact]
     public void Search_Offset_PaginatesTheRanking()
     {
         SkipIfUnavailable();
