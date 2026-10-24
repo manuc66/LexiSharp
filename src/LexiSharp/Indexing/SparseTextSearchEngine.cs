@@ -176,7 +176,7 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
         return SearchAsync(query, options).GetAwaiter().GetResult();

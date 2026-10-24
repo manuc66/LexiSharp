@@ -7,7 +7,7 @@ namespace LexiSharp.Core;
 /// </summary>
 /// <remarks>
 /// Implementing this interface is opt-in, like <see cref="IDetailedSearchEngine"/>: a plain
-/// engine keeps its single <see cref="ITextSearchEngine.Search(string, SearchOptions)"/>
+/// engine keeps its single <see cref="ITextSearchEngine.Search(string, SearchOptions?, CancellationToken)"/>
 /// contract. A <c>Search</c> call and a <c>SearchWithGraphFacts</c> call on the same engine
 /// and options must agree on the returned results — the facts variant only adds the connected
 /// facts. Detected with pattern matching (<c>engine is IGraphSearchEngine</c>).
@@ -15,7 +15,7 @@ namespace LexiSharp.Core;
 public interface IGraphSearchEngine : ITextSearchEngine
 {
     /// <summary>
-    /// Same search as <see cref="ITextSearchEngine.Search(string, SearchOptions)"/>, plus the
+    /// Same search as <see cref="ITextSearchEngine.Search(string, SearchOptions?, CancellationToken)"/>, plus the
     /// facts the <see cref="IKnowledgeGraphBridge"/> returns for the entities mined from the
     /// query.
     /// </summary>

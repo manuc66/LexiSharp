@@ -6,7 +6,7 @@ namespace LexiSharp.Core;
 /// entities.
 /// </summary>
 /// <param name="Results">
-/// Exactly the page <see cref="ITextSearchEngine.Search(string, SearchOptions)"/> would return
+/// Exactly the page <see cref="ITextSearchEngine.Search(string, SearchOptions?, CancellationToken)"/> would return
 /// for the same query and options — the ranking is untouched; the facts are an addition.
 /// </param>
 /// <param name="Facts">The triplets the graph connected to the query's entities.</param>

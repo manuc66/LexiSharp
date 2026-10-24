@@ -131,8 +131,8 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
-        SearchWithDetails(query, options)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
+        SearchWithDetails(query, options, cancellationToken)
             .Select(x => x.ToSearchResult())
             .ToList();
 
@@ -148,7 +148,7 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
     /// the breakdown is an instrument for debugging and surface UI, not a substitute for the
     /// merged ordering.
     /// </remarks>
-    public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null)
+    public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
 
@@ -172,7 +172,7 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
         for (int i = 0; i < _engines.Count; i++)
         {
             long sourceStarted = instrumented ? RetrievalTelemetry.StartTimer() : 0;
-            var results = _engines[i].Search(query, options with { Offset = 0, Limit = candidateLimit });
+            var results = _engines[i].Search(query, options with { Offset = 0, Limit = candidateLimit }, cancellationToken);
 
             if (instrumented)
             {

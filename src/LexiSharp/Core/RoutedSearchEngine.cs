@@ -94,17 +94,17 @@ public sealed class RoutedSearchEngine : IFacetedSearchEngine, IQueryCostProbe, 
     public void Clear() => throw new NotSupportedException(WriteMessage);
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
         return Search(query.AsSpan(), options);
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(ReadOnlySpan<char> query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(ReadOnlySpan<char> query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         var resolved = options ?? SearchOptions.Default;
-        return SelectEngine(query, resolved).Engine.Search(query, resolved);
+        return SelectEngine(query, resolved).Engine.Search(query, resolved, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -137,7 +137,7 @@ public sealed class RoutedSearchEngine : IFacetedSearchEngine, IQueryCostProbe, 
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null)
+    public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
         var resolved = options ?? SearchOptions.Default;
@@ -149,7 +149,7 @@ public sealed class RoutedSearchEngine : IFacetedSearchEngine, IQueryCostProbe, 
                 $"Engine '{selected.Name}' selected for this query does not support detailed results.");
         }
 
-        return detailed.SearchWithDetails(query, resolved);
+        return detailed.SearchWithDetails(query, resolved, cancellationToken);
     }
 
     /// <inheritdoc />

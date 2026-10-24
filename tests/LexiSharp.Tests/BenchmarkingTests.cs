@@ -175,7 +175,7 @@ public class BenchmarkingTests
     /// <summary>Engine that never matches anything; used to prove the runner reports signal.</summary>
     private sealed class EmptyEngine : ITextSearchEngine
     {
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
             Array.Empty<SearchResult>();
 
         public void Index(IEnumerable<SearchDocument> documents) => throw new NotSupportedException();

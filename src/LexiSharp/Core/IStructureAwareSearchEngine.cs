@@ -8,7 +8,7 @@ namespace LexiSharp.Core;
 /// </summary>
 /// <remarks>
 /// Implementing this interface is opt-in, like <see cref="IFacetedSearchEngine"/>: a plain
-/// engine keeps its single <see cref="ITextSearchEngine.Search(string, SearchOptions)"/>
+/// engine keeps its single <see cref="ITextSearchEngine.Search(string, SearchOptions?, CancellationToken)"/>
 /// contract. The ancestor chain comes from a <see cref="DocumentHierarchy"/>, which the
 /// engine decorator holds; writing and searching behave exactly as the wrapped engine's.
 /// <para>

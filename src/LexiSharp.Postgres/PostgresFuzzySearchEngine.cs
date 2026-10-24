@@ -192,7 +192,7 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable, 
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
 

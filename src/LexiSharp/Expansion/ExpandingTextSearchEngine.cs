@@ -88,10 +88,10 @@ public sealed class ExpandingTextSearchEngine : IQueryCostProbe, IFacetedSearchE
     public void Clear() => _inner.Clear();
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
-        return _inner.Search(ExpandQuery(query), options);
+        return _inner.Search(ExpandQuery(query), options, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -107,10 +107,10 @@ public sealed class ExpandingTextSearchEngine : IQueryCostProbe, IFacetedSearchE
 
     /// <inheritdoc />
     /// <exception cref="NotSupportedException">The wrapped engine does not implement <see cref="IDetailedSearchEngine"/>.</exception>
-    public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null)
+    public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
-        return Detailed().SearchWithDetails(ExpandQuery(query), options);
+        return Detailed().SearchWithDetails(ExpandQuery(query), options, cancellationToken);
     }
 
     /// <inheritdoc />

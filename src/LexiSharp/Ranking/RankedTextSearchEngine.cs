@@ -203,14 +203,14 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         _index is IAccumulatingIndex acc ? acc.OrdinalOf(documentId) : -1;
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
         return Search(query.AsSpan(), options);
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(ReadOnlySpan<char> query, SearchOptions? options = null) =>
+    public IReadOnlyList<SearchResult> Search(ReadOnlySpan<char> query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
         RunQuery(query, options ?? SearchOptions.Default, null);
 
     /// <inheritdoc />
@@ -974,7 +974,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     }
 
     /// <summary>
-    /// Shared by <see cref="Search(string, SearchOptions)"/> and <see cref="Explain(string, string)"/>: parse the raw query, then
+    /// Shared by <see cref="Search(string, SearchOptions?, CancellationToken)"/> and <see cref="Explain(string, string)"/>: parse the raw query, then
     /// resolve synonyms and vocabulary expansions into the concrete scoring terms. The parsed
     /// form still carries the literal phrase constraints for the positional gate, and is null for
     /// a query that has none — a plain one, which the query language leaves alone.
@@ -1223,7 +1223,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// <param name="documentId">Id of the document to explain.</param>
     /// <param name="query">
     /// The raw query; parsed and resolved with the same <see cref="BuildQuery"/> path as
-    /// <see cref="Search(string, SearchOptions)"/> (quoted segments contribute their terms, synonyms and expansion
+    /// <see cref="Search(string, SearchOptions?, CancellationToken)"/> (quoted segments contribute their terms, synonyms and expansion
     /// atoms resolve against the map/vocabulary) and tokenized with the engine's tokenizer.
     /// </param>
     /// <returns>
@@ -1241,7 +1241,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// the query as a string.
     /// </summary>
     /// <param name="documentId">Id of the document to explain.</param>
-    /// <param name="query">The raw query; parsed and resolved like <see cref="Search(ReadOnlySpan{char}, SearchOptions?)"/>.</param>
+    /// <param name="query">The raw query; parsed and resolved like <see cref="Search(ReadOnlySpan{char}, SearchOptions?, CancellationToken)"/>.</param>
     /// <returns>
     /// A <see cref="ScoreExplanation"/>, or <c>null</c> when the active scorer cannot explain
     /// itself (it does not implement <see cref="IScoreExplainer"/>) or the document is unknown.

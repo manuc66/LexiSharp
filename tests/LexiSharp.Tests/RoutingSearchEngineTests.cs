@@ -30,7 +30,7 @@ public class RoutingSearchEngineTests
 
         public void Clear() { }
 
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
         {
             Calls++;
             LastQuery = query;

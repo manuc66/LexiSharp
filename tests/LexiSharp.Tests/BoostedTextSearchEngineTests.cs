@@ -68,7 +68,7 @@ public class BoostedTextSearchEngineTests
             ClearCalls++;
         }
 
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
         {
             SearchCalls++;
             return options?.Limit is int limit and > 0

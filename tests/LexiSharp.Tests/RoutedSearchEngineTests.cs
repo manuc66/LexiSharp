@@ -299,7 +299,7 @@ public class RoutedSearchEngineTests
 
         public SearchOptions? LastOptions { get; private set; }
 
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
         {
             LastQuery = query;
             LastOptions = options;
@@ -323,7 +323,7 @@ public class RoutedSearchEngineTests
 
         public PlainEngine(string tag) => _tag = tag;
 
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
             new[] { new SearchResult(_tag, 1, new SearchDocument(_tag, query)) };
 
         public void Index(IEnumerable<SearchDocument> documents) => throw new NotSupportedException();
@@ -349,7 +349,7 @@ public class RoutedSearchEngineTests
     {
         public string? LastFacetQuery { get; private set; }
 
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
             new[] { new SearchResult("faceted", 1, new SearchDocument("faceted", query)) };
 
         public FacetedSearchResult SearchWithFacets(
@@ -374,7 +374,7 @@ public class RoutedSearchEngineTests
 
     private sealed class DetailedEngine : IDetailedSearchEngine, ITextSearchEngine
     {
-        public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null) =>
+        public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
             new[]
             {
                 new DetailedSearchResult(
@@ -382,7 +382,7 @@ public class RoutedSearchEngineTests
                     new Dictionary<string, double> { ["lexical"] = 1 }),
             };
 
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
             new[] { new SearchResult("detailed", 1, new SearchDocument("detailed", query)) };
 
         public void Index(IEnumerable<SearchDocument> documents) => throw new NotSupportedException();
@@ -402,7 +402,7 @@ public class RoutedSearchEngineTests
                 Array.Empty<TermContribution>(),
                 new Dictionary<string, double>());
 
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
             new[] { new SearchResult("explainable", 1, new SearchDocument("explainable", query)) };
 
         public void Index(IEnumerable<SearchDocument> documents) => throw new NotSupportedException();

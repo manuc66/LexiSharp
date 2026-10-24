@@ -17,7 +17,7 @@ public interface IExplainableSearchEngine
     /// explain itself or the document is unknown.
     /// </summary>
     /// <param name="documentId">Id of the document to explain.</param>
-    /// <param name="query">The raw query, parsed and resolved like <see cref="ITextSearchEngine.Search(string, SearchOptions)"/>.</param>
+    /// <param name="query">The raw query, parsed and resolved like <see cref="ITextSearchEngine.Search(string, SearchOptions?, CancellationToken)"/>.</param>
     ScoreExplanation? Explain(string documentId, string query);
 
     /// <summary>
@@ -25,7 +25,7 @@ public interface IExplainableSearchEngine
     /// copies the span into a string and forwards.
     /// </summary>
     /// <param name="documentId">Id of the document to explain.</param>
-    /// <param name="query">The raw query, parsed and resolved like <see cref="ITextSearchEngine.Search(ReadOnlySpan{char}, SearchOptions)"/>.</param>
+    /// <param name="query">The raw query, parsed and resolved like <see cref="ITextSearchEngine.Search(ReadOnlySpan{char}, SearchOptions?, CancellationToken)"/>.</param>
     ScoreExplanation? Explain(string documentId, ReadOnlySpan<char> query) =>
         Explain(documentId, query.ToString());
 }

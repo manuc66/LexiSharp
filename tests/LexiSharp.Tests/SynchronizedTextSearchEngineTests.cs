@@ -170,7 +170,7 @@ public class SynchronizedTextSearchEngineTests
 
         public void Clear() { }
 
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
             Array.Empty<SearchResult>();
     }
 }

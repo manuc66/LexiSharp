@@ -122,7 +122,7 @@ public class AtomicEngineReferenceTests
 
         public void Clear() { }
 
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
             [new SearchResult($"doc-{Tag}", 1, new SearchDocument($"doc-{Tag}", query))];
     }
 }

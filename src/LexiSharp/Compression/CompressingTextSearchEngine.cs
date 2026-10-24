@@ -10,7 +10,7 @@ namespace LexiSharp.Compression;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The flat <see cref="ITextSearchEngine.Search(string, SearchOptions)"/> contract is
+/// The flat <see cref="ITextSearchEngine.Search(string, SearchOptions?, CancellationToken)"/> contract is
 /// untouched — the full text still comes back. <see cref="SearchCompressed"/> runs the same
 /// search, tokenizes the query with the engine's own tokenizer, and hands each returned
 /// document's text to the compressor; the ranking (ids and scores) is the inner engine's, and
@@ -77,15 +77,15 @@ public sealed class CompressingTextSearchEngine : ICompressingSearchEngine
     public void Clear() => _inner.Clear();
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
-        return _inner.Search(query, options);
+        return _inner.Search(query, options, cancellationToken);
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(ReadOnlySpan<char> query, SearchOptions? options = null) =>
-        _inner.Search(query, options);
+    public IReadOnlyList<SearchResult> Search(ReadOnlySpan<char> query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
+        _inner.Search(query, options, cancellationToken);
 
     /// <inheritdoc />
     public IReadOnlyList<CompressedHit> SearchCompressed(string query, SearchOptions? options = null)

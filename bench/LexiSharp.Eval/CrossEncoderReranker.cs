@@ -324,7 +324,7 @@ internal sealed class RerankTextSearchEngine(
     public void Clear() =>
         throw new NotSupportedException("RerankTextSearchEngine delegates to its base engine.");
 
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         options ??= SearchOptions.Default;
 

@@ -2,7 +2,7 @@ namespace LexiSharp.Core;
 
 /// <summary>
 /// Wraps an <see cref="ITextSearchEngine"/> so that concurrent searches and concurrent mutation
-/// stop being the caller's problem: any number of <see cref="Search(string, SearchOptions)"/> (and
+/// stop being the caller's problem: any number of <see cref="Search(string, SearchOptions?, CancellationToken)"/> (and
 /// the capability calls below) may run at the same time, while <see cref="Index"/>,
 /// <see cref="Add"/>, <see cref="Remove"/> and <see cref="Clear"/> each take exclusive access and
 /// wait for the searches already in flight to return.
@@ -34,7 +34,7 @@ namespace LexiSharp.Core;
 /// </para>
 /// <para>
 /// The read lock is not free in principle, and the measured cost on the stock engine is reported
-/// in the remarks of <see cref="Search(ReadOnlySpan{char}, SearchOptions?)"/> — measured against
+/// in the remarks of <see cref="Search(ReadOnlySpan{char}, SearchOptions?, CancellationToken)"/> — measured against
 /// the unwrapped engine in the same session, not claimed. A caller who needs the last few percent
 /// of single-threaded latency should keep the engine unwrapped rather than expect a number.
 /// </para>
@@ -118,7 +118,7 @@ public sealed class SynchronizedTextSearchEngine
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
         return Search(query.AsSpan(), options);
@@ -144,13 +144,13 @@ public sealed class SynchronizedTextSearchEngine
     /// engine rather than expect a number from this one.
     /// </para>
     /// </remarks>
-    public IReadOnlyList<SearchResult> Search(ReadOnlySpan<char> query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(ReadOnlySpan<char> query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         _lock.EnterReadLock();
 
         try
         {
-            return _inner.Search(query, options);
+            return _inner.Search(query, options, cancellationToken);
         }
         finally
         {
@@ -192,7 +192,7 @@ public sealed class SynchronizedTextSearchEngine
 
     /// <inheritdoc />
     /// <exception cref="NotSupportedException">The wrapped engine does not implement <see cref="IDetailedSearchEngine"/>.</exception>
-    public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null)
+    public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         var detailed = Detailed();
 
@@ -200,7 +200,7 @@ public sealed class SynchronizedTextSearchEngine
 
         try
         {
-            return detailed.SearchWithDetails(query, options);
+            return detailed.SearchWithDetails(query, options, cancellationToken);
         }
         finally
         {

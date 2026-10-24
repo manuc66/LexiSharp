@@ -104,7 +104,7 @@ public sealed class BoostContext<TPayload>
     /// </summary>
     /// <remarks>
     /// The two are different situations and this property is what tells them apart. Reached
-    /// through <see cref="ITextSearchEngine.Search(string, SearchOptions?)"/>, no payload was
+    /// through <see cref="ITextSearchEngine.Search(string, SearchOptions?, CancellationToken)"/>, no payload was
     /// ever offered and this is <c>false</c>; reached through
     /// <see cref="IContextualSearchEngine{TPayload}.Search(string, SearchOptions?, TPayload)"/>,
     /// one was offered and this is <c>true</c> — even if the caller passed <c>null</c>.

@@ -90,7 +90,7 @@ public class FeedbackAwareTextSearchEngineTests
         public bool Remove(string documentId) => false;
         public void Clear() { }
 
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
         {
             return new[]
             {

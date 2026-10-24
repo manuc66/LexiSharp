@@ -109,7 +109,7 @@ public sealed class RerankedTextSearchEngine : ITextSearchEngine, IQueryCostProb
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
 
@@ -140,7 +140,7 @@ public sealed class RerankedTextSearchEngine : ITextSearchEngine, IQueryCostProb
             Offset = 0,
             Limit = candidateLimit,
             MinimumScore = double.NegativeInfinity,
-        });
+        }, cancellationToken);
 
         if (instrumented)
             _telemetry.StageCompleted(EngineName, "retrieve", candidates.Count, retrieveStarted);

@@ -37,7 +37,7 @@ namespace LexiSharp.Core;
 /// </remarks>
 /// <typeparam name="TPayload">
 /// The caller's per-search state, constrained to a reference type so that the no-payload
-/// <see cref="ITextSearchEngine.Search(string, SearchOptions?)"/> overload can pass
+/// <see cref="ITextSearchEngine.Search(string, SearchOptions?, CancellationToken)"/> overload can pass
 /// <c>null</c> unambiguously. A value type would make <c>default(TPayload)</c> the zero
 /// value, and a boost reading <c>Payload</c> would have to tell that apart from a payload the
 /// caller deliberately passed — which is the confusion the constraint removes.
@@ -46,7 +46,7 @@ public interface IContextualSearchEngine<TPayload> : ITextSearchEngine
     where TPayload : class
 {
     /// <summary>
-    /// Searches as <see cref="ITextSearchEngine.Search(string, SearchOptions?)"/> does, with
+    /// Searches as <see cref="ITextSearchEngine.Search(string, SearchOptions?, CancellationToken)"/> does, with
     /// <paramref name="payload"/> handed to whatever in this pipeline asked for it.
     /// </summary>
     /// <param name="query">Raw query text; it is tokenized internally.</param>

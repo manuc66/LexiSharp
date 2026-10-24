@@ -6,7 +6,7 @@ namespace LexiSharp.Core;
 /// </summary>
 /// <remarks>
 /// Implementing this interface is opt-in — plain engines keep their single
-/// <see cref="ITextSearchEngine.Search(string, SearchOptions)"/> contract. A <c>Search</c> call and a
+/// <see cref="ITextSearchEngine.Search(string, SearchOptions?, CancellationToken)"/> contract. A <c>Search</c> call and a
 /// <c>SearchWithFacets</c> call on the same engine and options must agree on
 /// <see cref="FacetedSearchResult.Results"/> — the faceted variant only adds the buckets.
 /// Implemented by the stock <c>RankedTextSearchEngine</c>.
@@ -14,7 +14,7 @@ namespace LexiSharp.Core;
 public interface IFacetedSearchEngine : ITextSearchEngine
 {
     /// <summary>
-    /// Same search as <see cref="ITextSearchEngine.Search(string, SearchOptions)"/> plus one facet bucket per
+    /// Same search as <see cref="ITextSearchEngine.Search(string, SearchOptions?, CancellationToken)"/> plus one facet bucket per
     /// requested field of <see cref="SearchDocument.Fields"/>.
     /// </summary>
     /// <remarks>
@@ -38,7 +38,7 @@ public interface IFacetedSearchEngine : ITextSearchEngine
         IReadOnlyList<string>? facetFields = null);
 
     /// <summary>
-    /// Same search as <see cref="ITextSearchEngine.Search(ReadOnlySpan{char}, SearchOptions?)"/>
+    /// Same search as <see cref="ITextSearchEngine.Search(ReadOnlySpan{char}, SearchOptions?, CancellationToken)"/>
     /// plus facet buckets, without materializing the query as a string.
     /// </summary>
     /// <remarks>
