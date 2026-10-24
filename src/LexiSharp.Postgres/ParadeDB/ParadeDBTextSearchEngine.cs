@@ -178,6 +178,7 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, I
     public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
+        cancellationToken.ThrowIfCancellationRequested();
 
         options ??= SearchOptions.Default;
 
@@ -252,6 +253,9 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, I
 
         var results = new List<SearchResult>();
 
+        // Npgsql's blocking API takes no token; the registration is what makes this command
+        // cancellable while it runs. See PostgresCancellation.
+        using var cancelling = PostgresCancellation.Register(command, cancellationToken);
         using var reader = command.ExecuteReader();
 
         while (reader.Read())
