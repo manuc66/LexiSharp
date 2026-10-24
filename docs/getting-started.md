@@ -81,15 +81,16 @@ The same engine is a .NET tool, for trying it on a directory before writing any 
 dotnet tool install -g LexiSharp.Cli
 
 lexisharp search ./docs --query "rank fusion"          # scan and search, writes nothing
-lexisharp segment build ./docs --store ./index         # index a store that outlives the process
-lexisharp segment search ./index --query "bm25"
-lexisharp segment info ./index
+lexisharp segment build ./docs                         # index a store at ./.lexisharp
+lexisharp search --query "rank fusion"                 # finds it: no directory, no store flag
+lexisharp segment info .lexisharp
 ```
 
-`benchmark`, `diff`, `baseline` and `verify` run a corpus against labelled queries and report the
-IR metrics of the [evaluation](evaluation.md) page; `lexisharp benchmark --help` lists the
-configurations and the file formats. The tool's own README is
-[here](https://github.com/manuc66/LexiSharp/tree/main/bench/LexiSharp.Cli).
+A directory that holds a store is searched through the store rather than re-scanned: the directory
+itself if it is a store, else its `.lexisharp`. `benchmark`, `diff`, `baseline` and `verify` run a
+corpus against labelled queries and report the IR metrics of the [evaluation](evaluation.md) page;
+`lexisharp benchmark --help` lists the configurations and the file formats. The tool's own README
+is [here](https://github.com/manuc66/LexiSharp/tree/main/bench/LexiSharp.Cli).
 
 ## Document sources (`LexiSharp.Sources`)
 

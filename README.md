@@ -61,7 +61,8 @@ Or from a terminal, without writing any code:
 
 ```bash
 dotnet tool install -g LexiSharp.Cli
-lexisharp search ./docs --query "rank fusion"
+lexisharp segment build ./docs              # → ./.lexisharp
+lexisharp search --query "rank fusion"      # finds the store in the folder
 ```
 
 `net10.0`, MIT. Optional: `LexiSharp.MessagePack` (binary index persistence),

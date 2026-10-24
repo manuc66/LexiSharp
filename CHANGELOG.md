@@ -32,6 +32,12 @@ workflow.
   reproduction switches through `InternalsVisibleTo`; they ship because they live in the same
   binary, and they are tooling rather than a stable API.
 
+  A search does not have to be told where the store is. `lexisharp search --query "…"` reads the
+  current directory, and a directory that holds a store — itself, or its `.lexisharp` — is searched
+  through the store instead of being scanned as files; `segment build` writes `.lexisharp` when
+  `--store` is omitted. Because a store records the analyzer it was built with, `--analyzer` is
+  refused against one rather than silently reading a different index.
+
 - **`SegmentedTextIndex`, an index that can be written to and read back from disk.**
 
   A search server needs to write to a corpus it serves, and it needs that corpus to survive a restart
