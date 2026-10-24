@@ -26,7 +26,7 @@ public class ContextualFeedbackEngineTests
 
         public void Clear() { }
 
-        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+        public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
             options is { IsEmpty: false } ? _results : Array.Empty<SearchResult>();
     }
 
@@ -170,7 +170,7 @@ public class ContextualFeedbackEngineTests
 
         // Strength is normalized against the most-chosen document, so it stays 1 however many
         // times that document was chosen; the counter is what the second Learn changed.
-        Assert.Equal(2, history.Snapshot().Single().DocumentCounts["b"]);
+        Assert.Equal(2, history.Snapshot().Single().DocumentWeights["b"]);
     }
 
     [Fact]
