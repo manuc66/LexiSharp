@@ -14,7 +14,7 @@ namespace LexiSharp.Hybrid;
 /// A per-engine score that is NaN or infinite never poisons the blend: it is dropped from that
 /// engine's normalization and from every document it would have contributed to.
 /// </remarks>
-public sealed class WeightedScoreResultMerger : IResultMerger
+public sealed class WeightedScoreResultMerger : IResultMerger, IMergeExplainer
 {
     private readonly double[] _weights;
 
@@ -55,6 +55,28 @@ public sealed class WeightedScoreResultMerger : IResultMerger
             AccumulateEngine(merged, perEngineResults[i], weights[i], normalization[i]);
 
         return Rank(merged);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The same two helpers <see cref="Merge"/> calls, over the same input, so the explanation and
+    /// the merge cannot disagree about a divisor: a second implementation of "the largest score"
+    /// would be a second source of truth for the only numbers this type exists to report.
+    /// </remarks>
+    public MergeExplanation Explain(IReadOnlyList<IReadOnlyList<SearchResult>> perEngineResults)
+    {
+        ArgumentNullException.ThrowIfNull(perEngineResults);
+
+        int engineCount = perEngineResults.Count;
+
+        // Merge returns an empty list for no engines rather than refusing the input, so the
+        // explanation of that merge is empty rather than an error.
+        if (engineCount == 0)
+            return new MergeExplanation(Array.Empty<double>(), Array.Empty<double>());
+
+        return new MergeExplanation(
+            ResolveWeights(engineCount),
+            ComputeNormalization(perEngineResults, engineCount));
     }
 
     private double[] ResolveWeights(int engineCount)

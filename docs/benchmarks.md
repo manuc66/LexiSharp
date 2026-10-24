@@ -90,6 +90,33 @@ corpus against the committed baseline and fails the build on any drift in rankin
 clock is involved, so there is nothing to be noisy — which is the difference between a benchmark
 and a regression test, and the reason behaviour is protected that way rather than by a threshold.
 
+### Merge explanation on a traced hybrid search — allocation, before/after
+
+`HybridTraceBenchmarks` prices the query-level merge step on a two-engine hybrid (2 000 synthetic
+documents, `Limit: 10`, lexical + dense, `WeightedScoreResultMerger`). Measured on the host above
+with the parent commit compiled in a separate worktree and the two builds **alternated in one
+session**:
+
+| Build | `Trace: null` | Traced |
+|---|---:|---:|
+| parent commit (no explanation) | 60.1 KB | 71.0 KB |
+| with the explanation | 60.1 KB | 72.4 KB |
+
+**The untraced path allocates the same bytes, to the byte.** That is the column that matters, and
+it is not a timing claim: the explanation is written below the `trace is null` guard in
+`RecordMergeStage`, so no line of it runs when nobody asks. The traced path pays **1.4 KB per
+search** — one step and one formatted string, against the ten steps recording already writes per
+document.
+
+The timing rows are deliberately not reproduced here. On this host two runs of the *same* build for
+the same untraced case read 318.8 µs and 325.7 µs (2 %), while the parent build read 314.8 µs —
+run-to-run drift larger than the effect, and the machine was shared with another session. The
+allocation counter does not have that problem.
+
+```bash
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter "*HybridTraceBenchmarks*"
+```
+
 ### Before / after the search optimization pass (the 'after' build is commit 639880e, same env)
 
 | Method                          | Before          | After          | Mean Δ   | Alloc Δ   |
