@@ -58,6 +58,56 @@ internal sealed record QueryCoverage(
     double JudgedIdfShare);
 
 /// <summary>
+/// How far apart two configurations' top-10 rankings are for one query — the quantity a reranking
+/// or fusion trigger would be built on, measured by <em>ids</em> rather than by score.
+/// </summary>
+/// <param name="Shared">Ids present in both rankings.</param>
+/// <param name="LeftOnly">Ids only the left configuration returned.</param>
+/// <param name="RightOnly">Ids only the right configuration returned.</param>
+/// <param name="Distance">
+/// Jaccard distance over the two id sets: <c>1 - |shared| / |union|</c>. <c>0</c> means both
+/// configurations returned the same ids and <c>1</c> means they shared none. Two configurations that
+/// both returned nothing are at <c>0</c>: they agree about having found nothing, and the alternative
+/// — calling an empty result maximal disagreement — would put the queries no retriever can answer at
+/// the top of a table read as "where reranking is needed".
+/// </param>
+/// <remarks>
+/// <para>
+/// Rank correlation is deliberately not used. The two rankings are stored truncated to
+/// <see cref="MetricDepth.Cutoff"/> and may have different lengths, so a Kendall or Spearman figure
+/// over them would be defined by a padding convention nobody reading the column would know. The set
+/// distance is defined for every pair of lists, including empty ones.
+/// </para>
+/// <para>
+/// <b>The depth is not a free parameter.</b> The ranking kept per query is cut at
+/// <see cref="MetricDepth.Cutoff"/> by <c>Evaluation.Run</c>, so this distance is a property of the
+/// top-10 and cannot be asked for at depth 100 without changing what that capture holds — and paying
+/// for it in memory, which is the reason it is cut there.
+/// </para>
+/// <para>
+/// <b>This is measurable only after both retrievers have run.</b> It cannot decide whether to pay for
+/// a dense encoder; it can decide what to do with the two rankings once they exist — how to weight a
+/// fusion, or whether an expensive third stage is worth invoking on this query.
+/// </para>
+/// </remarks>
+internal sealed record TopKDisagreement(
+    string QueryId,
+    int Shared,
+    int LeftOnly,
+    int RightOnly,
+    double Distance);
+
+/// <summary>
+/// A rank correlation, or the reason one was not computed. A <c>null</c> correlation is printed as
+/// "-" with its reason, never as a zero: a zero is a measurement, and "not enough rows" is not one.
+/// </summary>
+internal readonly record struct RankCorrelation(double? Rho, int Pairs, string? Unavailable)
+{
+    /// <summary>No correlation exists for this input, and <paramref name="why"/> says why.</summary>
+    public static RankCorrelation NotComputed(int pairs, string why) => new(null, pairs, why);
+}
+
+/// <summary>
 /// Everything the per-query report needs, gathered once so the two writers take one argument and
 /// cannot be handed a coverage list from one run and outcomes from another.
 /// </summary>
@@ -266,29 +316,152 @@ internal static class QueryAnalysis
         _ => MismatchBand.High,
     };
 
+    /// <summary>Bands of top-10 disagreement, from agreement to no shared id at all.</summary>
+    public enum DisagreementBand
+    {
+        /// <summary>Under a fifth of the union differs — the two rankings are nearly the same list.</summary>
+        Agree,
+
+        /// <summary>A fifth to a half differs.</summary>
+        Mixed,
+
+        /// <summary>A half to four fifths differ — the rankings overlap but lead to different places.</summary>
+        MostlyDisagree,
+
+        /// <summary>Over four fifths differ, up to and including no shared id.</summary>
+        Disagree,
+    }
+
+    /// <summary>Buckets a Jaccard distance. The cut points are a reading, not a result.</summary>
+    public static DisagreementBand DisagreementBandOf(double distance) => distance switch
+    {
+        < 0.2 => DisagreementBand.Agree,
+        < 0.5 => DisagreementBand.Mixed,
+        < 0.8 => DisagreementBand.MostlyDisagree,
+        _ => DisagreementBand.Disagree,
+    };
+
+    /// <summary>
+    /// Measures how far apart two named configurations' rankings are, query by query.
+    /// </summary>
+    /// <param name="report">The run, whose per-configuration rankings are already in memory.</param>
+    /// <param name="left">One configuration's display name, e.g. <c>"BM25 (k1=1.5, b=0.75)"</c>.</param>
+    /// <param name="right">The other's, e.g. <c>"Dense multilingual-e5-small"</c>.</param>
+    /// <remarks>
+    /// <para>
+    /// The point of the pair is that it crosses representation, not parameters: BM25 against a dense
+    /// retriever is two different answers to the same question, whereas two BM25 parameterisations
+    /// disagree mostly about ties. Nothing here enforces that — it is a choice made on the command
+    /// line, and the summary names both configurations so the choice is readable in the output.
+    /// </para>
+    /// <para>
+    /// Pairing a configuration with itself is refused rather than measured: the distance is zero for
+    /// every query, which would print as a column of zeros and read as a finding about agreement.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<TopKDisagreement> DescribeDisagreement(
+        QueryAnalysisReport report, string left, string right)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        ArgumentException.ThrowIfNullOrWhiteSpace(left);
+        ArgumentException.ThrowIfNullOrWhiteSpace(right);
+
+        if (string.Equals(left, right, StringComparison.Ordinal))
+            throw new ArgumentException(
+                $"'{left}' is named on both sides of the disagreement pair. A configuration agrees with "
+                + "itself on every query, and a column of zeros reads as a measurement.",
+                nameof(right));
+
+        var leftOutcomes = report.OutcomesOf(left);
+        var rightOutcomes = report.OutcomesOf(right);
+
+        var described = new List<TopKDisagreement>(report.Coverage.Count);
+
+        foreach (var coverage in report.Coverage)
+        {
+            // Missing rather than short: every configuration in a run scores every query, and a
+            // report that silently skipped the ones it could not pair would slice a table over a
+            // subset nobody named.
+            var leftOutcome = Find(leftOutcomes, coverage.QueryId)
+                ?? throw new InvalidOperationException(
+                    $"Configuration '{left}' has no outcome for query '{coverage.QueryId}', so the "
+                    + "disagreement column would be short by exactly the queries that failed.");
+            var rightOutcome = Find(rightOutcomes, coverage.QueryId)
+                ?? throw new InvalidOperationException(
+                    $"Configuration '{right}' has no outcome for query '{coverage.QueryId}', so the "
+                    + "disagreement column would be short by exactly the queries that failed.");
+
+            var leftTop = new HashSet<string>(leftOutcome.Retrieved, StringComparer.Ordinal);
+            var rightTop = new HashSet<string>(rightOutcome.Retrieved, StringComparer.Ordinal);
+
+            // The smaller set is walked: the count is symmetric and the loop is not.
+            var smaller = leftTop.Count <= rightTop.Count ? leftTop : rightTop;
+            var larger = ReferenceEquals(smaller, leftTop) ? rightTop : leftTop;
+
+            int shared = 0;
+
+            foreach (string id in smaller)
+            {
+                if (larger.Contains(id))
+                    shared++;
+            }
+
+            int union = leftTop.Count + rightTop.Count - shared;
+
+            described.Add(new TopKDisagreement(
+                coverage.QueryId,
+                shared,
+                leftTop.Count - shared,
+                rightTop.Count - shared,
+                // Both empty is agreement about nothing, not maximal disagreement; the doc comment on
+                // the record says why that convention is the readable one.
+                union == 0 ? 0 : 1.0 - (double)shared / union));
+        }
+
+        return described;
+    }
+
     /// <summary>
     /// Writes one row per query per configuration, with the paired deltas against the baseline.
     /// </summary>
     /// <remarks>
     /// Tab-separated, because the ids and query text contain spaces and quotes and a CSV of them
     /// needs an escaping convention that becomes a second thing to get wrong. Header row included:
-    /// twenty columns of bare numbers is not readable, and a file nobody reads is not evidence.
+    /// a row of twenty-odd bare numbers is not readable, and a file nobody reads is not evidence.
     /// </remarks>
-    public static void Write(string path, QueryAnalysisReport report, string baseline)
+    public static void Write(
+        string path,
+        QueryAnalysisReport report,
+        string baseline,
+        IReadOnlyList<TopKDisagreement>? disagreement = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentNullException.ThrowIfNull(report);
 
         var baselineOutcomes = report.OutcomesOf(baseline);
 
-        using var writer = new StreamWriter(path, append: false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        // Keyed rather than indexed by position: the write walks the coverage list and the distance
+        // list is built from it, but a pairing that depends on two orders agreeing is a bug that
+        // appears only after one of them is changed.
+        var disagreementByQuery = disagreement?.ToDictionary(row => row.QueryId, StringComparer.Ordinal);
 
-        writer.WriteLine(string.Join('\t', new[]
-        {
+        // The depth is read from the constant rather than written into a literal, so a column headed
+        // "at_10" cannot be produced by a run that captured a different depth.
+        string depth = $"at_{MetricDepth.Cutoff}";
+
+        List<string> header =
+        [
             "query_id", "query_terms", "oov_terms", "idf_mass", "judged_terms_covered", "judged_idf_share",
             "band", "judged_relevant", "config", "relevant_retrieved", "recall", "ndcg",
             "baseline_relevant_retrieved", "delta_recall", "delta_ndcg", "new_relevant", "lost_relevant",
-        }));
+        ];
+
+        if (disagreementByQuery is not null)
+            header.AddRange([$"disagreement_{depth}", $"shared_{depth}", "left_only", "right_only"]);
+
+        using var writer = new StreamWriter(path, append: false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        writer.WriteLine(string.Join('\t', header));
 
         // Configuration is the inner loop so a query's rows are adjacent, and the outer loop walks the
         // queries in the order the run scored them, so two runs of the same corpus line up.
@@ -308,8 +481,8 @@ internal static class QueryAnalysis
                     ? (0, 0)
                     : Exchange(outcome.Retrieved, base_.Retrieved, judged);
 
-                writer.WriteLine(string.Join('\t', new[]
-                {
+                List<string> cells =
+                [
                     coverage.QueryId,
                     I(coverage.QueryTerms),
                     I(coverage.TermsOutOfVocabulary),
@@ -327,7 +500,22 @@ internal static class QueryAnalysis
                     base_ is null ? string.Empty : F(outcome.NdcgAt10 - base_.NdcgAt10),
                     base_ is null ? string.Empty : I(gained),
                     base_ is null ? string.Empty : I(lost),
-                }));
+                ];
+
+                if (disagreementByQuery is not null)
+                {
+                    if (!disagreementByQuery.TryGetValue(coverage.QueryId, out var row))
+                        throw new InvalidOperationException(
+                            $"The disagreement list has no row for query '{coverage.QueryId}', so the file "
+                            + "would be short by exactly the queries that failed.");
+
+                    cells.Add(F(row.Distance));
+                    cells.Add(I(row.Shared));
+                    cells.Add(I(row.LeftOnly));
+                    cells.Add(I(row.RightOnly));
+                }
+
+                writer.WriteLine(string.Join('\t', cells));
             }
         }
     }
@@ -402,6 +590,259 @@ internal static class QueryAnalysis
 
             writer.WriteLine(string.Join(" ", cells.Select((cell, i) => i == 0 ? cell.PadRight(widths[i]) : cell.PadLeft(widths[i]))));
         }
+    }
+
+    /// <summary>
+    /// Slices a candidate's per-query delta by how far apart the two named retrievers' rankings are,
+    /// which is the question the disagreement columns exist for: does the signal separate the queries
+    /// a second stage helps from the ones it does not.
+    /// </summary>
+    /// <param name="writer">Where the table goes.</param>
+    /// <param name="report">The run.</param>
+    /// <param name="disagreement">The distances, from <see cref="DescribeDisagreement"/>.</param>
+    /// <param name="candidate">The configuration whose delta is being explained.</param>
+    /// <param name="baseline">What the delta is measured against.</param>
+    /// <remarks>
+    /// The table asks a question about a third configuration pair than the one the distance is
+    /// measured between, and that is the point: the distance is a property of two retrievers, while
+    /// the delta is the effect of adding a stage on top of them. A table where the two pairs coincide
+    /// (BM25 against dense, explained by BM25 against dense) would be measuring the delta against
+    /// itself.
+    /// </remarks>
+    public static void WriteDisagreementSummary(
+        TextWriter writer,
+        QueryAnalysisReport report,
+        IReadOnlyList<TopKDisagreement> disagreement,
+        string candidate,
+        string baseline)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        ArgumentNullException.ThrowIfNull(disagreement);
+
+        var (_, _, candidateOutcomes, baselineOutcomes) = report.Pair(candidate, baseline);
+
+        int identical = 0;
+        int disjoint = 0;
+
+        foreach (var row in disagreement)
+        {
+            if (row.Distance <= 0)
+                identical++;
+            else if (row.Distance >= 1)
+                disjoint++;
+        }
+
+        string depth = $"top-{MetricDepth.Cutoff}";
+
+        writer.WriteLine();
+        writer.WriteLine($"Per-{depth}-disagreement-band means, '{candidate}' against '{baseline}'.");
+        writer.WriteLine(
+            $"Disagreement is 1 - |shared| / |union| over the ids each configuration returned at depth {MetricDepth.Cutoff}; "
+            + "0 means the same ids, 1 means none in common. Two configurations that both returned nothing count as agreeing.");
+        writer.WriteLine(
+            $"Identical top-{MetricDepth.Cutoff} sets: {I(identical)} of {I(disagreement.Count)} queries. "
+            + $"No id in common: {I(disjoint)}.");
+        writer.WriteLine(
+            "The second number is the one to read before the table: a distance that is 1 for most queries "
+            + "bands the corpus into one row and says nothing about separation.");
+        writer.WriteLine(
+            "Bands are cut at 0.2 / 0.5 / 0.8 of that distance. The cut points are a reading, not a result, "
+            + "and the count column is what stops a band of three being read as a trend.");
+
+        var bands = new[]
+        {
+            DisagreementBand.Agree,
+            DisagreementBand.Mixed,
+            DisagreementBand.MostlyDisagree,
+            DisagreementBand.Disagree,
+        };
+
+        string[] header = ["band", "queries", "d_recall", "d_ndcg", "new_rel", "lost_rel", "mean_dist"];
+        int[] widths = [16, 9, 11, 11, 10, 10, 11];
+
+        writer.WriteLine(string.Join(" ", header.Select((cell, i) => i == 0 ? cell.PadRight(widths[i]) : cell.PadLeft(widths[i]))));
+        writer.WriteLine(new string('-', widths.Sum() + (widths.Length - 1)));
+
+        foreach (var band in bands)
+        {
+            int queries = 0;
+            double deltaRecall = 0, deltaNdcg = 0, distance = 0;
+            int gained = 0, lost = 0;
+
+            foreach (var row in disagreement)
+            {
+                if (DisagreementBandOf(row.Distance) != band)
+                    continue;
+
+                QueryOutcome? a = Find(candidateOutcomes, row.QueryId);
+                QueryOutcome? b = Find(baselineOutcomes, row.QueryId);
+
+                if (a is null || b is null)
+                    continue;
+
+                (int g, int l) = Exchange(a.Retrieved, b.Retrieved, report.Judged(row.QueryId));
+
+                queries++;
+                distance += row.Distance;
+                deltaRecall += a.RecallAt10 - b.RecallAt10;
+                deltaNdcg += a.NdcgAt10 - b.NdcgAt10;
+                gained += g;
+                lost += l;
+            }
+
+            string[] cells = queries == 0
+                ? [band.ToString(), "0", "-", "-", "-", "-", "-"]
+                :
+                [
+                    band.ToString(),
+                    I(queries),
+                    F(deltaRecall / queries),
+                    F(deltaNdcg / queries),
+                    F((double)gained / queries),
+                    F((double)lost / queries),
+                    F(distance / queries),
+                ];
+
+            writer.WriteLine(string.Join(" ", cells.Select((cell, i) => i == 0 ? cell.PadRight(widths[i]) : cell.PadLeft(widths[i]))));
+        }
+
+        // The bands are a reading; the rank correlation is the same relation without cut points. Both
+        // are printed because they disagree in a readable way — a monotone trend that no band shows is
+        // real, and a band table with no correlation is a shape without a direction.
+        var pairs = new List<(double X, double Y)>(disagreement.Count);
+
+        foreach (var row in disagreement)
+        {
+            QueryOutcome? a = Find(candidateOutcomes, row.QueryId);
+            QueryOutcome? b = Find(baselineOutcomes, row.QueryId);
+
+            if (a is not null && b is not null)
+                pairs.Add((row.Distance, a.NdcgAt10 - b.NdcgAt10));
+        }
+
+        RankCorrelation correlation = Spearman(pairs);
+
+        writer.WriteLine();
+
+        if (correlation.Rho is { } rho)
+        {
+            writer.WriteLine(
+                $"Spearman rank correlation between disagreement and delta_ndcg: {F(rho)} over "
+                + $"{I(correlation.Pairs)} queries, average ranks for ties. Exploratory: one correlation, one corpus, "
+                + "and a distance that is only measurable once both retrievers have already run.");
+        }
+        else
+        {
+            writer.WriteLine(
+                $"Spearman rank correlation not computed: {correlation.Unavailable} ({I(correlation.Pairs)} "
+                + "comparable queries).");
+        }
+    }
+
+    /// <summary>
+    /// Spearman's rank correlation, computed as Pearson's correlation of the average ranks.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The <c>1 - 6·Σd² / (n(n²-1))</c> shortcut is not used: it is exact only when neither column
+    /// repeats a value, and both of these columns repeat heavily — a distance is <c>0</c> for every
+    /// query where the two retrievers returned the same ids, and a delta is <c>0</c> whenever a
+    /// configuration changed nothing. Average ranks for ties, then Pearson on the ranks, is the
+    /// definition that survives them.
+    /// </para>
+    /// <para>
+    /// No p-value is produced, and that is a decision rather than an omission. The queries are not a
+    /// sample from a population this table describes; they are the whole test set of one corpus, and a
+    /// significance test would dress a descriptive statistic as an inference.
+    /// </para>
+    /// </remarks>
+    public static RankCorrelation Spearman(IReadOnlyList<(double X, double Y)> pairs)
+    {
+        ArgumentNullException.ThrowIfNull(pairs);
+
+        // Non-finite rows are dropped rather than counted: pairs are built from metrics that are
+        // always finite, so a NaN here means a caller passed something the report cannot contain, and
+        // silently folding it into a rank would move every row below it.
+        var xs = new List<double>(pairs.Count);
+        var ys = new List<double>(pairs.Count);
+
+        foreach (var (x, y) in pairs)
+        {
+            if (double.IsFinite(x) && double.IsFinite(y))
+            {
+                xs.Add(x);
+                ys.Add(y);
+            }
+        }
+
+        if (xs.Count < 3)
+            return RankCorrelation.NotComputed(xs.Count, "fewer than three comparable queries");
+
+        var xRanks = AverageRanks(xs);
+        var yRanks = AverageRanks(ys);
+
+        double meanX = 0, meanY = 0;
+
+        for (int i = 0; i < xRanks.Length; i++)
+        {
+            meanX += xRanks[i];
+            meanY += yRanks[i];
+        }
+
+        meanX /= xRanks.Length;
+        meanY /= xRanks.Length;
+
+        double covariance = 0, varianceX = 0, varianceY = 0;
+
+        for (int i = 0; i < xRanks.Length; i++)
+        {
+            double dx = xRanks[i] - meanX;
+            double dy = yRanks[i] - meanY;
+
+            covariance += dx * dy;
+            varianceX += dx * dx;
+            varianceY += dy * dy;
+        }
+
+        // A constant column has no rank order to correlate with. Dividing here would produce a NaN
+        // that reads as a correlation of "not a number" in a table, which is worse than saying so.
+        if (varianceX <= 0 || varianceY <= 0)
+            return RankCorrelation.NotComputed(xs.Count, "one of the two columns is constant");
+
+        double rho = covariance / Math.Sqrt(varianceX * varianceY);
+
+        return new RankCorrelation(Math.Clamp(rho, -1.0, 1.0), xs.Count, null);
+    }
+
+    /// <summary>Ranks values ascending, giving every run of equal values its mean rank.</summary>
+    private static double[] AverageRanks(IReadOnlyList<double> values)
+    {
+        int[] order = Enumerable.Range(0, values.Count).OrderBy(index => values[index]).ToArray();
+        var ranks = new double[values.Count];
+
+        int start = 0;
+
+        while (start < order.Length)
+        {
+            int end = start;
+
+            // Compared against the run's first value, so a chain of three equal values is one run
+            // rather than two overlapping pairs.
+            while (end + 1 < order.Length
+                && values[order[end + 1]].Equals(values[order[start]]))
+            {
+                end++;
+            }
+
+            double rank = (start + end) / 2.0 + 1.0;
+
+            for (int i = start; i <= end; i++)
+                ranks[order[i]] = rank;
+
+            start = end + 1;
+        }
+
+        return ranks;
     }
 
     /// <summary>

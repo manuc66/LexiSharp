@@ -284,6 +284,22 @@ workflow.
   `LexiSharp.AspNetCore` fails them at `MapGet(route, Delegate)`, which the framework annotates
   `RequiresUnreferencedCode`/`RequiresDynamicCode`.
 
+- **`--analyze-disagreement-left` / `--analyze-disagreement-right` in the evaluation harness.**
+
+  Four extra columns in the `--analyze` file measure how far apart two configurations' top-10
+  rankings are, per query: the Jaccard distance over the ids they returned (`1 - |shared| / |union|`),
+  and the shared, left-only and right-only counts. Two configurations that both returned nothing
+  count as agreeing, so the queries nobody can answer do not head a table read as "where the
+  expensive stage is needed". With `--analyze-candidate` the harness also prints the
+  candidate-against-baseline delta sliced by disagreement band, plus a Spearman correlation between
+  distance and `delta_ndcg` with average ranks for ties and no p-value. The flags are off by
+  default: a run that does not name a pair writes the columns it always did.
+
+  The distance needs both rankings, so it is measurable only after both retrievers have run — it
+  cannot decide whether to pay for a dense encoder. It exists to ask whether a signal available at
+  serving time predicts where a fusion or a reranking stage helps, a question the harness can now
+  answer per corpus. The per-corpus answer is an experiment, not a claim, and this entry makes none.
+
 ### Fixed
 
 - **`TieBreak.InsertionOrder` ordered tied documents by a position that moved with the corpus.**

@@ -44,6 +44,14 @@ public static class Program
         string analyzeBaseline = "BM25 (k1=1.5, b=0.75)";
         string? analyzeCandidate = null;
 
+        // The pair the disagreement columns are measured between — normally the lexical row and a
+        // dense row, because the signal exists to explain what a third stage adds on top of two
+        // retrievers that answer differently. Two flags and not one comma-separated value: the
+        // default baseline is literally "BM25 (k1=1.5, b=0.75)", and a separator that a configuration
+        // name can contain is a flag that cannot name that configuration.
+        string? disagreementLeft = null;
+        string? disagreementRight = null;
+
         // Query-side expansion sweep. Empty means off, so a default run learns nothing and pays
         // nothing: the expander's learning pass is the one genuinely expensive step in a run, at
         // seconds and hundreds of megabytes per learned model on SciFact.
@@ -163,6 +171,12 @@ public static class Program
                 case "--analyze-candidate" when i + 1 < args.Length:
                     analyzeCandidate = args[++i];
                     break;
+                case "--analyze-disagreement-left" when i + 1 < args.Length:
+                    disagreementLeft = args[++i];
+                    break;
+                case "--analyze-disagreement-right" when i + 1 < args.Length:
+                    disagreementRight = args[++i];
+                    break;
                 case "--ann-ef" when i + 1 < args.Length:
                     annEfValues.AddRange(ParsePositiveInts(args[++i], "--ann-ef"));
                     break;
@@ -194,6 +208,26 @@ public static class Program
                 "--segment cannot run with --reference-index-statistics: a segment stores exact document " +
                 "lengths and has no quantized form, so the index conventions that reproduction needs are not " +
                 "ones a store can hold.");
+            return 2;
+        }
+
+        // Checked before the retrieval runs, not at write time: a mistyped pair would otherwise be
+        // discovered after the whole table was scored, and the flag that half a pair names is the one
+        // a caller is most likely to have forgotten.
+        if ((disagreementLeft is null) != (disagreementRight is null))
+        {
+            Console.Error.WriteLine(
+                "--analyze-disagreement-left and --analyze-disagreement-right name a pair and must be given " +
+                "together: the columns measure how far apart two configurations' rankings are, and one name " +
+                "does not say what it is measured against.");
+            return 2;
+        }
+
+        if (disagreementLeft is not null && analyzePath is null)
+        {
+            Console.Error.WriteLine(
+                "--analyze-disagreement-left/right require --analyze: the distance is computed from the " +
+                "per-query rankings that --analyze is what captures.");
             return 2;
         }
 
@@ -281,6 +315,7 @@ public static class Program
                 saturationConstant, singlePrecision, dense, denseSeq,
                 tuned, reranker, rerankCandidates, runPath, jobs, indexCache, parseQuerySyntax,
                 querySyntaxReference, segment, analyzePath, analyzeBaseline, analyzeCandidate,
+                disagreementLeft, disagreementRight,
                 expandDensities, expandRankings, annEfValues, annConnection);
             Console.WriteLine();
         }
@@ -405,6 +440,7 @@ public static class Program
         IReranker? reranker, int rerankCandidates, string? runPath, int jobs, string? indexCache,
         bool parseQuerySyntax, bool referenceIndexStatistics, bool segment,
         string? analyzePath, string analyzeBaseline, string? analyzeCandidate,
+        string? disagreementLeft, string? disagreementRight,
         IReadOnlyList<double> expandDensities, IReadOnlyList<ExpansionRanking> expandRankings,
         IReadOnlyList<int> annEfValues, string? annConnection)
     {
@@ -525,7 +561,7 @@ public static class Program
 
         if (analyzePath is not null)
             WriteQueryAnalysis(analyzePath, analyzeBaseline, analyzeCandidate, corpus, runIndex, tokenizer, results, topK, limit,
-                excludeQueryDocument, parseQuerySyntax);
+                excludeQueryDocument, parseQuerySyntax, disagreementLeft, disagreementRight);
 
         if (runPath is not null)
         {
@@ -632,7 +668,9 @@ public static class Program
         int topK,
         int? limit,
         bool excludeQueryDocument,
-        bool parseQuerySyntax)
+        bool parseQuerySyntax,
+        string? disagreementLeft = null,
+        string? disagreementRight = null)
     {
         var analyzed = results.Where(result => result.Outcomes is not null).ToList();
 
@@ -654,7 +692,14 @@ public static class Program
         // short console message rather than after producing a file with empty delta columns.
         report.OutcomesOf(baseline);
 
-        QueryAnalysis.Write(path, report, baseline);
+        // Both names are validated by DescribeDisagreement, which is why a typo here also fails before
+        // the file is written rather than as a column of blanks.
+        IReadOnlyList<TopKDisagreement>? disagreement =
+            disagreementLeft is not null && disagreementRight is not null
+                ? QueryAnalysis.DescribeDisagreement(report, disagreementLeft, disagreementRight)
+                : null;
+
+        QueryAnalysis.Write(path, report, baseline, disagreement);
 
         Console.WriteLine();
         Console.WriteLine($"Per-query analysis: {Path.GetFullPath(path)}");
@@ -663,6 +708,13 @@ public static class Program
             $"(retrieval depth {topK}{(parseQuerySyntax ? ", query syntax on" : ", query syntax off")}).");
         Console.WriteLine($"  Delta columns are against '{baseline}'.");
 
+        if (disagreement is not null)
+        {
+            Console.WriteLine(
+                $"  Disagreement columns measure the top-{MetricDepth.Cutoff} id sets of " +
+                $"'{disagreementLeft}' and '{disagreementRight}'.");
+        }
+
         // A candidate is named separately because pairing the baseline with itself would print a table
         // of zeros, which reads as a result and is not one. With no candidate the file still carries
         // every per-query metric; the band table is the one summary that needs a pair.
@@ -670,6 +722,16 @@ public static class Program
             QueryAnalysis.WriteBandSummary(Console.Out, report, candidate, baseline);
         else
             Console.WriteLine("  Pass --analyze-candidate with a configuration name for the mismatch-band summary.");
+
+        // Reported separately from the mismatch bands because it answers a different question: not
+        // "where does the candidate help" but "does disagreement between two retrievers predict where
+        // it helps". It slices the same candidate-against-baseline delta, so it needs the same pair.
+        if (disagreement is not null && candidate is not null)
+            QueryAnalysis.WriteDisagreementSummary(Console.Out, report, disagreement, candidate, baseline);
+        else if (disagreement is not null)
+            Console.WriteLine(
+                "  Pass --analyze-candidate for the disagreement-band table: the columns are per query, and " +
+                "the table slices a delta that needs a candidate to name.");
     }
 
     /// <summary>
@@ -1069,6 +1131,19 @@ public static class Program
                                 Also print the mean deltas per mismatch band, this configuration
                                 against the baseline. Omitted, no band table: pairing the baseline
                                 with itself would print zeros that read as a result.
+              --analyze-disagreement-left <name>
+                                One side of the pair whose top-10 disagreement is measured, per query,
+                                and written as extra columns by --analyze. Use with
+                                --analyze-disagreement-right; both or neither. The usual pair is the
+                                lexical row and a dense row, e.g. "BM25 (k1=1.5, b=0.75)" and
+                                "Dense multilingual-e5-small": 0 means both returned the same ids,
+                                1 means they shared none. Measurable only after both retrievers have
+                                run, so it cannot gate a dense encoder.
+              --analyze-disagreement-right <name>
+                                The other side of that pair. With --analyze-candidate, also prints the
+                                candidate-against-baseline delta sliced by disagreement band, plus a
+                                Spearman correlation between the two — the "does disagreement predict
+                                where the stage helps" question, as a description rather than a test.
               --expand-density <shares>
                                 Add a query-side expansion row per window-density cut, e.g. 0.05,0.1,
                                 along with its --analyze rows if --analyze is set. The share is the

@@ -164,6 +164,45 @@ question the file was built for — *does the candidate help where the theory sa
 there*. A band's query count is printed next to its means; a band of three must not be read as a
 trend. The metrics and the new/lost counts are evaluated at the run's retrieval depth (`--top-k`).
 
+### Retriever disagreement
+
+`--analyze-disagreement-left <name> --analyze-disagreement-right <name>` adds four columns measuring
+how far apart two configurations' top-10 rankings are, per query: `disagreement_at_10` (Jaccard
+distance, `1 - |shared| / |union|`), `shared_at_10`, `left_only`, `right_only`. Both flags or
+neither.
+
+The quantity is set-based rather than rank-based on purpose: the stored ranking is truncated to the
+metric depth and the two lists can have different lengths, so a Kendall or Spearman figure would be
+defined by a padding convention. Two configurations that both returned nothing count as agreeing —
+calling an empty result maximal disagreement would put the queries no retriever can answer at the
+top of a table read as "where the expensive stage is needed".
+
+With `--analyze-candidate` it also prints the candidate-against-baseline delta sliced by disagreement
+band, then a Spearman correlation between distance and `delta_ndcg` (average ranks for ties; no
+p-value, because these queries are a corpus's whole test set, not a sample). The pair it is worth
+naming is a lexical row against a dense one — two answers to the same question rather than two
+parameterisations of one:
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --dense --no-tuned \
+  --analyze /tmp/nf.tsv --analyze-baseline "BM25 (k1=1.5, b=0.75)" \
+  --analyze-candidate "Hybrid BM25+Dense RRF" \
+  --analyze-disagreement-left "BM25 (k1=1.5, b=0.75)" \
+  --analyze-disagreement-right "Dense multilingual-e5-small"
+```
+
+Three limits worth stating before reading the table:
+
+- **It cannot gate the dense encoder.** The distance needs both rankings, so it is measurable only
+  after both retrievers have run. It can inform fusion weighting or a reranking trigger; it cannot
+  decide whether to pay for a retriever in the first place.
+- **The depth is the captured depth.** The per-query ranking is cut at `MetricDepth.Cutoff` (10), so
+  the columns are a property of the top-10. Asking for depth 100 means capturing deeper, which costs
+  the memory `--analyze` already warns about on ArguAna.
+- **Band cut points (0.2 / 0.5 / 0.8) are a reading, not a result.** The summary prints the count of
+  queries with identical top-10 sets and the count with none in common, because a distribution that
+  is 1 almost everywhere bands the corpus into one row and says nothing about separation.
+
 ## Query-side expansion
 
 `--expand-density <shares>` adds one BM25 row per window-density cut, where each row wraps the
