@@ -32,7 +32,9 @@ workflow.
 
   ParadeDB's row is Tantivy's BM25, with `--backend-bm25` setting k1/b as index-time tokenizer
   arguments and the title concatenated into the indexed content; the lexical row is `ts_rank_cd`,
-  whose `websearch_to_tsquery` matcher ANDs every term. ArguAna produces no row: both engines refuse
+  whose `websearch_to_tsquery` matcher ANDs every term; and `--backend vector --backend-ef` reports
+  the pgvector ANN's cost in nDCG against the in-memory dense ranking of the same embeddings, one row
+  per `ef_search`. ArguAna produces no row: both text engines refuse
   query text their matcher reads as a prefix operator, and 2 of its 1,406 test queries carry one, so
   the run reports the refusal rather than a metric over a different query set. The measured figures
   and what each one is comparable with are in `bench/LexiSharp.Eval/README.md` and

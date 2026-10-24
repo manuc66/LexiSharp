@@ -16,6 +16,9 @@ internal enum BackendKind
 
     /// <summary><c>pg_search</c> + <c>pdb.score</c>: Okapi BM25 computed by Tantivy.</summary>
     ParadeDb,
+
+    /// <summary><c>pgvector</c> ANN over the harness's cached embeddings, cosine distance.</summary>
+    Vector,
 }
 
 /// <summary>
@@ -32,15 +35,27 @@ internal enum BackendKind
 /// them per field as tokenizer arguments, which is what <see cref="Tokenizer"/> builds; the lexical
 /// engine has no such parameter, so asking it for one is refused rather than ignored.
 /// </param>
+/// <param name="EfSearchValues">
+/// The pgvector <c>hnsw.ef_search</c> values a vector row is measured at, one row each. Empty for
+/// the other engines, and refused there rather than ignored.
+/// </param>
 internal sealed record BackendLane(
     BackendKind Kind,
     string ConnectionString,
     string TextSearchConfig,
-    Bm25Parameters? Bm25 = null)
+    Bm25Parameters? Bm25 = null,
+    IReadOnlyList<int>? EfSearchValues = null)
 {
+    /// <summary>The <c>ef_search</c> values in force; pgvector's own default when none was given.</summary>
+    public IReadOnlyList<int> EfValues => EfSearchValues is { Count: > 0 } values ? values : [40];
+
     /// <summary>Parses <c>--backend</c>, refusing a name it does not implement by name.</summary>
     public static BackendLane Parse(
-        string kind, string connectionString, string textSearchConfig, Bm25Parameters? bm25 = null)
+        string kind,
+        string connectionString,
+        string textSearchConfig,
+        Bm25Parameters? bm25 = null,
+        IReadOnlyList<int>? efSearchValues = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
@@ -48,9 +63,11 @@ internal sealed record BackendLane(
         {
             "lexical" => BackendKind.Lexical,
             "paradedb" => BackendKind.ParadeDb,
+            "vector" => BackendKind.Vector,
             _ => throw new ArgumentException(
-                $"--backend expects 'lexical' or 'paradedb', got '{kind}'. The vector and sparse engines "
-                + "are measured by the ANN curve (--ann-ef), which reports recall rather than nDCG."),
+                $"--backend expects 'lexical', 'paradedb' or 'vector', got '{kind}'. The sparse and fuzzy "
+                + "engines have no row: no sparse model is wired into this harness, and trigram similarity "
+                + "is not a ranking of prose."),
         };
 
         if (parsed == BackendKind.Lexical && bm25 is not null)
@@ -68,7 +85,32 @@ internal sealed record BackendLane(
                 + "--backend lexical.");
         }
 
-        return new BackendLane(parsed, connectionString, textSearchConfig, bm25);
+        if (parsed == BackendKind.Vector)
+        {
+            if (bm25 is not null)
+            {
+                throw new ArgumentException(
+                    "--backend-bm25 sets k1/b, which no BM25 parameter reaches in a vector index: the "
+                    + "ranking there is cosine distance over embeddings. Drop the flag.");
+            }
+
+            if (textSearchConfig != "simple")
+            {
+                throw new ArgumentException(
+                    $"--backend-config '{textSearchConfig}' is PostgreSQL's text search configuration, "
+                    + "which the vector engine never reads: its documents are ranked by embedding. Drop "
+                    + "the flag, or use --backend lexical.");
+            }
+        }
+
+        if (parsed != BackendKind.Vector && efSearchValues is { Count: > 0 })
+        {
+            throw new ArgumentException(
+                "--backend-ef sets pgvector's hnsw.ef_search, which only the vector backend reads. "
+                + "Drop the flag, or use --backend vector.");
+        }
+
+        return new BackendLane(parsed, connectionString, textSearchConfig, bm25, efSearchValues);
     }
 
     /// <summary>
@@ -89,10 +131,16 @@ internal sealed record BackendLane(
     }
 
     /// <summary>Names the engine and its analysis, because a nDCG without them is not a figure.</summary>
-    public string Description => Kind == BackendKind.ParadeDb
-        ? "ParadeDB BM25 (pdb.score, Tantivy)" + Bm25Text
-          + " — index over content only, title concatenated into it"
-        : $"PostgreSQL lexical (ts_rank_cd, text search config '{TextSearchConfig}' + unaccent)";
+    public string Description => Kind switch
+    {
+        BackendKind.ParadeDb =>
+            "ParadeDB BM25 (pdb.score, Tantivy)" + Bm25Text
+            + " — index over content only, title concatenated into it",
+        BackendKind.Vector =>
+            "pgvector HNSW (cosine) over multilingual-e5-small embeddings, ef_search "
+            + string.Join(", ", EfValues.Select(value => value.ToString(CultureInfo.InvariantCulture))),
+        _ => $"PostgreSQL lexical (ts_rank_cd, text search config '{TextSearchConfig}' + unaccent)",
+    };
 
     /// <summary>
     /// The tokenizer declaration a ParadeDB index is built with. pg_search takes k1/b as per-field
@@ -113,25 +161,46 @@ internal sealed record BackendLane(
     /// What a reader has to know before putting this row beside another. Not a disclaimer: each
     /// line is a property of the ranking function that changes what the number is comparable with.
     /// </summary>
-    public IReadOnlyList<string> Caveats =>
-    [
-        Kind == BackendKind.ParadeDb
-            ? "Scores are Tantivy's BM25" + Bm25Text + ", computed by pg_search; the analysis is "
-              + "pdb.simple with ASCII folding, not this library's tokenizer."
-            : "ts_rank_cd is a coverage-based rank, not BM25, and it takes no k1/b. Its ORDER BY has no "
-              + "tie-break, so the order among equal scores is the executor's and can differ between runs.",
+    public IReadOnlyList<string> Caveats => Kind switch
+    {
+        BackendKind.Vector =>
+        [
+            "The vectors are the harness's cached multilingual-e5-small pass, so this row and the "
+            + "in-memory dense row rank the same embeddings: the difference between them is the index. "
+            + "hnsw.ef_search trades that difference against latency; the ef_search curve reports how "
+            + "many true neighbours the graph missed.",
+            "A query with no cached embedding throws rather than being scored as a zero, so the query "
+            + "count this row reports is the count it actually measured.",
+        ],
+        BackendKind.ParadeDb =>
+        [
+            "Scores are Tantivy's BM25" + Bm25Text + ", computed by pg_search; the analysis is "
+            + "pdb.simple with ASCII folding, not this library's tokenizer.",
+            AnalysisCaveat,
+        ],
+        _ =>
+        [
+            "ts_rank_cd is a coverage-based rank, not BM25, and it takes no k1/b. Its ORDER BY has no "
+            + "tie-break, so the order among equal scores is the executor's and can differ between runs.",
+            AnalysisCaveat,
+        ],
+    };
+
+    private const string AnalysisCaveat =
         "The analysis is PostgreSQL's, not the harness tokenizer's: no Porter, no stop list, no "
-          + "possessive rule. This row is comparable with the in-memory 'defaults' rows at most, and "
-          + "not with an aligned (--analyzer english) row or a published figure.",
-    ];
+        + "possessive rule. This row is comparable with the in-memory 'defaults' rows at most, and "
+        + "not with an aligned (--analyzer english) row or a published figure.";
 }
 
-/// <summary>One measured backend row: the engine that ran, the index it read, and its metrics.</summary>
+/// <summary>One metric row: its label (the <c>ef_search</c> for a vector curve) and its figures.</summary>
+internal sealed record BackendRow(string Label, ConfigResult Result);
+
+/// <summary>One measured backend: the engine that ran, the index it read, and its rows.</summary>
 internal sealed record BackendMeasurement(
     string Description,
     string Table,
     int Documents,
-    ConfigResult Result,
+    IReadOnlyList<BackendRow> Rows,
     IReadOnlyList<string> Caveats);
 
 /// <summary>
@@ -160,6 +229,11 @@ internal static class PostgresBackendBenchmark
     /// scores it, and drops the table. Throws <see cref="NotSupportedException"/> when the engine
     /// refuses the queries' syntax, restated as what that costs the measurement.
     /// </summary>
+    /// <param name="dense">
+    /// The cached embeddings, required by <see cref="BackendKind.Vector"/> and unused otherwise. The
+    /// vectors are the harness's own dense pass, so the row and the in-memory dense row rank the same
+    /// embeddings and differ only in where the distance is computed.
+    /// </param>
     public static BackendMeasurement Measure(
         BackendLane lane,
         BeirCorpus corpus,
@@ -168,13 +242,17 @@ internal static class PostgresBackendBenchmark
         int? limit,
         NdcgGain ndcgGain,
         bool excludeQueryDocument,
-        int jobs)
+        int jobs,
+        DenseVectors? dense = null)
     {
         ArgumentNullException.ThrowIfNull(lane);
         ArgumentNullException.ThrowIfNull(corpus);
 
         IReadOnlyList<SearchDocument> documents = Shape(lane.Kind, Evaluation.BuildDocuments(corpus));
         string table = lane.TableFor(dataset);
+
+        if (lane.Kind == BackendKind.Vector)
+            return MeasureVector(lane, corpus, documents, table, dense, topK, limit, ndcgGain, excludeQueryDocument, jobs);
 
         if (lane.Kind == BackendKind.ParadeDb)
         {
@@ -202,7 +280,8 @@ internal static class PostgresBackendBenchmark
                 ConfigResult result = Evaluation.RunEngine(
                     corpus, engine, lane.Description, topK, limit, ndcgGain, excludeQueryDocument, jobs);
 
-                return new BackendMeasurement(lane.Description, table, documents.Count, result, lane.Caveats);
+                return new BackendMeasurement(
+                    lane.Description, table, documents.Count, [new BackendRow(string.Empty, result)], lane.Caveats);
             }
             catch (Exception error) when (FindRefusal(error) is { } refusal)
             {
@@ -219,6 +298,96 @@ internal static class PostgresBackendBenchmark
                 dropSchema();
             }
         }
+    }
+
+    /// <summary>
+    /// One vector row per requested <c>ef_search</c>, over one index. The index is the same index at
+    /// every value — only the candidate list the search explores changes — so rebuilding it per
+    /// point would measure the rebuild, not the parameter.
+    /// </summary>
+    private static BackendMeasurement MeasureVector(
+        BackendLane lane,
+        BeirCorpus corpus,
+        IReadOnlyList<SearchDocument> documents,
+        string table,
+        DenseVectors? dense,
+        int topK,
+        int? limit,
+        NdcgGain ndcgGain,
+        bool excludeQueryDocument,
+        int jobs)
+    {
+        if (dense is null)
+        {
+            throw new InvalidOperationException(
+                "The vector backend needs the cached embeddings: re-run with --dense, or use a corpus "
+                + "the dense lane has already encoded.");
+        }
+
+        if (dense.DocumentVectors.Length != documents.Count)
+        {
+            throw new InvalidOperationException(
+                $"{documents.Count} documents but {dense.DocumentVectors.Length} vectors: the vector lane "
+                + "pairs them by position, and a mismatch would index one document's text under another's "
+                + "embedding.");
+        }
+
+        List<EvaluatedQuery> queries = Evaluation.BuildQueries(corpus, limit, excludeQueryDocument);
+
+        // Both roles come from the cache, keyed by text: the dense pass encodes passages and queries
+        // with different prefixes, so one lookup per role rather than one vector reused for both.
+        var provider = new CachedEmbeddingProvider(
+            documents
+                .Select(document => document.Text)
+                .Zip(dense.DocumentVectors, (text, vector) => (Text: text, Vector: vector))
+                .ToList(),
+            queries
+                .Select(query => (Text: query.Query.Text, Vector: Vector(dense, query.Query.Text)))
+                .ToList(),
+            dense.Dimension);
+
+        var options = new PostgresVectorOptions
+        {
+            Table = table,
+            Dimension = dense.Dimension,
+            IndexMethod = VectorIndexMethod.Hnsw,
+            Distance = VectorDistance.Cosine,
+        };
+
+        try
+        {
+            // Built once. HNSW accepts inserts and an index over a populated table alike, so the
+            // table is loaded with the engine that does not read it and the reads below share it.
+            using (var indexer = new PostgresVectorSearchEngine(lane.ConnectionString, provider, options))
+                indexer.Index(documents);
+
+            var rows = new List<BackendRow>(lane.EfValues.Count);
+
+            foreach (int efSearch in lane.EfValues)
+            {
+                using var engine = new PostgresVectorSearchEngine(
+                    lane.ConnectionString, provider, options with { HnswEfSearch = efSearch });
+
+                rows.Add(new BackendRow(
+                    efSearch.ToString(CultureInfo.InvariantCulture),
+                    Evaluation.RunEngine(
+                        corpus, engine, $"pgvector HNSW (ef={efSearch})", topK, limit, ndcgGain,
+                        excludeQueryDocument, jobs)));
+            }
+
+            return new BackendMeasurement(lane.Description, table, documents.Count, rows, lane.Caveats);
+        }
+        finally
+        {
+            using var dropper = new PostgresVectorSearchEngine(lane.ConnectionString, provider, options);
+            dropper.DropSchema();
+        }
+
+        static float[] Vector(DenseVectors vectors, string text) =>
+            vectors.QueryEmbeddings.TryGetValue(text, out float[]? vector)
+                ? vector
+                : throw new InvalidOperationException(
+                    "A query has no cached embedding, so it cannot be scored through the vector backend.");
     }
 
     /// <summary>
@@ -329,24 +498,46 @@ internal static class PostgresBackendBenchmark
     }
 
     /// <summary>
-    /// The row as one block of text. A table row would carry a Time column measured through a
-    /// connection open per query, and printing it beside the in-memory timings would invite a
-    /// comparison that means nothing.
+    /// The rows as one block of text. A table would carry a Time column measured through a connection
+    /// open per query, and printing it beside the in-memory timings would invite a comparison that
+    /// means nothing.
     /// </summary>
     public static string Format(BackendMeasurement measurement, string dataset)
     {
         ArgumentNullException.ThrowIfNull(measurement);
 
-        ConfigResult result = measurement.Result;
+        var lines = new List<string>
+        {
+            string.Create(CultureInfo.InvariantCulture, $"== {dataset}, backend =="),
+            string.Create(CultureInfo.InvariantCulture, $"Engine: {measurement.Description}"),
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"Index:  {measurement.Documents:N0} documents in {measurement.Table}, dropped after the run"),
+        };
 
-        return string.Create(
-            CultureInfo.InvariantCulture,
-            $"""
-             == {dataset}, backend ==
-             Engine: {measurement.Description}
-             Index:  {measurement.Documents:N0} documents in {measurement.Table}, dropped after the run
-             Result: nDCG@10 {result.NdcgAt10:0.0000} | MAP@10 {result.MapAt10:0.0000} | MRR@10 {result.MrrAt10:0.0000} | R@10 {result.RecallAt10:0.0000} | {result.Queries:N0} queries
+        if (measurement.Rows is [{ Label: "", Result: { } single }])
+        {
+            lines.Add(string.Create(
+                CultureInfo.InvariantCulture,
+                $"Result: nDCG@10 {single.NdcgAt10:0.0000} | MAP@10 {single.MapAt10:0.0000} | "
+                + $"MRR@10 {single.MrrAt10:0.0000} | R@10 {single.RecallAt10:0.0000} | {single.Queries:N0} queries"));
+        }
+        else
+        {
+            lines.Add(string.Empty);
+            lines.Add("  ef_search | nDCG@10 | MAP@10 | MRR@10 |  R@10 | queries");
 
-             """);
+            foreach (BackendRow row in measurement.Rows)
+            {
+                ConfigResult result = row.Result;
+
+                lines.Add(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"  {row.Label,9} | {result.NdcgAt10,7:0.0000} | {result.MapAt10,6:0.0000} | "
+                    + $"{result.MrrAt10,6:0.0000} | {result.RecallAt10,5:0.0000} | {result.Queries,7:N0}"));
+            }
+        }
+
+        return string.Join('\n', lines) + "\n";
     }
 }
