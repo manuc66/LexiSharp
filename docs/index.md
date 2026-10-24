@@ -120,7 +120,10 @@ twice. Every figure below is reproducible with a command on the
   build and self-skip when `POSTGRES_TEST_CONNECTION` is unset.
 - **Not measured, and named rather than glossed over.** The **time** cost of `SearchTrace`
   (its allocation is pinned; the timing was not resolvable on the machine used, so no figure
-  is quoted). The **learned-sparse and expansion lanes** on BEIR: no SPLADE model is
+  is quoted). The **ranking of the vector, sparse and fuzzy engines** on BEIR: the vector
+  engine is measured for its approximate index (recall against an exact top-k), and the sparse
+  and fuzzy engines by integration tests only. The **learned-sparse and expansion lanes** on
+  BEIR: no SPLADE model is
   wired into the harness, and corpus-derived expansion is a *loss* where it has been
   measured (0.8469 against BM25's 0.8751 on the reference corpus). **Not every combination**
   of engine, scorer, reranker and merger is exercised by a test.
