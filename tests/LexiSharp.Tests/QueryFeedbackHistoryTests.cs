@@ -127,7 +127,7 @@ public class QueryFeedbackHistoryTests
 
         history.Restore(new[]
         {
-            ("new query", (IReadOnlyDictionary<string, int>)new Dictionary<string, int> { ["doc-2"] = 1 }),
+            ("new query", (IReadOnlyDictionary<string, double>)new Dictionary<string, double> { ["doc-2"] = 1 }),
         });
 
         Assert.Empty(history.GetAssociations("old query"));
@@ -158,5 +158,51 @@ public class QueryFeedbackHistoryTests
         var associations = history.GetAssociations("quarterly report");
 
         Assert.Single(associations);
+    }
+
+    [Fact]
+    public void Record_WithReward_AccumulatesProxySignal()
+    {
+        var history = new QueryFeedbackHistory();
+
+        // A strong proxy reward on doc-2 outweighs a single binary click on doc-1.
+        history.Record("quarterly report", "doc-1");
+        history.Record("quarterly report", "doc-2", 3.0);
+
+        var associations = history.GetAssociations("quarterly report");
+
+        Assert.Equal(2, associations.Count);
+        Assert.Equal("doc-2", associations[0].DocumentId);
+        Assert.Equal(1.0, associations[0].Strength, 5);
+        Assert.Equal(1.0 / 3.0, associations[1].Strength, 5);
+    }
+
+    [Fact]
+    public void Seed_AddsAssociationsWithoutReplacing()
+    {
+        var history = new QueryFeedbackHistory();
+        history.Record("quarterly report", "doc-1");
+
+        history.Seed(new[] { ("quarterly report", "doc-2") });
+        history.Seed(new[] { ("quarterly report", "doc-2", 2.0) });
+
+        var associations = history.GetAssociations("quarterly report");
+
+        Assert.Equal(2, associations.Count);
+        // doc-2: 1 + 2 = 3, doc-1: 1 -> doc-2 wins.
+        Assert.Equal("doc-2", associations[0].DocumentId);
+    }
+
+    [Fact]
+    public void Seed_WithReward_OverloadResolves()
+    {
+        var history = new QueryFeedbackHistory();
+
+        history.Seed(new[] { ("q", "d", 0.5) });
+
+        var associations = history.GetAssociations("q");
+
+        Assert.Single(associations);
+        Assert.Equal(1.0, associations[0].Strength, 5);
     }
 }

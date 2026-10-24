@@ -50,7 +50,7 @@ public sealed class FeedbackAwareTextSearchEngine<TPayload> : IContextualSearchE
     /// Minimum token-overlap similarity for a recorded query to reach the current one. Default: 0.3.
     /// </param>
     /// <param name="requirePayload">
-    /// Whether a search arriving through <see cref="ITextSearchEngine.Search(string, SearchOptions?)"/>
+    /// Whether a search arriving through <see cref="ITextSearchEngine.Search(string, SearchOptions?, CancellationToken)"/>
     /// should throw instead of running without a payload. Default <c>false</c>.
     /// <para>
     /// Set it when the history is chosen by payload. Serving such a search with the single
@@ -96,7 +96,7 @@ public sealed class FeedbackAwareTextSearchEngine<TPayload> : IContextualSearchE
     /// Searches with no payload. The engine's <c>requirePayload</c> decides whether that throws or
     /// serves the search with no history.
     /// </summary>
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
         Search(query, options, default!, payloadSupplied: false);
 
     /// <inheritdoc />
@@ -181,6 +181,21 @@ public sealed class FeedbackAwareTextSearchEngine<TPayload> : IContextualSearchE
             return false;
 
         history.Record(query, documentId);
+        return true;
+    }
+
+    /// <summary>
+    /// Records that the payload's owner chose <paramref name="documentId"/> for
+    /// <paramref name="query"/>, with an explicit reward.
+    /// </summary>
+    public bool Learn(TPayload payload, string query, string documentId, double reward)
+    {
+        var history = _historyFor(payload);
+
+        if (history is null)
+            return false;
+
+        history.Record(query, documentId, reward);
         return true;
     }
 

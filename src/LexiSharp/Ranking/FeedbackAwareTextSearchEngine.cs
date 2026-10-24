@@ -66,14 +66,21 @@ public sealed class FeedbackAwareTextSearchEngine : ITextSearchEngine, IQueryCos
     public void Clear() => _inner.Clear();
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null) =>
-        _inner.Search(query, options);
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
+        _inner.Search(query, options, cancellationToken);
 
     /// <summary>
     /// Records that <paramref name="documentId"/> was chosen for <paramref name="query"/>, so a
     /// future similar query boosts it.
     /// </summary>
     public void Learn(string query, string documentId) => _history.Record(query, documentId);
+
+    /// <summary>
+    /// Records that <paramref name="documentId"/> was chosen for <paramref name="query"/>, with
+    /// an explicit reward (a reranker score, a query-passage similarity, a ROUGE on the generated
+    /// answer, …). A reward of 1.0 is what the two-argument form adds.
+    /// </summary>
+    public void Learn(string query, string documentId, double reward) => _history.Record(query, documentId, reward);
 
     /// <inheritdoc />
     public long EstimateCandidateCount(ReadOnlySpan<char> query, SearchOptions options) =>
