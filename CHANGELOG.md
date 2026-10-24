@@ -467,20 +467,28 @@ workflow.
 
 ### Changed
 
-- **`ITextSearchEngine.Search` gains a `CancellationToken`, and no engine consults it.**
+- **`ITextSearchEngine.Search` takes a `CancellationToken`, and the engines consult it where they can.**
 
   The signature is `Search(string query, SearchOptions? options = null, CancellationToken
   cancellationToken = default)`. Source-compatible for callers, because the parameter has a default;
   breaking for anyone implementing `ITextSearchEngine`, which is what puts it here.
 
-  No engine reads the token. The in-memory engine drops it before `RunQuery`, the PostgreSQL engines
-  open their connection without it, and the change that introduced the parameter touched signatures
-  only. `ThrowIfCancellationRequested` appears in this package on the benchmarking paths, not on the
-  search path. A caller who cancels the token passed to `Search` gets a normal result.
+  Every hop forwards it: the string overloads to the span and async overloads, each decorator to the
+  engine it wraps, the benchmarks to the engines they measure. The ranked engine consults it on entry
+  and then every 1 024 candidates on the two per-document paths and once per entry on the accumulation
+  path. The PostgreSQL dense and sparse engines pass it to `OpenConnectionAsync`,
+  `ExecuteReaderAsync` and the embedding call. A cancelled token throws `OperationCanceledException`
+  instead of returning a result; `SearchCancellationTests` pins that, and the forwarding through a
+  decorator.
 
-  The token is forwarded through the decorators and never consulted at the leaves, so the declared
-  surface is wider than the behaviour. Stated because a signature alone would say otherwise, and a
-  cancellation parameter a caller cannot rely on is a guarantee the API does not keep.
+  **Not observed by the synchronous SQL engines.** `PostgresTextSearchEngine`,
+  `PostgresFuzzySearchEngine` and `ParadeDBTextSearchEngine` open their connection with the blocking
+  Npgsql API, which takes no token, so a search there runs to completion whatever the token says. On
+  those three paths the parameter is accepted and does nothing. Observing it means moving them to the
+  async API or registering `NpgsqlCommand.Cancel`.
+
+  Not claimed either: promptness on a large corpus. The 1 024-candidate interval bounds how long a
+  pass can outlive a cancellation, and that is a property of the checkpoint rather than a figure.
 
 - **A filtered query under a tie-break other than `DocumentId` is served by the accumulation pass.**
 

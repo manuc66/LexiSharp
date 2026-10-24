@@ -125,7 +125,7 @@ public sealed class RetrievalEvaluator
                 continue;
 
             stopwatch.Restart();
-            var retrieved = engine.Search(query.Text, searchOptions);
+            var retrieved = engine.Search(query.Text, searchOptions, cancellationToken);
             stopwatch.Stop();
             elapsedTicks += stopwatch.ElapsedTicks;
 

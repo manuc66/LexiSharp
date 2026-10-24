@@ -223,7 +223,7 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
     public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
-        return SearchAsync(query, options).GetAwaiter().GetResult();
+        return SearchAsync(query, options, cancellationToken).GetAwaiter().GetResult();
     }
 
     /// <summary>

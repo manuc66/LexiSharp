@@ -206,12 +206,12 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
-        return Search(query.AsSpan(), options);
+        return Search(query.AsSpan(), options, cancellationToken);
     }
 
     /// <inheritdoc />
     public IReadOnlyList<SearchResult> Search(ReadOnlySpan<char> query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
-        RunQuery(query, options ?? SearchOptions.Default, null);
+        RunQuery(query, options ?? SearchOptions.Default, null, cancellationToken);
 
     /// <inheritdoc />
     public FacetedSearchResult SearchWithFacets(
@@ -230,7 +230,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         IReadOnlyList<string>? facetFields = null)
     {
         var collector = facetFields is { Count: > 0 } ? new FacetCollector(facetFields) : null;
-        var results = RunQuery(query, options ?? SearchOptions.Default, collector);
+        var results = RunQuery(query, options ?? SearchOptions.Default, collector, CancellationToken.None);
 
         return new FacetedSearchResult(
             results,
@@ -242,8 +242,17 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// every candidate, optionally count facet values for the documents that match
     /// (<paramref name="facets"/>), and cut the requested page from the bounded top window.
     /// </summary>
-    private IReadOnlyList<SearchResult> RunQuery(ReadOnlySpan<char> query, SearchOptions options, FacetCollector? facets)
+    private IReadOnlyList<SearchResult> RunQuery(
+        ReadOnlySpan<char> query,
+        SearchOptions options,
+        FacetCollector? facets,
+        CancellationToken cancellationToken)
     {
+        // A search whose token is already cancelled does no work. The loops below check again every
+        // 1024 candidates: one branch per search here, and one per thousand on the scoring path, so a
+        // long corpus stays interruptible without putting a check in front of every document.
+        cancellationToken.ThrowIfCancellationRequested();
+
         // One clock read per search, and only when a sink is attached: an un-instrumented engine
         // never reads the timer at all.
         bool instrumented = _telemetry.IsEnabled;
@@ -275,7 +284,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             _resolveOrdinal,
             _resolveId,
             ordinalsAreInsertionPositions: _index is IAccumulatingIndex);
-        var spanRun = TryRunSpanQuery(query, options, facets, top);
+        var spanRun = TryRunSpanQuery(query, options, facets, top, cancellationToken);
 
         if (spanRun is { } span)
         {
@@ -351,7 +360,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         // ordinal would under-report the work by every non-matching candidate.
         long scoredDocuments = 0;
 
-        if (TryRunAccumulatingQuery(plan, reachableDocuments, parsed, options, facets, top) is { } accumulated)
+        if (TryRunAccumulatingQuery(plan, reachableDocuments, parsed, options, facets, top, cancellationToken) is { } accumulated)
         {
             ordinal = accumulated.Ordinal;
             scoredDocuments = accumulated.ScoredDocuments;
@@ -387,8 +396,15 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
             if (candidateIds is not null)
             {
+                int checkedIds = 0;
+
                 foreach (string documentId in candidateIds)
+                {
+                    if ((checkedIds++ & 0x3FF) == 0)
+                        cancellationToken.ThrowIfCancellationRequested();
+
                     ScoreCandidate(documentId, document: null);
+                }
 
                 return CutPage(options, top, ordinal, scoredDocuments, scoreStarted, started, instrumented);
             }
@@ -405,8 +421,15 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
                     ? Candidates(candidateIndex, distinctQueryTerms)
                     : _index.Documents;
 
+            int checkedDocuments = 0;
+
             foreach (var document in candidateDocuments)
+            {
+                if ((checkedDocuments++ & 0x3FF) == 0)
+                    cancellationToken.ThrowIfCancellationRequested();
+
                 ScoreCandidate(document.Id, document);
+            }
         }
 
         // Scores one candidate. `document` is null on the id-only path, where the gates that read a
@@ -508,7 +531,8 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         IAccumulatedScoreFinisher finisher,
         SearchOptions options,
         FacetCollector? facets,
-        TopRankedWindow top)
+        TopRankedWindow top,
+        CancellationToken cancellationToken)
     {
         long ordinal = 0;
 
@@ -522,6 +546,9 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
         for (int i = 0; i < accumulator.Count; i++)
         {
+            if ((i & 0x3FF) == 0)
+                cancellationToken.ThrowIfCancellationRequested();
+
             int candidate = accumulator.OrdinalAt(i);
 
             // The plan's last step, because this path never calls Score and a score that is narrowed
@@ -573,7 +600,8 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         ReadOnlySpan<char> query,
         SearchOptions options,
         FacetCollector? facets,
-        TopRankedWindow top)
+        TopRankedWindow top,
+        CancellationToken cancellationToken)
     {
         if (_synonyms is not null || _tokenizer is not ISpanTokenizer tokenizer)
             return null;
@@ -645,7 +673,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
                 if (!plan.TryAccumulateSpans(spanIndex, terms, query, accumulator))
                     return null;
 
-                return (FinishAccumulatedPass(spanIndex, accumulator, plan, options, facets, top), scoreStarted);
+                return (FinishAccumulatedPass(spanIndex, accumulator, plan, options, facets, top, cancellationToken), scoreStarted);
             }
             finally
             {
@@ -765,7 +793,8 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         ParsedQuery? parsed,
         SearchOptions options,
         FacetCollector? facets,
-        TopRankedWindow top)
+        TopRankedWindow top,
+        CancellationToken cancellationToken)
     {
         // A metadata filter reaches this pass through AccumulateFilteredQueries alone. The tie-break
         // no longer has anything to do with it: a tie is decided on the document id or on the
@@ -797,7 +826,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             if (!accumulating.TryAccumulate(index, accumulator))
                 return null;
 
-            return FinishAccumulatedPass(index, accumulator, accumulating, options, facets, top);
+            return FinishAccumulatedPass(index, accumulator, accumulating, options, facets, top, cancellationToken);
         }
         finally
         {
