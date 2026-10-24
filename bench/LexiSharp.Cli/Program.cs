@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Text.Json;
 using LexiSharp.Benchmarking;
 using LexiSharp.Core;
+using LexiSharp.Indexing;
+using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
 using LexiSharp.Sources;
 
@@ -54,7 +56,7 @@ public static class Program
         // someone reviews, never a button that accepts whatever the code now does.
         string command = "benchmark";
 
-        if (args.Length > 0 && args[0] is "benchmark" or "diff" or "baseline" or "verify" or "segment")
+        if (args.Length > 0 && args[0] is "benchmark" or "diff" or "baseline" or "verify" or "segment" or "search")
         {
             command = args[0];
             args = args[1..];
@@ -64,6 +66,9 @@ public static class Program
         // itself rather than sharing the corpus/query/qrels contract the four evaluation commands do.
         if (command == "segment")
             return SegmentCommands.Run(args);
+
+        if (command == "search")
+            return RunSearch(args);
 
         string? corpusDir = null;
         string? queriesPath = null;
@@ -421,6 +426,94 @@ public static class Program
 
         Console.WriteLine("FAILED: the run no longer matches the baseline. If the change was intended, re-record it and review the diff.");
         return 1;
+    }
+
+    private static int RunSearch(string[] args)
+    {
+        string? corpusDir = null;
+        string? query = null;
+        string analyzer = "default";
+        int topK = 10;
+
+        for (int i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--query" when i + 1 < args.Length:
+                    query = args[++i];
+                    break;
+                case "--analyzer" when i + 1 < args.Length:
+                    analyzer = args[++i];
+                    break;
+                case "--top-k" when i + 1 < args.Length:
+                    topK = ParsePositive(args[++i], "--top-k");
+                    break;
+                case "--help":
+                case "-h":
+                    Console.WriteLine("Usage: lexisharp search <corpus-dir> --query <text> [--analyzer default|english] [--top-k <n>]");
+                    return 0;
+                default:
+                    if (corpusDir is null)
+                        corpusDir = args[i];
+                    else
+                    {
+                        Console.Error.WriteLine($"Unknown argument: {args[i]}");
+                        return 2;
+                    }
+                    break;
+            }
+        }
+
+        if (corpusDir is null || query is null)
+        {
+            Console.Error.WriteLine("search requires <corpus-dir> and --query <text>.");
+            return 2;
+        }
+
+        try
+        {
+            var documents = LoadCorpus(corpusDir);
+            var tokenizer = analyzer switch
+            {
+                "default" => Tokenizer.Default,
+                "english" => new Tokenizer(new TokenizerOptions
+                {
+                    Stemmer = new PorterStemmer(),
+                    RemoveStopWords = true,
+                    StopWords = StopWords.EnglishFunction,
+                    KeepSingleCharTerms = true,
+                }),
+                _ => throw new ArgumentException($"Unknown analyzer '{analyzer}'. Expected 'default' or 'english'."),
+            };
+
+            var index = new InMemoryTextIndex(tokenizer);
+            index.Index(documents);
+            var engine = new RankedTextSearchEngine(index, new Bm25Scorer(), tokenizer);
+
+            var results = engine.Search(query, new SearchOptions(topK));
+
+            Console.WriteLine($"Corpus: {corpusDir} ({documents.Count} documents, analyzer {analyzer})");
+            Console.WriteLine($"Query:  {query}");
+            Console.WriteLine();
+
+            for (int i = 0; i < results.Count; i++)
+            {
+                var result = results[i];
+                string text = result.Document.Text.ReplaceLineEndings(" ");
+                if (text.Length > 96) text = string.Concat(text.AsSpan(0, 96), "…");
+                Console.WriteLine($"{(i + 1),3}. {result.Score,10:0.0000}  {result.DocumentId}");
+                Console.WriteLine($"     {text}");
+            }
+
+            if (results.Count == 0) Console.WriteLine("(no matches)");
+            return 0;
+        }
+        catch (Exception exception) when (
+            exception is IOException or ArgumentException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"Error: {exception.Message}");
+            return 1;
+        }
     }
 
     private static int Run(
