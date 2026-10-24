@@ -71,6 +71,7 @@ public static class Program
         string? backendConnection = null;
         string backendConfig = "simple";
         Bm25Parameters? backendBm25 = null;
+        var backendEfValues = new List<int>();
 
         // Off by default, because every query in a BEIR corpus is natural language and the published
         // figures apply no query language to it: the query string goes to the analyzer whole. Left on,
@@ -204,6 +205,9 @@ public static class Program
                 case "--backend-bm25" when i + 1 < args.Length:
                     backendBm25 = ParseBm25Parameters(args[++i]);
                     break;
+                case "--backend-ef" when i + 1 < args.Length:
+                    backendEfValues.AddRange(ParsePositiveInts(args[++i], "--backend-ef"));
+                    break;
                 case "--expand-density" when i + 1 < args.Length:
                     expandDensities.AddRange(ParseDensities(args[++i]));
                     break;
@@ -268,11 +272,24 @@ public static class Program
         {
             try
             {
-                backendLane = BackendLane.Parse(backendKind, backendConnection, backendConfig, backendBm25);
+                backendLane = BackendLane.Parse(
+                    backendKind, backendConnection, backendConfig, backendBm25, backendEfValues);
             }
             catch (ArgumentException error)
             {
                 Console.Error.WriteLine(error.Message);
+                return 2;
+            }
+
+            // A vector row is measured over the harness's cached embeddings, not over an embedding
+            // call of its own: without --dense there is nothing to index, and encoding a corpus
+            // silently inside a metrics lane would be a cost nobody asked for.
+            if (backendLane.Kind == BackendKind.Vector && !dense)
+            {
+                Console.Error.WriteLine(
+                    "--backend vector needs --dense: the row is measured over the cached "
+                    + "multilingual-e5-small embeddings the dense lane builds, and it does not embed a "
+                    + "corpus of its own.");
                 return 2;
             }
         }
@@ -638,7 +655,7 @@ public static class Program
 
         if (backendLane is not null)
         {
-            RunBackendRow(backendLane, corpus, dataset, topK, limit, gain, excludeQueryDocument, jobs);
+            RunBackendRow(backendLane, corpus, dataset, topK, limit, gain, excludeQueryDocument, jobs, denseVectors);
         }
     }
 
@@ -649,7 +666,7 @@ public static class Program
     /// </summary>
     private static void RunBackendRow(
         BackendLane lane, BeirCorpus corpus, BeirDataset dataset, int topK, int? limit,
-        NdcgGain gain, bool excludeQueryDocument, int jobs)
+        NdcgGain gain, bool excludeQueryDocument, int jobs, DenseVectors? dense)
     {
         Console.WriteLine();
 
@@ -659,9 +676,9 @@ public static class Program
             // the only thing it shares with the table above is the query list, the qrels and the
             // metric code.
             BackendMeasurement measurement = PostgresBackendBenchmark.Measure(
-                lane, corpus, dataset.Name, topK, limit, gain, excludeQueryDocument, jobs);
+                lane, corpus, dataset.Name, topK, limit, gain, excludeQueryDocument, jobs, dense);
 
-            Console.WriteLine(PostgresBackendBenchmark.Format(measurement, dataset.Name));
+            Console.Write(PostgresBackendBenchmark.Format(measurement, dataset.Name));
 
             foreach (string caveat in measurement.Caveats)
                 Console.WriteLine($"Note: {caveat}");
@@ -1102,8 +1119,8 @@ public static class Program
         Console.WriteLine("""
             Usage: LexiSharp.Eval [--data <dir>] [--dataset <name|all>] [--top-k <n>] [--limit <n>]
                      [--no-tuned] [--stem porter] [--dense] [--dense-seq <n>] [--rerank] [--rerank-top <n>]
-                     [--backend <lexical|paradedb> --backend-connection <s>]
-                     [--backend-bm25 <k1,b>] [--backend-config <name>]
+                     [--backend <lexical|paradedb|vector> --backend-connection <s>]
+                     [--backend-bm25 <k1,b>] [--backend-ef <list>] [--backend-config <name>]
 
               --data <dir>      Base directory for datasets (default: <project>/data).
                                 Downloaded and checksum-verified on first run.
@@ -1215,10 +1232,12 @@ public static class Program
                                 The target database needs the vector extension.
               --backend <name>  Add a retrieval-quality row measured through a SQL backend on the same
                                 corpus, queries and qrels: 'lexical' (tsvector + ts_rank_cd over stock
-                                PostgreSQL) or 'paradedb' (pg_search + pdb.score, Okapi BM25 computed
-                                by Tantivy; needs the paradedb image). Printed on its own, because the
-                                engine owns its index and its ranking function and the in-memory table
-                                is one index with many scorers. Needs --backend-connection.
+                                PostgreSQL), 'paradedb' (pg_search + pdb.score, Okapi BM25 computed
+                                by Tantivy; needs the paradedb image) or 'vector' (pgvector HNSW over
+                                the cached dense embeddings, needs --dense). Printed on its own,
+                                because the engine owns its index and its ranking function and the
+                                in-memory table is one index with many scorers. Needs
+                                --backend-connection.
               --backend-connection <s>
                                 Npgsql connection string for --backend. The lane builds a table named
                                 lexisharp_eval_<dataset> and drops it afterwards, so it never reads or
@@ -1235,6 +1254,12 @@ public static class Program
                                 rather than re-weighted afterwards. Omitted, Tantivy's defaults
                                 (k1=1.2, b=0.75) apply. Refused with --backend lexical, whose
                                 ts_rank_cd has no such parameter.
+              --backend-ef <list>
+                                pgvector hnsw.ef_search values the vector backend is measured at,
+                                comma-separated (e.g. 10,40,160). One row per value, over one index:
+                                the index is the same at every value, only the candidate list the
+                                search explores changes. Default 40, pgvector's own. Refused with the
+                                other backends, which do not read it.
               --analyze <file>  Write one row per query per configuration: the query's lexical coverage
                                 of its own judged documents, the metrics, and the per-query deltas
                                 against --analyze-baseline. Off by default — capturing a ranking per

@@ -40,14 +40,14 @@ public class PostgresBackendBenchmarkTests
     [Fact]
     public void AnUnknownEngineNameIsRefusedAndTheMessageSaysWhatIsMissing()
     {
-        // The vector and sparse engines implement ITextSearchEngine too, so their absence from the
-        // list is a decision a caller will ask about. The message answers it, because a bare
+        // The sparse and fuzzy engines implement ITextSearchEngine too, so their absence from the list
+        // is a decision a caller will ask about. The message answers it, because a bare
         // "unknown backend" sends the reader looking for the wrong defect.
         ArgumentException error = Assert.Throws<ArgumentException>(
-            () => BackendLane.Parse("vector", "Host=db;Database=search", "simple"));
+            () => BackendLane.Parse("sparse", "Host=db;Database=search", "simple"));
 
         Assert.Contains("lexical", error.Message, StringComparison.Ordinal);
-        Assert.Contains("--ann-ef", error.Message, StringComparison.Ordinal);
+        Assert.Contains("no sparse model", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -167,6 +167,78 @@ public class PostgresBackendBenchmarkTests
     }
 
     [Fact]
+    public void TheVectorBackendDefaultsToOneEfSearchValueAndNamesIt()
+    {
+        // pgvector's own default is 40. A row that did not say which ef_search it ran at would be a
+        // recall number with no candidate list attached to it.
+        BackendLane lane = BackendLane.Parse("vector", "Host=db;Database=search", "simple");
+
+        Assert.Equal("Vector", lane.Kind.ToString());
+        Assert.Equal([40], lane.EfValues);
+        Assert.Contains("ef_search 40", lane.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheVectorBackendKeepsEveryRequestedEfSearchValueInOrder()
+    {
+        BackendLane lane = BackendLane.Parse(
+            "vector", "Host=db;Database=search", "simple", efSearchValues: [160, 10]);
+
+        // Order is the caller's: the rows print in the order the flag lists them, so a curve reads
+        // the way the command was typed rather than sorted behind the caller's back.
+        Assert.Equal([160, 10], lane.EfValues);
+        Assert.Contains("ef_search 160, 10", lane.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnEfSearchValueGivenToABm25BackendIsRefused()
+    {
+        // Neither ts_rank_cd nor pdb.score reads hnsw.ef_search. Accepting the flag would label a row
+        // with a parameter that never entered it.
+        ArgumentException error = Assert.Throws<ArgumentException>(() => BackendLane.Parse(
+            "lexical", "Host=db;Database=search", "simple", efSearchValues: [40]));
+
+        Assert.Contains("--backend-ef", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AK1AndBGivenToTheVectorBackendIsRefused()
+    {
+        ArgumentException error = Assert.Throws<ArgumentException>(() => BackendLane.Parse(
+            "vector", "Host=db;Database=search", "simple", new Bm25Parameters(0.9, 0.4)));
+
+        Assert.Contains("cosine", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OneRowPrintsAsASentenceAndSeveralPrintAsATable()
+    {
+        // The lexical and ParadeDB lanes produce one number; the vector lane produces a curve. A
+        // one-row table would be ceremony, and a sentence for a curve would bury the axis.
+        var single = new BackendMeasurement(
+            "engine", "table", 10,
+            [new BackendRow(string.Empty, new ConfigResult("engine", 7, 0.25, 0.2, 0.5, 0.1, TimeSpan.Zero))],
+            []);
+
+        Assert.Contains("Result: nDCG@10 0.2500", PostgresBackendBenchmark.Format(single, "nfcorpus"), StringComparison.Ordinal);
+
+        var curve = new BackendMeasurement(
+            "engine", "table", 10,
+            [
+                new BackendRow("10", new ConfigResult("ef=10", 7, 0.25, 0.2, 0.5, 0.1, TimeSpan.Zero)),
+                new BackendRow("160", new ConfigResult("ef=160", 7, 0.26, 0.2, 0.5, 0.1, TimeSpan.Zero)),
+            ],
+            []);
+
+        string formatted = PostgresBackendBenchmark.Format(curve, "nfcorpus");
+
+        Assert.Contains("ef_search", formatted, StringComparison.Ordinal);
+        Assert.Contains("       10 |", formatted, StringComparison.Ordinal);
+        Assert.Contains("      160 |", formatted, StringComparison.Ordinal);
+        Assert.DoesNotContain("Result:", formatted, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TheRowScoresTheEngineItIsGivenOverTheTestQueriesOnly()
     {
         // Two judged queries and one without a judgement: the harness loads the third and leaves it
@@ -247,8 +319,8 @@ public class PostgresBackendBenchmarkTests
             excludeQueryDocument: false, jobs: 1);
 
         Assert.Equal(2, measurement.Documents);
-        Assert.Equal(1, measurement.Result.Queries);
-        Assert.Equal(1.0, measurement.Result.NdcgAt10);
+        Assert.Equal(1, measurement.Rows[0].Result.Queries);
+        Assert.Equal(1.0, measurement.Rows[0].Result.NdcgAt10);
         Assert.False(TableExists(measurement.Table), "The lane drops the table it built.");
     }
 
@@ -282,7 +354,7 @@ public class PostgresBackendBenchmarkTests
             excludeQueryDocument: false, jobs: 1);
 
         Assert.Equal(2, measurement.Documents);
-        Assert.Equal(1, measurement.Result.NdcgAt10);
+        Assert.Equal(1, measurement.Rows[0].Result.NdcgAt10);
         Assert.False(TableExists(measurement.Table), "The lane drops the table it built.");
     }
 
@@ -355,6 +427,44 @@ public class PostgresBackendBenchmarkTests
         Assert.DoesNotContain("0 of", restated.Message, StringComparison.Ordinal);
     }
 
+    [SkippableFact]
+    public void TheVectorLaneMeasuresOneRowPerEfSearchAndDropsItsTable()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        if (!ExtensionAvailable(ConnectionString!, "vector"))
+            Skip.If(true, "the vector extension is not available on the target instance.");
+
+        var corpus = new BeirCorpus
+        {
+            Name = "test",
+            Documents = [new BeirDocument("a", string.Empty, "alpha"), new BeirDocument("b", string.Empty, "beta")],
+            Queries = [new BeirQuery("q1", "find alpha")],
+            TestRelevance = new Dictionary<string, IReadOnlyDictionary<string, double>>(StringComparer.Ordinal)
+            {
+                ["q1"] = new Dictionary<string, double> { ["a"] = 1 },
+            },
+        };
+
+        // The query text differs from both document texts on purpose: the provider keys one
+        // dictionary by text, so a query that read "alpha" would overwrite the document vector
+        // indexed under the same key.
+        var dense = new DenseVectors(
+            [[1f, 0f], [0f, 1f]],
+            new Dictionary<string, float[]>(StringComparer.Ordinal) { ["find alpha"] = [1f, 0f] },
+            Dimension: 2);
+
+        var lane = BackendLane.Parse("vector", ConnectionString!, "simple", efSearchValues: [10, 160]);
+
+        BackendMeasurement measurement = PostgresBackendBenchmark.Measure(
+            lane, corpus, "vector_lane_test", topK: 10, limit: null, NdcgGain.Exponential,
+            excludeQueryDocument: false, jobs: 1, dense);
+
+        Assert.Equal(["10", "160"], measurement.Rows.Select(row => row.Label));
+        Assert.All(measurement.Rows, row => Assert.Equal(1.0, row.Result.NdcgAt10));
+        Assert.False(TableExists(measurement.Table), "The lane drops the table it built.");
+    }
+
     private static SearchDocument Document(string id, string title, string text) =>
         new(id, text, null, null, string.IsNullOrEmpty(title) ? null : new Dictionary<string, string> { ["title"] = title });
 
@@ -371,7 +481,9 @@ public class PostgresBackendBenchmarkTests
         return (long)command.ExecuteScalar()! > 0;
     }
 
-    private static bool ParadeDBAvailable(string connectionString)
+    private static bool ParadeDBAvailable(string connectionString) => ExtensionAvailable(connectionString, "pg_search");
+
+    private static bool ExtensionAvailable(string connectionString, string extension)
     {
         try
         {
@@ -379,7 +491,8 @@ public class PostgresBackendBenchmarkTests
             connection.Open();
 
             using var command = connection.CreateCommand();
-            command.CommandText = "SELECT count(*) FROM pg_available_extensions WHERE name = 'pg_search'";
+            command.CommandText = "SELECT count(*) FROM pg_available_extensions WHERE name = @name";
+            command.Parameters.AddWithValue("name", extension);
             return (long)command.ExecuteScalar()! > 0;
         }
         catch

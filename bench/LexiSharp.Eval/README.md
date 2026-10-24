@@ -157,6 +157,7 @@ same qrels as the table above, through the same metric code at the same depth:
 |---|---|---|---|
 | `lexical` | `PostgresTextSearchEngine` | `ts_rank_cd` | stock PostgreSQL (the lane installs `unaccent`) |
 | `paradedb` | `ParadeDBTextSearchEngine` | `pdb.score`, Tantivy's BM25 | `paradedb/paradedb:pg16` (`pg_search`) |
+| `vector` | `PostgresVectorSearchEngine` | cosine over pgvector HNSW | `--dense` (it ranks the cached e5 vectors) |
 
 The row is printed on its own rather than appended to the table: every row above is a different
 scorer over one shared in-memory index, and these engines own both their index and their ranking
@@ -194,7 +195,7 @@ What each row is, and is not:
   match is a document containing all of them. NFCorpus's test queries average 3.4 words and read
   0.1864; SciFact's average 13.1 and read 0.0188. PostgreSQL's own English analysis
   (`--backend-config english`) moves NFCorpus 0.1864 → 0.2043, not closer.
-- **ArguAna has no row.** Both engines refuse query text their matcher would read as a prefix
+- **ArguAna has no row.** Both text engines refuse query text their matcher would read as a prefix
   operator, and 2 of the 1,406 test queries carry a `*` attached to a term. The lane prints that
   refusal and its count instead of a metric over the other 1,404, which would be a different query
   set from every row it sat beside.
@@ -206,9 +207,28 @@ What each row is, and is not:
   columns are. Feed both backends to the
   [hybrid merger](../../docs/pipelines.md#hybrid-engine) when one ordering is needed.
 
-The vector and sparse engines are not in this lane. Their quality knob is not a ranking but an ANN
-index, and the lane that measures it is the `ef_search` curve (`--ann-ef`), which reports recall
-against an exact top-k rather than nDCG.
+`--backend vector --backend-ef 10,40,160` measures the ANN engine, one row per `ef_search`, over one
+index — the index is the same at every value, only the candidate list the search explores changes.
+The vectors are the dense lane's cached pass, so the in-memory dense row ranks the same embeddings
+exactly and the distance between them is the index's cost in nDCG (NFCorpus, the one corpus this
+curve was taken on):
+
+| ef_search | nDCG@10 | MAP@10 | MRR@10 | R@10 |
+|---|---:|---:|---:|---:|
+| 10 | 0.2882 | 0.2077 | 0.4589 | 0.1301 |
+| 40 | 0.2960 | 0.2127 | 0.4811 | 0.1388 |
+| 160 | 0.3013 | 0.2151 | 0.4928 | 0.1426 |
+| exact, in process | 0.304 | 0.216 | 0.502 | 0.144 |
+
+**The index costs 0.0158 nDCG@10 at `ef_search` 10, 0.008 at 40 and 0.0027 at 160** — the recall
+ratio translated into metric points. The residual at 160 is not attributed: the same cosine computed
+by pgvector in single precision and in process, and on NFCorpus the planner may already answer with
+an exact scan at that value (see the plan note on the backends page).
+
+The **sparse** and **fuzzy** engines are not in this lane. No sparse model is wired into the
+harness, and trigram similarity is not a ranking of prose, so the integration suite is what covers
+them; the ANN *recall* curve (`--ann-ef`) is a separate measurement, kept because a recall ratio and
+an nDCG are different questions.
 
 ## Per-query analysis
 

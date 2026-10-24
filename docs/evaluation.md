@@ -313,7 +313,7 @@ Out of the box, each engine at its own defaults (`k1=1.5, b=0.75` here, `1.2, 0.
   document containing all of them. NFCorpus's test queries average 3.4 words and read 0.1864;
   SciFact's average 13.1 and read 0.0188. PostgreSQL's own English analysis
   (`--backend-config english`) moves NFCorpus 0.1864 → 0.2043, not closer.
-- **ArguAna has no row.** Both engines refuse query text their matcher reads as a prefix operator,
+- **ArguAna has no row.** Both text engines refuse query text their matcher reads as a prefix operator,
   and 2 of the 1,406 test queries carry one. The run prints that refusal and its count instead of a
   metric over the other 1,404, which would be a different query set from every row beside it.
 - **These rows are not pinned.** `reference/pinned.json` keys on the analyzer and the BM25
@@ -325,11 +325,27 @@ Out of the box, each engine at its own defaults (`k1=1.5, b=0.75` here, `1.2, 0.
   rows are not comparable with the published figures or with the aligned rows either — the
   parameter-matched table above compares two analyses, not two implementations of one.
 
-What the lane does **not** cover: the vector, sparse and fuzzy engines. The vector engine's quality
-knob is an ANN index rather than a ranking, and the measurement that exists for it is the
-`ef_search` curve in [the backends page](backends.md), which reports recall against an exact top-k.
-The sparse and fuzzy engines have no equivalent — what covers them is the integration suite, not a
-public benchmark.
+The vector engine is measured the same way, over the harness's cached embeddings, with one row per
+`ef_search` — `--backend vector --backend-ef 10,40,160`, which needs `--dense`:
+
+| NFCorpus, ef_search | nDCG@10 | MAP@10 | MRR@10 | R@10 |
+|---|---:|---:|---:|---:|
+| 10 | 0.2882 | 0.2077 | 0.4589 | 0.1301 |
+| 40 | 0.2960 | 0.2127 | 0.4811 | 0.1388 |
+| 160 | 0.3013 | 0.2151 | 0.4928 | 0.1426 |
+| exact, in process (the in-memory dense row) | 0.304 | 0.216 | 0.502 | 0.144 |
+
+The in-memory dense row ranks the same vectors exactly, so the distance between the two is what the
+index costs in metric points: **0.0158 nDCG@10 at `ef_search` 10, 0.008 at 40, 0.0027 at 160** —
+recall translated into nDCG rather than left as a ratio. The residual at 160 is not attributed here:
+it is the same cosine computed by pgvector in single precision and in process, and on NFCorpus the
+planner may already answer with an exact scan at that value ([backends](backends.md)). NFCorpus is
+the only corpus this curve was taken on; the lane accepts the other two, and no figure is quoted for
+them because none was taken.
+
+What the lane does **not** cover: the **sparse** and **fuzzy** engines. No sparse model is wired into
+this harness, and trigram similarity is not a ranking of prose; the integration suite is what covers
+them, not a public benchmark.
 
 ## Metrics
 
