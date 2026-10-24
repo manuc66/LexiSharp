@@ -45,7 +45,11 @@ namespace LexiSharp.Indexing;
 /// <para>
 /// <b>Durability, stated exactly.</b> Writes are visible immediately and live as long as the process.
 /// <see cref="Commit"/> makes them durable by writing one merged segment to the directory and swapping
-/// it in atomically, so a reader in flight never sees a half-written store. What is <b>not</b> durable
+/// it in atomically, so a reader in flight never sees a half-written store. A crash after that rename
+/// and before the cleanup can leave the replaced generation on disk beside its successor; the store
+/// opens <b>the newest generation only</b>, because the successor is the flush of everything live at
+/// commit time — chaining both would return every shared document twice and bring back the ones the
+/// commit deleted. What is <b>not</b> durable
 /// is the overlay between writes: a crash after an <see cref="Add"/> and before a <see cref="Commit"/>
 /// loses that document. That is a write-ahead log, it is not this increment, and the type does not
 /// pretend otherwise.
@@ -131,9 +135,20 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
         var segments = new List<SegmentTextIndex>();
         var owners = new List<IDisposable>();
 
+        // The newest generation only. A commit writes the new segment to a temporary file, renames it
+        // into place, and only then deletes the segments it replaced — so a crash in that window
+        // leaves the previous generation beside its successor. Both describe the same corpus (the
+        // successor is the flush of everything live at commit time), so chaining both would return
+        // every shared document twice and resurrect every document the commit had deleted. The
+        // generation is in the name and the file list is sorted, so the last match is the newest.
+        string? newest = null;
+
         foreach (string path in SegmentFiles(directory))
+            newest = path;
+
+        if (newest is not null)
         {
-            var handle = OpenSegment(path, _tokenizer, mode, decodedCacheEntries);
+            var handle = OpenSegment(newest, _tokenizer, mode, decodedCacheEntries);
 
             segments.Add(handle.Index);
 
@@ -427,6 +442,16 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     /// The bytes come from the chain's own merged segment rather than a second compaction: a flush is
     /// a pure function of the live corpus, so compacting twice would produce the same bytes at twice
     /// the cost — about 0.9 s and 126 MB allocated at 40,000 documents each time.
+    /// <para>
+    /// <b>Unverified on Windows: a mapped store's commit may fail at the cleanup.</b> The generation it
+    /// replaces is deleted while the store it was read from still holds a view over it. Linux allows
+    /// deleting a mapped file (the inode outlives the last unmap), so the path is exercised here;
+    /// Windows refuses the delete while a mapping is open. Every CI job in this repository runs on
+    /// Ubuntu, so nothing in the tree demonstrates the Windows behaviour either way, and it is stated
+    /// as a risk rather than fixed blind. A caller that commits a
+    /// <see cref="SegmentSourceMode.Mapped"/> store on Windows should dispose it first, which the
+    /// array mode does not need.
+    /// </para>
     /// </remarks>
     private void WriteToDisk(SegmentTextIndex merged)
     {
