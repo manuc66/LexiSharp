@@ -105,6 +105,13 @@ twice. Every figure below is reproducible with a command on the
   reaches **0.333**, and adding a cross-encoder rerank **0.346**, about 2.1 points above
   BEIR's BM25. Those two lanes are the only ones that use a real model, and the model comes
   from the harness, not from the library.
+- **The SQL backends, on the same corpora.** The two PostgreSQL engines that rank on their own are
+  scored over the same queries and qrels as the in-memory table: at matched k1=0.9/b=0.4, ParadeDB's
+  Tantivy BM25 reads **0.3055** and **0.6633** on NFCorpus and SciFact against this library's
+  **0.305** and **0.655**, and `ts_rank_cd` reads **0.1864** and **0.0188** — mostly its matcher,
+  which ANDs every term. ArguAna produces no row, because both engines reject 2 of its 1,406 test
+  queries. The analysis there is PostgreSQL's, not this library's, and those rows are not pinned.
+  See [evaluation](evaluation.md#the-sql-backends-on-the-same-corpora).
 - **Zero runtime dependencies in the core.** `LexiSharp` references no NuGet package at
   all: index, BM25, every scorer and every decorator are BCL only. The optional packages
   bring their own.
@@ -113,8 +120,7 @@ twice. Every figure below is reproducible with a command on the
   build and self-skip when `POSTGRES_TEST_CONNECTION` is unset.
 - **Not measured, and named rather than glossed over.** The **time** cost of `SearchTrace`
   (its allocation is pinned; the timing was not resolvable on the machine used, so no figure
-  is quoted). The **retrieval quality of the SQL backends** — the BEIR harness runs the
-  in-memory engines. The **learned-sparse and expansion lanes** on BEIR: no SPLADE model is
+  is quoted). The **learned-sparse and expansion lanes** on BEIR: no SPLADE model is
   wired into the harness, and corpus-derived expansion is a *loss* where it has been
   measured (0.8469 against BM25's 0.8751 on the reference corpus). **Not every combination**
   of engine, scorer, reranker and merger is exercised by a test.
