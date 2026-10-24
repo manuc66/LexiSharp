@@ -325,9 +325,11 @@ Out of the box, each engine at its own defaults (`k1=1.5, b=0.75` here, `1.2, 0.
   rows are not comparable with the published figures or with the aligned rows either — the
   parameter-matched table above compares two analyses, not two implementations of one.
 
-What the lane does **not** cover: the vector, sparse and fuzzy engines. Their quality knob is an ANN
-index rather than a ranking, and the measurement that exists for them is the `ef_search` curve in
-[the backends page](backends.md), which reports recall against an exact top-k.
+What the lane does **not** cover: the vector, sparse and fuzzy engines. The vector engine's quality
+knob is an ANN index rather than a ranking, and the measurement that exists for it is the
+`ef_search` curve in [the backends page](backends.md), which reports recall against an exact top-k.
+The sparse and fuzzy engines have no equivalent — what covers them is the integration suite, not a
+public benchmark.
 
 ## Metrics
 

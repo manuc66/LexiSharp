@@ -40,9 +40,10 @@ installation, the query paths, and exact cosine behaviour for the vector engine.
 `--backend lexical|paradedb` adds a nDCG row for the same BEIR corpus, queries and qrels as
 the in-memory table, and [the evaluation page](evaluation.md#the-sql-backends-on-the-same-corpora)
 carries the figures and what each one is comparable with. What is **not** measured against a
-public benchmark is the vector, sparse and fuzzy engines: their knob is an approximate index
-rather than a ranking, and the `ef_search` curve below measures their recall against an exact
-top-k instead. PostgreSQL-native scores are also **not** numerically comparable to
+public benchmark is the *ranking* of the vector, sparse and fuzzy engines. The vector engine's
+knob is an approximate index rather than a ranking, and the `ef_search` curve below measures its
+recall against an exact top-k; the sparse and fuzzy engines have no such curve, and the
+integration tests are what cover them. PostgreSQL-native scores are also **not** numerically comparable to
 `Bm25Scorer`; feed several backends to the
 [hybrid merger](pipelines.md#hybrid-engine) when you need one consistent ordering.
 

@@ -193,8 +193,9 @@ is [Scope and limits](https://github.com/manuc66/LexiSharp/blob/main/docs/refere
   matched k1=0.9/b=0.4, ParadeDB's Tantivy BM25 reads **0.3055** and **0.6633** on NFCorpus and
   SciFact against this library's **0.305** and **0.655**, and `ts_rank_cd` reads **0.1864** and
   **0.0188**, which is mostly its matcher — it ANDs every term. ArguAna produces no row: both
-  engines reject 2 of its 1,406 test queries' syntax. The **vector, sparse and fuzzy** engines are
-  measured for their approximate index rather than for ranking: recall against an exact top-k
+  engines reject 2 of its 1,406 test queries' syntax, and these rows are not pinned. Of the other
+  three, the **vector** engine is measured for its index rather than its ranking — recall against an
+  exact top-k — and the **sparse** and **fuzzy** engines only by integration tests
   ([backends](https://github.com/manuc66/LexiSharp/blob/main/docs/backends.md),
   [evaluation](https://github.com/manuc66/LexiSharp/blob/main/docs/evaluation.md#the-sql-backends-on-the-same-corpora)).
 - **Not every combination is tested.** Engines, scorers, rerankers and mergers are tested
