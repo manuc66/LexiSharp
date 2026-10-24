@@ -242,7 +242,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
             await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
             await using var command = connection.CreateCommand();
 
-            string tsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content");
+            string tsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content", "EXCLUDED.text_fields");
 
             string insertSql = $"""
                 INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, embedding)
@@ -283,7 +283,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         string updateList = string.Join(", ",
             columns.Select(c => $"{SafeIdentifier.QuoteIdentifier($"{c}_embedding")} = EXCLUDED.{SafeIdentifier.QuoteIdentifier($"{c}_embedding")}"));
 
-        string multiTsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content");
+        string multiTsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content", "EXCLUDED.text_fields");
 
         string insertMultiSql = $"""
             INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, {columnList})
@@ -337,7 +337,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
         return SearchAsync(query, options).GetAwaiter().GetResult();
@@ -390,11 +390,11 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
     /// <see cref="IDetailedSearchEngine"/> capability; on the legacy single-column engine the single
     /// contribution is keyed <c>"embedding"</c>. Search and details always agree on the ordering.
     /// </summary>
-    public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null)
+    public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
 
-        var outcome = SearchCoreAsync(query, GetDefaultColumns(), options, CancellationToken.None).GetAwaiter().GetResult();
+        var outcome = SearchCoreAsync(query, GetDefaultColumns(), options, cancellationToken).GetAwaiter().GetResult();
 
         return outcome.Results
             .Select(x => new DetailedSearchResult(

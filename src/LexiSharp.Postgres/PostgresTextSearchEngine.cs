@@ -167,7 +167,7 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable, I
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
 
@@ -225,7 +225,7 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable, I
         }
 
         string searchSql = $"""
-            SELECT id, content, category, fields, ts_rank_cd(tsv, {rankExpression}) AS score
+            SELECT id, content, category, fields, text_fields, ts_rank_cd(tsv, {rankExpression}) AS score
             FROM {_options.QualifiedTableName}
             WHERE ({gateCondition}){filters.Fragment}
             ORDER BY score DESC
@@ -248,7 +248,7 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable, I
 
         while (reader.Read())
         {
-            double score = reader.GetDouble(4);
+            double score = reader.GetDouble(5);
 
             if (double.IsNaN(score) || double.IsInfinity(score) || score == 0)
                 continue;
@@ -274,16 +274,18 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable, I
     {
         using var command = connection.CreateCommand();
 
-        string tsvExpr = PostgresSchema.TsvExpression(_options, "@content");
+        string tsvExpr = PostgresSchema.TsvExpression(_options, "@content", "@text_fields");
+        string tsvExprUpsert = PostgresSchema.TsvExpression(_options, "EXCLUDED.content", "EXCLUDED.text_fields");
 
         string insertSql = $"""
-            INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, tsv)
-            VALUES (@id, @content, @category, @fields, {tsvExpr})
+            INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, tsv)
+            VALUES (@id, @content, @category, @fields, @text_fields, {tsvExpr})
             ON CONFLICT (id) DO UPDATE
                 SET content = EXCLUDED.content,
                     category = EXCLUDED.category,
                     fields = EXCLUDED.fields,
-                    tsv = {tsvExpr.Replace("@content", "EXCLUDED.content")};
+                    text_fields = EXCLUDED.text_fields,
+                    tsv = {tsvExprUpsert};
             """;
 
         // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); values are parameters.
@@ -301,6 +303,20 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable, I
             document.Fields is null ? DBNull.Value : System.Text.Json.JsonSerializer.Serialize(document.Fields, PostgresJsonContext.Default.IReadOnlyDictionaryStringString));
         fieldsParameter.NpgsqlDbType = NpgsqlDbType.Jsonb;
 
+        NpgsqlParameter textFieldsParameter;
+        if (document.TextFields is not null)
+        {
+            textFieldsParameter = command.Parameters.AddWithValue(
+                "text_fields",
+                System.Text.Json.JsonSerializer.Serialize(document.TextFields, PostgresJsonContext.Default.IReadOnlyDictionaryStringString));
+            textFieldsParameter.NpgsqlDbType = NpgsqlDbType.Jsonb;
+        }
+        else
+        {
+            textFieldsParameter = command.Parameters.AddWithValue("text_fields", DBNull.Value);
+            textFieldsParameter.NpgsqlDbType = NpgsqlDbType.Jsonb;
+        }
+
         command.ExecuteNonQuery();
     }
 
@@ -310,8 +326,9 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable, I
         string content = reader.GetString(1);
         string? category = reader.IsDBNull(2) ? null : reader.GetString(2);
         var fields = reader.IsDBNull(3) ? null : DeserializeFields(reader.GetString(3));
+        var textFields = reader.IsDBNull(4) ? null : DeserializeFields(reader.GetString(4));
 
-        return new SearchDocument(id, content, fields, category);
+        return new SearchDocument(id, content, fields, category, textFields);
     }
 
     private static IReadOnlyDictionary<string, string>? DeserializeFields(string? json)

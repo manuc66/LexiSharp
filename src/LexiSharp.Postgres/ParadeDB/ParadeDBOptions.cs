@@ -56,7 +56,7 @@ public sealed record ParadeDBOptions
     /// </summary>
     public string ContentExpression => $"({ContentField}::{WithAlias(ContentTokenizer)})";
 
-    private string WithAlias(string tokenizer)
+    internal string WithAlias(string tokenizer)
     {
         if (tokenizer.Contains("alias=", System.StringComparison.Ordinal))
             return tokenizer;

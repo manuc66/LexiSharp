@@ -175,7 +175,7 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, I
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null)
+    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
 
@@ -203,7 +203,7 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, I
         if (segments.Phrases.Count == 0)
         {
             string matchSql = $"""
-                SELECT id, content, category, fields, pdb.score(id) AS score
+                SELECT id, content, category, fields, text_fields, pdb.score(id) AS score
                 FROM {_options.QualifiedTableName}
                 WHERE {_options.ContentField} ||| @query
                 ORDER BY pdb.score(id) DESC, id ASC
@@ -228,7 +228,7 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, I
             }
 
             string phraseSql = $"""
-                SELECT id, content, category, fields, pdb.score(id) AS score
+                SELECT id, content, category, fields, text_fields, pdb.score(id) AS score
                 FROM {_options.QualifiedTableName}
                 WHERE {string.Join(" AND ", phraseConditions)}
                 ORDER BY pdb.score(id) DESC, id ASC
@@ -256,7 +256,7 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, I
 
         while (reader.Read())
         {
-            double score = reader.GetFloat(4);
+            double score = reader.GetFloat(5);
 
             if (double.IsNaN(score) || double.IsInfinity(score) || score <= 0)
                 continue;
@@ -309,12 +309,13 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, I
         using var command = connection.CreateCommand();
 
         string upsertSql = $"""
-            INSERT INTO {_options.QualifiedTableName} (id, content, category, fields)
-            VALUES (@id, @content, @category, @fields)
+            INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields)
+            VALUES (@id, @content, @category, @fields, @text_fields)
             ON CONFLICT (id) DO UPDATE
                 SET content = EXCLUDED.content,
                     category = EXCLUDED.category,
-                    fields = EXCLUDED.fields;
+                    fields = EXCLUDED.fields,
+                    text_fields = EXCLUDED.text_fields;
             """;
 
         // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); values are parameters.
@@ -332,6 +333,20 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, I
             document.Fields is null ? DBNull.Value : System.Text.Json.JsonSerializer.Serialize(document.Fields, PostgresJsonContext.Default.IReadOnlyDictionaryStringString));
         fieldsParameter.NpgsqlDbType = NpgsqlDbType.Jsonb;
 
+        NpgsqlParameter textFieldsParameter;
+        if (document.TextFields is not null)
+        {
+            textFieldsParameter = command.Parameters.AddWithValue(
+                "text_fields",
+                System.Text.Json.JsonSerializer.Serialize(document.TextFields, PostgresJsonContext.Default.IReadOnlyDictionaryStringString));
+            textFieldsParameter.NpgsqlDbType = NpgsqlDbType.Jsonb;
+        }
+        else
+        {
+            textFieldsParameter = command.Parameters.AddWithValue("text_fields", DBNull.Value);
+            textFieldsParameter.NpgsqlDbType = NpgsqlDbType.Jsonb;
+        }
+
         command.ExecuteNonQuery();
     }
 
@@ -341,8 +356,9 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, I
         string content = reader.GetString(1);
         string? category = reader.IsDBNull(2) ? null : reader.GetString(2);
         var fields = reader.IsDBNull(3) ? null : DeserializeFields(reader.GetString(3));
+        var textFields = reader.IsDBNull(4) ? null : DeserializeFields(reader.GetString(4));
 
-        return new SearchDocument(id, content, fields, category);
+        return new SearchDocument(id, content, fields, category, textFields);
     }
 
     private static IReadOnlyDictionary<string, string>? DeserializeFields(string? json)
