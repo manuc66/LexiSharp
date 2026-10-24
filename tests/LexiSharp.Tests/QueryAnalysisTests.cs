@@ -258,6 +258,276 @@ public class QueryAnalysisTests
         Assert.Contains("High", text);
     }
 
+    [Fact]
+    public void TwoConfigurationsThatReturnedTheSameIdsHaveNotDisagreed()
+    {
+        // The trivial case, pinned because the distance is a ratio and a zero denominator is exactly
+        // how a "same ids" query gets reported as a NaN that sorts first in every table.
+        var report = ReportOf(new Fixture("q1", ["a", "b", "c"], ["a", "b", "c"], ["a"], ["a"]));
+
+        var row = QueryAnalysis.DescribeDisagreement(report, "left", "right").Single();
+
+        Assert.Equal(0, row.Distance);
+        Assert.Equal(3, row.Shared);
+        Assert.Equal(0, row.LeftOnly);
+        Assert.Equal(0, row.RightOnly);
+    }
+
+    [Fact]
+    public void ARankingThatSharesNoIdWithAnotherIsMaximalDisagreement()
+    {
+        var report = ReportOf(new Fixture("q1", ["a", "b"], ["c", "d"], ["a"], ["a"]));
+
+        var row = QueryAnalysis.DescribeDisagreement(report, "left", "right").Single();
+
+        Assert.Equal(1, row.Distance);
+        Assert.Equal(0, row.Shared);
+        Assert.Equal(2, row.LeftOnly);
+        Assert.Equal(2, row.RightOnly);
+    }
+
+    [Fact]
+    public void TheDistanceIsOverTheUnionSoUnequalLengthsAreNotTotalDisagreement()
+    {
+        // A lexical retriever that matched two documents against a dense one that always returns ten
+        // must not read as maximal disagreement. Shared 2, union 4, so 0.5 — the pair of lists is
+        // measured, not the shorter one's absence.
+        var report = ReportOf(new Fixture("q1", ["a", "b"], ["a", "b", "c", "d"], ["a"], ["a"]));
+
+        var row = QueryAnalysis.DescribeDisagreement(report, "left", "right").Single();
+
+        Assert.Equal(0.5, row.Distance, 10);
+        Assert.Equal(2, row.Shared);
+        Assert.Equal(0, row.LeftOnly);
+        Assert.Equal(2, row.RightOnly);
+    }
+
+    [Fact]
+    public void TwoConfigurationsThatBothReturnedNothingCountAsAgreeing()
+    {
+        // The convention a table read as "where does reranking help" depends on: a query no retriever
+        // can answer is not where the retrievers disagree most, and putting it at distance 1 would put
+        // the unanswerable queries at the top of that table.
+        var report = ReportOf(new Fixture("q1", [], [], [], []));
+
+        var row = QueryAnalysis.DescribeDisagreement(report, "left", "right").Single();
+
+        Assert.Equal(0, row.Distance);
+        Assert.Equal(0, row.Shared);
+    }
+
+    [Fact]
+    public void NamingOneConfigurationOnBothSidesIsRefused()
+    {
+        // A column of zeros reads as a measurement of agreement. It is a configuration agreeing with
+        // itself, which is the same failure the band summary refuses when the candidate is the baseline.
+        var report = ReportOf(new Fixture("q1", ["a"], ["b"], ["a"], ["a"]));
+
+        var error = Assert.Throws<ArgumentException>(
+            () => QueryAnalysis.DescribeDisagreement(report, "left", "left"));
+
+        Assert.Contains("left", error.Message);
+    }
+
+    [Fact]
+    public void TheDisagreementColumnsAreAbsentUnlessTheyWereAskedFor()
+    {
+        // The file's existing readers key on its header. A run that does not name a pair must produce
+        // the same columns it always did, or every recorded analysis stops being comparable with every
+        // new one for a reason nobody asked for.
+        var report = ReportOf(new Fixture("q1", ["a"], ["b"], ["a"], ["a"]));
+
+        var plain = WriteToFile(report, "baseline");
+        var withPair = WriteToFile(
+            report, "baseline", QueryAnalysis.DescribeDisagreement(report, "left", "right"));
+
+        Assert.DoesNotContain("disagreement", plain[0]);
+        Assert.Contains($"disagreement_at_{MetricDepth.Cutoff}", withPair[0]);
+        Assert.Contains($"shared_at_{MetricDepth.Cutoff}", withPair[0]);
+        Assert.Contains("left_only", withPair[0]);
+        Assert.Contains("right_only", withPair[0]);
+    }
+
+    [Fact]
+    public void TheDisagreementColumnsCarryTheRightQuerysDistance()
+    {
+        // Two queries, one agreeing and one not. The columns are per query and repeat on every
+        // configuration's row, so a lookup keyed by position would put q1's distance on q2's row and
+        // nothing in the file would say so.
+        var report = ReportOf(
+            new Fixture("q1", ["a", "b"], ["a", "b"], ["a"], ["a"]),
+            new Fixture("q2", ["a", "b"], ["c", "d"], ["a"], ["a"]));
+
+        var lines = WriteToFile(
+            report, "baseline", QueryAnalysis.DescribeDisagreement(report, "left", "right"));
+
+        string[] header = lines[0].Split('\t');
+        int idColumn = Array.IndexOf(header, "query_id");
+        int distanceColumn = Array.IndexOf(header, $"disagreement_at_{MetricDepth.Cutoff}");
+
+        Assert.True(distanceColumn > 0);
+
+        var byQuery = lines
+            .Skip(1)
+            .Select(line => line.Split('\t'))
+            .GroupBy(cells => cells[idColumn])
+            .ToDictionary(group => group.Key, group => group.Select(cells => cells[distanceColumn]).Distinct().ToArray());
+
+        Assert.Equal(["0"], byQuery["q1"]);
+        Assert.Equal(["1"], byQuery["q2"]);
+    }
+
+    [Fact]
+    public void TheDisagreementBandTablePrintsAQueryCountBesideEveryMeanAndNamesTheTies()
+    {
+        // Four queries, one per band, and a delta that rises with the distance. The counts are what
+        // stop a band of one being read as a trend, and the tie counts are what stop a distribution
+        // with one gross band from being read as separation.
+        var report = ReportOf(
+            new Fixture("q1", ["a", "b"], ["a", "b"], ["a"], ["a"], CandidateNdcg: 0.5, BaselineNdcg: 0.5),
+            new Fixture("q2", ["a", "b", "c"], ["a", "b", "c", "d"], ["a"], ["a"], CandidateNdcg: 0.5, BaselineNdcg: 0.4),
+            new Fixture("q3", ["a", "b"], ["a", "b", "c", "d"], ["a"], ["a"], CandidateNdcg: 0.5, BaselineNdcg: 0.3),
+            new Fixture("q4", ["e", "f"], ["g", "h"], ["a"], ["a"], CandidateNdcg: 0.5, BaselineNdcg: 0.2));
+
+        var disagreement = QueryAnalysis.DescribeDisagreement(report, "left", "right");
+
+        using var writer = new StringWriter();
+
+        QueryAnalysis.WriteDisagreementSummary(writer, report, disagreement, "candidate", "baseline");
+
+        var text = writer.ToString();
+
+        Assert.Contains("queries", text);
+        Assert.Contains("mean_dist", text);
+        Assert.Contains("Agree", text);
+        Assert.Contains("Mixed", text);
+        Assert.Contains("MostlyDisagree", text);
+        Assert.Contains("Disagree", text);
+
+        // One of the four shares every id and one shares none, which the summary states before the
+        // table rather than leaving to be inferred from a mean.
+        Assert.Contains("Identical top-10 sets: 1 of 4 queries", text);
+        Assert.Contains("No id in common: 1", text);
+
+        // A strictly increasing delta against a strictly increasing distance is a rank correlation of
+        // exactly one, printed without a p-value.
+        Assert.Contains("Spearman rank correlation between disagreement and delta_ndcg: 1 over", text);
+    }
+
+    [Fact]
+    public void AMonotoneRelationshipHasARankCorrelationOfOne()
+    {
+        var correlation = QueryAnalysis.Spearman([(0, 0), (0.5, 0.2), (1, 0.4)]);
+
+        Assert.Equal(1, correlation.Rho!.Value, 10);
+        Assert.Equal(3, correlation.Pairs);
+        Assert.Null(correlation.Unavailable);
+    }
+
+    [Fact]
+    public void TheRankCorrelationUsesAverageRanksForTies()
+    {
+        // x ranks are (1.5, 1.5, 3.5, 3.5) and y ranks (1, 2.5, 2.5, 4), so Pearson on the ranks is
+        // 3 / sqrt(18) = 0.7071. The tie-free shortcut 1 - 6*sum(d^2)/(n(n^2-1)) would read 0.75 here,
+        // because it assigns the tied rows consecutive ranks; this test is what keeps the definition
+        // that survives repeated values.
+        var correlation = QueryAnalysis.Spearman([(0, 0), (0, 0.5), (1, 0.5), (1, 0.9)]);
+
+        Assert.NotNull(correlation.Rho);
+        Assert.Equal(0.7071, correlation.Rho.Value, 4);
+    }
+
+    [Fact]
+    public void AConstantColumnIsReportedAsNotComputedRatherThanAsZero()
+    {
+        // An unchanged configuration makes every delta zero. A correlation of zero would say "no
+        // relation"; the truth is that there is no order to correlate with, and the printed reason is
+        // what keeps those two apart.
+        var correlation = QueryAnalysis.Spearman([(0, 1), (0.5, 1), (1, 1)]);
+
+        Assert.Null(correlation.Rho);
+        Assert.Equal(3, correlation.Pairs);
+        Assert.Contains("constant", correlation.Unavailable);
+    }
+
+    [Fact]
+    public void TwoQueriesAreTooFewForACorrelation()
+    {
+        var correlation = QueryAnalysis.Spearman([(0, 0), (1, 0.5)]);
+
+        Assert.Null(correlation.Rho);
+        Assert.Equal(2, correlation.Pairs);
+        Assert.Contains("fewer than three", correlation.Unavailable);
+    }
+
+    /// <summary>One query's two retrievers and its candidate/baseline metrics, for the tests below.</summary>
+    private sealed record Fixture(
+        string Id,
+        string[] Left,
+        string[] Right,
+        string[] Candidate,
+        string[] Baseline,
+        double CandidateNdcg = 0,
+        double BaselineNdcg = 0);
+
+    /// <summary>
+    /// A report with four configurations — <c>left</c>/<c>right</c> for the distance and
+    /// <c>candidate</c>/<c>baseline</c> for the delta — over one query per fixture.
+    /// </summary>
+    private static QueryAnalysisReport ReportOf(params Fixture[] fixtures)
+    {
+        var queries = new List<EvaluatedQuery>();
+        var left = new List<QueryOutcome>();
+        var right = new List<QueryOutcome>();
+        var candidate = new List<QueryOutcome>();
+        var baseline = new List<QueryOutcome>();
+
+        foreach (var fixture in fixtures)
+        {
+            queries.Add(Query(fixture.Id, "bile salts", ["a", "b", "c"]));
+            left.Add(Outcome(fixture.Id, fixture.Left, 0, 3));
+            right.Add(Outcome(fixture.Id, fixture.Right, 0, 3));
+            candidate.Add(new QueryOutcome(fixture.Id, fixture.Candidate, 0, 3, 0, fixture.CandidateNdcg));
+            baseline.Add(new QueryOutcome(fixture.Id, fixture.Baseline, 0, 3, 0, fixture.BaselineNdcg));
+        }
+
+        var index = new InMemoryTextIndex();
+        index.Index([new SearchDocument("a", "bile"), new SearchDocument("b", "salts"), new SearchDocument("c", "digest")]);
+        var corpus = Corpus(
+            Document("a", "", "bile"),
+            Document("b", "", "salts"),
+            Document("c", "", "digest"));
+
+        var coverage = QueryAnalysis.Describe(queries, index, corpus, Tokens);
+
+        return new QueryAnalysisReport(
+            queries,
+            coverage,
+            new Dictionary<string, IReadOnlyList<QueryOutcome>>(StringComparer.Ordinal)
+            {
+                ["left"] = left,
+                ["right"] = right,
+                ["candidate"] = candidate,
+                ["baseline"] = baseline,
+            });
+    }
+
+    private static string[] WriteToFile(
+        QueryAnalysisReport report, string baseline, IReadOnlyList<TopKDisagreement>? disagreement = null)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"lexisharp-analysis-{Guid.NewGuid():N}.tsv");
+
+        try
+        {
+            QueryAnalysis.Write(path, report, baseline, disagreement);
+            return File.ReadAllLines(path);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     private static (int Gained, int Lost) Exchange(
         QueryAnalysisReport report, string queryId,
         IReadOnlyList<QueryOutcome> candidate, IReadOnlyList<QueryOutcome> baseline)
