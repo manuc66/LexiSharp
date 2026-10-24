@@ -333,14 +333,17 @@ Four things a caller has to know, and each one is a consequence of a measurement
 - **A write is visible to the very next search.** Adding a document is a tokenization and a dictionary
   write, not a segment write; an overlay of 1,000 documents reads at 1.02× the same documents committed
   into a segment. What an overlay is not is durable: it is lost on a crash. `Commit()` is what makes
-  the writes durable, and it writes one segment atomically — a crash mid-write leaves the previous
-  segment intact rather than a truncated one.
+  the writes durable: it writes one segment to a temporary file, **flushes it to the device**, then
+  renames it into place. The file's contents therefore cannot be torn by a power loss; the directory
+  entry is not fsynced (no portable API), so which of the rename and the cleanup the filesystem keeps
+  is its own choice — a crash costs at most the commit, never a corpus of zeros.
 - **A commit interrupted between its rename and its cleanup opens the newest generation only.** The
   successor is the flush of everything live at commit time, so the replaced file is a subset of it;
   chaining both would return every shared document twice and bring back the ones the commit deleted.
-  The mapped-mode commit of that path is **unverified on Windows**: Windows refuses to delete a file
-  while a mapping is open, and every CI job here runs on Ubuntu. On Windows, dispose a mapped store
-  before committing it.
+  A directory left with a temporary segment and no readable generation is **refused**, because opening
+  it as a new store would report an empty corpus instead of a lost one. The mapped-mode commit of that
+  path is **unverified on Windows**: Windows refuses to delete a file while a mapping is open, and
+  every CI job here runs on Ubuntu. On Windows, dispose a mapped store before committing it.
 - **Merging returns a new index rather than mutating this one.** A search in flight reads the segments,
   their bases and the length array, and a write between those reads would fold half the old chain and
   half the new one. Swapping the reference an engine holds is the pattern `AtomicEngineReference`

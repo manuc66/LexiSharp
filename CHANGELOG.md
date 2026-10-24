@@ -347,6 +347,27 @@ workflow.
 
 ### Fixed
 
+- **`Commit` forces the segment to the device before the rename, and refuses an interrupted commit
+  instead of opening an empty store.**
+
+  `WriteToDisk` wrote through `File.WriteAllBytes`, which closes the stream without forcing the bytes
+  to disk. A power loss could therefore leave a correctly named segment whose content was never
+  written: the reader refuses it, correctly, while the generation it replaced had already been
+  deleted — so the store could not be opened at all. The write now goes through a stream with
+  `Flush(flushToDisk: true)` before the rename. The directory entry is still not fsynced (`.NET` has
+  no portable API for it, and this type does not call into libc), and both the class remarks and
+  `docs/indexing.md` now say exactly that instead of describing the commit as durable without
+  qualification.
+
+  A directory holding a temporary segment and no readable generation now throws
+  `InvalidDataException` rather than opening as a new, empty store: answering "no documents" to every
+  query, while the corpus is still on disk, is the one failure worse than an exception. Two tests,
+  one of which pins that an empty directory still opens as a new store, so the refusal cannot spread
+  to the legitimate first-commit case.
+
+  No test observes the fsync itself — it is not visible from a unit test — so the durability claim is
+  stated as what the code does, not asserted.
+
 - **A commit interrupted after its rename served every document twice, and resurrected the deleted
   ones.**
 

@@ -90,6 +90,51 @@ public class SegmentRecoveryTests
         }
     }
 
+    [Fact]
+    public void ADirectoryHoldingOnlyAnInterruptedCommitIsRefusedRatherThanOpenedEmpty()
+    {
+        // A temp segment and no readable generation is a commit that never completed. Opening it as a
+        // new, empty store would answer "no documents" to every query while the corpus sits on disk —
+        // the one failure worse than an exception.
+        string directory = NewDirectory();
+
+        try
+        {
+            Write(Build(("a", "quokka")), directory, generation: 1);
+
+            string segment = Directory.GetFiles(directory, "*.lxs").Single();
+            File.Move(segment, segment + ".tmp");
+
+            Assert.Throws<InvalidDataException>(() => new SegmentedTextIndex(directory));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AnEmptyDirectoryStillOpensAsANewStore()
+    {
+        // The refusal above must not turn a genuinely new store into an error: an empty directory is
+        // what a first commit is written into.
+        string directory = NewDirectory();
+
+        try
+        {
+            var store = new SegmentedTextIndex(directory);
+
+            Assert.Equal(0, store.Count);
+
+            store.Add(new SearchDocument("a", "quokka"));
+            Assert.Equal(1, store.Count);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static InMemoryTextIndex Build(params (string Id, string Text)[] documents)
     {
         var index = new InMemoryTextIndex();
