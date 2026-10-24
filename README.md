@@ -188,9 +188,15 @@ is [Scope and limits](https://github.com/manuc66/LexiSharp/blob/main/docs/refere
   SciFact — an in-sample margin, so an upper bound rather than a result. On ArguAna, untuned,
   they lose, and no `δ`-tuned ArguAna row exists, so whether tuning closes that gap is
   **unmeasured** ([ranking](https://github.com/manuc66/LexiSharp/blob/main/docs/ranking.md#bm25-variants)).
-- **The SQL backends' retrieval quality is unmeasured.** The BEIR numbers come from the
-  in-memory engines; the live integration tests cover schema, query paths and cosine
-  behaviour, not relevance ([backends](https://github.com/manuc66/LexiSharp/blob/main/docs/backends.md)).
+- **The SQL backends are measured on ranking, not on every engine.** The two PostgreSQL engines
+  that rank on their own are scored over the same BEIR queries and qrels as the in-memory table: at
+  matched k1=0.9/b=0.4, ParadeDB's Tantivy BM25 reads **0.3055** and **0.6633** on NFCorpus and
+  SciFact against this library's **0.305** and **0.655**, and `ts_rank_cd` reads **0.1864** and
+  **0.0188**, which is mostly its matcher — it ANDs every term. ArguAna produces no row: both
+  engines reject 2 of its 1,406 test queries' syntax. The **vector, sparse and fuzzy** engines are
+  measured for their approximate index rather than for ranking: recall against an exact top-k
+  ([backends](https://github.com/manuc66/LexiSharp/blob/main/docs/backends.md),
+  [evaluation](https://github.com/manuc66/LexiSharp/blob/main/docs/evaluation.md#the-sql-backends-on-the-same-corpora)).
 - **Not every combination is tested.** Engines, scorers, rerankers and mergers are tested
   individually *and* in the combinations described, but not every pairing — treat an unusual
   one as supported but unproven until you test it on your data.
