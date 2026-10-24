@@ -22,6 +22,8 @@ public static class Program
             typeof(QueryAllocationBreakdownBenchmarks),
             typeof(CandidateSearchBenchmarks),
             typeof(ScoringPathBenchmarks),
+            typeof(RerankBenchmarks),
+            typeof(TextRankBenchmarks),
             typeof(LevenshteinBenchmarks),
             typeof(ClassificationBenchmarks),
             typeof(StoreWriteBenchmarks),
