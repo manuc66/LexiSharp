@@ -359,8 +359,19 @@ public static class Program
                 // so dropping them here would make this index hold terms the reference does not.
                 KeepSingleCharTerms = true,
             },
+            "identifiers" => new TokenizerOptions
+            {
+                // Preserve serial numbers / references as single tokens: join the separators
+                // most often found inside identifiers instead of splitting on them, keep every
+                // character (no stop words, no stemming, no diacritic folding) so an exact
+                // identifier matches itself and nothing else.
+                WordJoiners = "-_.:/",
+                RemoveStopWords = false,
+                KeepSingleCharTerms = true,
+                FoldDiacritics = false,
+            },
             _ => throw new ArgumentException(
-                $"--analyzer expects 'default', 'porter', 'english' or 'uax29', got '{analyzer}'."),
+                $"--analyzer expects 'default', 'porter', 'english', 'uax29' or 'identifiers', got '{analyzer}'."),
         };
 
         // Tokenizer.Default is a shared instance built from TokenizerOptions.Default; naming its
@@ -951,10 +962,14 @@ public static class Program
                                 opt-in; off by default, so the tables stay comparable).
               --analyzer <name> Analysis for the whole run: 'default' (lowercase, diacritics folded,
                                 no stemming, stop words kept), 'porter' (stemming + LexiSharp stop
-                                words) or 'english' (Porter + the conventional 33-word stop list +
-                                single-character terms kept). 'english' is the analysis the
-                                published BM25 baselines used, and the only one under which these
-                                numbers are comparable with them.
+                                words), 'english' (Porter + the conventional 33-word stop list +
+                                single-character terms kept), 'uax29' (the published separator rules)
+                                or 'identifiers' (no stemming, no stop words, no diacritic folding,
+                                lowercased like every other analyzer, and common identifier
+                                separators joined so a serial number or reference stays one
+                                token). 'english' is the analysis the published
+                                BM25 baselines used, and the only one under which these numbers are
+                                comparable with them.
               --exclude-query-doc
                                 Exclude the document whose id equals the query id, which is what
                                 published figures was produced under. Affects only corpora that number their

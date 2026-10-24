@@ -110,4 +110,22 @@ public class TokenizerTests
         Assert.Equal("e", Tokenizer.Normalize("É"));
         Assert.Equal("æ", Tokenizer.Normalize("Æ")); // ligature, left as-is by NFKD
     }
+
+    [Fact]
+    public void IdentifiersAnalysis_KeepsSerialNumberAsSingleToken()
+    {
+        var options = new TokenizerOptions
+        {
+            WordJoiners = "-_.:/",
+            RemoveStopWords = false,
+            KeepSingleCharTerms = true,
+            FoldDiacritics = false,
+        };
+        var tokenizer = new Tokenizer(options);
+
+        var tokens = tokenizer.Tokenize("Serial number SN-12345-AB and ref A.B/C:9");
+
+        Assert.Contains("sn-12345-ab", tokens);
+        Assert.Contains("a.b/c:9", tokens);
+    }
 }
