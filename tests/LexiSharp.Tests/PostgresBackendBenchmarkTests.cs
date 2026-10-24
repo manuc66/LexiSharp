@@ -465,6 +465,41 @@ public class PostgresBackendBenchmarkTests
         Assert.False(TableExists(measurement.Table), "The lane drops the table it built.");
     }
 
+    [Fact]
+    public void AnUnsupportedQueryIsRefusedBeforeAnythingIsIndexed()
+    {
+        // The engines refuse at search time, which for this lane is after the corpus was loaded into
+        // a table. ArguAna's dense run died that way: 8,674 documents indexed, then an unhandled
+        // exception on the first quoted query.
+        var queries = new List<EvaluatedQuery>
+        {
+            new(new BeirQuery("q1", "alpha beta"), new Dictionary<string, double> { ["a"] = 1 }),
+            new(new BeirQuery("q2", "\"alpha beta\""), new Dictionary<string, double> { ["a"] = 1 }),
+            new(new BeirQuery("q3", "gamma"), new Dictionary<string, double> { ["a"] = 1 }),
+        };
+
+        NotSupportedException refusal = Assert.Throws<NotSupportedException>(() =>
+            PostgresBackendBenchmark.RefuseUnsupported(
+                new FixedEngine(new Dictionary<string, string[]>(StringComparer.Ordinal), QueryFeatures.None),
+                queries));
+
+        Assert.Contains("1 of 3", refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("q2", refusal.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnEngineThatDeclaresPhrasesIsNotRefusedForAQuotedQuery()
+    {
+        var queries = new List<EvaluatedQuery>
+        {
+            new(new BeirQuery("q1", "\"alpha beta\""), new Dictionary<string, double> { ["a"] = 1 }),
+        };
+
+        PostgresBackendBenchmark.RefuseUnsupported(
+            new FixedEngine(new Dictionary<string, string[]>(StringComparer.Ordinal), QueryFeatures.Phrases),
+            queries);
+    }
+
     private static SearchDocument Document(string id, string title, string text) =>
         new(id, text, null, null, string.IsNullOrEmpty(title) ? null : new Dictionary<string, string> { ["title"] = title });
 
