@@ -147,6 +147,15 @@ Runtime, no Python:
 - The reranker scores each candidate's *document text* (query and doc are tokenized as a
   BERT pair); scores are validated against the HuggingFace `CrossEncoder` reference on the
   same query–doc pairs (Spearman ρ ≈ 0.99 on NFCorpus candidates, top-10 overlap ≈ 0.9).
+- **The run is resumable.** A one-line-per-pair cache under `data/rerank-cache/` (or
+  `--rerank-cache <dir>`) is flushed to disk every 1,000 pairs, so an interrupted run restarts
+  where it stopped instead of at the first query. The file is named for the corpus md5 and the
+  model, because a score depends on both; it is append-only, so a kill during a write costs the
+  last buffered pairs and nothing already written; and a truncated tail is skipped with a count
+  rather than discarding the file. The three reranked rows of one corpus also share candidates,
+  so the second and third reuse the first's work — on five NFCorpus queries the second row
+  computed nothing at all. Delete the directory to force a re-score; on ArguAna this is what
+  turns a 12-hour run into one that survives being stopped.
 
 ## SQL backends (optional, needs PostgreSQL)
 
