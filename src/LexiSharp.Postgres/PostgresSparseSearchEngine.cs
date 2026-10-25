@@ -60,7 +60,8 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
         if (!_options.IsValid)
             throw new ArgumentException(
                 "Schema and table must match [A-Za-z0-9_], the vocabulary must be non-empty with non-negative" +
-                " coordinates, and HNSW parameters must be positive.",
+                " coordinates, HNSW parameters must be positive, and a field weight must name a non-empty" +
+                " field with a defined class.",
                 nameof(options));
 
         if (autoCreateSchema is not null)
@@ -199,10 +200,11 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
         await using var command = connection.CreateCommand();
 
         string tsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content", "EXCLUDED.text_fields");
+        string tsvInsertExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "@content", "@text_fields");
 
         string insertSql = $"""
-            INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, sparse)
-            VALUES (@id, @content, @category, @fields, @text_fields, @sparse::sparsevec)
+            INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, sparse, tsv)
+            VALUES (@id, @content, @category, @fields, @text_fields, @sparse::sparsevec, {tsvInsertExpr})
             ON CONFLICT (id) DO UPDATE
                 SET content = EXCLUDED.content,
                     category = EXCLUDED.category,

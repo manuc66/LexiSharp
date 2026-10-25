@@ -59,7 +59,10 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         _options = options ?? new PostgresVectorOptions();
 
         if (!_options.IsValid)
-            throw new ArgumentException("Schema, table names must match [A-Za-z0-9_] and size parameters must be positive.", nameof(options));
+            throw new ArgumentException(
+                "Schema and table names must match [A-Za-z0-9_], size parameters must be positive, and a " +
+                "field weight must name a non-empty field with a defined class.",
+                nameof(options));
 
         if (autoCreateSchema is not null)
             _options = _options with { AutoCreateSchema = autoCreateSchema.Value };
@@ -243,10 +246,11 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
             await using var command = connection.CreateCommand();
 
             string tsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content", "EXCLUDED.text_fields");
+            string tsvInsertExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "@content", "@text_fields");
 
             string insertSql = $"""
-                INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, embedding)
-                VALUES (@id, @content, @category, @fields, @text_fields, @embedding::vector)
+                INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, embedding, tsv)
+                VALUES (@id, @content, @category, @fields, @text_fields, @embedding::vector, {tsvInsertExpr})
                 ON CONFLICT (id) DO UPDATE
                     SET content = EXCLUDED.content,
                         category = EXCLUDED.category,
@@ -284,10 +288,11 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
             columns.Select(c => $"{SafeIdentifier.QuoteIdentifier($"{c}_embedding")} = EXCLUDED.{SafeIdentifier.QuoteIdentifier($"{c}_embedding")}"));
 
         string multiTsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content", "EXCLUDED.text_fields");
+        string multiTsvInsertExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "@content", "@text_fields");
 
         string insertMultiSql = $"""
-            INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, {columnList})
-            VALUES (@id, @content, @category, @fields, @text_fields, {parameterList})
+            INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, {columnList}, tsv)
+            VALUES (@id, @content, @category, @fields, @text_fields, {parameterList}, {multiTsvInsertExpr})
             ON CONFLICT (id) DO UPDATE
                 SET content = EXCLUDED.content,
                     category = EXCLUDED.category,

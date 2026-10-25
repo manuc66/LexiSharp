@@ -39,12 +39,20 @@ internal enum BackendKind
 /// The pgvector <c>hnsw.ef_search</c> values a vector row is measured at, one row each. Empty for
 /// the other engines, and refused there rather than ignored.
 /// </param>
+/// <param name="FieldWeights">
+/// The <c>tsvector</c> weight class per text field for a lexical row, or <c>null</c> for the
+/// unweighted vector every field has always shared. Weights are classes rather than multipliers:
+/// <c>ts_rank_cd</c> maps <c>A</c> to 1.0 and <c>D</c> to 0.1, and has no per-field length
+/// normalisation to go with them. Without a weighted <c>title</c>, a document's body counts as
+/// much as its title and the row measures nothing new.
+/// </param>
 internal sealed record BackendLane(
     BackendKind Kind,
     string ConnectionString,
     string TextSearchConfig,
     Bm25Parameters? Bm25 = null,
-    IReadOnlyList<int>? EfSearchValues = null)
+    IReadOnlyList<int>? EfSearchValues = null,
+    IReadOnlyDictionary<string, PostgresFieldWeight>? FieldWeights = null)
 {
     /// <summary>The <c>ef_search</c> values in force; pgvector's own default when none was given.</summary>
     public IReadOnlyList<int> EfValues => EfSearchValues is { Count: > 0 } values ? values : [40];
@@ -55,7 +63,8 @@ internal sealed record BackendLane(
         string connectionString,
         string textSearchConfig,
         Bm25Parameters? bm25 = null,
-        IReadOnlyList<int>? efSearchValues = null)
+        IReadOnlyList<int>? efSearchValues = null,
+        IReadOnlyDictionary<string, PostgresFieldWeight>? fieldWeights = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
@@ -110,7 +119,15 @@ internal sealed record BackendLane(
                 + "Drop the flag, or use --backend vector.");
         }
 
-        return new BackendLane(parsed, connectionString, textSearchConfig, bm25, efSearchValues);
+        if (parsed != BackendKind.Lexical && fieldWeights is { Count: > 0 })
+        {
+            throw new ArgumentException(
+                "--backend-field-weights configures setweight on the tsv column, which only the lexical "
+                + "backend ranks with: the vector and ParadeDB rows are ranked by an embedding or by "
+                + "pdb.score. Drop the flag, or use --backend lexical.");
+        }
+
+        return new BackendLane(parsed, connectionString, textSearchConfig, bm25, efSearchValues, fieldWeights);
     }
 
     /// <summary>
@@ -139,8 +156,22 @@ internal sealed record BackendLane(
         BackendKind.Vector =>
             "pgvector HNSW (cosine) over multilingual-e5-small embeddings, ef_search "
             + string.Join(", ", EfValues.Select(value => value.ToString(CultureInfo.InvariantCulture))),
-        _ => $"PostgreSQL lexical (ts_rank_cd, text search config '{TextSearchConfig}' + unaccent)",
+        _ => $"PostgreSQL lexical (ts_rank_cd, text search config '{TextSearchConfig}' + unaccent"
+            + FieldWeightsText + ")",
     };
+
+    /// <summary>
+    /// The weighting the row ran under, spelled into its name: a lexical nDCG with and without
+    /// <c>setweight</c> is two configurations, and a table that labelled both the same way would be
+    /// two rows a reader could not tell apart.
+    /// </summary>
+    private string FieldWeightsText => FieldWeights is { Count: > 0 } weights
+        ? ", field weights " + string.Join(
+            ", ",
+            weights.OrderBy(entry => entry.Key, StringComparer.Ordinal)
+                .Select(entry => $"{entry.Key}={entry.Value}"))
+            + ", other text at D"
+        : string.Empty;
 
     /// <summary>
     /// The tokenizer declaration a ParadeDB index is built with. pg_search takes k1/b as per-field
@@ -182,6 +213,13 @@ internal sealed record BackendLane(
         [
             "ts_rank_cd is a coverage-based rank, not BM25, and it takes no k1/b. Its ORDER BY has no "
             + "tie-break, so the order among equal scores is the executor's and can differ between runs.",
+            FieldWeights is { Count: > 0 }
+                ? "The weighting is a tsvector class per field, so what it changes is the ratio between "
+                + "classes (A = 1.0 against D = 0.1 in ts_rank_cd's default mapping). It has no per-field "
+                + "length normalisation: a match in a long field contributes the same as a match in a "
+                + "short one, and only the class separates them."
+                : "Every text field is written into one tsvector at the same weight, so a match in the "
+                + "title and a match in the body contribute the same.",
             AnalysisCaveat,
         ],
     };
@@ -265,7 +303,12 @@ internal static class PostgresBackendBenchmark
 
         using var lexical = new PostgresTextSearchEngine(
             lane.ConnectionString,
-            new PostgresIndexOptions { Table = table, TextSearchConfig = lane.TextSearchConfig });
+            new PostgresIndexOptions
+            {
+                Table = table,
+                TextSearchConfig = lane.TextSearchConfig,
+                FieldWeights = lane.FieldWeights,
+            });
 
         return Run(lexical, lexical.DropSchema);
 

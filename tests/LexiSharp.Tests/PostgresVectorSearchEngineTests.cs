@@ -140,6 +140,41 @@ public class PostgresVectorSearchEngineTests
     }
 
     [SkippableFact]
+    public void Add_WritesTheTsvTheLexicalEngineSearches()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        // A fresh table, so this is the INSERT path and not the upsert: the document enters through
+        // the vector engine and has to be findable through the lexical one, which is what the shared
+        // table is for. The title is not the embedded text, so only the tsv can make it searchable.
+        using var vector = NewEngine(new StubEmbeddingProvider(new Dictionary<string, float[]>
+        {
+            ["body text"] = new[] { 1f, 0f },
+        }));
+
+        string table = vector.TestTableName;
+
+        try
+        {
+            vector.Add(new SearchDocument("a", "body text",
+                TextFields: new Dictionary<string, string> { ["title"] = "searchable headline" }));
+
+            using var lexical = new PostgresTextSearchEngine(
+                ConnectionString!,
+                new PostgresIndexOptions { Table = table });
+
+            var results = lexical.Search("headline", new SearchOptions(Limit: 10));
+
+            Assert.Single(results);
+            Assert.Equal("a", results[0].DocumentId);
+        }
+        finally
+        {
+            vector.DropSchema();
+        }
+    }
+
+    [SkippableFact]
     public void Search_OrdersByCosineSimilarity_AndSkipsOrthogonal()
     {
         Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
