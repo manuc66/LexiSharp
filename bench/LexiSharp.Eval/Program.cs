@@ -88,6 +88,10 @@ public static class Program
         // BM25F's own tuner is 29 evaluations where BM25's is 25 and the deltas' are 125; opt-in so a
         // default run and the pinned replay do not pay for a row that answers a narrower question.
         bool tuneBm25F = false;
+        // Opt-in for the same reason: fitting the tuned rows under this run's query-reading convention
+        // changes their parameters on a corpus whose queries carry syntax, and the tuned rows already
+        // published were fitted through the tuners' defaults. A default run keeps that convention.
+        bool tuneSearchOptions = false;
         bool segment = false;
 
         for (int i = 0; i < args.Length; i++)
@@ -179,6 +183,9 @@ public static class Program
                     break;
                 case "--tune-bm25f":
                     tuneBm25F = true;
+                    break;
+                case "--tune-search-options":
+                    tuneSearchOptions = true;
                     break;
                 case "--index-cache" when i + 1 < args.Length:
                     indexCache = args[++i];
@@ -392,6 +399,14 @@ public static class Program
                 "difference between 9.8% of queries collapsing and none of them doing so.");
         }
 
+        if (tuneSearchOptions)
+        {
+            Console.WriteLine(
+                "Tuning convention: candidate searches use this run's SearchOptions " +
+                $"(query syntax {(parseQuerySyntax ? "on" : "off")}), so the tuned rows are fitted " +
+                "under the convention they are reported with.");
+        }
+
         Console.WriteLine();
 
         foreach (BeirDataset dataset in datasets)
@@ -401,7 +416,8 @@ public static class Program
                 excludeQueryDocument, fingerprintOnly, referenceBm25, queryFrequency, scoreRounding,
                 saturationConstant, singlePrecision, dense, denseSeq,
                 tuned, reranker, rerankCandidates, runPath, jobs, indexCache, parseQuerySyntax,
-                querySyntaxReference, segment, tuneBm25F, analyzePath, analyzeBaseline, analyzeCandidate,
+                querySyntaxReference, segment, tuneBm25F, tuneSearchOptions,
+                analyzePath, analyzeBaseline, analyzeCandidate,
                 disagreementLeft, disagreementRight,
                 expandDensities, expandRankings, annEfValues, annConnection, backendLane, rerankCacheDir);
             Console.WriteLine();
@@ -526,6 +542,7 @@ public static class Program
         bool singlePrecision, bool dense, int denseSeq, bool tuned,
         IReranker? reranker, int rerankCandidates, string? runPath, int jobs, string? indexCache,
         bool parseQuerySyntax, bool referenceIndexStatistics, bool segment, bool tuneBm25F,
+        bool tuneSearchOptions,
         string? analyzePath, string analyzeBaseline, string? analyzeCandidate,
         string? disagreementLeft, string? disagreementRight,
         IReadOnlyList<double> expandDensities, IReadOnlyList<ExpansionRanking> expandRankings,
@@ -662,7 +679,10 @@ public static class Program
             queryFrequency, scoreRounding, saturationConstant, singlePrecision, denseVectors, tuned, reranker,
             rerankCandidates,
             jobs, parseQuerySyntax, captureOutcomes: analyzePath is not null, queryExpansions: queryExpansions,
-            tuneBm25F: tuneBm25F);
+            tuneBm25F: tuneBm25F,
+            tuningSearchOptions: tuneSearchOptions
+                ? new SearchOptions(ParseQuerySyntax: parseQuerySyntax)
+                : null);
 
         foreach (string note in notes)
             Console.WriteLine($"Note: {note}");
@@ -1162,7 +1182,7 @@ public static class Program
     {
         Console.WriteLine("""
             Usage: LexiSharp.Eval [--data <dir>] [--dataset <name|all>] [--top-k <n>] [--limit <n>]
-                     [--no-tuned] [--tune-bm25f] [--stem porter] [--dense] [--dense-seq <n>] [--rerank] [--rerank-top <n>]
+                     [--no-tuned] [--tune-bm25f] [--tune-search-options] [--stem porter] [--dense] [--dense-seq <n>] [--rerank] [--rerank-top <n>]
                      [--rerank-cache <dir>]
                      [--backend <lexical|paradedb|vector> --backend-connection <s>]
                      [--backend-bm25 <k1,b>] [--backend-ef <list>] [--backend-config <name>]
@@ -1183,6 +1203,14 @@ public static class Program
                                 whether weighting beats leaving the fields neutral when both are
                                 fitted. Reports WeightingHelped. Needs a corpus with titles and an
                                 index that keeps per-field statistics; skipped with a note otherwise.
+              --tune-search-options
+                                Fit every tuned row with the same SearchOptions this run reports
+                                with, instead of the tuners' defaults. The convention that changes
+                                the winner is query syntax: left on, a quoted phrase is adjacency
+                                to the tuner and literal text to a run that reports with it off.
+                                Off by default, because a tuned row fitted under another convention
+                                is a different parameter choice and the published rows were fitted
+                                through the defaults.
               --stem porter     Stem every term with LexiSharp.Linguistics.PorterStemmer (English,
                                 opt-in; off by default, so the tables stay comparable).
               --analyzer <name> Analysis for the whole run: 'default' (lowercase, diacritics folded,

@@ -88,6 +88,12 @@ internal static class Evaluation
     /// rather than taking every core, because a sweep that saturates the machine is a sweep nobody
     /// can run anything else on.
     /// </param>
+    /// <param name="tuningSearchOptions">
+    /// The <see cref="SearchOptions"/> the tuned rows' candidate searches start from, or <c>null</c>
+    /// for the tuners' defaults. Pass the same options this run reports with when the two conventions
+    /// differ — <see cref="SearchOptions.ParseQuerySyntax"/> is the one that changes the winner on a
+    /// corpus whose queries carry syntax. The harness's <c>--tune-search-options</c> is what passes it.
+    /// </param>
     /// <returns>
     /// The per-configuration results, a description of how the k1/b tuning went, and the
     /// configurations that were skipped because this index cannot serve them — a capability the
@@ -105,7 +111,8 @@ internal static class Evaluation
         DenseVectors? dense = null,
         bool tuned = true, IReranker? reranker = null, int rerankCandidates = 100, int jobs = 1,
         bool parseQuerySyntax = false, bool captureOutcomes = false, bool tuneBm25F = false,
-        IReadOnlyList<(string Name, ITermExpander Expander)>? queryExpansions = null)
+        IReadOnlyList<(string Name, ITermExpander Expander)>? queryExpansions = null,
+        SearchOptions? tuningSearchOptions = null)
     {
         // Excluding a query's own document id is a no-op unless the corpus numbers its queries as
         // documents, so the check needs no corpus-specific configuration. One membership test per
@@ -281,7 +288,7 @@ internal static class Evaluation
                     evaluated.Excluded))
                 .ToList();
 
-            Bm25FTuningResult fitted = new Bm25FParameterTuner(index, validation, tokenizer)
+            Bm25FTuningResult fitted = new Bm25FParameterTuner(index, validation, tokenizer, tuningSearchOptions)
                 .Tune(weightedFields: ["title"], topK: topK, metric: TuningMetric.Ndcg);
 
             double titleWeight = fitted.Parameters.FieldWeights is { } weights
@@ -312,7 +319,9 @@ internal static class Evaluation
             results.Add(RunConfig(name, factory(), queries, topK, ndcgGain, jobs, parseQuerySyntax, scoreRounding, captureOutcomes));
 
         string tunedDescription = tuned
-            ? RunTuned(index, corpus, queries, topK, tokenizer, ndcgGain, results, jobs, parseQuerySyntax, captureOutcomes)
+            ? RunTuned(
+                index, corpus, queries, topK, tokenizer, ndcgGain, results, jobs, parseQuerySyntax,
+                tuningSearchOptions, captureOutcomes)
             : "skipped (--no-tuned)";
 
         if (tuned)
@@ -320,7 +329,7 @@ internal static class Evaluation
             // The delta axis is a free parameter of both variants, so "tuned BM25" next to "BM25+ at
             // delta=1.0" is tuned-against-unfitted. These two rows close that, which is the only way
             // the variant rows in docs/ranking.md mean what a reader takes them to mean.
-            RunTunedVariants(index, queries, topK, tokenizer, ndcgGain, results, out string plusDelta, out string lDelta, jobs, parseQuerySyntax, captureOutcomes);
+            RunTunedVariants(index, queries, topK, tokenizer, ndcgGain, results, out string plusDelta, out string lDelta, jobs, parseQuerySyntax, tuningSearchOptions, captureOutcomes);
 
             tunedDescription += $"; {plusDelta}, {lDelta}";
         }
@@ -511,6 +520,7 @@ internal static class Evaluation
         List<ConfigResult> results,
         int jobs,
         bool parseQuerySyntax,
+        SearchOptions? tuningSearchOptions,
         bool captureOutcomes = false)
     {
         var validation = queries
@@ -520,7 +530,7 @@ internal static class Evaluation
                 evaluated.Excluded))
             .ToList();
 
-        var tuner = new Bm25ParameterTuner(index, validation, tokenizer);
+        var tuner = new Bm25ParameterTuner(index, validation, tokenizer, tuningSearchOptions);
         var tuned = tuner.Tune(topK: topK, metric: TuningMetric.Ndcg);
 
         var result = RunConfig(
@@ -561,6 +571,7 @@ internal static class Evaluation
         out string lDelta,
         int jobs,
         bool parseQuerySyntax,
+        SearchOptions? tuningSearchOptions,
         bool captureOutcomes = false)
     {
         var validation = queries
@@ -570,7 +581,7 @@ internal static class Evaluation
                 evaluated.Excluded))
             .ToList();
 
-        var plus = new Bm25PlusParameterTuner(index, validation, tokenizer)
+        var plus = new Bm25PlusParameterTuner(index, validation, tokenizer, tuningSearchOptions)
             .Tune(topK: topK, metric: TuningMetric.Ndcg);
 
         results.Add(RunConfig(
@@ -589,7 +600,7 @@ internal static class Evaluation
         // is the delta axis. So the gap between this row and the unfloored score is what delta bought.
         plusDelta = Describe("BM25+", plus.Delta, plus.UnflooredMetricScore, plus.MetricScore, plus.DeltaHelped);
 
-        var l = new Bm25LParameterTuner(index, validation, tokenizer)
+        var l = new Bm25LParameterTuner(index, validation, tokenizer, tuningSearchOptions)
             .Tune(topK: topK, metric: TuningMetric.Ndcg);
 
         results.Add(RunConfig(
