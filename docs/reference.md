@@ -122,9 +122,14 @@ was designed from:
   and stable; its timing is not quoted because the baseline itself varied 2.3× between
   identical runs on the machine used. Read it as unknown, not as free — see
   [Ranking trace](observability.md#ranking-trace-searchtrace).
-- **No OpenTelemetry or Prometheus exporter.** `IRetrievalMetrics` is the only number
-  surface; implement it over your own backend for a real metrics pipeline. See
-  [Observability](observability.md#observability-retrievaltelemetry).
+- **In-box instruments and spans, no exporter.** `RetrievalDiagnostics` implements
+  `IRetrievalMetrics` over a `System.Diagnostics.Metrics.Meter` named `LexiSharp` and exposes an
+  `ActivitySource` named `LexiSharp.Search`, using types that are in-box on .NET 10 — the core
+  package references no package for it. It ships no exporter, aggregator or dashboard, and no
+  OpenTelemetry SDK dependency: a host's SDK, a `MeterListener` or an `ActivityListener` attaches
+  the backend. Engine and stage tags are caller-supplied and must stay low-cardinality; query text
+  and document ids are not tags. See
+  [Observability](observability.md#in-box-instruments-and-spans-retrievaldiagnostics).
 
 ## Building & testing
 

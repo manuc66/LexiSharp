@@ -205,6 +205,12 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `TraceStep` | record struct | — | One recorded step of a document's journey through the search pipeline: the stage it was at, the score going in, the score coming out, and a stage-specific… |
 | `WeightedToken` | record | — | A token paired with a fractional relevance weight, for classifiers that can consume pre-weightened tokens (e.g. a token corrected by a spell-corrector should… |
 
+#### `LexiSharp.Diagnostics`
+
+| Type | Kind | Contracts | What it is |
+| --- | --- | --- | --- |
+| `RetrievalDiagnostics` | class | `IDisposable`, `IRetrievalMetrics` | Turns the IRetrievalMetrics seam into Meter instruments and ActivitySource spans, using only types that ship with .NET. |
+
 #### `LexiSharp.Embeddings`
 
 | Type | Kind | Contracts | What it is |

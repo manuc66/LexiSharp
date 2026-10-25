@@ -147,11 +147,12 @@ per-query state, so concurrent searches share one safely as long as the sinks ar
 statement about the code, not a measurement: no timing figure is quoted here for the same reason
 the trace section above quotes none.
 
-**What is *not* covered.** `IRetrievalMetrics` is the only number surface: there is no built-in
-OpenTelemetry or Prometheus exporter, and no percentile histogram — `InMemoryRetrievalMetrics` keeps
-a count, a total, a min and a max per engine and stage, which is enough to assert on in tests and to
-back a diagnostics endpoint, and is deliberately not a substitute for a real metrics pipeline.
-Implement `IRetrievalMetrics` over your own backend for that. `SearchTrace.StageCounts()` reports how
+**What is *not* covered.** No exporter, aggregator or dashboard ships with any backend. The seam is
+`IRetrievalMetrics`, and `RetrievalDiagnostics` below turns it into a `Meter` and an `ActivitySource`
+that a host's OpenTelemetry SDK — or a plain `MeterListener`/`ActivityListener` — consumes; the core
+package still references no package for it. `InMemoryRetrievalMetrics` keeps a count, a total, a min
+and a max per engine and stage, which is enough to assert on in tests and to back a diagnostics
+endpoint, and is deliberately not a percentile histogram. `SearchTrace.StageCounts()` reports how
 many steps each stage recorded; per-stage *timings* come from the metrics collector, not the trace.
 
 A `LexiSharpIndexHealthCheck` reports readiness for the same reason: an index holding nothing
@@ -164,6 +165,86 @@ services.AddLexiSharpSearchHealthCheck(
     o => o.Tags = ["ready"],
            o.Probe = ct => connection.OpenAsync(ct));  // optional: backing-store reachability
 ```
+
+## In-box instruments and spans (`RetrievalDiagnostics`)
+
+The `IRetrievalMetrics` seam can be implemented over your own backend, and it can also be handed to
+`RetrievalDiagnostics`, which implements it over `System.Diagnostics.Metrics.Meter` and adds an
+`ActivitySource`. Everything it uses is in-box on .NET 10, so the core package still has no package
+reference: a host that already runs the OpenTelemetry SDK — or any other collector — attaches the
+exporter on its side.
+
+```csharp
+using LexiSharp.Core;
+using LexiSharp.Diagnostics;
+using LexiSharp.Ranking;
+
+using var diagnostics = new RetrievalDiagnostics();   // once per process
+
+var engine = new RankedTextSearchEngine(
+    index, new Bm25Scorer(),
+    telemetry: RetrievalTelemetry.Measuring(diagnostics));
+
+using var search = diagnostics.StartSearch(RankedTextSearchEngine.EngineName);
+using (diagnostics.StartStage(RankedTextSearchEngine.EngineName, "score"))
+{
+    var hits = engine.Search("refresh token");
+}
+```
+
+The meter is named `LexiSharp` and the source `LexiSharp.Search`. A `MeterListener` —
+or the OpenTelemetry SDK's meter provider — filtered on that name sees:
+
+| instrument | kind | unit | recorded from |
+|---|---|---|---|
+| `search.duration` | histogram | `s` | `RecordSearch` |
+| `search.count` | counter | `{search}` | `RecordSearch` |
+| `search.results` | histogram | `{result}` | `RecordSearch` |
+| `search.stage.duration` | histogram | `s` | `RecordStage` |
+| `search.stage.count` | counter | `{invocation}` | `RecordStage` |
+| `search.stage.items` | histogram | `{item}` | `RecordStage` |
+| `index.documents` | gauge | `{document}` | `RecordIndex`, last value |
+| `index.vocabulary` | gauge | `{term}` | `RecordIndex`, last value |
+
+Durations are in **seconds**, the unit the OpenTelemetry semantic conventions use for duration
+instruments. No semantic convention defines a search instrument, so the names are this library's
+own; an application that serves search over HTTP keeps the HTTP layer's
+`http.server.request.duration` for the request and reads these for the retrieval work inside it.
+
+Listening without adding any package:
+
+```csharp
+using System.Diagnostics.Metrics;
+
+using var listener = new MeterListener();
+listener.InstrumentPublished = (instrument, l) =>
+{
+    if (instrument.Meter.Name == RetrievalDiagnostics.MeterName)
+        l.EnableMeasurementEvents(instrument);
+};
+listener.SetMeasurementEventCallback<double>((instrument, value, tags, _) =>
+    Console.WriteLine($"{instrument.Name} {value:0.###} {instrument.Unit}"));
+listener.Start();
+```
+
+**Cardinality is part of the contract.** The only tags the adapter adds are `search.engine` and
+`search.stage`, and both values are caller-supplied. Keep them a **fixed, bounded set**: one engine
+name per engine instance you construct, and one stage label per pipeline position (`retrieve`,
+`merge`, `rerank:<name>`, an entry of your `sourceNames`). Query text, result ids, document ids and
+user ids are never tags — every distinct value becomes a series in the backend, so a per-request
+value there is a slow leak. They belong in a log line or on a span you open yourself.
+
+**Spans.** `StartSearch` opens a `search` span and `StartStage` opens a `search.stage` span tagged
+with `search.stage`; called inside the search scope, the stage span is its child through
+`Activity.Current`, so a trace lines up with the stages `SearchTrace` lists. Both return `null` when
+no `ActivityListener` is attached — the scopes are free in an uninstrumented host — and neither
+throws. The metrics callbacks cannot open the spans themselves: the seam reports *after* the work
+and carries no start timestamp or correlation id.
+
+**What it does not do.** There is no exporter, no aggregation and no dashboard here: an OpenTelemetry
+SDK, a `MeterListener` or a tracing backend attaches to the names above and owns that. A gauge only
+knows a size that was reported while a listener had it enabled, so a listener attached after the
+last index change sees that engine at the next change rather than at collection time.
 
 ## Per-query cost sheet (`SearchCosts`)
 
