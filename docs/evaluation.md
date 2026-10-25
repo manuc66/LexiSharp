@@ -561,6 +561,12 @@ tuners maximize; Δ is held-out minus fit-set.
 | | | BM25L tuned (k1=2, b=1, δ=0.25) | 0.652 | 0.684 | +0.032 | 0.635 | 0.822 |
 | | | BM25 (k1=1.5, b=0.75), untuned reference | — | 0.680 | — | 0.632 | 0.814 |
 
+The two halves differ in difficulty, so the fit/held-out gap is not an overfitting measure on its
+own. The untuned default row reads 0.308 on all 323 NFCorpus queries and 0.291 on the withheld 167;
+on SciFact it reads 0.662 on all 300 and 0.680 on the withheld 147. What a tuned row is worth is
+therefore the held-out column against the untuned row on the same withheld queries, not against its
+own fit-set figure.
+
 The fit set chooses the same parameters the published full-set tune chooses on both corpora
 (NFCorpus `k1=2, b=0.5`; SciFact `k1=1.5, b=1`, and `δ=0.25` for both variants), so the split is not
 reporting a different winner. It is reporting what that winner is worth on the other half.
