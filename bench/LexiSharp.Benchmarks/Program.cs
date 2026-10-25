@@ -21,6 +21,13 @@ public static class Program
             return;
         }
 
+        // One shared index under 1/2/4/8 callers, raw and synchronized. See ConcurrencyLane.
+        if (args.Length > 0 && args[0] == "concurrency")
+        {
+            ConcurrencyLane.Run(args[1..]);
+            return;
+        }
+
         var switcher = new BenchmarkSwitcher(new[]
         {
             typeof(TokenizerBenchmarks),
