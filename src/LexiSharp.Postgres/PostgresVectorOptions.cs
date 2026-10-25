@@ -115,13 +115,33 @@ public sealed record PostgresVectorOptions
     /// </summary>
     public bool AutoCreateSchema { get; init; } = true;
 
+    /// <summary>
+    /// Weight class per <see cref="Core.SearchDocument.TextFields"/> entry for the shared
+    /// <c>tsv</c> column (default: <c>null</c>, every field at the same weight). See
+    /// <see cref="PostgresIndexOptions.FieldWeights"/>.
+    /// </summary>
+    /// <remarks>
+    /// This engine writes the same <c>tsv</c> as the lexical engine, so a table served by both
+    /// needs the same value here as there: a document written by one must not score differently
+    /// from the same document written by the other.
+    /// </remarks>
+    public IReadOnlyDictionary<string, PostgresFieldWeight>? FieldWeights { get; init; }
+
+    /// <summary>
+    /// Class for the content and for unlisted text fields when <see cref="FieldWeights"/> is set
+    /// (default: <see cref="PostgresFieldWeight.D"/>). See
+    /// <see cref="PostgresIndexOptions.DefaultFieldWeight"/>.
+    /// </summary>
+    public PostgresFieldWeight DefaultFieldWeight { get; init; } = PostgresFieldWeight.D;
+
     internal bool IsValid =>
         SafeIdentifier.IsValid(Schema) && SafeIdentifier.IsValid(Table)
         && Dimension > 0 && HnswM > 0 && HnswEfConstruction > 0 && IvfLists > 0
         && (HnswEfSearch is null || HnswEfSearch > 0)
         && !IsMixedEmbeddingConfiguration
         && (EmbeddingColumns is null || EmbeddingColumns.Count > 0)
-        && (EmbeddingColumns?.All(column => SafeIdentifier.IsValid(column.Key) && column.Value.Length > 0) ?? true);
+        && (EmbeddingColumns?.All(column => SafeIdentifier.IsValid(column.Key) && column.Value.Length > 0) ?? true)
+        && PostgresIndexOptions.IsWeightingValid(FieldWeights, DefaultFieldWeight);
 
     /// <summary><see cref="EmbeddingTextField"/> and <see cref="EmbeddingColumns"/> are two
     /// mutually exclusive ways to source the embedded text; configuring both is a programming error.</summary>
@@ -131,9 +151,16 @@ public sealed record PostgresVectorOptions
     /// <summary>Fully qualified table name, e.g. <c>public.lexisharp_documents</c>.</summary>
     public string QualifiedTableName => $"{SafeIdentifier.QuoteIdentifier(Schema)}.{SafeIdentifier.QuoteIdentifier(Table)}";
 
-    /// <summary>Base table options (schema/table only) shared with the lexical engine.</summary>
+    /// <summary>Base table options (schema/table and the shared tsv weighting) shared with the lexical engine.</summary>
     internal PostgresIndexOptions AsIndexOptions() =>
-        new() { Schema = Schema, Table = Table, AutoCreateSchema = AutoCreateSchema };
+        new()
+        {
+            Schema = Schema,
+            Table = Table,
+            AutoCreateSchema = AutoCreateSchema,
+            FieldWeights = FieldWeights,
+            DefaultFieldWeight = DefaultFieldWeight,
+        };
 
     /// <summary>pgvector type declaration for the embedding column, e.g. <c>vector(384)</c>.</summary>
     internal string VectorType => $"vector({Dimension})";

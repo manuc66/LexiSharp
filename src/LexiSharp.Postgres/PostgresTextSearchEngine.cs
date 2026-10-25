@@ -22,10 +22,17 @@ namespace LexiSharp.Postgres;
 ///   content  text NOT NULL,
 ///   category text,
 ///   fields   jsonb,
-///   tsv      tsvector GENERATED ALWAYS AS (to_tsvector('simple', unaccent(content))) STORED
+///   text_fields jsonb,
+///   tsv      tsvector
 /// );
 /// CREATE INDEX IF NOT EXISTS {table}_tsv_gin ON {schema}.{table} USING GIN (tsv);
 /// </code>
+/// <para>
+/// <c>tsv</c> is an ordinary column the engine writes on every insert and upsert (from
+/// <c>content</c> and <c>text_fields</c>, see <see cref="PostgresSchema.TsvExpression"/>), not a
+/// generated column: the weighting that derives it lives in the options, and rows written by the
+/// vector and sparse engines into the same table are written with the same expression.
+/// </para>
 /// <para>
 /// Ranking uses the database's native <c>ts_rank_cd</c>, so scores are <b>not</b> numerically
 /// comparable to LexiSharp's BM25/TF-IDF. When identical scoring matters, wrap this engine in
@@ -60,7 +67,10 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable, I
         _options = options ?? new PostgresIndexOptions();
 
         if (!_options.IsValid)
-            throw new ArgumentException("Schema, table and text search config must match [A-Za-z0-9_].", nameof(options));
+            throw new ArgumentException(
+                "Schema, table and text search config must match [A-Za-z0-9_], and a field weight must name " +
+                "a non-empty field with a defined class.",
+                nameof(options));
 
         if (autoCreateSchema is not null)
             _options = _options with { AutoCreateSchema = autoCreateSchema.Value };
@@ -228,8 +238,15 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable, I
             rankExpression = string.Join(" || ", ranks);
         }
 
+        // The weights array is the class-to-value mapping the stored letters are read through, so
+        // the query side of a weighted index is stated here rather than left to ts_rank_cd's
+        // default. Without FieldWeights the call is the one the engine has always issued.
+        string rank = PostgresSchema.RankWeightsArray(_options) is { } weights
+            ? $"ts_rank_cd({weights}, tsv, {rankExpression})"
+            : $"ts_rank_cd(tsv, {rankExpression})";
+
         string searchSql = $"""
-            SELECT id, content, category, fields, text_fields, ts_rank_cd(tsv, {rankExpression}) AS score
+            SELECT id, content, category, fields, text_fields, {rank} AS score
             FROM {_options.QualifiedTableName}
             WHERE ({gateCondition}){filters.Fragment}
             ORDER BY score DESC
