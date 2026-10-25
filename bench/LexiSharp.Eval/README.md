@@ -152,10 +152,10 @@ Runtime, no Python:
   where it stopped instead of at the first query. The file is named for the corpus md5 and the
   model, because a score depends on both; it is append-only, so a kill during a write costs the
   last buffered pairs and nothing already written; and a truncated tail is skipped with a count
-  rather than discarding the file. The three reranked rows of one corpus also share candidates,
-  so the second and third reuse the first's work — on five NFCorpus queries the second row
-  computed nothing at all. Delete the directory to force a re-score; on ArguAna this is what
-  turns a 12-hour run into one that survives being stopped.
+  rather than discarding the file. The three reranked rows of one corpus also share candidates:
+  on ArguAna **175,420 of 394,621 pair-requests (44 %) were served from an earlier row's passes**,
+  and on five NFCorpus queries the second row computed nothing at all. Delete the directory to force
+  a re-score.
 
 ## SQL backends (optional, needs PostgreSQL)
 
@@ -643,6 +643,9 @@ Default tokenizer, **no stemming** — see [Stemming](#stemming) for the same ru
 | Dense multilingual-e5-small        |   0.313 |  0.208 |  0.208 | 0.647 |
 | Hybrid BM25+Dense (weighted)       |   0.349 |  0.231 |  0.231 | 0.725 |
 | Hybrid BM25+Dense (RRF)            |   0.350 |  0.229 |  0.229 | 0.731 |
+| BM25 (top100) → cross-encoder      |   0.302 |  0.203 |  0.203 | 0.615 |
+| QL (top100) → cross-encoder        |   0.301 |  0.203 |  0.203 | 0.609 |
+| Hybrid RRF (top100) → cross-encoder |  0.339 |  0.229 |  0.229 | 0.688 |
 
 **The BM25+ / BM25L rows here are the worst the variants do anywhere — and the tuned rows answer
 the question the untuned ones left open.** At a fixed paper δ they lose 0.051 and 0.044 against
@@ -667,11 +670,20 @@ query in either carries syntax. The four tuners take no `SearchOptions`, which i
 
 **Fusion beats both parents here too, and it is the second corpus where that holds.** Dense alone
 reads 0.313, just below BM25's 0.320; BM25+dense reaches **0.349** (weighted) and **0.350** (RRF),
-so the +0.029/+0.030 over BM25 is the same shape as NFCorpus and SciFact. No cross-encoder row:
-1,406 queries of ~200 words through the reranker at 100 candidates is an order of magnitude more
-compute than SciFact's 300 short ones, and it was not run — an `ef_search` curve for ArguAna is
-absent for a different reason: the vector engine refuses 148 of the 1,406 test queries as phrases,
-so the curve would be over a reduced query set.
+so the +0.029/+0.030 over BM25 is the same shape as NFCorpus and SciFact.
+
+**The cross-encoder loses to every first stage it is stacked on here**, which makes this the corpus
+where the second stage is uniformly negative: BM25 0.320 → 0.302, QL 0.302 → 0.301, RRF fusion
+0.350 → **0.339**. SciFact had it help QL and hurt the other two; NFCorpus had it help all three.
+So the honest summary is that the reranker pays on short-query corpora with a few judged documents
+and does not pay on long-query ones — and this is the extreme long-query corpus, 196 words per
+query against NFCorpus's 3.4.
+
+The three rows cost 8,057 s, 3,625 s and 3,342 s of wall clock in the run's own elapsed column,
+and the cache is why the second and third were affordable: **175,420 of 394,621 pair-requests were
+served from the first row's passes** (44 %). An `ef_search` curve for this corpus is still absent,
+for a different reason — the vector engine refuses 148 of the 1,406 test queries as phrases, so the
+curve would be over a reduced query set.
 
 **The largest BM25F margin anywhere in this harness, and not because of the weighting — but also not
 established as a real gain.** 0.379 against BM25's 0.320 on 1406 queries, both under the library

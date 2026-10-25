@@ -103,8 +103,8 @@ twice. Every figure below is reproducible with a command on the
 - **Where the composed stack pays off.** Fusing a dense retriever with BM25 beats both parents on
   **all three** corpora: NFCorpus 0.333 against 0.308/0.304, SciFact **0.686** against
   0.662/0.655, ArguAna 0.350 against 0.320/0.313. A cross-encoder on top is **corpus-dependent**:
-  on NFCorpus it improves every first stage (0.346, about 2.1 points above BEIR's BM25), while on
-  SciFact it helps one of three and costs the best fusion 0.022. Those two lanes are the only ones
+  it improves every first stage on NFCorpus (0.346, about 2.1 points above BEIR's BM25), helps one
+  of three on SciFact, and **loses to all three on ArguAna**. Those two lanes are the only ones
   that use a real model, and the model comes from the harness, not from the library.
 - **The SQL backends, on the same corpora.** The three PostgreSQL engines that rank on their own are
   scored over the same queries and qrels as the in-memory table: at matched k1=0.9/b=0.4, ParadeDB's

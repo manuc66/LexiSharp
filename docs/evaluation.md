@@ -249,8 +249,9 @@ What that table says:
   ship — the harness supplies `multilingual-e5-small` over ONNX;
 - **fusing beats both parents** (0.323–0.333 against 0.308 and 0.304), and **on this corpus** the
   **cross-encoder improves every first stage** it is stacked on: **0.346** for BM25+dense RRF
-  plus reranking, about +2.1 points over BEIR's published BM25. SciFact is the counter-example —
-  there the same reranker helps one of three first stages and costs the best fusion 0.022;
+  plus reranking, about +2.1 points over BEIR's published BM25. The other two corpora are the
+  counter-examples: SciFact's reranker helps one of three first stages and costs the best fusion
+  0.022, and on ArguAna it loses to all three;
 - **BM25F sits below BM25 here and the title weight moves nothing** — a negative result, and
   the reason is default parameters rather than the technique: tuned against tuned, the two
   are identical on the reference corpus. See
@@ -261,10 +262,11 @@ What it does **not** say:
 - the dense and cross-encoder rows are the only ones that use a real model, and both belong
   to the harness, not to the library. The **dense and fused rows exist on all three corpora**
   (SciFact: 0.655 alone, 0.681/0.686 fused; ArguAna: 0.313 alone, 0.349/0.350 fused), so the
-  hybrid payoff is measured three times rather than once. The **cross-encoder** is measured on two
-  of the three — ArguAna's 1,406 queries of ~200 words were not run — and on SciFact it is a
-  **loss**: 0.653 on BM25, 0.649 on query likelihood and 0.664 on the RRF fusion, against 0.662,
-  0.622 and 0.686;
+  hybrid payoff is measured three times rather than once. The **cross-encoder** is now measured on
+  all three, and it pays on one: NFCorpus improves every first stage, SciFact helps query likelihood
+  (0.622 → 0.649) and costs BM25 and the best fusion, and on ArguAna it **loses to all three**
+  (0.302, 0.301, 0.339 against 0.320, 0.302, 0.350). Short queries with a few judged documents are
+  where it pays; 196-word argument queries are where it does not;
 - stemming is not settled either: `--stem porter` takes NFCorpus 0.308 → 0.322 and SciFact
   0.662 → 0.687, and is mixed on ArguAna 0.320 → 0.308 (BM25) / 0.302 → 0.312 (QL). That is why it stays opt-in — see
   [Tokenizer customization](indexing.md#tokenizer-customization). What that comparison leaves out is
