@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using LexiSharp.Core;
 using LexiSharp.Eval;
+using LexiSharp.Postgres;
 using LexiSharp.Ranking;
 using Npgsql;
 using Xunit;
@@ -35,6 +36,45 @@ public class PostgresBackendBenchmarkTests
         BackendLane lane = BackendLane.Parse(name, "Host=db;Database=search", "simple");
 
         Assert.Equal(expected, lane.Kind.ToString());
+    }
+
+    [Fact]
+    public void TheLexicalRowCanBeWeightedPerFieldAndItsNameSaysSo()
+    {
+        // A lexical nDCG with and without setweight is two configurations; a table that labelled
+        // both "PostgreSQL lexical" would be two rows a reader could not tell apart.
+        var weights = new Dictionary<string, PostgresFieldWeight> { ["title"] = PostgresFieldWeight.A };
+
+        BackendLane weighted = BackendLane.Parse(
+            "lexical", "Host=db;Database=search", "simple", fieldWeights: weights);
+
+        Assert.Equal(weights, weighted.FieldWeights);
+        Assert.Contains("field weights title=A", weighted.Description, StringComparison.Ordinal);
+        Assert.Contains(
+            weighted.Caveats,
+            caveat => caveat.Contains("per-field length normalisation", StringComparison.Ordinal));
+
+        BackendLane neutral = BackendLane.Parse("lexical", "Host=db;Database=search", "simple");
+
+        Assert.Null(neutral.FieldWeights);
+        Assert.DoesNotContain("field weights", neutral.Description, StringComparison.Ordinal);
+        Assert.Contains(
+            neutral.Caveats,
+            caveat => caveat.Contains("same weight", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("paradedb")]
+    [InlineData("vector")]
+    public void FieldWeightsAreRefusedByTheBackendsThatDoNotRankOnTheTsv(string kind)
+    {
+        ArgumentException error = Assert.Throws<ArgumentException>(() => BackendLane.Parse(
+            kind,
+            "Host=db;Database=search",
+            "simple",
+            fieldWeights: new Dictionary<string, PostgresFieldWeight> { ["title"] = PostgresFieldWeight.A }));
+
+        Assert.Contains("--backend-field-weights", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

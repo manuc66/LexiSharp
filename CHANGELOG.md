@@ -462,6 +462,32 @@ workflow.
   1.4 KB more (71.0 → 72.4 KB) — one step per search against the ten per document already written.
   The timing rows are not quoted: run-to-run drift on the measuring host exceeded the effect.
 
+- **Field weights on the PostgreSQL `tsvector` path.**
+
+  `PostgresIndexOptions.FieldWeights` maps a `SearchDocument.TextFields` entry to one of
+  PostgreSQL's four weight classes and makes the engines write `tsv` as one
+  `setweight(to_tsvector(...), class)` section per field, instead of flattening every field into one
+  vector; the lexical engine passes `ts_rank_cd` the matching class-to-value array (`A = 1.0`,
+  `B = 0.4`, `C = 0.2`, `D = 0.1`). `DefaultFieldWeight` is the class of the content and of every
+  field the map does not name, and an unlisted field stays indexed. Unset or empty, the expression,
+  the DDL and the scores are exactly the unweighted ones and `ts_rank_cd` is called without a
+  weights array. `PostgresVectorOptions` and `PostgresSparseOptions` carry the same two properties
+  because they write the same column: a table served by several engines needs the same value on each
+  of them. The harness measures the row with `--backend lexical --backend-field-weights title=A`.
+
+  Measured through `bench/LexiSharp.Eval`'s lexical row (text search configuration `simple`, harness
+  defaults, exponential gains, one host, one session, one run per row; the unweighted row reproduced
+  to four decimals on a second run): nDCG@10 on NFCorpus reads 0.1864 unweighted, 0.1869 at
+  `title=A` and 0.1873 at `title=B`; on SciFact it reads 0.0188 for all three. The weighting is
+  nearly inert on both corpora — at most +0.0009 — and SciFact's queries are long enough that
+  `websearch_to_tsquery`'s AND gate decides the match set before the ranking does. `ts_rank_cd` has
+  no per-field length normalisation, so the classes are a ratio between fields rather than a
+  per-field scoring model.
+
+  An existing table needs no DDL change: `tsv` is an ordinary column, so rows written before the
+  option was set keep their unweighted vector until they are rewritten. `docs/backends.md` carries
+  the `UPDATE` statement that rewrites them for a given map.
+
 ### Fixed
 
 - **The vector and sparse engines write `tsv` on the insert, not only on a conflict.**

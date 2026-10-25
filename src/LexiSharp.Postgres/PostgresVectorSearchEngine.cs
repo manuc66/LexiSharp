@@ -59,7 +59,10 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         _options = options ?? new PostgresVectorOptions();
 
         if (!_options.IsValid)
-            throw new ArgumentException("Schema, table names must match [A-Za-z0-9_] and size parameters must be positive.", nameof(options));
+            throw new ArgumentException(
+                "Schema and table names must match [A-Za-z0-9_], size parameters must be positive, and a " +
+                "field weight must name a non-empty field with a defined class.",
+                nameof(options));
 
         if (autoCreateSchema is not null)
             _options = _options with { AutoCreateSchema = autoCreateSchema.Value };

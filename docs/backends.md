@@ -73,6 +73,88 @@ accent-insensitive normalization. Scores are PostgreSQL-native, so they are **no
 comparable to `Bm25Scorer`/`TfIdfScorer` — feed both backends into the hybrid engine below
 when you need one consistent ordering.
 
+**Field weighting.** By default every text field is flattened into one `tsvector` at the same
+weight, so a match in `title` and a match in `content` contribute the same. `FieldWeights` maps a
+`SearchDocument.TextFields` entry to one of PostgreSQL's four weight classes and writes a weighted
+vector instead:
+
+```csharp
+var options = new PostgresIndexOptions
+{
+    FieldWeights = new Dictionary<string, PostgresFieldWeight>
+    {
+        ["title"] = PostgresFieldWeight.A,
+        ["summary"] = PostgresFieldWeight.B,
+    },
+    DefaultFieldWeight = PostgresFieldWeight.B,   // content and unlisted fields
+};
+
+var engine = new PostgresTextSearchEngine(connectionString, options);
+```
+
+The `tsv` column becomes the concatenation of one `setweight(to_tsvector(...), class)` per section
+— the content, the fields the map does not name, and each named field. The lexical engine passes
+`ts_rank_cd` the matching class-to-value array, so the classes are read back as PostgreSQL's
+defaults: `A = 1.0`, `B = 0.4`, `C = 0.2`, `D = 0.1`. With the example above a title match counts
+2.5 times a body match. `FieldWeights` unset (the default) or empty produces exactly the expression
+a table has always been written with — one `to_tsvector` call over `content || ' ' || text_fields`
+— and `ts_rank_cd` is called without a weights array, so an existing index neither changes its DDL
+nor its scores.
+
+What this is not: a per-field scoring model. `ts_rank_cd` is coverage-based and has no per-field
+length normalisation, so a match in a long field contributes the same as a match in a short one and
+only the class separates them. A field the map does not name is still indexed, in the unlisted
+section at `DefaultFieldWeight`; naming one field does not narrow the index to it.
+
+The weighting lives in the rows, not in the table definition: `tsv` is an ordinary column that the
+engines write, so `EnsureSchema` has nothing to alter and an existing table needs no DDL migration.
+Rows written before the option was set keep their unweighted vector, and the only way to bring them
+in line is to rewrite them — the statement below is the expression `PostgresSchema.TsvExpression`
+builds for `title = A` over the default classes, and the GIN index maintains itself through the
+`UPDATE`:
+
+```sql
+UPDATE public.lexisharp_documents AS d
+SET tsv = setweight(to_tsvector('simple', unaccent(d.content)), 'D')
+       || setweight(to_tsvector('simple', unaccent(coalesce(
+              (SELECT string_agg(value, ' ' ORDER BY key)
+               FROM jsonb_each_text(d.text_fields)
+               WHERE key NOT IN ('title')), ''))), 'D')
+       || setweight(to_tsvector('simple', unaccent(coalesce(d.text_fields ->> 'title', ''))), 'A');
+```
+
+A row at class `D` is stored exactly like an unweighted one (the class letter is omitted), so this
+rewrite is the only reliable moment at which the whole table is on one configuration. The vector
+and sparse engines write the same `tsv` from the same expression, which is why the option exists on
+`PostgresVectorOptions` and `PostgresSparseOptions` too: on a table served by several engines, all
+of them have to be given the same weights, or the same document scores differently depending on
+which engine wrote it. Their `Insert`s write `tsv` on the way in as well as on `ON CONFLICT`, so a
+table populated by the vector engine is searchable through the lexical engine.
+
+**Measured effect.** `bench/LexiSharp.Eval`'s lexical row takes the weighting with
+`--backend-field-weights`. Across the two corpora the harness has a lexical row for, weighting the
+title is nearly inert: nDCG@10 moves by at most 0.0009, and SciFact does not move to four decimals.
+Measured on one host in one session, `simple` configuration, harness defaults (exponential gains),
+one run per row; the unweighted row was run twice and reproduced its four decimals exactly:
+
+```bash
+POSTGRES_TEST_CONNECTION="Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp"
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
+  --backend lexical --backend-connection "$POSTGRES_TEST_CONNECTION" \
+  --backend-field-weights title=A
+```
+
+| Corpus | unweighted | `title=A` (other text `D`) | `title=B` (other text `D`) |
+|---|---:|---:|---:|
+| NFCorpus (323 queries) | 0.1864 | 0.1869 | 0.1873 |
+| SciFact (300 queries) | 0.0188 | 0.0188 | 0.0188 |
+
+The direction is consistent with the title carrying a little signal on NFCorpus and none on a
+corpus whose queries are long enough that `websearch_to_tsquery`'s AND gate, not the ranking,
+decides the match set. A difference this small on one host is a measurement of this configuration,
+not a claim that field weighting does not work: the classes are coarse (four buckets, fixed
+values), and the engine has no per-field length to normalise against.
+
 **Vector (`PostgresVectorSearchEngine`)** — ANN over `pgvector` (HNSW or IVFFlat), fed by
 your own embeddings:
 

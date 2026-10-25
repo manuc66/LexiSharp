@@ -3,6 +3,7 @@ using LexiSharp.Core;
 using LexiSharp.Expansion;
 using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
+using LexiSharp.Postgres;
 using LexiSharp.Ranking;
 
 namespace LexiSharp.Eval;
@@ -72,6 +73,10 @@ public static class Program
         string backendConfig = "simple";
         Bm25Parameters? backendBm25 = null;
         var backendEfValues = new List<int>();
+
+        // The lexical row's tsv weighting, as "title=A[,summary=B]" — parsed after the pair check
+        // below, so a malformed spec fails on a message rather than an unhandled exception.
+        string? backendFieldWeights = null;
 
         // Where the rerank cache lives. Defaulted inside the dataset loop (one file per corpus), and a
         // directory rather than a file because --dataset all would otherwise share one file between
@@ -226,6 +231,9 @@ public static class Program
                 case "--backend-ef" when i + 1 < args.Length:
                     backendEfValues.AddRange(ParsePositiveInts(args[++i], "--backend-ef"));
                     break;
+                case "--backend-field-weights" when i + 1 < args.Length:
+                    backendFieldWeights = args[++i];
+                    break;
                 case "--rerank-cache" when i + 1 < args.Length:
                     rerankCacheDir = args[++i];
                     break;
@@ -287,6 +295,14 @@ public static class Program
             return 2;
         }
 
+        if (backendFieldWeights is not null && backendKind is null)
+        {
+            Console.Error.WriteLine(
+                "--backend-field-weights configures the lexical backend's tsv, so it needs " +
+                "--backend lexical with --backend-connection.");
+            return 2;
+        }
+
         BackendLane? backendLane = null;
 
         if (backendKind is not null && backendConnection is not null)
@@ -294,7 +310,12 @@ public static class Program
             try
             {
                 backendLane = BackendLane.Parse(
-                    backendKind, backendConnection, backendConfig, backendBm25, backendEfValues);
+                    backendKind,
+                    backendConnection,
+                    backendConfig,
+                    backendBm25,
+                    backendEfValues,
+                    backendFieldWeights is null ? null : ParseFieldWeights(backendFieldWeights));
             }
             catch (ArgumentException error)
             {
@@ -1155,6 +1176,58 @@ public static class Program
         return new Bm25Parameters(k1, b);
     }
 
+    /// <summary>
+    /// Parses <c>title=A,summary=B</c> into the class map the lexical backend indexes with. The
+    /// class names are PostgreSQL's own four; a value that is not one is refused by name rather
+    /// than quantized to the nearest, because a silent approximation here would be a number
+    /// measured under a weighting nobody asked for.
+    /// </summary>
+    private static IReadOnlyDictionary<string, PostgresFieldWeight> ParseFieldWeights(string value)
+    {
+        var weights = new Dictionary<string, PostgresFieldWeight>(StringComparer.Ordinal);
+
+        foreach (string pair in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            int separator = pair.LastIndexOf('=');
+
+            if (separator <= 0 || separator == pair.Length - 1)
+            {
+                throw new ArgumentException(
+                    $"--backend-field-weights expects 'field=A[,field=B]', got '{pair}'. Field names are "
+                    + "free text and the class is one of A, B, C, D.");
+            }
+
+            string field = pair[..separator].Trim();
+            string className = pair[(separator + 1)..].Trim();
+
+            PostgresFieldWeight? weight = className.ToUpperInvariant() switch
+            {
+                "A" => PostgresFieldWeight.A,
+                "B" => PostgresFieldWeight.B,
+                "C" => PostgresFieldWeight.C,
+                "D" => PostgresFieldWeight.D,
+                _ => null,
+            };
+
+            if (weight is null)
+            {
+                throw new ArgumentException(
+                    $"--backend-field-weights got class '{className}' for field '{field}'; the classes are "
+                    + "A, B, C, D.");
+            }
+
+            weights[field] = weight.Value;
+        }
+
+        if (weights.Count == 0)
+        {
+            throw new ArgumentException(
+                "--backend-field-weights was given no pairs. Omit the flag for the unweighted tsv.");
+        }
+
+        return weights;
+    }
+
     private static NdcgGain ParseNdcgGain(string value) => value switch
     {
         "exponential" => NdcgGain.Exponential,
@@ -1347,6 +1420,14 @@ public static class Program
                                 the index is the same at every value, only the candidate list the
                                 search explores changes. Default 40, pgvector's own. Refused with the
                                 other backends, which do not read it.
+              --backend-field-weights <field=class,...>
+                                Weight each text field of the lexical backend's tsv with setweight,
+                                e.g. title=A. Classes are PostgreSQL's four (A, B, C, D); A counts
+                                1.0 and D 0.1 in ts_rank_cd's default mapping, and the content plus
+                                every unnamed field takes D. Omitted, every field lands in one
+                                unweighted vector. The row's name carries the weighting, so a
+                                weighted and an unweighted run are distinguishable in the output.
+                                Refused with the other backends.
               --analyze <file>  Write one row per query per configuration: the query's lexical coverage
                                 of its own judged documents, the metrics, and the per-query deltas
                                 against --analyze-baseline. Off by default — capturing a ranking per

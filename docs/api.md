@@ -387,6 +387,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
+| `PostgresFieldWeight` | enum | — | The four weight classes a tsvector lexeme can carry, which setweight writes and ts_rank_cd reads back through its weights array. |
 | `PostgresFuzzyOptions` | record | — | Naming and behavior options for the PostgresFuzzySearchEngine. |
 | `PostgresFuzzySearchEngine` | class | `IDisposable`, `IQuerySyntaxSupport`, `ITextSearchEngine` | PostgreSQL-backed ITextSearchEngine for approximate, typo-tolerant matching on top of the pg_trgm extension (trigram similarity) and fuzzystrmatch (levenshtein… |
 | `PostgresIndexOptions` | record | — | Naming and behavior options for the PostgreSQL-backed index. |

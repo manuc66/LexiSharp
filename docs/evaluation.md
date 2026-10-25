@@ -324,7 +324,10 @@ Out of the box, each engine at its own defaults (`k1=1.5, b=0.75` here, `1.2, 0.
   matching rule rather than the ranking: `websearch_to_tsquery` ANDs every term, so a match is a
   document containing all of them. NFCorpus's test queries average 3.4 words and read 0.1864;
   SciFact's average 13.1 and read 0.0188. PostgreSQL's own English analysis
-  (`--backend-config english`) moves NFCorpus 0.1864 → 0.2043, not closer.
+  (`--backend-config english`) moves NFCorpus 0.1864 → 0.2043, not closer. Weighting the title with
+  `--backend-field-weights title=A` leaves both rows essentially unchanged — NFCorpus 0.1869,
+  SciFact 0.0188 — and [the backend guide](backends.md#postgresql-backend-lexisharpostgres) carries
+  the statement, the rows at `A` and `B`, and what `ts_rank_cd` cannot express per field.
 - **ArguAna has no row.** Both text engines refuse query text their matcher reads as a prefix
   operator, and 2 of the 1,406 test queries carry one; the vector engine refuses the 148 whose text
   it reads as a phrase, because an embedding has no phrase semantics to honour. The run prints

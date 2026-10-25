@@ -60,7 +60,8 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
         if (!_options.IsValid)
             throw new ArgumentException(
                 "Schema and table must match [A-Za-z0-9_], the vocabulary must be non-empty with non-negative" +
-                " coordinates, and HNSW parameters must be positive.",
+                " coordinates, HNSW parameters must be positive, and a field weight must name a non-empty" +
+                " field with a defined class.",
                 nameof(options));
 
         if (autoCreateSchema is not null)
