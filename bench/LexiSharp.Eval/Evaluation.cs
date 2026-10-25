@@ -49,6 +49,35 @@ internal sealed record EvaluatedQuery(
     IReadOnlyDictionary<string, double> Graded,
     IReadOnlySet<string>? Excluded = null);
 
+/// <summary>
+/// A tuned configuration measured on both sides of the held-out split: the fit set it was chosen on
+/// (<paramref name="Fit"/>, the in-sample figure) and the score set withheld from fitting
+/// (<paramref name="Score"/>).
+/// </summary>
+internal sealed record HeldOutComparison(string Name, ConfigResult Fit, ConfigResult Score);
+
+/// <summary>
+/// What a <c>--heldout</c> run measured, or why it could not measure it.
+/// </summary>
+/// <param name="UntunedBaseline">
+/// The fixed BM25 row (<c>k1=1.5, b=0.75</c>) scored on the score set, or <c>null</c>. It is not a
+/// fitted row and has no fit-set figure; it is the reference a held-out tuned number has to beat for
+/// tuning to have bought anything on the queries that did not choose the parameters.
+/// </param>
+/// <param name="NotRunReason">
+/// Non-null when the split was asked for but no tuned row could be measured on it — a degenerate
+/// partition, or a run that fits nothing. The reason is printed rather than the table being omitted,
+/// so the absence has a stated cause.
+/// </param>
+internal sealed record HeldOutReport(
+    double Fraction,
+    int TotalQueries,
+    int FitQueries,
+    int ScoreQueries,
+    IReadOnlyList<HeldOutComparison> Rows,
+    ConfigResult? UntunedBaseline = null,
+    string? NotRunReason = null);
+
 internal static class Evaluation
 {
     /// <summary>
@@ -94,12 +123,20 @@ internal static class Evaluation
     /// differ — <see cref="SearchOptions.ParseQuerySyntax"/> is the one that changes the winner on a
     /// corpus whose queries carry syntax. The harness's <c>--tune-search-options</c> is what passes it.
     /// </param>
+    /// <param name="heldOutFraction">
+    /// The share of the validation queries withheld from fitting and used to score the tuned rows, or
+    /// <c>null</c> for the default in-sample table. Set, every tuner fits on the remaining queries; the
+    /// tuned rows in <c>Results</c> are fitted and scored on that fit set, and the returned
+    /// <see cref="HeldOutReport"/> carries each one's score-set figures. The untuned rows are unaffected
+    /// and still score every query.
+    /// </param>
     /// <returns>
-    /// The per-configuration results, a description of how the k1/b tuning went, and the
-    /// configurations that were skipped because this index cannot serve them — a capability the
-    /// corpus alone does not decide, so it is reported rather than left as a gap in the table.
+    /// The per-configuration results, a description of how the k1/b tuning went, the configurations
+    /// that were skipped because this index cannot serve them — a capability the corpus alone does not
+    /// decide, so it is reported rather than left as a gap in the table — and the held-out report, or
+    /// <c>null</c> when no split was asked for.
     /// </returns>
-    public static (IReadOnlyList<ConfigResult> Results, string TunedDescription, IReadOnlyList<string> Notes) Run(
+    public static (IReadOnlyList<ConfigResult> Results, string TunedDescription, IReadOnlyList<string> Notes, HeldOutReport? HeldOut) Run(
         BeirCorpus corpus, ITextIndex index, int topK, int? limit, ITokenizer tokenizer,
         bool excludeQueryDocument = false,
         NdcgGain ndcgGain = NdcgGain.Exponential,
@@ -112,12 +149,41 @@ internal static class Evaluation
         bool tuned = true, IReranker? reranker = null, int rerankCandidates = 100, int jobs = 1,
         bool parseQuerySyntax = false, bool captureOutcomes = false, bool tuneBm25F = false,
         IReadOnlyList<(string Name, ITermExpander Expander)>? queryExpansions = null,
-        SearchOptions? tuningSearchOptions = null)
+        SearchOptions? tuningSearchOptions = null,
+        double? heldOutFraction = null)
     {
         // Excluding a query's own document id is a no-op unless the corpus numbers its queries as
         // documents, so the check needs no corpus-specific configuration. One membership test per
         // query, not one scan of the corpus per query.
         List<EvaluatedQuery> queries = BuildQueries(corpus, limit, excludeQueryDocument);
+
+        // The split is over the queries this run scores, after --limit. A held-out report is returned
+        // even when the partition is degenerate, so the flag never fails silently: the reason is in
+        // NotRunReason and the caller prints it.
+        HeldOutReport? heldOut = null;
+        List<EvaluatedQuery> fitQueries = queries;
+        List<EvaluatedQuery>? scoreQueries = null;
+
+        if (heldOutFraction is { } fraction)
+        {
+            (List<EvaluatedQuery> fit, List<EvaluatedQuery> score) =
+                HeldOutSplit.Partition(queries, evaluated => evaluated.Query.Id, fraction);
+
+            string? degenerate = fit.Count == 0
+                ? "the score set took every query, so there was no fit set"
+                : score.Count == 0
+                    ? "the fit set took every query, so there was no score set"
+                    : null;
+
+            if (degenerate is null)
+            {
+                fitQueries = fit;
+                scoreQueries = score;
+            }
+
+            heldOut = new HeldOutReport(
+                fraction, queries.Count, fit.Count, score.Count, [], NotRunReason: degenerate);
+        }
 
         // Documents are still built here: the field-bearing view is what anyTitle and the
         // field-weighted configs need, and it is the same set the caller's index was built from.
@@ -275,20 +341,24 @@ internal static class Evaluation
             }
         }
 
+        var results = new List<ConfigResult>();
+
+        foreach (var (name, factory) in buildersList)
+            results.Add(RunConfig(name, factory(), queries, topK, ndcgGain, jobs, parseQuerySyntax, scoreRounding, captureOutcomes));
+
+        // Each fitted configuration is scored on the fit set here, and on the withheld score set when
+        // one exists. Without --heldout the fit set is the whole query list, so these are the rows and
+        // numbers the table has always carried.
+        var heldOutRows = new List<HeldOutComparison>();
+
         // BM25F's own tuner, opt-in. It costs 25 (k1, b) evaluations plus one per field weight where
         // the other tuned rows cost 25 or 125, so a default run and the pinned replay do not pay for
         // it — and the row exists to answer one question the fixed weights cannot: whether a weight
         // beats leaving the fields neutral when both are fitted.
         if (tuneBm25F && anyTitle && fieldStatistics)
         {
-            var validation = queries
-                .Select(evaluated => new Bm25ValidationQuery(
-                    evaluated.Query.Text,
-                    evaluated.Graded.Keys.ToArray(),
-                    evaluated.Excluded))
-                .ToList();
-
-            Bm25FTuningResult fitted = new Bm25FParameterTuner(index, validation, tokenizer, tuningSearchOptions)
+            Bm25FTuningResult fitted = new Bm25FParameterTuner(
+                    index, Validation(fitQueries), tokenizer, tuningSearchOptions)
                 .Tune(weightedFields: ["title"], topK: topK, metric: TuningMetric.Ndcg);
 
             double titleWeight = fitted.Parameters.FieldWeights is { } weights
@@ -296,14 +366,27 @@ internal static class Evaluation
                     ? weight
                     : 1.0;
 
-            buildersList.Add((
+            string name =
                 $"BM25F tuned (k1={fitted.Parameters.K1.ToString("0.##", CultureInfo.InvariantCulture)}, "
                 + $"b={fitted.Parameters.B.ToString("0.##", CultureInfo.InvariantCulture)}, "
-                + $"title={titleWeight.ToString("0.##", CultureInfo.InvariantCulture)})",
-                () => Ranked(index, new Bm25FScorer(fitted.Parameters), tokenizer)));
+                + $"title={titleWeight.ToString("0.##", CultureInfo.InvariantCulture)})";
+
+            ITextSearchEngine Engine() => Ranked(index, new Bm25FScorer(fitted.Parameters), tokenizer);
+
+            ConfigResult fitResult = RunConfig(
+                name, Engine(), fitQueries, topK, ndcgGain, jobs, parseQuerySyntax, scoreRounding, captureOutcomes);
+            results.Add(fitResult);
+
+            if (scoreQueries is not null)
+            {
+                heldOutRows.Add(new HeldOutComparison(
+                    name,
+                    fitResult,
+                    RunConfig(name, Engine(), scoreQueries, topK, ndcgGain, jobs, parseQuerySyntax, scoreRounding, captureOutcomes)));
+            }
 
             notes.Add(
-                $"BM25F tuned in-sample: k1={fitted.Parameters.K1.ToString("0.##", CultureInfo.InvariantCulture)}, "
+                $"BM25F tuned in-sample{(scoreQueries is null ? string.Empty : " on the fit set")}: k1={fitted.Parameters.K1.ToString("0.##", CultureInfo.InvariantCulture)}, "
                 + $"b={fitted.Parameters.B.ToString("0.##", CultureInfo.InvariantCulture)}, "
                 + $"title={titleWeight.ToString("0.##", CultureInfo.InvariantCulture)}, "
                 + $"{fitted.EvaluatedConfigurations} configurations, "
@@ -313,15 +396,10 @@ internal static class Evaluation
                 + "In-sample and an oracle, like every other tuned row.");
         }
 
-        var results = new List<ConfigResult>();
-
-        foreach (var (name, factory) in buildersList)
-            results.Add(RunConfig(name, factory(), queries, topK, ndcgGain, jobs, parseQuerySyntax, scoreRounding, captureOutcomes));
-
         string tunedDescription = tuned
             ? RunTuned(
-                index, corpus, queries, topK, tokenizer, ndcgGain, results, jobs, parseQuerySyntax,
-                tuningSearchOptions, captureOutcomes)
+                index, fitQueries, scoreQueries, topK, tokenizer, ndcgGain, results, heldOutRows, jobs,
+                parseQuerySyntax, tuningSearchOptions, captureOutcomes)
             : "skipped (--no-tuned)";
 
         if (tuned)
@@ -329,13 +407,54 @@ internal static class Evaluation
             // The delta axis is a free parameter of both variants, so "tuned BM25" next to "BM25+ at
             // delta=1.0" is tuned-against-unfitted. These two rows close that, which is the only way
             // the variant rows in docs/ranking.md mean what a reader takes them to mean.
-            RunTunedVariants(index, queries, topK, tokenizer, ndcgGain, results, out string plusDelta, out string lDelta, jobs, parseQuerySyntax, tuningSearchOptions, captureOutcomes);
+            RunTunedVariants(
+                index, fitQueries, scoreQueries, topK, tokenizer, ndcgGain, results, heldOutRows, out string plusDelta,
+                out string lDelta, jobs, parseQuerySyntax, tuningSearchOptions, captureOutcomes);
 
             tunedDescription += $"; {plusDelta}, {lDelta}";
         }
 
-        return (results, tunedDescription, notes);
+        if (heldOut is not null)
+        {
+            string? reason = heldOut.NotRunReason;
+            ConfigResult? untunedBaseline = null;
+
+            if (reason is null && heldOutRows.Count == 0)
+            {
+                reason = "no tuned row was fitted, so there is nothing to score on the score set "
+                       + "(pass --no-tuned only with --tune-bm25f for a BM25F row).";
+            }
+
+            // The score set needs a fixed reference: a held-out tuned figure below the fit-set figure
+            // is a gap, but only a comparison against the same queries says whether tuning bought
+            // anything there at all. One extra pass over the score set, only when a split ran.
+            if (reason is null && scoreQueries is not null)
+            {
+                untunedBaseline = RunConfig(
+                    "BM25 (k1=1.5, b=0.75)",
+                    Ranked(index, new Bm25Scorer(1.5, 0.75, queryTerms), tokenizer),
+                    scoreQueries, topK, ndcgGain, jobs, parseQuerySyntax, scoreRounding);
+            }
+
+            heldOut = heldOut with
+            {
+                Rows = heldOutRows,
+                UntunedBaseline = untunedBaseline,
+                NotRunReason = reason,
+            };
+        }
+
+        return (results, tunedDescription, notes, heldOut);
     }
+
+    /// <summary>The tuners' validation rows, one per query the fit set holds.</summary>
+    private static List<Bm25ValidationQuery> Validation(IReadOnlyList<EvaluatedQuery> queries) =>
+        queries
+            .Select(evaluated => new Bm25ValidationQuery(
+                evaluated.Query.Text,
+                evaluated.Graded.Keys.ToArray(),
+                evaluated.Excluded))
+            .ToList();
 
     /// <summary>
     /// Scores an engine that owns its own index, on the same queries and with the same metrics as
@@ -512,38 +631,38 @@ internal static class Evaluation
 
     private static string RunTuned(
         ITextIndex index,
-        BeirCorpus corpus,
-        IReadOnlyList<EvaluatedQuery> queries,
+        IReadOnlyList<EvaluatedQuery> fitQueries,
+        IReadOnlyList<EvaluatedQuery>? scoreQueries,
         int topK,
         ITokenizer tokenizer,
         NdcgGain ndcgGain,
         List<ConfigResult> results,
+        List<HeldOutComparison> heldOutRows,
         int jobs,
         bool parseQuerySyntax,
         SearchOptions? tuningSearchOptions,
         bool captureOutcomes = false)
     {
-        var validation = queries
-            .Select(evaluated => new Bm25ValidationQuery(
-                evaluated.Query.Text,
-                evaluated.Graded.Keys.ToArray(),
-                evaluated.Excluded))
-            .ToList();
-
-        var tuner = new Bm25ParameterTuner(index, validation, tokenizer, tuningSearchOptions);
+        var tuner = new Bm25ParameterTuner(index, Validation(fitQueries), tokenizer, tuningSearchOptions);
         var tuned = tuner.Tune(topK: topK, metric: TuningMetric.Ndcg);
 
-        var result = RunConfig(
-            $"BM25 tuned (k1={tuned.Parameters.K1:0.##}, b={tuned.Parameters.B:0.##})",
-            new RankedTextSearchEngine(index, new Bm25Scorer(tuned.Parameters), tokenizer),
-            queries,
-            topK,
-            ndcgGain,
-            jobs,
-            parseQuerySyntax,
-            captureOutcomes: captureOutcomes);
+        string name = $"BM25 tuned (k1={tuned.Parameters.K1:0.##}, b={tuned.Parameters.B:0.##})";
+
+        ITextSearchEngine Engine() =>
+            new RankedTextSearchEngine(index, new Bm25Scorer(tuned.Parameters), tokenizer);
+
+        ConfigResult result = RunConfig(
+            name, Engine(), fitQueries, topK, ndcgGain, jobs, parseQuerySyntax, captureOutcomes: captureOutcomes);
 
         results.Add(result);
+
+        if (scoreQueries is not null)
+        {
+            heldOutRows.Add(new HeldOutComparison(
+                name,
+                result,
+                RunConfig(name, Engine(), scoreQueries, topK, ndcgGain, jobs, parseQuerySyntax, captureOutcomes: captureOutcomes)));
+        }
 
         return $"k1={tuned.Parameters.K1.ToString("0.####", CultureInfo.InvariantCulture)}, "
              + $"b={tuned.Parameters.B.ToString("0.####", CultureInfo.InvariantCulture)}, "
@@ -556,17 +675,20 @@ internal static class Evaluation
     /// </summary>
     /// <remarks>
     /// Fitted in-sample on all three rows, so the comparison is fair between them and none of them
-    /// is a held-out number. The variants search 125 configurations to BM25's 25, so their margins
-    /// carry more fitted noise — the reason the winner's own nDCG is printed next to the parameters
-    /// rather than the delta alone.
+    /// is a held-out number unless <paramref name="scoreQueries"/> is non-null, in which case the
+    /// fitted winners are scored on the withheld set as well. The variants search 125 configurations
+    /// to BM25's 25, so their margins carry more fitted noise — the reason the winner's own nDCG is
+    /// printed next to the parameters rather than the delta alone.
     /// </remarks>
     private static void RunTunedVariants(
         ITextIndex index,
-        IReadOnlyList<EvaluatedQuery> queries,
+        IReadOnlyList<EvaluatedQuery> fitQueries,
+        IReadOnlyList<EvaluatedQuery>? scoreQueries,
         int topK,
         ITokenizer tokenizer,
         NdcgGain ndcgGain,
         List<ConfigResult> results,
+        List<HeldOutComparison> heldOutRows,
         out string plusDelta,
         out string lDelta,
         int jobs,
@@ -574,25 +696,28 @@ internal static class Evaluation
         SearchOptions? tuningSearchOptions,
         bool captureOutcomes = false)
     {
-        var validation = queries
-            .Select(evaluated => new Bm25ValidationQuery(
-                evaluated.Query.Text,
-                evaluated.Graded.Keys.ToArray(),
-                evaluated.Excluded))
-            .ToList();
+        var validation = Validation(fitQueries);
 
         var plus = new Bm25PlusParameterTuner(index, validation, tokenizer, tuningSearchOptions)
             .Tune(topK: topK, metric: TuningMetric.Ndcg);
 
-        results.Add(RunConfig(
-            $"BM25+ tuned (k1={plus.K1:0.##}, b={plus.B:0.##}, delta={plus.Delta:0.##})",
-            new RankedTextSearchEngine(index, new Bm25PlusScorer(plus.K1, plus.B, plus.Delta), tokenizer),
-            queries,
-            topK,
-            ndcgGain,
-            jobs,
-            parseQuerySyntax,
-            captureOutcomes: captureOutcomes));
+        string plusName = $"BM25+ tuned (k1={plus.K1:0.##}, b={plus.B:0.##}, delta={plus.Delta:0.##})";
+
+        ITextSearchEngine Plus() =>
+            new RankedTextSearchEngine(index, new Bm25PlusScorer(plus.K1, plus.B, plus.Delta), tokenizer);
+
+        ConfigResult plusFit = RunConfig(
+            plusName, Plus(), fitQueries, topK, ndcgGain, jobs, parseQuerySyntax, captureOutcomes: captureOutcomes);
+
+        results.Add(plusFit);
+
+        if (scoreQueries is not null)
+        {
+            heldOutRows.Add(new HeldOutComparison(
+                plusName,
+                plusFit,
+                RunConfig(plusName, Plus(), scoreQueries, topK, ndcgGain, jobs, parseQuerySyntax, captureOutcomes: captureOutcomes)));
+        }
 
         // BM25+ at delta = 0 IS Bm25Scorer, so the tuner's own unfloored score is BM25's on the same
         // grid. Worth stating in the output: it means this row and the bm25-tuned row are fitted by
@@ -603,15 +728,23 @@ internal static class Evaluation
         var l = new Bm25LParameterTuner(index, validation, tokenizer, tuningSearchOptions)
             .Tune(topK: topK, metric: TuningMetric.Ndcg);
 
-        results.Add(RunConfig(
-            $"BM25L tuned (k1={l.K1:0.##}, b={l.B:0.##}, delta={l.Delta:0.##})",
-            new RankedTextSearchEngine(index, new Bm25LScorer(l.K1, l.B, l.Delta), tokenizer),
-            queries,
-            topK,
-            ndcgGain,
-            jobs,
-            parseQuerySyntax,
-            captureOutcomes: captureOutcomes));
+        string lName = $"BM25L tuned (k1={l.K1:0.##}, b={l.B:0.##}, delta={l.Delta:0.##})";
+
+        ITextSearchEngine L() =>
+            new RankedTextSearchEngine(index, new Bm25LScorer(l.K1, l.B, l.Delta), tokenizer);
+
+        ConfigResult lFit = RunConfig(
+            lName, L(), fitQueries, topK, ndcgGain, jobs, parseQuerySyntax, captureOutcomes: captureOutcomes);
+
+        results.Add(lFit);
+
+        if (scoreQueries is not null)
+        {
+            heldOutRows.Add(new HeldOutComparison(
+                lName,
+                lFit,
+                RunConfig(lName, L(), scoreQueries, topK, ndcgGain, jobs, parseQuerySyntax, captureOutcomes: captureOutcomes)));
+        }
 
         // Same reading applies: BM25L at delta = 0 is BM25 too, the compression cancelling.
         lDelta = Describe("BM25L", l.Delta, l.UnflooredMetricScore, l.MetricScore, l.DeltaHelped);

@@ -416,7 +416,8 @@ off by default, so an existing run keeps the convention its tuned rows were fitt
 
 **A tuned score is an oracle, not a fair baseline.** The winner was fitted on the same
 queries it is scored on, and the more configurations were tried, the more of the gain is
-fitting noise. Score it on a held-out set, or treat it as an upper bound. Every comparison
+fitting noise. Score it on a held-out set — `--heldout` does that for all four tuners, below —
+or treat it as an upper bound. Every comparison
 in this documentation that claims a scorer "beats" another was run tuned-against-tuned for
 exactly this reason — a default-vs-default comparison mostly measures which default fits
 the corpus.
@@ -508,6 +509,91 @@ on zeros:
 // Throws: "BM25F needs per-field statistics, and FlatIndex has none…"
 new Bm25FScorer().Score("1", ["ranking"], someIndexWithoutFields);
 ```
+
+## Held-out measurement (`--heldout`)
+
+`--heldout <share>` withholds a share of the run's validation queries from every tuner and prints
+each tuned row's fit-set figure beside its score-set figure. The point is to replace "upper bound" with
+a number, and to show whether the parameters the fit set chose are worth anything on queries that did
+not choose them.
+
+**The split rule.** The bucket is FNV-1a (64-bit) over the query id's UTF-16 code units, modulo
+1,000,000; a bucket below `share × 1,000,000` is the **score set**, and the rest is the **fit set**.
+The id is the only input: no RNG, no seed, no dependence on file order, corpus order or the query
+text. The split is taken over the queries the run would score, after `--limit`. `--heldout 0.5` on
+NFCorpus therefore always reads the same 156 fit and 167 score queries, on any machine, from the
+command alone. The rule lives in `bench/LexiSharp.Eval/HeldOutSplit.cs` and the buckets are pinned by
+unit tests, so a refactor that changes the partition fails rather than quietly measuring a different
+one.
+
+**What the flag changes.** Every tuner (`Bm25ParameterTuner`, `Bm25FParameterTuner`,
+`Bm25PlusParameterTuner`, `Bm25LParameterTuner`) fits on the fit set only. The tuned rows in the main
+table are then *scored on the fit set*, so that table's `Queries` column reads 156 rather than 323 on
+NFCorpus. The held-out block prints, for each of those rows, the fit-set nDCG@10 (in-sample) beside
+the score-set nDCG@10 (held out), with MAP@10 and recall@10 for each side, and then the fixed
+`BM25 (k1=1.5, b=0.75)` row scored on the same withheld queries — a fitted number has nothing to be
+compared with otherwise. Without the flag nothing changes: the published rows keep the numbers they
+have, because they were fitted and scored on the whole set.
+
+**Commands.** These are the exact runs behind the table; the runs without the flag are the control
+that the published in-sample figures are unchanged.
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --heldout 0.5 --jobs 4
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset scifact --heldout 0.5 --jobs 4
+
+# The same corpora without the flag, for the published in-sample rows.
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --jobs 4
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset scifact --jobs 4
+```
+
+**Measured on 2026-10-25, 50 % held out, default analysis, `--jobs 4`.** nDCG@10 is the metric the
+tuners maximize; Δ is held-out minus fit-set.
+
+| Corpus | Split (fit / score) | Row | Fit nDCG@10 | Held-out nDCG@10 | Δ | Held-out MAP@10 | Held-out R@10 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| NFCorpus | 156 / 167 | BM25 tuned (k1=2, b=0.5) | 0.331 | 0.292 | −0.039 | 0.215 | 0.139 |
+| | | BM25+ tuned (k1=2, b=0.5, δ=0) | 0.331 | 0.292 | −0.039 | 0.215 | 0.139 |
+| | | BM25L tuned (k1=2, b=0.5, δ=0) | 0.331 | 0.292 | −0.039 | 0.215 | 0.139 |
+| | | BM25 (k1=1.5, b=0.75), untuned reference | — | 0.291 | — | 0.214 | 0.140 |
+| SciFact | 153 / 147 | BM25 tuned (k1=1.5, b=1) | 0.650 | 0.679 | +0.029 | 0.629 | 0.822 |
+| | | BM25+ tuned (k1=2, b=1, δ=0.25) | 0.652 | 0.680 | +0.028 | 0.630 | 0.822 |
+| | | BM25L tuned (k1=2, b=1, δ=0.25) | 0.652 | 0.684 | +0.032 | 0.635 | 0.822 |
+| | | BM25 (k1=1.5, b=0.75), untuned reference | — | 0.680 | — | 0.632 | 0.814 |
+
+The two halves differ in difficulty, so the fit/held-out gap is not an overfitting measure on its
+own. The untuned default row reads 0.308 on all 323 NFCorpus queries and 0.291 on the withheld 167;
+on SciFact it reads 0.662 on all 300 and 0.680 on the withheld 147. What a tuned row is worth is
+therefore the held-out column against the untuned row on the same withheld queries, not against its
+own fit-set figure.
+
+The fit set chooses the same parameters the published full-set tune chooses on both corpora
+(NFCorpus `k1=2, b=0.5`; SciFact `k1=1.5, b=1`, and `δ=0.25` for both variants), so the split is not
+reporting a different winner. It is reporting what that winner is worth on the other half.
+
+- **NFCorpus.** The fit-set figure is 0.331 and the held-out figure 0.292, but the untuned row on the
+  same held-out queries reads 0.291. The fit bought **+0.001** over the default parameters there; the
+  0.039 between the fit-set and held-out figures is the part that did not transfer.
+- **SciFact.** The fit-set figure (0.650) is *below* the held-out one (0.679), so the two halves differ
+  in difficulty and the fit/held-out gap is not itself an overfitting measure — the untuned row on the
+  withheld queries is. It reads 0.680: BM25 tuned is **−0.001**, BM25+ tuned **0.000**, BM25L tuned
+  **+0.004**. That +0.004 is the same margin the full-set in-sample row shows (0.668 against 0.664),
+  so it survives at the same size — four thousandths of nDCG@10 on 147 queries, not a result.
+
+**What remains an upper bound.** Every tuned row not in the table above: all ArguAna rows, every
+BM25F row, every other fraction, and every run under another analysis. The published full-set rows
+are intact and still in-sample figures over all queries; the pairs above cover only the two corpora,
+one fraction and the one analysis the commands name. The existing "in-sample upper bound" language is
+unchanged for everything not measured here.
+
+**ArguAna is not measured here.** Its full in-sample oracle grid is recorded as roughly two
+hours in the harness README, and the fit half still searches 25 points for BM25 and 125 each for the
+two delta variants over ~700 whole-argument queries. The harness does
+not skip such a run silently: with `--no-tuned` the held-out block is still printed and reads
+`Not run: no tuned row was fitted…`, so the absence has a stated cause rather than looking like a
+split that found no gap. `--heldout` is refused with `--analyze`, `--verify-reference` and
+`--fingerprint`, whose output shapes assume every configuration scores every query or stop before
+scoring starts.
 
 ## Benchmark CLI (`LexiSharp.Cli`)
 

@@ -462,6 +462,17 @@ workflow.
   1.4 KB more (71.0 → 72.4 KB) — one step per search against the ten per document already written.
   The timing rows are not quoted: run-to-run drift on the measuring host exceeded the effect.
 
+- **The evaluation harness can fit the tuned rows out of sample.** `--heldout <share>` withholds a
+  hash-chosen share of a corpus's validation queries from all four tuners (FNV-1a 64 of the query id
+  modulo 1,000,000 — no RNG, no seed, no file-order dependence), scores the tuned rows on the fit set
+  in the main table, and prints each row's fit-set nDCG@10 beside its score-set nDCG@10, MAP@10 and
+  recall@10, with the fixed BM25 row on the same withheld queries as the reference. Without the flag
+  the published in-sample rows keep their numbers and their parameters. The split rule, the commands
+  and the measured fit/held-out pairs are in
+  [Evaluation](docs/evaluation.md#held-out-measurement---heldout); `--analyze`, `--verify-reference`
+  and `--fingerprint` are refused with it, because their output assumes every configuration scores
+  every query or stops before scoring starts.
+
 ### Fixed
 
 - **`Commit` forces the segment to the device before the rename, and refuses an interrupted commit
