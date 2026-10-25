@@ -427,6 +427,59 @@ adding each document once (58 µs measured); a store that never commits pays tha
 commit still has a cadence to choose — the journal makes it a choice rather than the only durability
 point.
 
+**What an `Add` costs under each policy.** `StoreWriteBenchmarks` prices one `Add` for each policy over
+500 documents cut from its own 20,000-document, 124-token, 100,000-term corpus, in a directory of its
+own per invocation. The rows write on this host's ext4 root rather than under `/tmp`, which is a tmpfs
+here and where a device flush is nearly free. Each row runs in its own process with `--job medium`, so
+a row's iterations are not interleaved with another policy's:
+
+| policy | pass 1, mean µs per `Add` | pass 2, mean µs per `Add` | pass 3, mean µs per `Add` |
+|---|---:|---:|---:|
+| `Disabled` | 81.0 | 39.3 | 43.0 |
+| `OnCommit` | 70.9 | 49.4 | 52.6 |
+| `Grouped` (default) | 120.5 | 91.7 | 91.4 |
+| `PerWrite` | 3224 | 3672 | 3679 |
+
+The three columns are the same command at 20:59, 21:04 and 21:13, on a host shared with other builds,
+and they are all here because the disagreement is part of the method: `PerWrite`, which waits on the
+device, spans 3.22-3.68 ms (12 %), while the rows that compute span 39-81 µs (`Disabled`, 2.1×),
+49-71 µs (`OnCommit`) and 91-121 µs (`Grouped`, 1.3×). The two later passes agree within 10 % on every
+row; the first is the outlier, reading 32-106 % higher on the three CPU-bound rows and 12 % lower on
+`PerWrite`. What is stable across all three is the ordering and the gap *inside* a pass. `OnCommit` is
+within about 10 µs of `Disabled` — the append and the page-cache write, at this row's resolution.
+`Grouped` is 39-50 µs above `OnCommit` for five flushes over 500 documents. `PerWrite` is 3.15-3.63 ms
+above `OnCommit`.
+
+The journal's own measurement gives a 1 KiB entry at **0.5 µs** appended, **3.1 ms** flushed and
+**33 µs** with one flush per hundred entries (3.1 ms / 94), from a journal-level harness without the
+store around it. The store-level rows reproduce the flush and the grouping: the grouped run flushes
+five times where `PerWrite` flushes five hundred times. They put the grouped cost above what that
+figure says: 39-50 µs per `Add`, i.e. 3.9-5.0 ms per flushed group of a hundred records, against
+3.15-3.63 ms for the single-record flush the same pass pays. In the two passes that agree, the group
+is 3.9-4.2 ms against 3.6 ms. The group's flush carries a hundred records' text rather than one
+record's, and these rows do not separate the flush syscall from the bytes it writes back. Read the
+33 µs as the journal-level amortised flush and 39-50 µs as what an end-to-end `Add` pays for it.
+
+```bash
+dotnet build bench/LexiSharp.Benchmarks -c Release
+
+for policy in Disabled Grouped OnCommit PerWrite; do
+  dotnet bench/LexiSharp.Benchmarks/bin/Release/net10.0/LexiSharp.Benchmarks.dll \
+    --filter "*AddWithJournal$policy*" --job medium
+done
+```
+
+The rows write into `bin/Release/net10.0/journal-bench-*`, deleted by the benchmark's cleanup. Run
+them from a checkout on a real filesystem: on this host `/tmp` is a tmpfs, and a flush row measured
+there prices a device it never touched.
+
+Not measured by these rows: a device power loss — they flush, and nothing cuts the power; Windows; any
+filesystem other than this host's ext4/NVMe; and the replay at open, which the 58 µs above measures and
+these rows do not. The 500-document count makes a `Grouped` run five flushes and a `PerWrite`
+invocation under two seconds. A longer run would amortise the per-invocation directory and journal
+creation over more documents; those are inside the invocation and the rows include them without
+separating them.
+
 ### The store through the typed facade
 
 `LexiSharpIndex<T>` can be a store instead of an in-memory index, so the same typed API gains
