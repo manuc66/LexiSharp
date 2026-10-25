@@ -63,6 +63,17 @@ workflow.
   The overlay build of 20,000 documents still allocates 395 MB against its 460 MB pin with the journal
   on: the encoder reuses its buffers, so the journal's own share is one serialized copy of each
   document rather than a stream, a writer and two arrays per write.
+- **Retrieval metrics and search spans through .NET's own diagnostics APIs.**
+
+  `LexiSharp.Diagnostics.RetrievalDiagnostics` implements `IRetrievalMetrics` over a
+  `System.Diagnostics.Metrics.Meter` named `LexiSharp` and exposes an `ActivitySource` named
+  `LexiSharp.Search`, built entirely from `System.Diagnostics.DiagnosticSource` — the core package
+  references no package for it. Search and stage durations are histograms in seconds; search count,
+  page size, stage runs and stage item counts are counters and histograms; index size is two
+  gauges. `StartSearch` and `StartStage` open a search span and a child per pipeline stage when a
+  listener is attached, and return `null` when none is. Engine and stage tags are documented as
+  low-cardinality sets; query text, result ids and document ids are never tags. Exports are the
+  host's job: the library ships no exporter, dashboard or SDK reference.
 
 - **The evaluation harness's cross-encoder reranking is resumable.**
 
