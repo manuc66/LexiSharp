@@ -20,6 +20,16 @@ workflow.
 
 ### Added
 
+- **The evaluation harness's cross-encoder reranking is resumable.**
+
+  Every scored `(query, document)` pair is appended to `data/rerank-cache/` (or
+  `--rerank-cache <dir>`) with one line per pair, flushed to disk every 1,000 pairs, keyed by the
+  corpus md5 and the model. An interrupted run restarts at the pair rather than at the first query,
+  and the three reranked configurations of one corpus share candidates, so the later two reuse the
+  earlier one's passes. The file is append-only — a kill costs the buffered tail and never the
+  entries already written — and a truncated last line is skipped with a count rather than
+  invalidating the cache.
+
 - **The evaluation harness scores the PostgreSQL backends on the BEIR corpora.**
 
   `--backend lexical|paradedb --backend-connection <s>` adds a nDCG/MAP/MRR/recall row measured

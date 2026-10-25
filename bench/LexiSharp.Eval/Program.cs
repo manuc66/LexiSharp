@@ -73,6 +73,11 @@ public static class Program
         Bm25Parameters? backendBm25 = null;
         var backendEfValues = new List<int>();
 
+        // Where the rerank cache lives. Defaulted inside the dataset loop (one file per corpus), and a
+        // directory rather than a file because --dataset all would otherwise share one file between
+        // corpora whose document ids collide.
+        string? rerankCacheDir = null;
+
         // Off by default, because every query in a BEIR corpus is natural language and the published
         // figures apply no query language to it: the query string goes to the analyzer whole. Left on,
         // a straight double quote in an argument — 138 of ArguAna's 1,406 test queries, measured —
@@ -207,6 +212,9 @@ public static class Program
                     break;
                 case "--backend-ef" when i + 1 < args.Length:
                     backendEfValues.AddRange(ParsePositiveInts(args[++i], "--backend-ef"));
+                    break;
+                case "--rerank-cache" when i + 1 < args.Length:
+                    rerankCacheDir = args[++i];
                     break;
                 case "--expand-density" when i + 1 < args.Length:
                     expandDensities.AddRange(ParseDensities(args[++i]));
@@ -389,7 +397,7 @@ public static class Program
                 tuned, reranker, rerankCandidates, runPath, jobs, indexCache, parseQuerySyntax,
                 querySyntaxReference, segment, analyzePath, analyzeBaseline, analyzeCandidate,
                 disagreementLeft, disagreementRight,
-                expandDensities, expandRankings, annEfValues, annConnection, backendLane);
+                expandDensities, expandRankings, annEfValues, annConnection, backendLane, rerankCacheDir);
             Console.WriteLine();
         }
 
@@ -515,7 +523,8 @@ public static class Program
         string? analyzePath, string analyzeBaseline, string? analyzeCandidate,
         string? disagreementLeft, string? disagreementRight,
         IReadOnlyList<double> expandDensities, IReadOnlyList<ExpansionRanking> expandRankings,
-        IReadOnlyList<int> annEfValues, string? annConnection, BackendLane? backendLane)
+        IReadOnlyList<int> annEfValues, string? annConnection, BackendLane? backendLane,
+        string? rerankCacheDir)
     {
         Console.WriteLine($"== {dataset.Name} ==");
 
@@ -595,6 +604,25 @@ public static class Program
             Console.WriteLine("Dense configs disabled — re-run with --dense to add multilingual-e5-small (CPU, first run downloads the model and encodes the corpus). Re-run with --rerank to add a cross-encoder second stage.");
         }
 
+        // Reranking is the one lane that costs hours, so it is the one that remembers what it has
+        // already scored. Wrapped per dataset, because the cache is keyed by document id and a file
+        // shared between corpora would serve one corpus's scores to another's ids.
+        CachedReranker? rerankCache = null;
+
+        if (reranker is not null)
+        {
+            string cachePath = Path.Combine(
+                rerankCacheDir ?? Path.Combine(dataBaseDir, "rerank-cache"),
+                $"{dataset.Name}-{dataset.ExpectedMd5}-{CrossEncoderModels.ModelId.Split('/')[^1]}.tsv");
+
+            rerankCache = new CachedReranker(reranker, cachePath);
+            reranker = rerankCache;
+
+            Console.WriteLine(
+                $"Rerank cache: {rerankCache.CachePath} — {rerankCache.Loaded:N0} pairs loaded"
+                + $"{(rerankCache.Unreadable > 0 ? $", {rerankCache.Unreadable:N0} unreadable line(s) skipped" : string.Empty)}.");
+        }
+
         if (annEfValues.Count > 0)
             await RunAnnCurveAsync(annEfValues, annConnection, denseVectors, corpus, dataset, dataBaseDir, topK, limit);
 
@@ -656,6 +684,15 @@ public static class Program
         if (backendLane is not null)
         {
             RunBackendRow(backendLane, corpus, dataset, topK, limit, gain, excludeQueryDocument, jobs, denseVectors);
+        }
+
+        if (rerankCache is not null)
+        {
+            rerankCache.Dispose();
+            Console.WriteLine(
+                $"Rerank cache: {rerankCache.Reused:N0} pairs reused, {rerankCache.Computed:N0} computed, "
+                + $"{rerankCache.Loaded + rerankCache.Computed:N0} in the file — re-running this command resumes "
+                + "from here rather than from the first query.");
         }
     }
 
@@ -1119,6 +1156,7 @@ public static class Program
         Console.WriteLine("""
             Usage: LexiSharp.Eval [--data <dir>] [--dataset <name|all>] [--top-k <n>] [--limit <n>]
                      [--no-tuned] [--stem porter] [--dense] [--dense-seq <n>] [--rerank] [--rerank-top <n>]
+                     [--rerank-cache <dir>]
                      [--backend <lexical|paradedb|vector> --backend-connection <s>]
                      [--backend-bm25 <k1,b>] [--backend-ef <list>] [--backend-config <name>]
 
@@ -1221,6 +1259,13 @@ public static class Program
                                 ONNX Runtime): re-scores the top-N lexical/dense candidates per query.
                                 First run downloads ~90 MB into data/models/cross-encoder/.
               --rerank-top <n>  Number of candidates fed to the cross-encoder (default: 100).
+              --rerank-cache <dir>
+                                Directory for the rerank cache (default: <data>/rerank-cache). One
+                                append-only file per corpus and model, one line per scored pair, so
+                                an interrupted run resumes instead of starting from the first query:
+                                a 1,406-query corpus at 100 candidates is tens of thousands of
+                                forward passes and hours of CPU. The three reranked configurations
+                                also share candidates, so the second and third reuse the first's work.
               --ann-ef <list>  Measure the pgvector HNSW candidate-list curve over these ef_search
                                 values (comma-separated, e.g. 10,40,160,320): the recall of the
                                 index against an exact in-process top-k, and the latency each size
