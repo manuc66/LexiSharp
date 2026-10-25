@@ -30,7 +30,8 @@ say so in the notes (`NotSupportedException` rather than a silent no-op — see
 - **Synonyms** — `SynonymMap` applies one-way rewrites and bidirectional groups to free
   query terms, one level deep. See [Synonyms](#synonyms).
 - **Facets** — `SearchWithFacets` returns the ranked page plus value counts per requested
-  field over the whole match set. See [Facets](#facets).
+  field over the whole match set, and `SearchWithNumericFacets` adds half-open numeric ranges
+  or a histogram. See [Facets](#facets).
 - **Span-first API** — every text entry point has a `ReadOnlySpan<char>` overload, so a
   query in a buffer need not be copied into a `string`. See
   [Span-first API](#span-first-api).
@@ -176,6 +177,56 @@ passes the metadata filters, the phrase gates and the score thresholds — the w
 independently of `Offset`/`Limit`, which only cut `Results`. A document missing a field does
 not count for it (faceting reads `Fields` only, not `Category`), and fields no matching
 document carries are omitted from `Buckets`. Currently stock-engine only.
+
+### Numeric ranges and histograms
+
+String facets count distinct values; a price or a year needs buckets. `SearchWithNumericFacets`
+takes the same search and the same string facets, plus numeric requests over `Fields`:
+
+```csharp
+FacetedSearchResult page = engine.SearchWithNumericFacets(
+    "fast car",
+    new SearchOptions(Limit: 10),
+    facetFields: ["kind"],
+    numericFacets:
+    [
+        NumericFacetRequest.Ranges("price", [0, 10, 50, 100]),  // [0,10) [10,50) [50,100)
+        NumericFacetRequest.Histogram("year", 5),               // 5 buckets, min..max of the matches
+    ]);
+
+foreach (var bucket in page.NumericBuckets)
+    foreach (var range in bucket.Ranges)
+        Console.WriteLine($"{bucket.Field} [{range.From}, {range.To}) = {range.Count}");
+```
+
+**The boundary rule.** A range includes its lower boundary and excludes its upper one: a value
+equal to `From` is counted, a value equal to `To` is not — it belongs to the range that starts
+there, if the boundaries put one there. Values below the first boundary or at or above the last
+one are in no range, which is what choosing the boundaries means; the reported ranges show what
+is covered.
+
+**Histograms** derive their boundaries from the match set — the smallest and largest parseable
+values — and split that span into equal-width buckets. The last bucket is closed at the top
+(`UpperInclusive` is `true`, `[from, to]`) so the largest value is counted; every other bucket,
+and every explicit range, is `[from, to)`. When every value is identical the width is zero and
+the facet reports one bucket whose `From` equals its `To`, counting every value. A histogram of
+`n` buckets reports `n` ranges whenever at least one value parses; a bucket count larger than the
+number of distinct values leaves the extra ranges empty rather than dropping them.
+
+**Parsing.** A value is read with `double.TryParse`, `NumberStyles.Any`, invariant culture — the
+same parse `MetadataFilter` uses for its numeric comparisons — and must be finite. A document
+missing the field does not count, exactly as for the string facets. A value that does not parse
+(`n/a`, `NaN`, `Infinity`) is **not** placed in a range: it is counted in
+`NumericFacetBucket.UnparseableCount` instead, and the string facet on the same field still
+lists it. `MetadataFilter` falls back to an ordinal string comparison for such a value, because
+a filter still has to answer `year > 2023` on a field holding the odd non-number; a range facet
+cannot, because its edges are numbers and a non-number has no position among them.
+
+Counts cover the whole match set independently of `Offset`/`Limit`, and `Results` is identical
+to `Search`. String facets are unchanged — a `SearchWithFacets` call leaves `NumericBuckets`
+empty — and `SearchWithNumericFacets` is opt-in: an engine that implements the string facets but
+not this one throws `NotSupportedException` rather than returning buckets that look like a
+match set where nothing parsed. Currently stock-engine only.
 
 ## Span-first API
 

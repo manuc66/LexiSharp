@@ -8,9 +8,24 @@ namespace LexiSharp.Core;
 /// One bucket per field that at least one counted document carries, in requested-field
 /// order; fields absent from every counted document are omitted.
 /// </param>
+/// <remarks>
+/// <see cref="NumericBuckets"/> carries the numeric ranges and histograms requested through
+/// <see cref="IFacetedSearchEngine.SearchWithNumericFacets(string, SearchOptions?, IReadOnlyList{string}?, IReadOnlyList{NumericFacetRequest}?)"/>;
+/// a string-facet call leaves it empty.
+/// The two lists are independent — asking for both kinds in one call returns both, over the same
+/// match set.
+/// </remarks>
 public sealed record FacetedSearchResult(
     IReadOnlyList<SearchResult> Results,
-    IReadOnlyList<FacetBucket> Buckets);
+    IReadOnlyList<FacetBucket> Buckets)
+{
+    /// <summary>
+    /// Numeric buckets in requested order; empty when no numeric facet was requested, or when no
+    /// counted document carries any requested field.
+    /// </summary>
+    public IReadOnlyList<NumericFacetBucket> NumericBuckets { get; init; } =
+        Array.Empty<NumericFacetBucket>();
+}
 
 /// <summary>Value counts for one facet field.</summary>
 /// <param name="Field">The requested field name.</param>

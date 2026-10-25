@@ -137,6 +137,37 @@ public sealed class RoutedSearchEngine : IFacetedSearchEngine, IQueryCostProbe, 
     }
 
     /// <inheritdoc />
+    public FacetedSearchResult SearchWithNumericFacets(
+        string query,
+        SearchOptions? options = null,
+        IReadOnlyList<string>? facetFields = null,
+        IReadOnlyList<NumericFacetRequest>? numericFacets = null)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        return SearchWithNumericFacets(query.AsSpan(), options, facetFields, numericFacets);
+    }
+
+    /// <inheritdoc />
+    /// <exception cref="NotSupportedException">The engine selected for the query does not support facets.</exception>
+    public FacetedSearchResult SearchWithNumericFacets(
+        ReadOnlySpan<char> query,
+        SearchOptions? options = null,
+        IReadOnlyList<string>? facetFields = null,
+        IReadOnlyList<NumericFacetRequest>? numericFacets = null)
+    {
+        var resolved = options ?? SearchOptions.Default;
+        var selected = SelectEngine(query, resolved);
+
+        if (selected.Engine is not IFacetedSearchEngine faceted)
+        {
+            throw new NotSupportedException(
+                $"Engine '{selected.Name}' selected for this query does not support facets.");
+        }
+
+        return faceted.SearchWithNumericFacets(query, resolved, facetFields, numericFacets);
+    }
+
+    /// <inheritdoc />
     public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
