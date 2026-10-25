@@ -107,9 +107,11 @@ text, so `e-mail`, `well-being` and `foo-bar` tokenize exactly as they do withou
 language, and `+ machine` is a bare `+` token (which tokenizes to nothing) followed by an
 unqualified term. When a token starts with several operator characters the first one decides:
 `++a` and `+-a` mean `+a`, `--a` and `-+a` mean `-a`. A qualifier on a segment that produces no
-terms — `-""`, or `+a` where the tokenizer drops the single character — imposes no constraint.
-A token that tokenizes to several terms is used whole: `+foo-bar` requires both `foo` and
-`bar`, and `-foo-bar` excludes a document containing either.
+terms — `-""`, or `+a` where the tokenizer drops the single character — is dropped with that
+segment and imposes no constraint; a query whose only content is such a token has no term to
+match, so it returns nothing, the same as any other query with no terms. A token that tokenizes
+to several terms is used whole: `+foo-bar` requires both `foo` and `bar`, and `-foo-bar` excludes
+a document containing either.
 
 **What the operators do.** Both are gates checked before any relevance math:
 

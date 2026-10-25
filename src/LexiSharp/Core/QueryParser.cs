@@ -121,7 +121,9 @@ public sealed record RawQuerySegments(
 /// or <c>-</c> tokenizes to nothing. When a token starts with several operator characters, the
 /// first one decides: <c>++a</c> and <c>+-a</c> mean <c>+a</c>, <c>--a</c> and <c>-+a</c> mean
 /// <c>-a</c>; the remaining leading characters are separators to the tokenizer. And a <c>+</c>/<c>-</c>
-/// separated from its term or quote by whitespace is not an operator at all.
+/// separated from its term or quote by whitespace is not an operator at all. A qualifier whose
+/// segment produces no terms (a single character the tokenizer drops, an empty quoted segment) is
+/// dropped with that segment, so a query made only of such tokens has nothing to match.
 /// </para>
 /// <para>
 /// <b>Semantics.</b> Required and prohibited atoms are gates checked before scoring: a required
