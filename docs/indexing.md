@@ -390,7 +390,9 @@ reader rather than misread.
 
 A store opened and written to keeps **one file of what changed** rather than a corpus per write. Opening
 it replays those entries over the newest segment, so a process that ends without a commit costs at most
-the tail the flush policy has not forced to the device.
+the tail the flush policy has not forced to the device. Opening is a **read**: a corpus replica on a
+read-only mount opens, replays and answers queries, and the first write is what asks the directory for
+write access.
 
 ```csharp
 using var store = new SegmentedTextIndex("./corpus");          // journal on, flushed in groups
@@ -419,8 +421,20 @@ Two consequences worth knowing. The segment records the last journal entry it co
 stops at what the commit already holds rather than applying a write twice — re-indexing a document is
 not idempotent, it tombstones the old ordinal and adds a new one. And a directory holds **one journal
 and one writer**: `Commit` and `Merge` return the store that owns the journal, and the store they
-replaced refuses further writes. A store opened with `JournalOptions.Disabled` writes no journal, and a
-crash before its next commit loses the overlay — the behaviour of a corpus assembled as one batch.
+replaced refuses further writes. A store opened with `JournalOptions.Disabled` writes no journal and
+loses its overlay on a crash before the next commit — the behaviour of a corpus assembled as one batch —
+and it **refuses to open** a directory whose journal holds entries it would otherwise have to ignore,
+rather than serving a corpus that is missing them.
+
+Each record frames itself with a length, a checksum of that length, its payload and a checksum of the
+payload. The two checksums separate the two failures a journal meets. A **torn tail** — the record a
+crash interrupted — cannot present a whole frame, so opening reports what it found in
+`TruncatedJournalBytes` and the first write cuts the file back to a boundary before appending; the
+report is there because the alternative is a store that opens, answers, and is quietly missing the tail
+of its last write. A **damaged** record — length or payload that does not match its checksum — makes the
+store refuse to open rather than replay an operation it cannot vouch for. The length has its own
+checksum because a corrupted length is indistinguishable from an interrupted write by framing alone,
+and reading it as a tear would drop every record after it in silence.
 
 The journal grows until a commit truncates it, and opening replays what it holds at about the cost of
 adding each document once (58 µs measured); a store that never commits pays that on every open, so the
