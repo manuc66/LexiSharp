@@ -171,6 +171,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `QueryParser` | class | — | Splits a raw query on double quotes before tokenization — the tokenizer treats " as an ordinary separator and would destroy the delimiters — and recognizes the… |
 | `QueryRoute` | record | — | The decision an IQueryRouter returns for a query: which route to run, and how confident the router is. |
 | `QuerySyntax` | class | — | Detects and validates the LexiSharp query syntax a raw query carries, so an engine that does not interpret a feature fails fast instead of silently treating the… |
+| `QueryTermOperator` | enum | — | What a query atom asks of the documents that contain it. |
 | `RawQuerySegments` | record | — | The raw, un-tokenized quote-level split of a query: text outside quotes and the literal interior of each quoted segment. SQL backends forward these strings to… |
 | `RerankedTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that re-ranks the matches of an inner engine before they are returned. |
 | `RetrievalAgreement` | enum | — | How much the sources of a federated search agree about one document. |

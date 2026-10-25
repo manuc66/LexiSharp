@@ -20,6 +20,30 @@ workflow.
 
 ### Added
 
+- **The query language reads a leading `+`/`-`, so a term can be required or prohibited.**
+
+  `+term` requires the term and scores it; `-term` excludes every document containing it and
+  contributes nothing to the score. Both apply to quoted phrases (`+"a phrase"`, `-"a phrase"`)
+  and to prefix/fuzzy atoms (`+term*`, `-term~2`), gate before any relevance math, and are
+  declared through `QueryFeatures.RequiredTerms`/`QueryFeatures.ProhibitedTerms` — an engine that
+  does not implement them throws `NotSupportedException` instead of treating the sign as text.
+
+  **A query whose token begins with `-` changes meaning.** With `SearchOptions.ParseQuerySyntax`
+  at its default `true`, `-word` now excludes documents containing `word`; before, the tokenizer
+  discarded the sign and the query searched for `word`. A corpus of prose that writes leading
+  hyphens literally needs `ParseQuerySyntax: false`, where the query language is not consulted at
+  all and `-word` again searches `word`. `+word` also used to search `word`; it now requires it,
+  which narrows the result set to documents that contain it.
+
+  A `-` inside a token is unchanged: `e-mail`, `well-being` and `foo-bar` tokenize exactly as
+  before, because only a leading sign on a whitespace-delimited token is an operator. A query of
+  only prohibited terms returns the complement at score `1.0` — a filter, ordered by the
+  configured tie-break — and a query of only required terms scores on those terms.
+
+  `RankedTextSearchEngine` implements both. The PostgreSQL and ParadeDB lexical engines declare
+  them unsupported and refuse with `NotSupportedException`, as do the vector, sparse and fuzzy
+  backends, which already refuse the rest of the query language.
+
 - **The evaluation harness can fit BM25F, and reports whether the weighting earned it.**
 
   `--tune-bm25f` adds a row fitted by `Bm25FParameterTuner`: `(k1, b)` first, then the weight of
