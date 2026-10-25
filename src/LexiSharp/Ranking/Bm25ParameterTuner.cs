@@ -23,6 +23,7 @@ public sealed class Bm25ParameterTuner
     private readonly ITextIndex _index;
     private readonly ITokenizer _tokenizer;
     private readonly IReadOnlyList<Bm25ValidationQuery> _validationQueries;
+    private readonly SearchOptions? _searchOptions;
 
     /// <param name="index">The indexed corpus to tune against (read-only for the tuner).</param>
     /// <param name="validationQueries">
@@ -32,16 +33,27 @@ public sealed class Bm25ParameterTuner
     /// <param name="tokenizer">
     /// Tokenizer for queries; should be the same one the index was built with.
     /// </param>
+    /// <param name="searchOptions">
+    /// Options every candidate search starts from, or <c>null</c> for the library defaults. Used as a
+    /// template: <see cref="SearchOptions.Limit"/> and
+    /// <see cref="SearchOptions.ExcludedDocumentIds"/> are replaced per query by the tuning depth and
+    /// by the validation query's own exclusions, and every other setting is kept. Pass the options the
+    /// final ranking is reported with when they differ from the defaults — most importantly
+    /// <see cref="SearchOptions.ParseQuerySyntax"/>, because a quoted phrase is adjacency to a tuner
+    /// left on the default and literal text to a harness that reports with syntax off.
+    /// </param>
     public Bm25ParameterTuner(
         ITextIndex index,
         IEnumerable<Bm25ValidationQuery> validationQueries,
-        ITokenizer? tokenizer = null)
+        ITokenizer? tokenizer = null,
+        SearchOptions? searchOptions = null)
     {
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(validationQueries);
 
         _index = index;
         _tokenizer = tokenizer ?? Tokenizer.Default;
+        _searchOptions = searchOptions;
         _validationQueries = validationQueries.ToList();
 
         if (_validationQueries.Count == 0)
@@ -123,7 +135,10 @@ public sealed class Bm25ParameterTuner
         foreach (var validationQuery in _validationQueries)
         {
             var retrievedIds = engine
-                .Search(validationQuery.Query, new SearchOptions(topK, ExcludedDocumentIds: validationQuery.ExcludedDocumentIds))
+                .Search(
+                    validationQuery.Query,
+                    Bm25VariantTunerCore.ResolveSearchOptions(
+                        _searchOptions, topK, validationQuery.ExcludedDocumentIds))
                 .Select(result => result.DocumentId)
                 .ToArray();
 

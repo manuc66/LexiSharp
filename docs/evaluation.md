@@ -403,6 +403,17 @@ bound, over the full `k1 × b × delta` product.
 | `Bm25PlusParameterTuner` | `k1 × b × delta` | 125 | `DeltaHelped` |
 | `Bm25LParameterTuner` | `k1 × b × delta` | 125 | `DeltaHelped` |
 
+**A tuner scores candidates under the caller's conventions.** Each of the four constructors takes an
+optional `SearchOptions`; it is the template for every candidate search, with `Limit` and the
+validation query's `ExcludedDocumentIds` replaced per query and nothing else. `null` — the default —
+is the library defaults, so a tuner built without it performs the same search it always did. The
+setting that matters is `ParseQuerySyntax`: a quoted phrase is positional adjacency to a tuner left on
+the default and literal text to a run that reports with syntax off. On ArguAna, whose queries are
+whole arguments and 138 of 1,406 carry a straight quote, the two readings disagree about which queries
+can match at all; on NFCorpus and SciFact no query carries syntax, so their tuned rows do not depend
+on the option. The BEIR harness passes the options it reports with only under `--tune-search-options`,
+off by default, so an existing run keeps the convention its tuned rows were fitted under.
+
 **A tuned score is an oracle, not a fair baseline.** The winner was fitted on the same
 queries it is scored on, and the more configurations were tried, the more of the gain is
 fitting noise. Score it on a held-out set, or treat it as an upper bound. Every comparison
