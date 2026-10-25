@@ -167,11 +167,13 @@ which serves this folder from `/LexiSharp/`. It is worth reading before editing 
 *What it is* column is the type's own XML summary, so an edit that disagrees with the source is
 overwritten on the next run.
 
-Postgres/ParadeDB integration tests run against whatever `POSTGRES_TEST_CONNECTION` points to:
-`pgvector/pgvector:pg16` covers the lexical + vector + sparse + fuzzy suites,
-`paradedb/paradedb:pg16` covers the lexical + ParadeDB (BM25) + fuzzy suites. The sparse tests
-self-skip when the `vector` extension is unavailable. The fuzzy tests
-self-skip when `pg_trgm` (and `fuzzystrmatch`, when exercised) are unavailable.
+Postgres/ParadeDB integration tests run against whatever `POSTGRES_TEST_CONNECTION` points to.
+`paradedb/paradedb:pg16` packages `pgvector`, `pg_trgm` and `pg_search`, so it runs the **whole**
+suite with nothing skipped — verified on a fresh database, where the pgvector image still skips
+the ParadeDB lane because `pg_search` is absent. The sparse tests install the `vector` extension
+they need when the image packages it, rather than skipping a fresh database that has not had it
+created yet; a server without pgvector still skips them, as does a server without `pg_trgm`
+(and `fuzzystrmatch`, when exercised) for the fuzzy tests.
 
 ## License
 
