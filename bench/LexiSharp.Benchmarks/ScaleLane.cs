@@ -21,15 +21,17 @@ namespace LexiSharp.Benchmarks;
 /// </para>
 /// <para>
 /// It is a direct run rather than a benchmark class for that reason, and the numbers are therefore
-/// a stopwatch in a plain process, not a BenchmarkDotNet report: no warm-up beyond the iteration
-/// counts printed with each row, no outlier removal, no forced collections around the measured
-/// operation. Read the absolute latencies as host-bound; the byte counts are exact.
+/// a stopwatch in a plain process, not a BenchmarkDotNet report: no warm-up beyond the discarded
+/// 1,000-document build and the iteration counts printed with each row, no outlier removal, no
+/// forced collections around the measured operation. Read the absolute latencies as host-bound;
+/// the byte counts are exact.
 /// </para>
 /// <para>
 /// The corpus is <see cref="CorpusFactory.CreateZipfDocuments"/>, which is also what
 /// <see cref="CandidateSearchBenchmarks"/> and <see cref="ScoringPathBenchmarks"/> use, so a row
 /// here is comparable with a row there at 10,000 documents. The query terms are the same three tail
-/// terms those classes use, and the lane prints each term's document frequency at every size,
+/// terms <see cref="CandidateSearchBenchmarks"/> uses, and the lane prints each term's document
+/// frequency at every size,
 /// because the vocabulary is held at 30,000 words while the corpus grows: a tail term thickens with
 /// scale, and the printed <c>df</c> is what keeps that visible.
 /// </para>
@@ -68,7 +70,7 @@ internal static class ScaleLane
             Console.WriteLine(
                 $"\n{Number(LargestDocumentCount)} documents not run. " +
                 $"Pass --include-1m or set {IncludeLargestVariable}=1 to add that size; " +
-                "it needs several gigabytes of managed heap and a build measured in minutes.");
+                "it needs several gigabytes of managed heap and a long build.");
         }
     }
 
@@ -105,8 +107,10 @@ internal static class ScaleLane
         var oneTerm = MeasureQuery(index, engine, OneTermQuery, documentCount);
         var threeTerm = MeasureQuery(index, engine, ThreeTermQuery, documentCount);
 
-        // The flat posting copies the term-at-a-time pass walks are built on first use, after the
-        // build this lane just timed. This second reading prices them.
+        // The first searches retain structures the build does not: the score accumulator rented
+        // from ArrayPool (8 + 1 + 4 bytes per ordinal number), which goes back to the pool rather
+        // than to the GC, and the flat posting copy of each queried term. This second reading
+        // prices them; at 10,000 documents it did not move at the printed precision.
         long afterQueries = ManagedHeapBytes();
 
         Console.WriteLine();
