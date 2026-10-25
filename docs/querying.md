@@ -24,6 +24,9 @@ say so in the notes (`NotSupportedException` rather than a silent no-op — see
 - **Required & prohibited terms** — a leading `+` on a whitespace-delimited token requires it,
   a leading `-` excludes every document containing it. See
   [Required and prohibited terms](#required-and-prohibited-terms).
+- **Field scopes** — `title:term` and `title:"a phrase"` match in one field only, and score from
+  that field's statistics; `+`/`-` combine with them. A prefix is a field only when the name is a
+  field of the corpus. See [Field scopes](#field-scopes).
 - **Highlighting** — `TextHighlighter` wraps query matches in the original text or returns
   word-snapped snippets, driven by the tokenizer's span mode. See
   [Highlighting](#highlighting).
@@ -150,7 +153,7 @@ raw text is then that backend's own grammar to read.
 
 | Engine | Query syntax |
 |---|---|
-| `RankedTextSearchEngine` | phrases, prefix/fuzzy, required and prohibited terms |
+| `RankedTextSearchEngine` | phrases, prefix/fuzzy, required and prohibited terms; field scopes when its scorer and index declare them (see [Which engines honor field scopes](#which-engines-honor-field-scopes)) |
 | `PostgresTextSearchEngine`, `ParadeDBTextSearchEngine` | phrases |
 | `PostgresFuzzySearchEngine`, `PostgresVectorSearchEngine`, `PostgresSparseSearchEngine`, `InMemoryVectorSearchEngine`, `SparseTextSearchEngine` | plain queries only |
 
@@ -158,6 +161,91 @@ The SQL backends are declared unsupported rather than approximated: the lexical 
 its query text to `websearch_to_tsquery`, which has its own grammar, and the ParadeDB engine
 forwards it to `pg_search`; neither would honor this grammar on the terms this library
 tokenizes. A `+`/`-` query against them is refused, and the message names the missing feature.
+
+## Field scopes
+
+Put a field name and a colon immediately before an atom to match that atom in one field only:
+
+```csharp
+engine.Search("title:obsidian");             // "obsidian" must be in the title
+engine.Search("title:\"machine learning\""); // the phrase, at consecutive title positions
+engine.Search("+title:obsidian");            // required: the document must have it in the title
+engine.Search("-title:draft");               // excluded if the title contains "draft"
+engine.Search("title:obsid*");               // prefix expansion, resolved inside the title
+```
+
+A scoped atom is the same atom with a field attached. It **scores from that field's statistics**:
+`tf` is the term's frequency in the field, the length correction uses the field's length and
+corpus average, and the document frequency is the field's own (`FieldDocumentFrequency`). The
+inverse document frequency keeps the corpus-wide document count `N`, so a term that appears in
+few titles is worth more than the same term appearing in many bodies — which is what asking for
+title evidence means. The scorer's configured weight for the field still applies: a scoped term
+is field evidence, and the weight says what that evidence is worth in this corpus.
+
+A scoped term joins the score of the unscoped terms rather than replacing them, so
+`title:obsidian notes` ranks on the title match plus the free term. As with an unscoped free
+term, a scoped one is **not** a hard gate: a document that matches only the free term still comes
+back. It behaves as a gate when it is the only positive content (nothing else scores), and it is
+one explicitly with `+`.
+
+**Grammar.** The prefix must be the first thing in a whitespace-delimited token after an optional
+leading `+`/`-`, it must name a field the query knows about (see below), and it must touch what it
+scopes: `title:term`, `title:"a phrase"`, `+title:term`, `-title:"a phrase"`, `title:term*`,
+`title:term~2`. `title: term`, a bare `title:`, `title:-term` and `"title:term"` (inside quotes)
+are ordinary text. Field names are matched exactly as the index spells them — ordinal, so
+`Title:term` is not `title:term` unless the index has a `Title` field. A scoped token that
+tokenizes to no term is dropped with its scope, exactly as a vacuous `+` atom is.
+
+**The colon is the dangerous character, and the rule is the field vocabulary.** A name before a
+colon is a scope only when it is a *known field*: the corpus's own `IReadOnlyTextIndex.Fields` by
+default, or `SearchOptions.KnownFields` when the caller declares the vocabulary. So `http://x`,
+`12:30` and `key:value` remain the tokens they always were on a corpus whose fields are, say,
+`title` and `body`. If a corpus really has a field called `key`, then `key:value` **is** a scope —
+the rule is the name, not the shape — and a field named `http` would make `http://x` one. That is
+why the vocabulary is explicit rather than guessed from `\w+:`.
+
+A scoped phrase must appear at **consecutive positions inside its field**. Positions are read
+through `IFieldStatisticsIndex.FieldTermPositions`, which returns the term's occurrences inside
+the field's own run of the document position space; a phrase satisfied in the body cannot stand in
+for one scoped to the title, even when both words are also somewhere in the title.
+
+**Unknown names fail loudly.** A prefix that parses as a scope but names a field the index does
+not have raises `NotSupportedException` naming the field and the index's fields, rather than
+returning nothing — a typo and a corpus with no match are different answers. A name the caller
+did not declare stays text, as above.
+
+**Escape hatch.** `ParseQuerySyntax: false` turns the whole grammar off, colons included: the
+query is then exactly `ITokenizer.Tokenize(query)`, so `title:obsidian` searches `title` and
+`obsidian` as two ordinary terms. That is the setting for a corpus of prose in which a colon
+prefix is a label rather than a query.
+
+### Which engines honor field scopes
+
+`RankedTextSearchEngine` honors them when **both** parts can: its scorer implements
+`IFieldScopedScorer` (the built-in `Bm25FScorer` does) and its index implements
+`IFieldStatisticsIndex` (`InMemoryTextIndex`, and the decorators that wrap one, do). The engine
+declares `QueryFeatures.FieldScopes` in exactly that configuration and refuses a scoped query
+otherwise, before scoring anything, naming the missing capability. An index that tracks the
+statistics but not per-field positions answers a scoped single term and throws
+`NotSupportedException` for a scoped phrase; `InMemoryTextIndex` answers both.
+
+| Engine | Field scopes |
+|---|---|
+| `RankedTextSearchEngine` + `Bm25FScorer` over an `IFieldStatisticsIndex` | yes |
+| `RankedTextSearchEngine` + any other scorer, or over an index without field statistics | refused |
+| `PostgresTextSearchEngine`, `ParadeDBTextSearchEngine` | refused when `KnownFields` is set; otherwise the prefix is text |
+| `PostgresFuzzySearchEngine`, `PostgresVectorSearchEngine`, `PostgresSparseSearchEngine`, `InMemoryVectorSearchEngine`, `SparseTextSearchEngine` | refused when `KnownFields` is set; otherwise the prefix is text |
+
+The SQL backends have no field model in their table (the text is one `tsvector`/`pg_search`
+column), so they do not map the syntax; a caller who sets `SearchOptions.KnownFields` gets a
+refusal that names the missing feature instead of a query forwarded as text. Without that set the
+engine has no way to distinguish `title:foo` from a word before a colon — which is the colon rule's
+whole point — so the text goes to the backend's own grammar unchanged.
+
+`Explain` refuses a field-scoped query (`NotSupportedException`): a `ScoreExplanation` has no field
+per contribution, and a total that silently omitted the scoped part would not be the score the
+search ranked on. `ParsedQuery.ScopedTerms`, `ScopedPhrases` and their required/prohibited
+siblings expose the split; `FieldScopedTerm` and `FieldScopedPhrase` are the shapes.
 
 ## Highlighting
 
