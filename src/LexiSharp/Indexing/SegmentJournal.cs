@@ -67,6 +67,17 @@ internal sealed class SegmentJournal : IDisposable
     private readonly FileStream _stream;
     private readonly byte[] _prefix = new byte[4];
     private readonly byte[] _checksum = new byte[4];
+    private readonly byte[] _writeLength = new byte[4];
+    private readonly byte[] _writeChecksum = new byte[4];
+
+    /// <summary>The payload buffer and its writer, reused by every append.</summary>
+    /// <remarks>
+    /// A store's <c>Index</c> appends one record per document, so an encoder that allocated a stream, a
+    /// writer and two arrays per record charged the journal a few kilobytes a document. The buffers are
+    /// the journal's, and the only allocation an append keeps is the encoded text itself.
+    /// </remarks>
+    private readonly MemoryStream _payloadBuffer = new();
+    private readonly BinaryWriter _payloadWriter;
 
     private long _lastSequence;
     private int _unflushed;
@@ -79,6 +90,7 @@ internal sealed class SegmentJournal : IDisposable
         _stream = stream;
         _lastSequence = lastSequence;
         _lastFlushAt = Environment.TickCount64;
+        _payloadWriter = new BinaryWriter(_payloadBuffer, Encoding.UTF8, leaveOpen: true);
     }
 
     /// <summary>The last sequence this journal holds, or the sequence it was reset to.</summary>
@@ -101,11 +113,19 @@ internal sealed class SegmentJournal : IDisposable
     /// </summary>
     /// <param name="directory">The store's directory. Created when absent.</param>
     /// <param name="options">The flush policy.</param>
+    /// <param name="startAt">
+    /// A sequence the journal continues above even when it holds no entry of its own — the marker of the
+    /// segment the store just committed. Without it a journal truncated by a commit would restart at 1,
+    /// and a replay would skip every new entry because the segment's marker already covers them.
+    /// </param>
     /// <exception cref="InvalidDataException">A record is intact by its framing and fails its checksum.</exception>
-    public static SegmentJournal Open(string directory, JournalOptions options)
+    public static SegmentJournal Open(string directory, JournalOptions options, long startAt = 0)
     {
         ArgumentNullException.ThrowIfNull(directory);
         ArgumentNullException.ThrowIfNull(options);
+
+        if (startAt < 0)
+            throw new ArgumentOutOfRangeException(nameof(startAt), startAt, "a journal sequence cannot be negative");
 
         if (!options.Enabled)
             throw new ArgumentException("a disabled journal is not opened; a store with no journal never creates one", nameof(options));
@@ -142,9 +162,30 @@ internal sealed class SegmentJournal : IDisposable
         // Buffering is disabled on purpose: an append reaches the operating system when it is written,
         // which is what makes OnCommit survive a process crash. The device flush is separate and only a
         // policy asks for it.
-        var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite, bufferSize: 1);
+        //
+        // OpenOrCreate rather than Append: an append-mode stream refuses SetLength, and Reset truncates
+        // the file after a commit. One writer per journal means the position is the end of the file, and
+        // the seek makes that true on open.
+        var stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.Write, FileShare.ReadWrite, bufferSize: 1);
+        stream.Seek(0, SeekOrigin.End);
 
-        return new SegmentJournal(path, options, stream, lastSequence) { TruncatedBytes = fileLength - validLength };
+        return new SegmentJournal(path, options, stream, Math.Max(startAt, lastSequence))
+        {
+            TruncatedBytes = fileLength - validLength,
+        };
+    }
+
+    /// <summary>
+    /// Continues above <paramref name="sequence"/>, when the segment the store opened contains entries
+    /// the journal no longer holds.
+    /// </summary>
+    public void StartAt(long sequence)
+    {
+        if (sequence < 0)
+            throw new ArgumentOutOfRangeException(nameof(sequence), sequence, "a journal sequence cannot be negative");
+
+        if (sequence > _lastSequence)
+            _lastSequence = sequence;
     }
 
     /// <summary>
@@ -157,9 +198,36 @@ internal sealed class SegmentJournal : IDisposable
     public long Append(JournalOperation operation, SearchDocument? document = null, string? documentId = null)
     {
         long sequence = _lastSequence + 1;
-        byte[] record = Encode(sequence, operation, document, documentId);
 
-        _stream.Write(record);
+        _payloadBuffer.Position = 0;
+        _payloadBuffer.SetLength(0);
+
+        _payloadWriter.Write(sequence);
+        _payloadWriter.Write((byte)operation);
+
+        switch (operation)
+        {
+            case JournalOperation.Add:
+                WriteDocument(_payloadWriter, document ?? throw new ArgumentNullException(nameof(document)));
+                break;
+
+            case JournalOperation.Remove:
+                _payloadWriter.Write(documentId ?? throw new ArgumentNullException(nameof(documentId)));
+                break;
+        }
+
+        _payloadWriter.Flush();
+
+        int length = (int)_payloadBuffer.Length;
+        byte[] payload = _payloadBuffer.GetBuffer();
+
+        BinaryPrimitives.WriteInt32LittleEndian(_writeLength, length);
+        BinaryPrimitives.WriteUInt32LittleEndian(_writeChecksum, Crc32(payload.AsSpan(0, length)));
+
+        _stream.Write(_writeLength);
+        _stream.Write(payload, 0, length);
+        _stream.Write(_writeChecksum);
+
         _lastSequence = sequence;
         _unflushed++;
 
@@ -224,6 +292,7 @@ internal sealed class SegmentJournal : IDisposable
         // there is no prefix to keep. A crash after this and before the next append replays nothing and
         // the segment is the corpus.
         _stream.SetLength(0);
+        _stream.Seek(0, SeekOrigin.Begin);
         _stream.Flush();
         _lastSequence = sequence;
         _unflushed = 0;
@@ -244,6 +313,8 @@ internal sealed class SegmentJournal : IDisposable
         if (_options.Flush != JournalFlushPolicy.OnCommit)
             Flush();
 
+        _payloadWriter.Dispose();
+        _payloadBuffer.Dispose();
         _stream.Dispose();
     }
 
@@ -325,37 +396,6 @@ internal sealed class SegmentJournal : IDisposable
 
         sequence = BinaryPrimitives.ReadInt64LittleEndian(payload);
         return true;
-    }
-
-    private static byte[] Encode(long sequence, JournalOperation operation, SearchDocument? document, string? documentId)
-    {
-        using var payload = new MemoryStream();
-
-        using (var writer = new BinaryWriter(payload, Encoding.UTF8, leaveOpen: true))
-        {
-            writer.Write(sequence);
-            writer.Write((byte)operation);
-
-            switch (operation)
-            {
-                case JournalOperation.Add:
-                    WriteDocument(writer, document ?? throw new ArgumentNullException(nameof(document)));
-                    break;
-
-                case JournalOperation.Remove:
-                    writer.Write(documentId ?? throw new ArgumentNullException(nameof(documentId)));
-                    break;
-            }
-        }
-
-        int length = (int)payload.Length;
-        byte[] record = new byte[4 + length + 4];
-        BinaryPrimitives.WriteInt32LittleEndian(record, length);
-
-        payload.GetBuffer().AsSpan(0, length).CopyTo(record.AsSpan(4));
-        BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(4 + length), Crc32(record.AsSpan(4, length)));
-
-        return record;
     }
 
     private static JournalEntry Decode(long sequence, byte[] payload, int length)

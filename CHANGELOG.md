@@ -20,6 +20,41 @@ workflow.
 
 ### Added
 
+- **The store keeps a write-ahead journal, so a write survives a crash.**
+
+  `SegmentedTextIndex` wrote the corpus to disk at `Commit` and kept everything written since in
+  memory, so a crash cost the whole overlay — every write since the last commit, which on a large
+  corpus is a corpus rewrite's worth of time. Writes are now appended to `journal.wal` beside the
+  segments and replayed when the store opens.
+
+  Measured on one NVMe host in one session, per 1 KiB entry: an append costs **0.5 µs**, an append with
+  a device flush **3.1 ms**, and one flush covering a hundred entries **33 µs**. A commit of 40,000
+  documents costs **1.4 s and 188 MB**, and its cost follows the corpus rather than the writes — which
+  is why "commit often enough to keep the window small" is not an option that scales, and why the
+  default is a grouped flush rather than a commit cadence.
+
+  Three policies: `Grouped` (default — a hundred entries or fifty milliseconds), `PerWrite` (a device
+  flush per write), `OnCommit` (never flushes outside a commit, so a process crash loses nothing and a
+  power loss loses whatever the kernel had not written back). `FlushJournal()` closes a grouped window
+  at a cadence the caller chooses. `JournalOptions.Disabled` restores the previous behaviour.
+
+  What stops a replay lives in the segment, not in a side file: the header carries the last entry the
+  segment contains, written into the temporary file before the fsync and published by the same rename,
+  so the two cannot disagree. Replaying past it would not be idempotent — re-indexing a document
+  tombstones its old ordinal and adds a new one.
+
+  A record is `[int32 length][payload][uint32 crc32]`. The framing distinguishes the two failures a
+  journal meets: a torn tail — the record a crash interrupted — cannot present a length that fits the
+  bytes behind it, so opening drops it and cuts the file back to a record boundary; a record whose
+  length fits and whose checksum does not is damage, and the store refuses to open rather than replay
+  an operation it cannot vouch for. The torn-tail test walks every byte cut of a four-record journal
+  and asserts, per cut, that replay yields exactly the records that fit, that the file was shortened to
+  a boundary, and that the next append is given the next sequence.
+
+  The overlay build of 20,000 documents still allocates 395 MB against its 460 MB pin with the journal
+  on: the encoder reuses its buffers, so the journal's own share is one serialized copy of each
+  document rather than a stream, a writer and two arrays per write.
+
 - **The evaluation harness's cross-encoder reranking is resumable.**
 
   Every scored `(query, document)` pair is appended to `data/rerank-cache/` (or
@@ -499,6 +534,14 @@ workflow.
   suffix per threshold fails it.
 
 ### Changed
+
+- **A store journals by default, and the store a commit replaces refuses writes.**
+  `SegmentedTextIndex(directory)` now opens or creates `journal.wal` and replays it; pass
+  `journal: JournalOptions.Disabled` for the previous behaviour. A directory holds one journal and one
+  writer, so `Commit` and `Merge` hand the journal to the store they return and the previous one throws
+  `InvalidOperationException` on its next write instead of handing out a sequence the new store would
+  also take. Write through the store those methods return — which is what their remarks already said a
+  caller should do.
 
 - **The segment format is version 5.** The header gained an eight-byte field: the last write-ahead
   journal entry the segment contains, zero for a segment written without a journal. It lives in the
