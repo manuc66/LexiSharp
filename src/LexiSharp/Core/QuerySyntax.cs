@@ -9,7 +9,9 @@ namespace LexiSharp.Core;
 /// <remarks>
 /// Detection uses <see cref="Tokenizer.Default"/>, the canonical query tokenizer: an operator
 /// whose base does not tokenize to a term (e.g. <c>a*</c> with the default single-char rule) is
-/// plain text, exactly as <see cref="QueryParser"/> decides it.
+/// plain text, exactly as <see cref="QueryParser"/> decides it. The same rule is why a bare
+/// <c>+</c>/<c>-</c> or a <c>-</c> inside a word (<c>e-mail</c>) is not reported: it is not an
+/// operator to <see cref="QueryParser"/> either.
 /// </remarks>
 public static class QuerySyntax
 {
@@ -26,6 +28,12 @@ public static class QuerySyntax
 
         if (parsed.HasExpansions)
             features |= QueryFeatures.Expansions;
+
+        if (parsed.HasRequired)
+            features |= QueryFeatures.RequiredTerms;
+
+        if (parsed.HasProhibited)
+            features |= QueryFeatures.ProhibitedTerms;
 
         return features;
     }
@@ -56,13 +64,19 @@ public static class QuerySyntax
         if (feature == QueryFeatures.None)
             return "plain queries only";
 
-        var parts = new List<string>(2);
+        var parts = new List<string>(4);
 
         if ((feature & QueryFeatures.Phrases) != 0)
             parts.Add("phrase queries");
 
         if ((feature & QueryFeatures.Expansions) != 0)
             parts.Add("prefix/fuzzy operators");
+
+        if ((feature & QueryFeatures.RequiredTerms) != 0)
+            parts.Add("required (+) terms");
+
+        if ((feature & QueryFeatures.ProhibitedTerms) != 0)
+            parts.Add("prohibited (-) terms");
 
         return string.Join(" and ", parts);
     }

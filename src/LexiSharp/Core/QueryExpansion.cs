@@ -10,6 +10,19 @@ public enum QueryExpansionKind
     Fuzzy,
 }
 
+/// <summary>What a query atom asks of the documents that contain it.</summary>
+public enum QueryTermOperator
+{
+    /// <summary>No leading operator: the atom only contributes to scoring.</summary>
+    None,
+
+    /// <summary>A leading <c>+</c>: the document must contain the atom, and it scores.</summary>
+    Required,
+
+    /// <summary>A leading <c>-</c>: the document must not contain the atom, and it does not score.</summary>
+    Prohibited,
+}
+
 /// <summary>
 /// A free-text query atom carrying a search-time expansion operator: the base term (already
 /// tokenized to exactly one term) is matched against the index vocabulary instead of being
@@ -24,4 +37,15 @@ public enum QueryExpansionKind
 public sealed record QueryExpansion(
     string BaseTerm,
     QueryExpansionKind Kind,
-    int MaxEdits = 1);
+    int MaxEdits = 1)
+{
+    /// <summary>
+    /// The leading <c>+</c>/<c>-</c> operator that qualified this atom, or
+    /// <see cref="QueryTermOperator.None"/> when it carried none. A
+    /// <see cref="QueryTermOperator.Required"/> atom gates on at least one expanded term being
+    /// present and contributes its expanded terms to scoring; a
+    /// <see cref="QueryTermOperator.Prohibited"/> atom gates on none of them being present and
+    /// contributes nothing to scoring.
+    /// </summary>
+    public QueryTermOperator Operator { get; init; } = QueryTermOperator.None;
+}
