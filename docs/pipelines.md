@@ -155,6 +155,49 @@ computes embeddings — and `VectorSimilarity` provides pure cosine math. `Postg
 is the reference consumer: it turns any provider into an ANN backend that the same
 `HybridTextSearchEngine` merges exactly like a lexical engine.
 
+## Whether to route, measured
+
+The fusion is worth having where the lexical lane fails. Over the queries where BM25 scores zero,
+RRF scores **+0.116** nDCG@10 on average across 60 SciFact queries and **+0.025** across 104 on
+NFCorpus, and **no query was made worse** in either set — 164 queries, 39 improved, none degraded.
+
+That makes a router attractive: run the dense lane only where it pays. Three candidate signals were
+measured against that, and each fails in its own way.
+
+| signal | what it reads | result |
+|---|---|---|
+| idf coverage | how much of the query the corpus knows | the rule fitted on it — fuse below a threshold — depends on the judgments, and the two corpora do not put that threshold in the same place |
+| out-of-vocabulary terms | query terms the index has never seen | keeps **72 %** of the always-fuse gain on SciFact, for about 0.2 ms a query |
+| top-10 disagreement | Jaccard distance between the two lanes' pages | rank correlation with the fusion gain **0.006** on NFCorpus and **−0.077** on SciFact; with the rerank gain **0.075**, on a 100-query SciFact prefix |
+
+The disagreement is the one that needs no labels, and it fails for a structural reason: it needs both
+rankings, so it cannot decide whether to run the encoder — only whether to run a stage after both
+have run. It does separate the queries where the lexical lane returns nothing, weakly: at a distance
+of 0.9, 61 % of the NFCorpus queries selected are zeros against a 32 % base, with 70 % of the zeros
+captured; on SciFact 41 % against 20 %, with 40 % captured. The distribution also sits near the top
+of its range — no query on either corpus has identical top-10 pages, 66 of 323 and 13 of 300 share no
+id at all, and 212 of 323 and 184 of 300 are above 0.8 — so a threshold there cuts the corpus rather
+than the hard cases.
+
+Two things frame those numbers. Missing vocabulary is not what makes a query hard: of the 104
+NFCorpus queries where BM25 scores zero, **67 have every term in the index**, so the difficulty is in
+the ranking rather than in a gap a thesaurus could fill. And the rerank row is a 100-id prefix rather
+than a random sample; the full 300-query rerank run did not finish in the session that measured it.
+
+Nothing here routes by default: `HybridTextSearchEngine` queries every lane, and both routers below
+take a decision the caller supplies. What would reopen the question is a signal deeper than the top
+ten, a rank-weighted distance, or one learned across corpora rather than a threshold rule. The
+harness measures it per corpus and writes one row per query, so every subset above is a filter over
+its output:
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --dense --no-tuned \
+  --analyze /tmp/nf.tsv --analyze-baseline "BM25 (k1=1.5, b=0.75)" \
+  --analyze-candidate "Hybrid BM25+Dense RRF" \
+  --analyze-disagreement-left "BM25 (k1=1.5, b=0.75)" \
+  --analyze-disagreement-right "Dense multilingual-e5-small"
+```
+
 ## Cost-based routing (`RoutedSearchEngine`)
 
 When the same corpus is reachable through several engines — say a stock in-memory engine and a

@@ -500,6 +500,20 @@ workflow.
 
 ### Changed
 
+- **Query-time routing is measured, and the library routes nothing by default.**
+  Fusing a dense lane with the lexical one gains where the lexical one fails — **+0.116** nDCG@10 on
+  average over the 60 SciFact queries where BM25 scores zero, **+0.025** over 104 on NFCorpus, 39
+  queries improved and none made worse across the 164 — so a router that runs the encoder only where
+  it helps is the obvious next step. Three candidate signals were measured against it and none
+  separates enough: the idf-coverage rule is fitted on the judgments and the two corpora
+  do not place its threshold alike; an out-of-vocabulary trigger keeps 72 % of the gain for about
+  0.2 ms a query; and the top-10 disagreement between the two lanes has a rank correlation of 0.006
+  and −0.077 with the fusion gain and 0.075 with the rerank gain. The disagreement is also not a
+  pre-retrieval signal — it needs both rankings — and its distribution saturates, so a threshold cuts
+  the corpus rather than the hard cases. `HybridTextSearchEngine` queries every lane and both routers
+  take a caller-supplied decision; the measurements are in
+  [pipelines](docs/pipelines.md#whether-to-route-measured).
+
 - **`ITextSearchEngine.Search` takes a `CancellationToken`, and the engines consult it where they can.**
 
   The signature is `Search(string query, SearchOptions? options = null, CancellationToken
