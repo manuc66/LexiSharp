@@ -573,6 +573,22 @@ workflow.
   the corpus rather than the hard cases. `HybridTextSearchEngine` queries every lane and both routers
   take a caller-supplied decision; the measurements are in
   [pipelines](docs/pipelines.md#whether-to-route-measured).
+- **Every parameter tuner takes an optional `SearchOptions` template.**
+
+  `Bm25ParameterTuner`, `Bm25FParameterTuner`, `Bm25PlusParameterTuner` and
+  `Bm25LParameterTuner` accept `SearchOptions? searchOptions = null` on the constructor. When given,
+  every candidate search starts from that instance and replaces only `Limit` (the tuning depth) and
+  `ExcludedDocumentIds` (the validation query's own); everything else — above all
+  `ParseQuerySyntax` — is the caller's. `null` is the library default, which is the run every tuner
+  performed before the parameter existed.
+
+  The case it closes is a tuner and a reported table reading the same validation query differently.
+  With the default, `"a phrase"` is positional adjacency; a run reporting with syntax off reads the
+  quotation marks as text. On ArguAna, where 138 of the 1,406 queries carry a straight quote, that is
+  a different parameter choice from the one the table reports, and no query on NFCorpus or SciFact
+  carries syntax, so those tuned rows do not depend on it. The BEIR harness passes its own options
+  only under `--tune-search-options`, off by default; the tuned rows already published keep the
+  parameters they were fitted with.
 
 - **`ITextSearchEngine.Search` takes a `CancellationToken`, and the engines consult it where they can.**
 
