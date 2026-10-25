@@ -725,8 +725,11 @@ suite and nothing else, so the default invocation's cost is unchanged.
   measurement: it does not count native or runtime memory (JIT code, thread stacks, the GC's own
   structures), page cache, or the corpus's `SearchDocument` objects and text — those are alive on
   both sides of the reading and therefore outside the delta. The `after queries` reading is taken
-  again once the tail queries have run, which prices the flat posting copies the term-at-a-time pass
-  builds on first use.
+  again once the tail queries have run, which prices what a first search retains: the score
+  accumulator rented from `ArrayPool` (8 + 1 + 4 bytes per ordinal number, returned to the pool
+  rather than to the GC) and the flat posting copy of each queried term. At 10,000 documents that
+  second reading did not move at the printed precision; at 100,000 it is 1.6 MB, consistent with the
+  pooled accumulator's three arrays alone (1.63 MB at that ordinal space).
 - **Query latency** — one tail term (`w20000x`) and three tail terms (`w20000x w25000x w29000x`),
   the same tail terms `CandidateSearchBenchmarks` uses, at `Limit: 10`. 100 warm-up searches are
   served at 10,000 documents, 50 at 100,000 and 20 at 1,000,000, followed by 1,000 / 300 / 100 timed
