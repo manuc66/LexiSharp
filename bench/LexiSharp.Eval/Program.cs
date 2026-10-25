@@ -749,9 +749,11 @@ public static class Program
         PrintTable(results, topK);
         PrintReference(dataset, analysisDescription, gain);
 
-        Console.WriteLine($"BM25 tuned {(heldOut is null
-            ? "in-sample on the same queries"
-            : "in-sample on the fit set")} (oracle, not a fair baseline): {tunedDescription}");
+        Console.WriteLine(heldOut is null
+            ? $"BM25 tuned in-sample on the same queries (oracle, not a fair baseline): {tunedDescription}"
+            : tuned
+                ? $"BM25 tuned in-sample on the fit set (oracle, not a fair baseline): {tunedDescription}"
+                : $"BM25 tuned: {tunedDescription}");
 
         if (heldOut is not null)
             PrintHeldOut(heldOut);
