@@ -417,7 +417,10 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         if (options.IsEmpty || string.IsNullOrWhiteSpace(query) || columns.Count == 0)
             return SearchOutcome.Empty;
 
-        QuerySyntax.EnsureSupported(query, SupportedQueryFeatures, nameof(PostgresVectorSearchEngine));
+        // ParseQuerySyntax: false is the caller saying "literal text, do not consult the query
+        // parser" — and EnsureSupported is a parser call.
+        if (options.ParseQuerySyntax)
+            QuerySyntax.EnsureSupported(query, SupportedQueryFeatures, nameof(PostgresVectorSearchEngine));
 
         // One query vector per channel: a column-aware provider may encode the same query
         // differently per column (e.g. centering each channel in its own space). Computed here,

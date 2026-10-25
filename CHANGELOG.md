@@ -37,6 +37,30 @@ workflow.
   numeric edge has no ordinal position to fall back to the way `MetadataFilter` does. Counts cover
   the whole match set independently of `Offset`/`Limit`, and `Results` is identical to `Search`.
   The existing `FacetValue`, `FacetBucket` and `SearchWithFacets` overloads are unchanged.
+- **The query language reads a leading `+`/`-`, so a term can be required or prohibited.**
+
+  `+term` requires the term and scores it; `-term` excludes every document containing it and
+  contributes nothing to the score. Both apply to quoted phrases (`+"a phrase"`, `-"a phrase"`)
+  and to prefix/fuzzy atoms (`+term*`, `-term~2`), gate before any relevance math, and are
+  declared through `QueryFeatures.RequiredTerms`/`QueryFeatures.ProhibitedTerms` — an engine that
+  does not implement them throws `NotSupportedException` instead of treating the sign as text.
+
+  **A query whose token begins with `-` changes meaning.** With `SearchOptions.ParseQuerySyntax`
+  at its default `true`, `-word` now excludes documents containing `word`; before, the tokenizer
+  discarded the sign and the query searched for `word`. A corpus of prose that writes leading
+  hyphens literally needs `ParseQuerySyntax: false`, where the query language is not consulted at
+  all and `-word` is again ordinary text to the tokenizer. `+word` also used to search `word`; it
+  now requires it, which narrows the result set to documents that contain it.
+
+  A `-` inside a token is unchanged: `e-mail`, `well-being` and `foo-bar` tokenize exactly as
+  before, because only a leading sign on a whitespace-delimited token is an operator. A query of
+  only prohibited terms returns the complement at score `1.0` — a filter, ordered by the
+  configured tie-break — and a query of only required terms scores on those terms.
+
+  `RankedTextSearchEngine` implements both. The PostgreSQL and ParadeDB lexical engines declare
+  them unsupported and refuse with `NotSupportedException` while the query language is on, as do
+  the vector, sparse and fuzzy backends, which already refuse the rest of it; with
+  `ParseQuerySyntax: false` the raw text is that backend's own grammar to read.
 
 - **The evaluation harness can fit BM25F, and reports whether the weighting earned it.**
 

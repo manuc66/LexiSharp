@@ -219,6 +219,45 @@ public abstract class SearchEngineConformanceTests
         }
     }
 
+    [SkippableFact]
+    public void RequiredAndProhibitedTerms_GateOrFailFast()
+    {
+        Skip.If(IsUnavailable, UnavailableReason);
+        var engine = CreateEngine();
+
+        try
+        {
+            engine.Index(Corpus);
+
+            if (!Supports(engine, QueryFeatures.RequiredTerms | QueryFeatures.ProhibitedTerms))
+            {
+                // Unsupported syntax must fail fast, never be silently treated as plain text. Both
+                // halves are asserted because an engine can implement one operator and not the other.
+                Assert.Throws<NotSupportedException>(() => engine.Search("+machine", All));
+                Assert.Throws<NotSupportedException>(() => engine.Search("-machine", All));
+                return;
+            }
+
+            // Required: only the two documents that contain "machine".
+            var required = Ids(engine.Search("+machine", All));
+            Assert.Contains("d1", required);
+            Assert.Contains("d2", required);
+            Assert.Equal(2, required.Length);
+
+            // Prohibited alone is the complement: neither of those documents can come back, and a
+            // document that never contains the term always does.
+            var prohibited = Ids(engine.Search("-machine", All));
+            Assert.DoesNotContain("d1", prohibited);
+            Assert.DoesNotContain("d2", prohibited);
+            Assert.Contains("d4", prohibited);
+            Assert.Contains("d5", prohibited);
+        }
+        finally
+        {
+            DestroyEngine(engine);
+        }
+    }
+
     private static bool Supports(ITextSearchEngine engine, QueryFeatures feature) =>
         engine is IQuerySyntaxSupport support && (support.SupportedQueryFeatures & feature) == feature;
 }
