@@ -186,6 +186,35 @@ public class PostgresSparseSearchEngineTests
     }
 
     [SkippableFact]
+    public void Add_WritesTheTsvTheLexicalEngineSearches()
+    {
+        Skip.If(ConnectionString is null || !VectorExtensionAvailable(), "POSTGRES_TEST_CONNECTION not set, or no vector extension.");
+
+        using var sparse = NewEngine();
+
+        string table = sparse.TestTableName;
+
+        try
+        {
+            sparse.Add(new SearchDocument("a", "red apple",
+                TextFields: new Dictionary<string, string> { ["title"] = "searchable headline" }));
+
+            using var lexical = new PostgresTextSearchEngine(
+                ConnectionString!,
+                new PostgresIndexOptions { Table = table });
+
+            var results = lexical.Search("headline", new SearchOptions(Limit: 10));
+
+            Assert.Single(results);
+            Assert.Equal("a", results[0].DocumentId);
+        }
+        finally
+        {
+            sparse.DropSchema();
+        }
+    }
+
+    [SkippableFact]
     public void Search_QueryTermsAllOutsideVocabulary_ReturnsEmpty()
     {
         Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
