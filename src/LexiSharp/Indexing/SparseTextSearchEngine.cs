@@ -201,7 +201,7 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
         // ParseQuerySyntax: false is the caller saying "literal text, do not consult the query
         // parser" — and EnsureSupported is a parser call.
         if (options.ParseQuerySyntax)
-            QuerySyntax.EnsureSupported(query, SupportedQueryFeatures, nameof(SparseTextSearchEngine));
+            QuerySyntax.EnsureSupported(query, SupportedQueryFeatures, nameof(SparseTextSearchEngine), options.KnownFields);
 
         if (_documents.Count == 0)
             return Array.Empty<SearchResult>();

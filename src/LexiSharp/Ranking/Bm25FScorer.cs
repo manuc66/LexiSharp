@@ -52,7 +52,7 @@ namespace LexiSharp.Ranking;
 /// rather than quietly ranking on zeros.
 /// </para>
 /// </remarks>
-public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPlannableScorer
+public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPlannableScorer, IFieldScopedScorer
 {
     private static readonly Dictionary<string, double> EmptyWeights = new(StringComparer.Ordinal);
 
@@ -165,6 +165,113 @@ public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
         ArgumentNullException.ThrowIfNull(index);
 
         return new Bm25FQueryPlan(queryTerms, index, _k1, _b, _weights);
+    }
+
+    /// <summary>
+    /// The BM25F contribution of terms scoped to one field each: the same formula as
+    /// <see cref="Score"/>, restricted to the field the term names.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// For a term scoped to <c>f</c>, the formula's sums run over <c>f</c> alone: <c>tf</c> is the
+    /// term's frequency in that field of the document, the length correction uses that field's
+    /// length and corpus average, and the baseline <c>W</c> is that field's weighted average. The
+    /// field's configured weight still applies, because it is what that field's evidence is worth
+    /// in this corpus.
+    /// </para>
+    /// <para>
+    /// The inverse document frequency keeps the corpus-wide <c>N</c> and takes the field's own
+    /// document frequency from
+    /// <see cref="IFieldStatisticsIndex.FieldDocumentFrequency"/>: a term present in few titles is
+    /// more informative than the same term present in many bodies, and the scope asked for the
+    /// field's evidence. The result is that a scoped term outranks an unscoped one of the same
+    /// corpus frequency when its field is more selective.
+    /// </para>
+    /// <para>
+    /// Every field named must come from <see cref="IReadOnlyTextIndex.Fields"/>;
+    /// <see cref="LexiSharp.Ranking.RankedTextSearchEngine"/> validates that before scoring, and a
+    /// direct caller gets an <see cref="ArgumentException"/> rather than a silent zero.
+    /// </para>
+    /// </remarks>
+    public double ScoreScoped(
+        string documentId,
+        IReadOnlyList<FieldScopedTerm> scopedTerms,
+        IReadOnlyTextIndex index)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(documentId);
+        ArgumentNullException.ThrowIfNull(scopedTerms);
+        ArgumentNullException.ThrowIfNull(index);
+
+        if (index.Count == 0 || scopedTerms.Count == 0)
+            return 0;
+
+        var fieldsIndex = RequireFieldStatistics(index);
+        var fields = ResolveFields(fieldsIndex);
+        double score = 0;
+        HashSet<(string Field, string Term)>? seen =
+            scopedTerms.Count > 1 ? new HashSet<(string, string)>() : null;
+
+        for (int i = 0; i < scopedTerms.Count; i++)
+        {
+            var scoped = scopedTerms[i];
+
+            TextFields.Validate(scoped.Field, nameof(scopedTerms));
+            ArgumentException.ThrowIfNullOrEmpty(scoped.Term);
+
+            if (seen is not null && !seen.Add((scoped.Field, scoped.Term)))
+                continue;
+
+            var field = FindField(fields, scoped.Field)
+                ?? throw new ArgumentException(
+                    $"Unknown field '{scoped.Field}'. The index's fields are " +
+                    $"{string.Join(", ", fieldsIndex.Fields)}.",
+                    nameof(scopedTerms));
+
+            var geometry = ScopedGeometry(documentId, scoped.Term, field, fieldsIndex, _b);
+            score += Combine(
+                geometry,
+                InverseDocumentFrequency(fieldsIndex.StatisticDocumentCount, geometry.DocumentFrequency),
+                _k1,
+                _b);
+        }
+
+        return score;
+    }
+
+    private static FieldStats? FindField(List<FieldStats> fields, string name)
+    {
+        for (int i = 0; i < fields.Count; i++)
+        {
+            if (string.Equals(fields[i].Name, name, StringComparison.Ordinal))
+                return fields[i];
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// One term's geometry when it is scoped to a single field: <c>t&#771;</c> and the length come
+    /// from that field alone, and the corpus baseline <c>W</c> is that field's weighted average.
+    /// </summary>
+    private static TermGeometry ScopedGeometry(
+        string documentId,
+        string term,
+        FieldStats field,
+        IFieldStatisticsIndex index,
+        double b)
+    {
+        int tf = field.Weight <= 0 ? 0 : index.FieldTermFrequency(documentId, field.Name, term);
+        int fieldLength = index.FieldLength(documentId, field.Name);
+
+        double correction = field.AverageLength > 0
+            ? 1.0 - b + (b * fieldLength / field.AverageLength)
+            : 1.0;
+
+        return new TermGeometry(
+            tf > 0 ? field.Weight * tf / correction : 0,
+            field.Weight * fieldLength,
+            field.WeightedAverageLength,
+            index.FieldDocumentFrequency(field.Name, term));
     }
 
     /// <inheritdoc />

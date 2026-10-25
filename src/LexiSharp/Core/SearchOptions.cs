@@ -34,11 +34,13 @@ namespace LexiSharp.Core;
 /// </param>
 /// <param name="ParseQuerySyntax">
 /// When <c>true</c> (the default), the query is read as query syntax: <c>"a phrase"</c> requires
-/// positional adjacency, <c>term*</c> is a prefix and <c>term~</c> is fuzzy, and a leading
+/// positional adjacency, <c>term*</c> is a prefix and <c>term~</c> is fuzzy, a leading
 /// <c>+</c>/<c>-</c> on a whitespace-delimited token makes that term, phrase or expansion
-/// required or prohibited. When <c>false</c>, the query is literal text and <c>QueryParser</c> is
-/// not consulted at all, so the terms are exactly <c>ITokenizer.Tokenize(query)</c> — including
-/// for a token that starts with <c>-</c>, which is then an ordinary separator.
+/// required or prohibited, and a <c>name:</c> prefix over a known field (see
+/// <see cref="KnownFields"/>) scopes the atom to that field. When <c>false</c>, the query is
+/// literal text and <c>QueryParser</c> is not consulted at all, so the terms are exactly
+/// <c>ITokenizer.Tokenize(query)</c> — including for a token that starts with <c>-</c>, which is
+/// then an ordinary separator, and for a colon, which is always one.
 /// <para>
 /// The distinction matters because a double quote is ordinary text in prose, and a query language
 /// cannot tell a quotation mark from a phrase delimiter. Measured on BEIR ArguAna, where all 1,406
@@ -109,6 +111,26 @@ namespace LexiSharp.Core;
 /// <see cref="Ranking.TieBreak.DocumentId"/> reads the document's ordinal, which both paths carry.
 /// Setting this <c>false</c> is the only thing that asks for the loop.</para>
 /// </param>
+/// <param name="KnownFields">
+/// The field names a <c>name:</c> prefix may name in the query (<c>title:term</c>,
+/// <c>title:"a phrase"</c>). Default <c>null</c>: the target engine's own field list, so a prefix
+/// is a scope exactly when the corpus has a field with that name — <c>http://x</c>, <c>12:30</c>
+/// and <c>key:value</c> stay ordinary text unless the corpus really has a field called
+/// <c>http</c>, <c>12</c> or <c>key</c>. An empty set disables field scopes; a name in the set that
+/// the index does not have makes the search throw rather than quietly return nothing. Matching is
+/// done with the set's own comparer; an engine's default set is ordinal, so <c>Title:</c> and
+/// <c>title:</c> name two different fields.
+/// <para>
+/// A scoped term matches and scores from that field's statistics, and a scoped phrase must appear
+/// at consecutive positions inside it. The stock engine honors the syntax only when its scorer
+/// implements <see cref="IFieldScopedScorer"/> and its index implements
+/// <see cref="IFieldStatisticsIndex"/>; it declares <see cref="QueryFeatures.FieldScopes"/> when
+/// it does, and refuses the query otherwise. Every other backend reads this set only to refuse a
+/// scope it cannot honor — a backend with no field model forwards the text unchanged when the set
+/// is left <c>null</c>. <see cref="ParseQuerySyntax"/> <c>false</c> turns the whole grammar off,
+/// colons included.
+/// </para>
+/// </param>
 public sealed record SearchOptions(
     int Limit = 10,
     double MinimumScore = double.NegativeInfinity,
@@ -120,7 +142,8 @@ public sealed record SearchOptions(
     bool ParseQuerySyntax = true,
     Ranking.TieBreak TieBreak = Ranking.TieBreak.DocumentId,
     bool AccumulateFilteredQueries = true,
-    SearchCosts? Costs = null)
+    SearchCosts? Costs = null,
+    IReadOnlySet<string>? KnownFields = null)
 {
     /// <summary>
     /// The rounding a system that writes its scores down applies before it writes them, or

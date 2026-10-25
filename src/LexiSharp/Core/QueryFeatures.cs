@@ -27,4 +27,15 @@ public enum QueryFeatures
     /// <c>-term~N</c>): the document must not contain it.
     /// </summary>
     ProhibitedTerms = 8,
+
+    /// <summary>
+    /// A known field name followed by a colon scopes the atom to that field:
+    /// <c>title:term</c>, <c>title:"a phrase"</c>, and either with a leading <c>+</c>/<c>-</c>.
+    /// </summary>
+    /// <remarks>
+    /// A prefix is a field only when the name is known to the query — the engine's index fields by
+    /// default, or <see cref="SearchOptions.KnownFields"/> — so <c>http://x</c>, <c>12:30</c> and
+    /// <c>key:value</c> stay ordinary text unless the corpus really has a field of that name.
+    /// </remarks>
+    FieldScopes = 16,
 }

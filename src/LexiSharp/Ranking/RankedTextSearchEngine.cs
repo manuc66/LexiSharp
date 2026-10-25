@@ -56,6 +56,17 @@ namespace LexiSharp.Ranking;
 /// for every surviving document; a query of only required atoms scores on exactly those terms.
 /// </para>
 /// <para>
+/// A <b>field scope</b> restricts an atom to one field: <c>title:term</c>, <c>title:"a phrase"</c>,
+/// <c>+title:term</c>, <c>-title:term</c>, and the expansion forms. It is recognized only when the
+/// name before the colon is a field of this engine's index (or one the caller declared through
+/// <see cref="SearchOptions.KnownFields"/>), so <c>http://x</c>, <c>12:30</c> and <c>key:value</c>
+/// remain ordinary text. A scoped term gates the same way an unscoped one does (hard only with
+/// <c>+</c>) and scores from its field's statistics; a scoped phrase must appear at consecutive
+/// positions <i>inside</i> that field, never across a boundary. The feature is declared only when
+/// the scorer implements <see cref="IFieldScopedScorer"/> (the built-in <c>Bm25FScorer</c> does)
+/// and the index implements <see cref="IFieldStatisticsIndex"/>; otherwise the query is refused.
+/// </para>
+/// <para>
 /// An optional <see cref="SynonymMap"/> additionally rewrites <b>free</b> query terms to
 /// their direct synonyms — one-way edges via <c>Add</c>, bidirectional groups via
 /// <c>AddEquivalent</c> — at one level only (never synonyms of synonyms) and never inside
@@ -80,10 +91,19 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
     /// <inheritdoc />
     public QueryFeatures SupportedQueryFeatures =>
-        QueryFeatures.Phrases | QueryFeatures.Expansions | QueryFeatures.RequiredTerms | QueryFeatures.ProhibitedTerms;
+        QueryFeatures.Phrases | QueryFeatures.Expansions | QueryFeatures.RequiredTerms | QueryFeatures.ProhibitedTerms
+        | (SupportsFieldScopes ? QueryFeatures.FieldScopes : QueryFeatures.None);
+
+    /// <summary>
+    /// Whether this engine can honour a field scope: the scorer has to know how to score one
+    /// field's statistics and the index has to record them.
+    /// </summary>
+    private bool SupportsFieldScopes => _scopedScorer is not null && _fieldStatistics is not null;
 
     private readonly IReadOnlyTextIndex _index;
     private readonly ITextScorer _scorer;
+    private readonly IFieldScopedScorer? _scopedScorer;
+    private readonly IFieldStatisticsIndex? _fieldStatistics;
     private readonly ITokenizer _tokenizer;
     private readonly Dictionary<string, string[]>? _synonyms;
     private readonly RetrievalTelemetry _telemetry;
@@ -128,6 +148,8 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
         _index = index;
         _scorer = scorer;
+        _scopedScorer = scorer as IFieldScopedScorer;
+        _fieldStatistics = index as IFieldStatisticsIndex;
         _tokenizer = tokenizer ?? Tokenizer.Default;
         _synonyms = ResolveSynonyms(synonyms);
         _telemetry = telemetry ?? RetrievalTelemetry.None;
@@ -311,6 +333,12 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             return Array.Empty<SearchResult>();
         }
 
+        // The field vocabulary a `name:` prefix may name. Resolved only when the query contains a
+        // colon, because without one no prefix can be a scope: a search that does not use the
+        // syntax allocates nothing for it. `null` means "no field grammar" (the literal path, or a
+        // query whose only fields are the default one, which has no writable name).
+        var knownFields = KnownFieldNames(query, options);
+
         // The span pass first: a plain query whose terms are slices of the query text is scored
         // without ever materializing them. It declines — and the string path below then runs
         // unchanged — when the terms are not slices, when the scorer or the index cannot resolve them
@@ -326,7 +354,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             _resolveOrdinal,
             _resolveId,
             ordinalsAreInsertionPositions: _index is IAccumulatingIndex);
-        var spanRun = TryRunSpanQuery(query, options, facets, top, cancellationToken);
+        var spanRun = TryRunSpanQuery(query, options, knownFields, facets, top, cancellationToken);
 
         if (spanRun is { } span)
         {
@@ -334,14 +362,19 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
                 options, top, span.Counts.Ordinal, span.Counts.ScoredDocuments, span.ScoreStarted, started, instrumented);
         }
 
-        var (parsed, queryTerms, requiredExpansionTerms, prohibitedExpansionTerms) = BuildQuery(query, options);
+        var prepared = BuildQuery(query, options, knownFields);
+        var parsed = prepared.Parsed;
+        var queryTerms = prepared.Terms;
+        var scopedTerms = prepared.ScopedTerms;
+        var requiredExpansionTerms = prepared.RequiredExpansionTerms;
+        var prohibitedExpansionTerms = prepared.ProhibitedExpansionTerms;
 
         // A query whose only positive content is a prohibited operator is still a query: it
         // matches the complement of what it excludes. Everything else with no positive term
         // (a whitespace query, a punctuation-only one, a vacuous phrase) matches nothing.
-        bool negativeOnly = queryTerms.Count == 0 && parsed is { HasProhibited: true };
+        bool negativeOnly = queryTerms.Count == 0 && scopedTerms.Count == 0 && parsed is { HasProhibited: true };
 
-        if (queryTerms.Count == 0 && !negativeOnly)
+        if (queryTerms.Count == 0 && scopedTerms.Count == 0 && !negativeOnly)
         {
             if (instrumented)
                 _telemetry.Warning(EngineName, "query produced no searchable term: nothing to match against the vocabulary");
@@ -354,7 +387,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         // again: a query that goes on to match nothing has still cost this many tokens, and the
         // stage row below would otherwise be the only record of a search that returned nothing.
         var costs = options.Costs;
-        costs?.AddTokens(queryTerms.Count);
+        costs?.AddTokens(queryTerms.Count + scopedTerms.Count);
 
         var distinctQueryTerms = DistinctTermList.Wrap(TermDeduplicator.Distinct(queryTerms));
 
@@ -390,10 +423,19 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
         long ordinal = 0;
 
+        // The terms a candidate may share with this query: the unscoped scoring terms plus the
+        // names of the scoped ones. A scoped term's document frequency over the whole corpus is an
+        // upper bound on its field's (a document that has the term only in another field is still
+        // enumerated and then scored/scoped to zero), so the union is a safe candidate set. Without
+        // a scope the list is the scoring list itself and this costs nothing.
+        IReadOnlyList<string> candidateTerms = scopedTerms.Count == 0
+            ? distinctQueryTerms
+            : UnionOf(distinctQueryTerms, scopedTerms);
+
         // One dictionary lookup per query term, feeding both of the decisions below. They are two
         // readings of the same quantity — how much of the corpus this query can reach — so it is
         // asked once rather than once per decision.
-        int reachableDocuments = SumDocumentFrequencies(_index, distinctQueryTerms);
+        int reachableDocuments = SumDocumentFrequencies(_index, candidateTerms);
 
         // The term-at-a-time pass, when the plan and the index can both offer it. It subsumes the
         // candidate-or-scan choice below: the posting walks produce the matched set themselves, so
@@ -434,7 +476,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             // A pure-negative query has no positive term to enumerate from, and its complement is the
             // whole corpus minus the excluded documents, so both enumerations are skipped and the full
             // scan below runs.
-            bool hasPositiveTerms = distinctQueryTerms.Count > 0;
+            bool hasPositiveTerms = candidateTerms.Count > 0;
             IEnumerable<string>? candidateIds = null;
 
             if (documentFree && hasPositiveTerms && _scorer is ITermOverlapScorer)
@@ -442,7 +484,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
                 if (_index is ICandidateIdIndex idIndex &&
                     CandidatesCoverFractionOfCorpus(reachableDocuments, _index.Count))
                 {
-                    candidateIds = idIndex.GetCandidateIds(distinctQueryTerms);
+                    candidateIds = idIndex.GetCandidateIds(candidateTerms);
                 }
                 else if (_index is IAccumulatingIndex ordinalSpace && _index is IOrdinalIdIndex ordinalIds)
                 {
@@ -475,7 +517,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
                 _index is ICandidateIndex candidateIndex &&
                 _scorer is ITermOverlapScorer &&
                 CandidatesCoverFractionOfCorpus(reachableDocuments, _index.Count)
-                    ? Candidates(candidateIndex, distinctQueryTerms)
+                    ? Candidates(candidateIndex, candidateTerms)
                     : _index.Documents;
 
             int checkedDocuments = 0;
@@ -497,20 +539,26 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             if (document is not null && !options.PassesFilters(document))
                 return;
 
-            // Phrase gates and the required/prohibited operators are hard corpus gates: every one
-            // is checked before any relevance math is paid for.
-            if (parsed is { } gated && (gated.HasPhrases || gated.HasQualifiers)
-                && !PassesQueryGates(documentId, gated, requiredExpansionTerms, prohibitedExpansionTerms))
+            // Phrase gates, the required/prohibited operators and the field scopes are hard
+            // corpus gates: every one is checked before any relevance math is paid for.
+            if (parsed is { } gated
+                && (gated.HasPhrases || gated.HasQualifiers || gated.HasFieldScopes)
+                && !PassesQueryGates(
+                    documentId, gated, requiredExpansionTerms, prohibitedExpansionTerms,
+                    prepared.RequiredScopedExpansions, prepared.ProhibitedScopedExpansions))
+            {
                 return;
+            }
 
             // A pure-negative query carries no relevance signal, so its survivors get the unit
             // score: a document is "matched" by not being excluded, and the configured tie-break
             // orders the page. A scorer is never asked to score an empty term list here.
-            double score = negativeOnly
-                ? 1.0
-                : plan is null
-                    ? _scorer.Score(documentId, distinctQueryTerms, _index)
-                    : plan.Score(documentId);
+            //
+            // The unscoped and the field-scoped parts are two sums added together, in that order,
+            // so a query mixing `title:foo` with a free `bar` ranks on the evidence each asked for.
+            // A scoped-only query never calls the scorer's unscoped entry point with an empty term
+            // list: the scoped interface is the whole question.
+            double score = negativeOnly ? 1.0 : ScoreUnscoped(documentId) + ScoreScoped(documentId);
 
             scoredDocuments++;
 
@@ -523,6 +571,21 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             top.Add(score, TryOrdinalOf(documentId), document, ordinal);
             ordinal++;
         }
+
+        double ScoreUnscoped(string documentId)
+        {
+            if (distinctQueryTerms.Count == 0)
+                return 0;
+
+            return plan is null
+                ? _scorer.Score(documentId, distinctQueryTerms, _index)
+                : plan.Score(documentId);
+        }
+
+        double ScoreScoped(string documentId) =>
+            scopedTerms.Count == 0 || _scopedScorer is null
+                ? 0
+                : _scopedScorer.ScoreScoped(documentId, scopedTerms, _index);
 
         return CutPage(options, top, ordinal, scoredDocuments, scoreStarted, started, instrumented);
     }
@@ -662,6 +725,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     private (AccumulatedCounts Counts, long ScoreStarted)? TryRunSpanQuery(
         ReadOnlySpan<char> query,
         SearchOptions options,
+        IReadOnlySet<string>? knownFields,
         FacetCollector? facets,
         TopRankedWindow top,
         CancellationToken cancellationToken)
@@ -672,9 +736,10 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         // A phrase or an operator is what the parser exists for; a plain query is the case this path
         // serves. Asking the predicate the string path asks is what keeps the two in step — without
         // it a quoted query would reach the vocabulary with its quotes tokenized away and its
-        // positional gate lost. The literal mode has no query language at all, so it is plain by
-        // construction and needs no predicate.
-        if (options.ParseQuerySyntax && !QueryParser.IsPlain(query))
+        // positional gate lost. A field scope is never plain, so a scoped query takes the string
+        // path. The literal mode has no query language at all, so it is plain by construction and
+        // needs no predicate.
+        if (options.ParseQuerySyntax && !QueryParser.IsPlain(query, knownFields))
             return null;
 
         if (_scorer is not IQueryPlannableScorer plannable || _index is not ISpanAccumulatingIndex spanIndex)
@@ -871,6 +936,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             _scorer is not ITermOverlapScorer ||
             parsed is { HasPhrases: true } ||
             parsed is { HasQualifiers: true } ||
+            parsed is { HasFieldScopes: true } ||
             (filterWouldBeHonoured && !options.AccumulateFilteredQueries))
         {
             return null;
@@ -995,7 +1061,9 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         string documentId,
         ParsedQuery parsed,
         IReadOnlyList<string[]> requiredExpansions,
-        IReadOnlyList<string[]> prohibitedExpansions)
+        IReadOnlyList<string[]> prohibitedExpansions,
+        IReadOnlyList<ScopedExpansion> requiredScopedExpansions,
+        IReadOnlyList<ScopedExpansion> prohibitedScopedExpansions)
     {
         var required = parsed.RequiredTerms;
 
@@ -1025,6 +1093,12 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
                 return false;
         }
 
+        if (!PassesScopedGates(
+            documentId, parsed, requiredScopedExpansions, prohibitedScopedExpansions))
+        {
+            return false;
+        }
+
         if (!MatchesPhrases(documentId, parsed.Phrases))
             return false;
 
@@ -1040,12 +1114,95 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         return true;
     }
 
+    /// <summary>
+    /// The field-scoped half of the gates: required terms must be in their field, prohibited ones
+    /// must be absent from it, phrases must match at consecutive positions inside it, and an
+    /// expansion gate is satisfied by any one of its resolved terms in the field.
+    /// </summary>
+    private bool PassesScopedGates(
+        string documentId,
+        ParsedQuery parsed,
+        IReadOnlyList<ScopedExpansion> requiredScopedExpansions,
+        IReadOnlyList<ScopedExpansion> prohibitedScopedExpansions)
+    {
+        var fields = parsed.HasFieldScopes ? _fieldStatistics : null;
+
+        if (fields is null)
+            return true; // unreachable: a scoped query without field statistics was refused at parse
+
+        for (int i = 0; i < parsed.RequiredScopedTerms.Count; i++)
+        {
+            var term = parsed.RequiredScopedTerms[i];
+
+            if (fields.FieldTermFrequency(documentId, term.Field, term.Term) == 0)
+                return false;
+        }
+
+        for (int i = 0; i < parsed.ProhibitedScopedTerms.Count; i++)
+        {
+            var term = parsed.ProhibitedScopedTerms[i];
+
+            if (fields.FieldTermFrequency(documentId, term.Field, term.Term) > 0)
+                return false;
+        }
+
+        for (int i = 0; i < requiredScopedExpansions.Count; i++)
+        {
+            var gate = requiredScopedExpansions[i];
+
+            if (!AnyScopedTermPresent(documentId, gate.Field, gate.Terms))
+                return false;
+        }
+
+        for (int i = 0; i < prohibitedScopedExpansions.Count; i++)
+        {
+            var gate = prohibitedScopedExpansions[i];
+
+            if (AnyScopedTermPresent(documentId, gate.Field, gate.Terms))
+                return false;
+        }
+
+        for (int i = 0; i < parsed.ScopedPhrases.Count; i++)
+        {
+            if (!MatchesScopedPhrase(documentId, parsed.ScopedPhrases[i]))
+                return false;
+        }
+
+        for (int i = 0; i < parsed.RequiredScopedPhrases.Count; i++)
+        {
+            if (!MatchesScopedPhrase(documentId, parsed.RequiredScopedPhrases[i]))
+                return false;
+        }
+
+        for (int i = 0; i < parsed.ProhibitedScopedPhrases.Count; i++)
+        {
+            if (MatchesScopedPhrase(documentId, parsed.ProhibitedScopedPhrases[i]))
+                return false;
+        }
+
+        return true;
+    }
+
     /// <summary>Whether the document contains at least one of <paramref name="terms"/>.</summary>
     private bool AnyTermPresent(string documentId, IReadOnlyList<string> terms)
     {
         for (int i = 0; i < terms.Count; i++)
         {
             if (_index.TermFrequency(documentId, terms[i]) > 0)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Whether the field carries at least one of the resolved expansion terms.</summary>
+    private bool AnyScopedTermPresent(string documentId, string field, IReadOnlyList<string> terms)
+    {
+        var fields = _fieldStatistics!;
+
+        for (int i = 0; i < terms.Count; i++)
+        {
+            if (fields.FieldTermFrequency(documentId, field, terms[i]) > 0)
                 return true;
         }
 
@@ -1068,12 +1225,21 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     }
 
     /// <summary>
-    /// Whether the phrase's terms sit at positions <c>p, p+1, …</c> for some occurrence of
-    /// its first term. Position lists come straight from the index (sorted, no allocation).
+    /// Whether a scoped phrase sits at consecutive positions inside its field. The positions come
+    /// from <see cref="IFieldStatisticsIndex.FieldTermPositions"/>, so an occurrence in another
+    /// field can neither satisfy the phrase nor bridge into it.
     /// </summary>
-    private bool MatchesPhrase(string documentId, IReadOnlyList<string> phrase)
+    private bool MatchesScopedPhrase(string documentId, FieldScopedPhrase phrase) =>
+        MatchesPhrase(documentId, phrase.Terms, phrase.Field);
+
+    /// <summary>
+    /// Whether the phrase's terms sit at positions <c>p, p+1, …</c> for some occurrence of
+    /// its first term. Position lists come straight from the index (sorted, no allocation), or
+    /// from the field's own positions when <paramref name="field"/> is set.
+    /// </summary>
+    private bool MatchesPhrase(string documentId, IReadOnlyList<string> phrase, string? field = null)
     {
-        var anchors = _index.GetTermPositions(documentId, phrase[0]);
+        var anchors = Positions(documentId, phrase[0], field);
 
         if (phrase.Count == 1)
             return anchors.Count > 0;
@@ -1086,7 +1252,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         // query over a 20,000-document store.
         if (phrase.Count == 2)
         {
-            var second = _index.GetTermPositions(documentId, phrase[1]);
+            var second = Positions(documentId, phrase[1], field);
 
             for (int a = 0; a < anchors.Count; a++)
             {
@@ -1100,7 +1266,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         var followers = new IReadOnlyList<int>[phrase.Count - 1];
 
         for (int i = 1; i < phrase.Count; i++)
-            followers[i - 1] = _index.GetTermPositions(documentId, phrase[i]);
+            followers[i - 1] = Positions(documentId, phrase[i], field);
 
         for (int a = 0; a < anchors.Count; a++)
         {
@@ -1123,6 +1289,15 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         return false;
     }
 
+    /// <summary>
+    /// One term's positions: the whole document's when <paramref name="field"/> is <c>null</c>,
+    /// the field's own run otherwise.
+    /// </summary>
+    private IReadOnlyList<int> Positions(string documentId, string term, string? field) =>
+        field is null
+            ? _index.GetTermPositions(documentId, term)
+            : _fieldStatistics!.FieldTermPositions(documentId, field, term);
+
     /// <summary>Membership test over an index position list (ascending, typically short).</summary>
     private static bool ContainsPosition(IReadOnlyList<int> positions, int position)
     {
@@ -1139,14 +1314,48 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     }
 
     /// <summary>
-    /// The resolved form of a parsed query: the concrete scoring terms, and the vocabulary
-    /// matches of every required and prohibited expansion atom (one entry per atom, in query
-    /// order) so the gates do not resolve the vocabulary per candidate document.
+    /// The resolved form of a parsed query: the concrete scoring terms, the scoped ones, and the
+    /// vocabulary matches of every required and prohibited expansion atom (one entry per atom, in
+    /// query order) so the gates do not resolve the vocabulary per candidate document.
     /// </summary>
     private readonly record struct ResolvedQuery(
         IReadOnlyList<string> ScoringTerms,
+        IReadOnlyList<FieldScopedTerm> ScopedTerms,
+        IReadOnlyList<ScopedExpansion> RequiredScopedExpansions,
+        IReadOnlyList<ScopedExpansion> ProhibitedScopedExpansions,
         IReadOnlyList<string[]> RequiredExpansionTerms,
         IReadOnlyList<string[]> ProhibitedExpansionTerms);
+
+    /// <summary>
+    /// One field-scoped expansion atom's resolved vocabulary matches, kept together with the field
+    /// so the gate can ask "is any one of these in that field".
+    /// </summary>
+    private readonly record struct ScopedExpansion(string Field, string[] Terms);
+
+    /// <summary>
+    /// The query a search is about to run: the parsed form (for the gates), the unscoped scoring
+    /// terms, the scoped scoring terms, and the resolved expansion gates. A struct, because it is
+    /// built once per search and never escapes: a class here would put one allocation on the
+    /// matching-nothing path that the engine's budget test pins.
+    /// </summary>
+    private readonly record struct PreparedQuery(
+        ParsedQuery? Parsed,
+        IReadOnlyList<string> Terms,
+        IReadOnlyList<FieldScopedTerm> ScopedTerms,
+        IReadOnlyList<string[]> RequiredExpansionTerms,
+        IReadOnlyList<string[]> ProhibitedExpansionTerms,
+        IReadOnlyList<ScopedExpansion> RequiredScopedExpansions,
+        IReadOnlyList<ScopedExpansion> ProhibitedScopedExpansions)
+    {
+        public static readonly PreparedQuery Literal = new(
+            null,
+            Array.Empty<string>(),
+            Array.Empty<FieldScopedTerm>(),
+            Array.Empty<string[]>(),
+            Array.Empty<string[]>(),
+            Array.Empty<ScopedExpansion>(),
+            Array.Empty<ScopedExpansion>());
+    }
 
     /// <summary>
     /// Shared by <see cref="Search(string, SearchOptions?, CancellationToken)"/> and <see cref="Explain(string, string)"/>: parse the raw query, then
@@ -1158,33 +1367,162 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// The two expansion term sets are the resolved vocabulary matches of
     /// <c>+term*</c>/<c>-term*</c> atoms, one entry per atom, so a gate can ask "<i>at least one
     /// of these</i>" or "<i>none of these</i>" without resolving the vocabulary per candidate
-    /// document.
+    /// document. A scoped expansion carries its field too, in
+    /// <see cref="PreparedQuery.RequiredScopedExpansions"/> and its prohibited counterpart.
     /// </remarks>
-    private (ParsedQuery? Parsed,
-        IReadOnlyList<string> Terms,
-        IReadOnlyList<string[]> RequiredExpansionTerms,
-        IReadOnlyList<string[]> ProhibitedExpansionTerms) BuildQuery(ReadOnlySpan<char> query, SearchOptions options)
+    private PreparedQuery BuildQuery(
+        ReadOnlySpan<char> query,
+        SearchOptions options,
+        IReadOnlySet<string>? knownFields)
     {
         // The literal path skips the query language entirely, so the terms are the tokenizer's and a
-        // quotation mark is a separator like any other. A leading - is ordinary text here too. Every
-        // downstream reader gets the same shape.
+        // quotation mark is a separator like any other. A leading - is ordinary text here too, and
+        // so is a colon. Every downstream reader gets the same shape.
         if (!options.ParseQuerySyntax)
-        {
-            return (null, TokenizeQueryTerms(query), Array.Empty<string[]>(), Array.Empty<string[]>());
-        }
+            return PreparedQuery.Literal with { Terms = TokenizeQueryTerms(query) };
 
         // A plain query is what the query language would produce for it anyway: the tokenizer's
-        // terms, no phrases and no expansion atoms. Building the ParsedQuery record to say that
-        // costs 48 bytes a search, so the record is built only when there is something in it.
-        // Synonyms are the one resolution a plain query still needs, and that path keeps the
+        // terms, no phrases, no expansion atoms and no scopes. Building the ParsedQuery record to
+        // say that costs 48 bytes a search, so the record is built only when there is something in
+        // it. Synonyms are the one resolution a plain query still needs, and that path keeps the
         // parsed form rather than duplicating the expansion here.
-        if (_synonyms is null && QueryParser.IsPlain(query))
-            return (null, TokenizeQueryTerms(query), Array.Empty<string[]>(), Array.Empty<string[]>());
+        if (_synonyms is null && QueryParser.IsPlain(query, knownFields))
+            return PreparedQuery.Literal with { Terms = TokenizeQueryTerms(query) };
 
-        var parsed = QueryParser.Parse(query, _tokenizer);
+        var parsed = QueryParser.Parse(query, _tokenizer, knownFields);
+        ValidateFieldScopes(parsed);
         var resolved = ResolveQueryTerms(parsed, options.FuzzyOnlyOutOfVocabulary);
 
-        return (parsed, resolved.ScoringTerms, resolved.RequiredExpansionTerms, resolved.ProhibitedExpansionTerms);
+        return new PreparedQuery(
+            parsed,
+            resolved.ScoringTerms,
+            resolved.ScopedTerms,
+            resolved.RequiredExpansionTerms,
+            resolved.ProhibitedExpansionTerms,
+            resolved.RequiredScopedExpansions,
+            resolved.ProhibitedScopedExpansions);
+    }
+
+    /// <summary>
+    /// Refuses a field-scoped query the engine cannot honor, loudly: a scorer without
+    /// <see cref="IFieldScopedScorer"/>, an index without per-field statistics, or a name the index
+    /// does not have. The alternative — treating the prefix as text or returning a zero score —
+    /// would answer a different question than the one asked.
+    /// </summary>
+    private void ValidateFieldScopes(ParsedQuery parsed)
+    {
+        if (!parsed.HasFieldScopes)
+            return;
+
+        foreach (string field in ScopeFields(parsed))
+        {
+            if (!HasField(field))
+            {
+                throw new NotSupportedException(
+                    $"{EngineName} cannot scope a query to field '{field}': the index's fields are " +
+                    $"{string.Join(", ", _index.Fields)}. Check the spelling or declare the name in " +
+                    $"{nameof(SearchOptions)}.{nameof(SearchOptions.KnownFields)}.");
+            }
+        }
+
+        if (_fieldStatistics is null)
+        {
+            throw new NotSupportedException(
+                $"{EngineName} cannot honor a field-scoped term: {_index.GetType().Name} does not " +
+                $"implement {nameof(IFieldStatisticsIndex)}, so no field's statistics can be read. " +
+                $"Build the corpus with {nameof(LexiSharp.Indexing.InMemoryTextIndex)}.");
+        }
+
+        if (_scopedScorer is null)
+        {
+            throw new NotSupportedException(
+                $"{EngineName} cannot honor a field-scoped term: {_scorer.Name} does not implement " +
+                $"{nameof(IFieldScopedScorer)}, so it cannot score one field's statistics. Use " +
+                $"{nameof(Bm25FScorer)} for a field-scoped query.");
+        }
+    }
+
+    /// <summary>Every field the query scopes an atom to, in first-appearance order.</summary>
+    private static List<string> ScopeFields(ParsedQuery parsed)
+    {
+        var fields = new List<string>(2);
+
+        void Add(string field)
+        {
+            for (int i = 0; i < fields.Count; i++)
+            {
+                if (string.Equals(fields[i], field, StringComparison.Ordinal))
+                    return;
+            }
+
+            fields.Add(field);
+        }
+
+        foreach (var term in parsed.ScopedTerms)
+            Add(term.Field);
+
+        foreach (var term in parsed.ProhibitedScopedTerms)
+            Add(term.Field);
+
+        foreach (var phrase in parsed.ScopedPhrases)
+            Add(phrase.Field);
+
+        foreach (var phrase in parsed.RequiredScopedPhrases)
+            Add(phrase.Field);
+
+        foreach (var phrase in parsed.ProhibitedScopedPhrases)
+            Add(phrase.Field);
+
+        foreach (var expansion in parsed.Expansions)
+        {
+            if (expansion.Field is { } field)
+                Add(field);
+        }
+
+        return fields;
+    }
+
+    /// <summary>Whether this index has <paramref name="field"/> (ordinal, as the index names them).</summary>
+    private bool HasField(string field)
+    {
+        foreach (string candidate in _index.Fields)
+        {
+            if (string.Equals(candidate, field, StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The field names the query language may read as a <c>name:</c> prefix for this search:
+    /// <see cref="SearchOptions.KnownFields"/> when the caller declared one, otherwise the index's
+    /// own named fields. <c>null</c> when there is no field grammar to apply — the literal path,
+    /// a query with no colon (the common case, which then allocates nothing), or an index whose
+    /// only field is the unnamed default.
+    /// </summary>
+    private IReadOnlySet<string>? KnownFieldNames(ReadOnlySpan<char> query, SearchOptions options)
+    {
+        if (!options.ParseQuerySyntax || query.IndexOf(':') < 0)
+            return null;
+
+        if (options.KnownFields is { } declared)
+            return declared.Count > 0 ? declared : null;
+
+        IReadOnlyCollection<string> fields = _index.Fields;
+
+        if (fields.Count <= 1)
+            return null;
+
+        var names = new HashSet<string>(fields.Count - 1, StringComparer.Ordinal);
+
+        foreach (string field in fields)
+        {
+            if (field.Length > 0)
+                names.Add(field);
+        }
+
+        return names.Count == 0 ? null : names;
     }
 
     /// <summary>
@@ -1197,6 +1535,32 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         var terms = new List<string>(8);
         _tokenizer.TokenizeInto(query, terms);
         return terms;
+    }
+
+    /// <summary>
+    /// The union of the unscoped scoring terms and the scoped terms' names, each once, in the
+    /// order they first appear. Used for the candidate set and its reach: a scoped term's
+    /// corpus-wide document frequency is an upper bound on its field's.
+    /// </summary>
+    private static List<string> UnionOf(
+        IReadOnlyList<string> terms, IReadOnlyList<FieldScopedTerm> scopedTerms)
+    {
+        var union = new List<string>(terms.Count + scopedTerms.Count);
+        var seen = new HashSet<string>(terms.Count + scopedTerms.Count, StringComparer.Ordinal);
+
+        for (int i = 0; i < terms.Count; i++)
+        {
+            if (seen.Add(terms[i]))
+                union.Add(terms[i]);
+        }
+
+        for (int i = 0; i < scopedTerms.Count; i++)
+        {
+            if (seen.Add(scopedTerms[i].Term))
+                union.Add(scopedTerms[i].Term);
+        }
+
+        return union;
     }
 
     /// <summary>
@@ -1215,13 +1579,28 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// nothing to the score and returns only its resolved set, so the gate can ask whether any one
     /// of them occurs. The vocabulary is therefore consulted once per query, not once per
     /// candidate document.
+    /// <para>
+    /// A scoped atom resolves the same way, but into <see cref="ResolvedQuery.ScopedTerms"/> (or a
+    /// <see cref="ScopedExpansion"/> gate), so a synonym or an expanded term never escapes the
+    /// field the query asked for: scoped terms are taken literally, exactly as required and
+    /// prohibited terms are.
+    /// </para>
     /// </remarks>
     private ResolvedQuery ResolveQueryTerms(ParsedQuery parsed, bool fuzzyOnlyOutOfVocabulary)
     {
         if (_synonyms is null && !parsed.HasExpansions)
-            return new ResolvedQuery(parsed.AllTerms, Array.Empty<string[]>(), Array.Empty<string[]>());
+        {
+            return new ResolvedQuery(
+                parsed.AllTerms,
+                parsed.ScopedTerms,
+                Array.Empty<ScopedExpansion>(),
+                Array.Empty<ScopedExpansion>(),
+                Array.Empty<string[]>(),
+                Array.Empty<string[]>());
+        }
 
         var terms = new List<string>(parsed.AllTerms);
+        var scoped = new List<FieldScopedTerm>(parsed.ScopedTerms);
 
         if (_synonyms is not null)
         {
@@ -1231,6 +1610,8 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
         List<string[]>? required = null;
         List<string[]>? prohibited = null;
+        List<ScopedExpansion>? requiredScoped = null;
+        List<ScopedExpansion>? prohibitedScoped = null;
 
         if (parsed.HasExpansions)
         {
@@ -1239,6 +1620,27 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             for (int i = 0; i < parsed.Expansions.Count; i++)
             {
                 var expansion = parsed.Expansions[i];
+
+                if (expansion.Field is { } field)
+                {
+                    var resolved = new List<string>();
+                    ResolveExpansion(resolved, vocabulary, expansion, fuzzyOnlyOutOfVocabulary);
+                    var gate = new ScopedExpansion(field, resolved.ToArray());
+
+                    if (expansion.Operator == QueryTermOperator.Prohibited)
+                    {
+                        (prohibitedScoped ??= new List<ScopedExpansion>()).Add(gate);
+                        continue;
+                    }
+
+                    for (int t = 0; t < resolved.Count; t++)
+                        scoped.Add(new FieldScopedTerm(field, resolved[t]));
+
+                    if (expansion.Operator == QueryTermOperator.Required)
+                        (requiredScoped ??= new List<ScopedExpansion>()).Add(gate);
+
+                    continue;
+                }
 
                 if (expansion.Operator == QueryTermOperator.Prohibited)
                 {
@@ -1265,6 +1667,9 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
         return new ResolvedQuery(
             terms,
+            scoped,
+            (IReadOnlyList<ScopedExpansion>?)requiredScoped ?? Array.Empty<ScopedExpansion>(),
+            (IReadOnlyList<ScopedExpansion>?)prohibitedScoped ?? Array.Empty<ScopedExpansion>(),
             (IReadOnlyList<string[]>?)required ?? Array.Empty<string[]>(),
             (IReadOnlyList<string[]>?)prohibited ?? Array.Empty<string[]>());
     }
@@ -1487,14 +1892,28 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// The query is resolved with the default expansion behavior
     /// (<see cref="SearchOptions.FuzzyOnlyOutOfVocabulary"/> is <c>false</c>): explanation has
     /// no per-search options of its own, so it always states the full literal resolution.
+    /// <para>
+    /// A field-scoped query is <b>refused</b> rather than explained without its scoped part:
+    /// <see cref="ScoreExplanation"/> has no field per contribution, so a total that omitted
+    /// <c>title:term</c> would be a smaller number than the search actually ranked on.
+    /// </para>
     /// </remarks>
+    /// <exception cref="NotSupportedException">The query carries a field scope.</exception>
     public ScoreExplanation? Explain(string documentId, ReadOnlySpan<char> query)
     {
         if (_scorer is not IScoreExplainer explainer || !_index.Contains(documentId))
             return null;
 
-        var (_, terms, _, _) = BuildQuery(query, SearchOptions.Default);
-        return explainer.Explain(documentId, terms, _index);
+        var prepared = BuildQuery(query, SearchOptions.Default, KnownFieldNames(query, SearchOptions.Default));
+
+        if (prepared.Parsed is { HasFieldScopes: true })
+        {
+            throw new NotSupportedException(
+                $"{EngineName}.Explain does not model field-scoped terms: a ScoreExplanation has no " +
+                "field per contribution. Run the search and compare its scores instead.");
+        }
+
+        return explainer.Explain(documentId, prepared.Terms, _index);
     }
 
     /// <summary>
@@ -1523,11 +1942,16 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         if (options.IsEmpty || _index.Count == 0)
             return 0;
 
-        var parsed = QueryParser.Parse(query, _tokenizer);
+        var parsed = QueryParser.Parse(query, _tokenizer, KnownFieldNames(query, options));
         long total = 0;
 
         for (int i = 0; i < parsed.AllTerms.Count; i++)
             total += _index.DocumentFrequency(parsed.AllTerms[i]);
+
+        // A scoped term's corpus-wide frequency is an upper bound on its field's, so counting it
+        // keeps the estimate an upper bound of the candidate union rather than a lower one.
+        for (int i = 0; i < parsed.ScopedTerms.Count; i++)
+            total += _index.DocumentFrequency(parsed.ScopedTerms[i].Term);
 
         return total;
     }
