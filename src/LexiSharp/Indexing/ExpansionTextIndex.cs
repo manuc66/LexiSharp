@@ -193,6 +193,14 @@ public sealed class ExpansionTextIndex : ITextIndex, IUnorderedCandidateIndex, I
     public int FieldDocumentFrequency(string field, string term) =>
         FieldStatistics().FieldDocumentFrequency(field, term);
 
+    /// <inheritdoc />
+    /// <exception cref="NotSupportedException">
+    /// The wrapped index does not implement <see cref="IFieldStatisticsIndex"/>, or tracks no
+    /// per-field positions.
+    /// </exception>
+    public IReadOnlyList<int> FieldTermPositions(string documentId, string field, string term) =>
+        FieldStatistics().FieldTermPositions(documentId, field, term);
+
     /// <summary>
     /// The wrapped index's field statistics, refused by name when it has none — the same per-call
     /// rule the capability-forwarding engines use, because C# has no way to implement an interface

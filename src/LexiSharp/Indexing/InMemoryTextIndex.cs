@@ -200,6 +200,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     private readonly Dictionary<string, Dictionary<string, Dictionary<string, int>>> _fieldFrequencies =
         new(StringComparer.Ordinal);
     private readonly Dictionary<string, Dictionary<string, int>> _fieldLengths = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Dictionary<string, int>> _fieldStarts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, long> _fieldTotalTokens = new(StringComparer.Ordinal);
 
     private long _totalTokens;
@@ -505,7 +506,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
             for (int i = 0; i < run.Terms.Count; i++)
                 terms.Add(Post(document.Id, ordinal, run.Terms[i], run.Start + i));
 
-            RecordField(run.Field, document.Id, terms);
+            RecordField(run.Field, document.Id, run.Start, terms);
             allTerms.AddRange(terms);
             length += terms.Count;
         }
@@ -559,7 +560,11 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// had for that field. The document is expected to have been removed already. The terms are the
     /// shared instances <see cref="Post"/> returned, so the field maps share the corpus vocabulary.
     /// </summary>
-    private void RecordField(string field, string documentId, IReadOnlyList<string> terms)
+    /// <param name="field">The field the run belongs to.</param>
+    /// <param name="documentId">The document being indexed.</param>
+    /// <param name="start">Position of the run's first token in the document's position space.</param>
+    /// <param name="terms">The run's tokens, in order.</param>
+    private void RecordField(string field, string documentId, int start, IReadOnlyList<string> terms)
     {
         if (!_fieldFrequencies.TryGetValue(field, out var byTerm))
         {
@@ -586,6 +591,15 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         }
 
         lengths[documentId] = terms.Count;
+
+        if (!_fieldStarts.TryGetValue(field, out var starts))
+        {
+            starts = new Dictionary<string, int>(StringComparer.Ordinal);
+            _fieldStarts[field] = starts;
+        }
+
+        starts[documentId] = start;
+
         _fieldTotalTokens[field] = (_fieldTotalTokens.TryGetValue(field, out long total) ? total : 0)
             + terms.Count;
     }
@@ -739,6 +753,9 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
             if (!lengths.Remove(documentId, out int removedLength))
                 continue;
 
+            if (_fieldStarts.TryGetValue(field, out var starts))
+                starts.Remove(documentId);
+
             if (_fieldTotalTokens.TryGetValue(field, out long total) &&
                 total - removedLength <= 0)
             {
@@ -752,6 +769,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
             if (lengths.Count == 0)
             {
                 _fieldLengths.Remove(field);
+                _fieldStarts.Remove(field);
                 _fieldTotalTokens.Remove(field);
             }
         }
@@ -766,6 +784,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         _corpusFrequencies.Clear();
         _fieldFrequencies.Clear();
         _fieldLengths.Clear();
+        _fieldStarts.Clear();
         _fieldTotalTokens.Clear();
         _byOrdinal.Clear();
         _freeOrdinals.Clear();
@@ -1239,6 +1258,46 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
                byTerm.TryGetValue(term, out var byDocument)
             ? byDocument.Count
             : 0;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The postings hold absolute document positions; a field's own run is
+    /// <c>[start, start + length)</c>, recorded when the document was indexed. The returned list is
+    /// a copy (the field's positions are not contiguous in the flat posting), and it is empty when
+    /// the document does not carry the field or the term is not in it.
+    /// </remarks>
+    public IReadOnlyList<int> FieldTermPositions(string documentId, string field, string term)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(documentId);
+        TextFields.Validate(field, nameof(field));
+        ArgumentNullException.ThrowIfNull(term);
+
+        if (!_fieldStarts.TryGetValue(field, out var starts) ||
+            !starts.TryGetValue(documentId, out int start) ||
+            !_fieldLengths.TryGetValue(field, out var lengths) ||
+            !lengths.TryGetValue(documentId, out int length) ||
+            length == 0)
+        {
+            return Array.Empty<int>();
+        }
+
+        if (!_postings.TryGetValue(term, out var posting) ||
+            !posting.ByDocument.TryGetValue(documentId, out var placed))
+        {
+            return Array.Empty<int>();
+        }
+
+        int end = start + length;
+        List<int>? inside = null;
+
+        foreach (int position in placed.Positions)
+        {
+            if (position >= start && position < end)
+                (inside ??= new List<int>(2)).Add(position);
+        }
+
+        return inside ?? (IReadOnlyList<int>)Array.Empty<int>();
     }
 }
 /// <summary>

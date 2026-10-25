@@ -48,4 +48,10 @@ public sealed record QueryExpansion(
     /// contributes nothing to scoring.
     /// </summary>
     public QueryTermOperator Operator { get; init; } = QueryTermOperator.None;
+
+    /// <summary>
+    /// The field the atom is scoped to (<c>title:foo*</c>), or <c>null</c> when it is unscoped.
+    /// Each expanded term inherits the scope: it is matched and scored from that field only.
+    /// </summary>
+    public string? Field { get; init; }
 }
