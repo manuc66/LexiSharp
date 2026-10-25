@@ -13,6 +13,14 @@ public static class Program
             return;
         }
 
+        // One index per corpus size in a plain process, for sizes BenchmarkDotNet cannot hold.
+        // See ScaleLane.
+        if (args.Length > 0 && args[0] == "scale")
+        {
+            ScaleLane.Run(args[1..]);
+            return;
+        }
+
         var switcher = new BenchmarkSwitcher(new[]
         {
             typeof(TokenizerBenchmarks),
