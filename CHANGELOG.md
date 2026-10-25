@@ -20,6 +20,24 @@ workflow.
 
 ### Added
 
+- **Numeric range facets and histograms alongside the string facets.**
+
+  `FacetValue` counts distinct strings, which cannot answer "how many hits under 50" or "a year
+  histogram". `FacetedSearchResult` gains `NumericBuckets`, and
+  `IFacetedSearchEngine.SearchWithNumericFacets` — also on the stock engine, the synchronized,
+  routed and expanding wrappers, and `LexiSharpIndex` — takes `NumericFacetRequest`s:
+  `Ranges(field, boundaries)` for explicit edges, `Histogram(field, bucketCount)` for equal-width
+  buckets between the match set's minimum and maximum. Every explicit range is `[from, to)`; a
+  histogram's last bucket is closed at the top, because its top edge is the match set's own
+  maximum — and a zero-width match set reports one point bucket rather than dividing by zero.
+
+  Values parse as invariant-culture numbers with the same `NumberStyles.Any` call `MetadataFilter`
+  compares with, and a document missing the field does not count — the string facets' rule. A value
+  that is not a finite number is in no range and is reported in `UnparseableCount`, because a
+  numeric edge has no ordinal position to fall back to the way `MetadataFilter` does. Counts cover
+  the whole match set independently of `Offset`/`Limit`, and `Results` is identical to `Search`.
+  The existing `FacetValue`, `FacetBucket` and `SearchWithFacets` overloads are unchanged.
+
 - **The evaluation harness can fit BM25F, and reports whether the weighting earned it.**
 
   `--tune-bm25f` adds a row fitted by `Bm25FParameterTuner`: `(k1, b)` first, then the weight of

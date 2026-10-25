@@ -164,6 +164,9 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `MetadataFilter` | record | — | A declarative, single-field predicate over Fields — the raw material of structured filtering (e.g. category = article, year &gt; 2023, tags containing nlp). |
 | `MetadataFilterOperator` | enum | — | Comparison applied by a MetadataFilter. |
 | `MoreLikeThis` | class | — | Builds a query from one already-indexed document and re-runs it through an engine, so the caller gets the documents most like it — the classic "more like this"… |
+| `NumericFacetBucket` | record | — | The numeric facet counts for one requested field: its ranges, in requested order, plus the values that could not be read as numbers. |
+| `NumericFacetRange` | record | — | One numeric bucket: how many counted documents fall between From and To — in [From, To), or in [From, To] when UpperInclusive is set. |
+| `NumericFacetRequest` | record | — | One numeric facet over Fields: either explicit boundaries, or a bucket count whose boundaries are derived from the match set — a histogram. |
 | `ParsedQuery` | record | — | The structured form of a raw query: free terms, quoted phrase constraints, expansion atoms, and the combined literal term list a scorer starts from. |
 | `QueryExpansion` | record | — | A free-text query atom carrying a search-time expansion operator: the base term (already tokenized to exactly one term) is matched against the index vocabulary… |
 | `QueryExpansionKind` | enum | — | How a query atom expands against the index vocabulary. |
