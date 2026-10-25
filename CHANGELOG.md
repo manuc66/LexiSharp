@@ -32,8 +32,8 @@ workflow.
   at its default `true`, `-word` now excludes documents containing `word`; before, the tokenizer
   discarded the sign and the query searched for `word`. A corpus of prose that writes leading
   hyphens literally needs `ParseQuerySyntax: false`, where the query language is not consulted at
-  all and `-word` again searches `word`. `+word` also used to search `word`; it now requires it,
-  which narrows the result set to documents that contain it.
+  all and `-word` is again ordinary text to the tokenizer. `+word` also used to search `word`; it
+  now requires it, which narrows the result set to documents that contain it.
 
   A `-` inside a token is unchanged: `e-mail`, `well-being` and `foo-bar` tokenize exactly as
   before, because only a leading sign on a whitespace-delimited token is an operator. A query of
@@ -41,8 +41,9 @@ workflow.
   configured tie-break — and a query of only required terms scores on those terms.
 
   `RankedTextSearchEngine` implements both. The PostgreSQL and ParadeDB lexical engines declare
-  them unsupported and refuse with `NotSupportedException`, as do the vector, sparse and fuzzy
-  backends, which already refuse the rest of the query language.
+  them unsupported and refuse with `NotSupportedException` while the query language is on, as do
+  the vector, sparse and fuzzy backends, which already refuse the rest of it; with
+  `ParseQuerySyntax: false` the raw text is that backend's own grammar to read.
 
 - **The evaluation harness can fit BM25F, and reports whether the weighting earned it.**
 
