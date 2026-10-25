@@ -731,9 +731,11 @@ suite and nothing else, so the default invocation's cost is unchanged.
   second reading did not move at the printed precision; at 100,000 it is 1.6 MB, consistent with the
   pooled accumulator's three arrays alone (1.63 MB at that ordinal space).
 - **Query latency** — one tail term (`w20000x`) and three tail terms (`w20000x w25000x w29000x`),
-  the same tail terms `CandidateSearchBenchmarks` uses, at `Limit: 10`. 100 warm-up searches are
-  served at 10,000 documents, 50 at 100,000 and 20 at 1,000,000, followed by 1,000 / 300 / 100 timed
-  searches respectively; `min`, `p50` and `mean` are over individual searches in one process.
+  the same tail terms `CandidateSearchBenchmarks` uses, at `Limit: 10`. Each query is warmed for five
+  seconds of wall time, then timed for 1,000 / 300 / 100 searches at 10,000 / 100,000 / 1,000,000
+  documents; `min`, `p50` and `mean` are over individual searches in one process. The row prints the
+  warm-up's search count and the cost of its last 100 ms beside the measured `p50`; the measurement
+  below is why.
 - **Allocation per search** — `GC.GetAllocatedBytesForCurrentThread` over a separate loop of the
   same length, divided by the iteration count, after the warm-up. It includes the result list the
   caller receives, so it is what a caller pays for that search.
@@ -745,31 +747,51 @@ here and a row there describe the same corpus and the same queries. The lane pri
 vocabulary is held fixed while the corpus grows: a tail term is in 1 document at 10,000 and in 9 at
 100,000, and the printed `df` is what keeps that visible.
 
-**Measured on 2026-10-25**, four runs of `scale` (the default 10,000 and 100,000 sizes), on
+**Measured on 2026-10-25**, three runs of `scale` (the default 10,000 and 100,000 sizes), on
 Manjaro Linux, Intel Core i7-8850H (12 logical processors), .NET 10.0.13, `ServerGC=True`, 15 GiB
-of RAM. The host's load average was 2.1 when the first run started and 7.7 around the fourth; the
-machine was not dedicated to this lane. The build column lists the readings in run order, and the
-fourth run carries the slowest 10,000-document readings. Latency is the median of the four run
-`p50`s with the min–max of those `p50`s beside it. The retained figures printed the same values in
-all four runs, and so did the allocation counts.
+of RAM. The machine was not dedicated to this lane: other sessions were building on it. The build
+column lists the readings in run order; latency is the median of the three run `p50`s with the
+min–max of those `p50`s beside it. The retained figures and the allocation counts printed the same
+values in all three runs.
 
-| Documents | Build (4 runs) | Retained after build | B/document | Retained after queries | One tail term | p50 | Alloc/search | Three tail terms | p50 | Alloc/search |
+| Documents | Build (3 runs) | Retained after build | B/document | Retained after queries | One tail term | p50 | Alloc/search | Three tail terms | p50 | Alloc/search |
 |---:|---|---:|---:|---:|---|---:|---:|---|---:|---:|
-| 10,000 | 668 / 672 / 679 / 831 ms | 76.9 MB | 8,063 | 76.9 MB | df 1, 1 hit | 2.25 µs (2.2–2.7) | 840 B | df sum 2, 2 hits | 4.8 µs (4.7–5.7) | 1,160 B |
-| 100,000 | 4.63 / 4.70 / 6.13 / 6.01 s | 661.5 MB | 6,936 | 663.1 MB | df 9, 9 hits | 13.05 µs (12.7–13.1) | 648 B | df sum 29, 10 hits | 19.15 µs (18.6–20.2) | 688 B |
+| 10,000 | 665 / 638 / 655 ms | 76.9 MB | 8,063 | 76.9 MB | df 1, 1 hit | 0.40 µs (0.40) | 840 B | df sum 2, 2 hits | 0.90 µs (0.90–1.50) | 1,160 B |
+| 100,000 | 5.04 / 4.86 / 4.82 s | 661.5 MB | 6,936 | 663.1 MB | df 9, 9 hits | 3.70 µs (3.60–3.80) | 648 B | df sum 29, 10 hits | 7.10 µs (4.40–8.20) | 688 B |
 
 `hits` is the number of results the search returned at `Limit: 10`; the three-term query at
 100,000 documents has 29 posting entries and returns a full page. The two per-document retention
 figures are 8,063 B at 10,000 and 6,936 B at 100,000; only two sizes were measured, so they are two
 readings rather than a trend, and nothing is implied about 1,000,000. The per-search allocation is
 also lower at 100,000 than at 10,000 for the same query; the lane does not decompose it, and no
-cause is claimed here.
+cause is claimed here. The three-term `p50` at 100,000 spans 4.40–8.20 µs across the three runs,
+which is this host's run-to-run spread, not a property of the query.
 
-The 100,000-document build spans 4.63–6.13 s across the four runs, and the last two readings are
-roughly 30 % above the first two; the 10,000-document build spans 668–831 ms, its last reading the
-slowest. That is host drift inside one session — the fourth run was taken after the suite with the
-host's load average at 7.7 — not a measurement of the build's variance, and the build column should
-be read as a range on this host rather than as a scaling factor.
+The build readings span 638–665 ms at 10,000 documents and 4.82–5.04 s at 100,000. Read the column
+as a range on this host, not as a scaling factor: the machine was shared, and the lane times one
+build per size rather than a mean.
+
+**The same query through BenchmarkDotNet.** `CandidateSearchBenchmarks.OneTerm` issues the same
+call on the same corpus. On this tree and host,
+`--filter "*CandidateSearchBenchmarks.OneTerm" --job short` reports **537.2 ns mean, 522.3 ns min,
+840 B allocated**, with a 99.9 % confidence-interval half-width of 416.7 ns on a host that was also
+running other sessions' builds. The lane's 10,000-document row for that query reads **0.40 µs
+`p50`, 0.45–0.55 µs mean, 840 B** across the three measured runs — the same allocation. A fourth
+run of the same binary read 0.80 µs `p50` / 0.82 µs mean, so this host's spread on that row is
+0.40–0.80 µs.
+
+The warm-up is not politeness. Warming the query with 100 calls instead reads **2.2 µs** for this
+row — 4.1× the BenchmarkDotNet mean, with byte-identical allocation, which is what shows the two
+readings are the same code path. Timed in 100 ms windows on this host, the query costs ~3.5 µs per
+search for the first 0.4 s, ~1.3 µs at half a second, and ~0.6 µs from 0.7 s onward; the same
+binary with `DOTNET_TieredCompilation=0` reads 0.6 µs after the same 100-search warm-up. The extra
+time is tiered compilation running its tier-1 instrumented code — not a different code path, and
+not GC pacing: BenchmarkDotNet's process reports `GC = Concurrent Server` and the lane prints
+`ServerGC=True`, so neither is workstation, and the lane's per-iteration clock reads cost a few
+nanoseconds (mean 2–8 ns over 10,000 empty iterations). Each query is warmed for five seconds, and
+the last 100 ms of that warm-up is printed with the row so that a run whose code has not settled is
+visible rather than silent. The warm-up adds 20 s to the default two-size run; it is the difference
+between measuring the search and measuring the JIT.
 
 **Not measured in this session: 1,000,000 documents.** `scale 1000000` and `--include-1m` reach the
 same block — the header and the warm-up line print, which is how the mode was checked — but the run
