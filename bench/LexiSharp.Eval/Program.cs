@@ -94,6 +94,10 @@ public static class Program
         bool tuneSearchOptions = false;
         bool segment = false;
 
+        // The held-out share: opt-in, because the published tuned rows are in-sample figures produced
+        // on the whole query set and a fraction would re-fit them. Null is "no split".
+        double? heldOutFraction = null;
+
         for (int i = 0; i < args.Length; i++)
         {
             switch (args[i])
@@ -187,6 +191,9 @@ public static class Program
                 case "--tune-search-options":
                     tuneSearchOptions = true;
                     break;
+                case "--heldout" when i + 1 < args.Length:
+                    heldOutFraction = ParseUnitFraction(args[++i], "--heldout");
+                    break;
                 case "--index-cache" when i + 1 < args.Length:
                     indexCache = args[++i];
                     break;
@@ -274,6 +281,35 @@ public static class Program
             Console.Error.WriteLine(
                 "--analyze-disagreement-left/right require --analyze: the distance is computed from the " +
                 "per-query rankings that --analyze is what captures.");
+            return 2;
+        }
+
+        // The analysis file is one row per query per configuration, and a held-out run scores its tuned
+        // rows on the fit set only. Writing the file would either skip those rows for some queries or
+        // report a delta against a baseline covering a different set; both read as a complete table and
+        // are not one.
+        if (heldOutFraction is not null && analyzePath is not null)
+        {
+            Console.Error.WriteLine(
+                "--heldout cannot run with --analyze: the analysis file expects every configuration to " +
+                "score every query, and a held-out run scores its tuned rows on the fit set only.");
+            return 2;
+        }
+
+        // The pinned replay fits and scores the default table; a split would silently be ignored by it.
+        if (heldOutFraction is not null && verifyAgainst is not null)
+        {
+            Console.Error.WriteLine(
+                "--heldout cannot run with --verify-reference: the replay compares the default in-sample " +
+                "table, so the split would not be measured.");
+            return 2;
+        }
+
+        if (heldOutFraction is not null && fingerprintOnly)
+        {
+            Console.Error.WriteLine(
+                "--heldout cannot run with --fingerprint: a fingerprint run stops before any query is " +
+                "scored, so there is nothing to split.");
             return 2;
         }
 
@@ -407,6 +443,16 @@ public static class Program
                 "under the convention they are reported with.");
         }
 
+        if (heldOutFraction is { } heldOutShare)
+        {
+            Console.WriteLine(
+                $"Held-out split: {heldOutShare.ToString("0.###", CultureInfo.InvariantCulture)} of the " +
+                "scored validation queries are withheld from fitting. Rule: FNV-1a 64 of the query id " +
+                "modulo 1,000,000; a bucket below the share is the score set, the rest is the fit set. " +
+                "The tuned rows are fitted and scored on the fit set, and their score-set figures are " +
+                "printed beside them.");
+        }
+
         Console.WriteLine();
 
         foreach (BeirDataset dataset in datasets)
@@ -419,7 +465,8 @@ public static class Program
                 querySyntaxReference, segment, tuneBm25F, tuneSearchOptions,
                 analyzePath, analyzeBaseline, analyzeCandidate,
                 disagreementLeft, disagreementRight,
-                expandDensities, expandRankings, annEfValues, annConnection, backendLane, rerankCacheDir);
+                expandDensities, expandRankings, annEfValues, annConnection, backendLane, rerankCacheDir,
+                heldOutFraction);
             Console.WriteLine();
         }
 
@@ -547,7 +594,7 @@ public static class Program
         string? disagreementLeft, string? disagreementRight,
         IReadOnlyList<double> expandDensities, IReadOnlyList<ExpansionRanking> expandRankings,
         IReadOnlyList<int> annEfValues, string? annConnection, BackendLane? backendLane,
-        string? rerankCacheDir)
+        string? rerankCacheDir, double? heldOutFraction)
     {
         Console.WriteLine($"== {dataset.Name} ==");
 
@@ -674,7 +721,7 @@ public static class Program
             queryExpansions.Add((name, learned));
         }
 
-        var (results, tunedDescription, notes) = Evaluation.Run(
+        var (results, tunedDescription, notes, heldOut) = Evaluation.Run(
             corpus, runIndex, topK, limit, tokenizer, excludeQueryDocument, gain, referenceBm25,
             queryFrequency, scoreRounding, saturationConstant, singlePrecision, denseVectors, tuned, reranker,
             rerankCandidates,
@@ -682,7 +729,8 @@ public static class Program
             tuneBm25F: tuneBm25F,
             tuningSearchOptions: tuneSearchOptions
                 ? new SearchOptions(ParseQuerySyntax: parseQuerySyntax)
-                : null);
+                : null,
+            heldOutFraction: heldOutFraction);
 
         foreach (string note in notes)
             Console.WriteLine($"Note: {note}");
@@ -701,7 +749,13 @@ public static class Program
         PrintTable(results, topK);
         PrintReference(dataset, analysisDescription, gain);
 
-        Console.WriteLine($"BM25 tuned in-sample on the same queries (oracle, not a fair baseline): {tunedDescription}");
+        Console.WriteLine($"BM25 tuned {(heldOut is null
+            ? "in-sample on the same queries"
+            : "in-sample on the fit set")} (oracle, not a fair baseline): {tunedDescription}");
+
+        if (heldOut is not null)
+            PrintHeldOut(heldOut);
+
         Console.WriteLine(
             "Note: absolute scores depend on the analysis, which is why the run states it. The " +
             "relative ordering of the configs above is meaningful within a run; the comparison to " +
@@ -1041,6 +1095,74 @@ public static class Program
         }
     }
 
+    /// <summary>
+    /// Prints each tuned row's fit-set figures beside its score-set figures. The two labels carry the
+    /// set they mean (<c>fit</c> chose the parameters, <c>score</c> was withheld), because a table where
+    /// both are bare numbers is exactly the confusion this flag exists to remove.
+    /// </summary>
+    private static void PrintHeldOut(HeldOutReport report)
+    {
+        Console.WriteLine();
+        Console.WriteLine(
+            $"Held-out split: {report.FitQueries} fit / {report.ScoreQueries} score of " +
+            $"{report.TotalQueries} validation queries " +
+            $"(held-out share {report.Fraction.ToString("0.###", CultureInfo.InvariantCulture)}).");
+        Console.WriteLine(
+            "  Rule: FNV-1a 64 of the query id modulo 1,000,000; a bucket below the share is the score " +
+            "set. Fit is the set the parameters were chosen on; score was withheld from every tuner.");
+
+        if (report.NotRunReason is not null)
+        {
+            Console.WriteLine($"  Not run: {report.NotRunReason}");
+            return;
+        }
+
+        string[] header =
+        [
+            "Config", "Fit nDCG@10 (in-sample)", "Score nDCG@10 (held out)", "Δ nDCG@10",
+            "Fit MAP@10", "Score MAP@10", "Fit R@10", "Score R@10",
+        ];
+
+        int nameWidth = Math.Max(30, report.Rows.Max(row => row.Name.Length));
+        int[] widths = [nameWidth, 22, 24, 10, 10, 12, 8, 10];
+
+        Console.WriteLine();
+        Console.WriteLine(string.Join(" | ", header.Select((cell, i) =>
+            i == 0 ? cell.PadRight(widths[i]) : cell.PadLeft(widths[i]))));
+        Console.WriteLine(new string('-', widths.Sum() + ((widths.Length - 1) * 3)));
+
+        foreach (HeldOutComparison row in report.Rows)
+        {
+            var cells = new[]
+            {
+                row.Name.PadRight(widths[0]),
+                row.Fit.NdcgAt10.ToString("0.000", CultureInfo.InvariantCulture).PadLeft(widths[1]),
+                row.Score.NdcgAt10.ToString("0.000", CultureInfo.InvariantCulture).PadLeft(widths[2]),
+                (row.Score.NdcgAt10 - row.Fit.NdcgAt10).ToString("+0.000;-0.000;0.000", CultureInfo.InvariantCulture).PadLeft(widths[3]),
+                row.Fit.MapAt10.ToString("0.000", CultureInfo.InvariantCulture).PadLeft(widths[4]),
+                row.Score.MapAt10.ToString("0.000", CultureInfo.InvariantCulture).PadLeft(widths[5]),
+                row.Fit.RecallAt10.ToString("0.000", CultureInfo.InvariantCulture).PadLeft(widths[6]),
+                row.Score.RecallAt10.ToString("0.000", CultureInfo.InvariantCulture).PadLeft(widths[7]),
+            };
+
+            Console.WriteLine(string.Join(" | ", cells));
+        }
+
+        if (report.UntunedBaseline is { } baseline)
+        {
+            Console.WriteLine(
+                $"  Fixed reference on the score set — {baseline.Name}: nDCG@10 " +
+                $"{baseline.NdcgAt10.ToString("0.000", CultureInfo.InvariantCulture)}, MAP@10 " +
+                $"{baseline.MapAt10.ToString("0.000", CultureInfo.InvariantCulture)}, R@10 " +
+                $"{baseline.RecallAt10.ToString("0.000", CultureInfo.InvariantCulture)}. " +
+                "It was not fitted, so it has no fit column.");
+        }
+
+        Console.WriteLine(
+            "  The tuned rows in the table above are the fit column's rows. The score column is the " +
+            "held-out measurement; a gap is what the fit bought on the queries that chose it.");
+    }
+
     private static void PrintReference(BeirDataset dataset, string analysisDescription, NdcgGain gain)
     {
         Console.WriteLine();
@@ -1178,11 +1300,28 @@ public static class Program
         return parsed;
     }
 
+    /// <summary>
+    /// A share strictly between 0 and 1. Both endpoints are refused: a score set of zero queries or a
+    /// fit set of zero queries is not a split, and the error says which flag failed rather than the
+    /// table silently falling back to the in-sample run.
+    /// </summary>
+    private static double ParseUnitFraction(string value, string option)
+    {
+        if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
+            || !double.IsFinite(parsed) || parsed <= 0 || parsed >= 1)
+        {
+            throw new ArgumentException(
+                $"{option} must be a share greater than 0 and less than 1, got '{value}'.");
+        }
+
+        return parsed;
+    }
+
     private static void PrintHelp()
     {
         Console.WriteLine("""
             Usage: LexiSharp.Eval [--data <dir>] [--dataset <name|all>] [--top-k <n>] [--limit <n>]
-                     [--no-tuned] [--tune-bm25f] [--tune-search-options] [--stem porter] [--dense] [--dense-seq <n>] [--rerank] [--rerank-top <n>]
+                     [--no-tuned] [--tune-bm25f] [--tune-search-options] [--heldout <share>] [--stem porter] [--dense] [--dense-seq <n>] [--rerank] [--rerank-top <n>]
                      [--rerank-cache <dir>]
                      [--backend <lexical|paradedb|vector> --backend-connection <s>]
                      [--backend-bm25 <k1,b>] [--backend-ef <list>] [--backend-config <name>]
@@ -1211,6 +1350,19 @@ public static class Program
                                 Off by default, because a tuned row fitted under another convention
                                 is a different parameter choice and the published rows were fitted
                                 through the defaults.
+              --heldout <share>
+                                Withhold this share (greater than 0, less than 1) of the run's
+                                validation queries from every tuner, and print each tuned row's
+                                fit-set (in-sample) nDCG@10 beside its score-set (held-out) figure.
+                                The split is FNV-1a 64 of the query id modulo 1,000,000: a bucket
+                                below the share is the score set, the rest is the fit set. The
+                                tuned rows in the main table are fitted and scored on the fit set.
+                                Off by default, so the published in-sample rows keep their numbers.
+                                Costs a re-fit of every tuned row; on ArguAna the 125-point delta
+                                grids over the fit set are the reason a run there takes hours, and
+                                --no-tuned is the switch that reports the rows as not run instead.
+                                Cannot be combined with --analyze, --verify-reference or
+                                --fingerprint.
               --stem porter     Stem every term with LexiSharp.Linguistics.PorterStemmer (English,
                                 opt-in; off by default, so the tables stay comparable).
               --analyzer <name> Analysis for the whole run: 'default' (lowercase, diacritics folded,
