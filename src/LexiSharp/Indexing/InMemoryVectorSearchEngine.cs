@@ -245,7 +245,7 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
         // ParseQuerySyntax: false is the caller saying "literal text, do not consult the query
         // parser" — and EnsureSupported is a parser call.
         if (options.ParseQuerySyntax)
-            QuerySyntax.EnsureSupported(query, SupportedQueryFeatures, nameof(InMemoryVectorSearchEngine));
+            QuerySyntax.EnsureSupported(query, SupportedQueryFeatures, nameof(InMemoryVectorSearchEngine), options.KnownFields);
 
         if (_documents.Count == 0)
             return Array.Empty<SearchResult>();

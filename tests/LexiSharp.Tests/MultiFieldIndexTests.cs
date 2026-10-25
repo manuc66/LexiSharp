@@ -221,6 +221,31 @@ public class MultiFieldIndexTests
         Assert.Equal("1", Assert.Single(engine.Search("\"red\"")).DocumentId);
     }
 
+    [Fact]
+    public void FieldTermPositionsAreTheFieldsOwnRunAndNotTheWholeDocument()
+    {
+        var index = Create(Article("1", title: "red apple", body: "red apple"));
+        int bodyLength = index.FieldLength("1", TextFields.Default);
+
+        // The body's run starts at 0; the title's starts after the body and the gap.
+        Assert.Equal([0], index.FieldTermPositions("1", TextFields.Default, "red"));
+        Assert.Equal(
+            [bodyLength + TextFields.PositionGap],
+            index.FieldTermPositions("1", "title", "red"));
+
+        // The term exists in the document but not in this field.
+        var summaryOnly = Create(Article("1", title: "blue", body: "blue", summary: "red"));
+        Assert.Empty(summaryOnly.FieldTermPositions("1", "title", "red"));
+        Assert.Equal(
+            [
+                summaryOnly.FieldLength("1", TextFields.Default)
+                    + TextFields.PositionGap
+                    + summaryOnly.FieldLength("1", "title")
+                    + TextFields.PositionGap,
+            ],
+            summaryOnly.FieldTermPositions("1", "summary", "red"));
+    }
+
     // ---- backward compatibility ------------------------------------------------------------------
 
     [Fact]

@@ -16,11 +16,16 @@ namespace LexiSharp.Core;
 public static class QuerySyntax
 {
     /// <summary>The features <paramref name="query"/> uses, as <see cref="QueryParser"/> would parse it.</summary>
-    public static QueryFeatures Detect(string query)
+    /// <param name="query">The raw query.</param>
+    /// <param name="fields">
+    /// The field names a <c>name:</c> prefix may name, or <c>null</c> when the caller has no field
+    /// vocabulary — in which case no prefix is a field and <c>Decimal:comma</c> is ordinary text.
+    /// </param>
+    public static QueryFeatures Detect(string query, IReadOnlySet<string>? fields = null)
     {
         ArgumentNullException.ThrowIfNull(query);
 
-        var parsed = QueryParser.Parse(query, Tokenizer.Default);
+        var parsed = QueryParser.Parse(query, Tokenizer.Default, fields);
         var features = QueryFeatures.None;
 
         if (parsed.HasPhrases)
@@ -35,6 +40,9 @@ public static class QuerySyntax
         if (parsed.HasProhibited)
             features |= QueryFeatures.ProhibitedTerms;
 
+        if (parsed.HasFieldScopes)
+            features |= QueryFeatures.FieldScopes;
+
         return features;
     }
 
@@ -45,11 +53,20 @@ public static class QuerySyntax
     /// <param name="query">The raw query about to be searched.</param>
     /// <param name="supported">The features the target engine honors.</param>
     /// <param name="engineName">Engine name used in the error message.</param>
-    public static void EnsureSupported(string query, QueryFeatures supported, string engineName)
+    /// <param name="fields">
+    /// The field names a <c>name:</c> prefix may name, or <c>null</c> when the engine has no field
+    /// vocabulary. A backend asked to scope a query to a field it cannot honor refuses here, before
+    /// opening a connection, rather than forwarding the prefix as text.
+    /// </param>
+    public static void EnsureSupported(
+        string query,
+        QueryFeatures supported,
+        string engineName,
+        IReadOnlySet<string>? fields = null)
     {
         ArgumentNullException.ThrowIfNull(query);
 
-        var unsupported = Detect(query) & ~supported;
+        var unsupported = Detect(query, fields) & ~supported;
 
         if (unsupported != QueryFeatures.None)
         {
@@ -77,6 +94,9 @@ public static class QuerySyntax
 
         if ((feature & QueryFeatures.ProhibitedTerms) != 0)
             parts.Add("prohibited (-) terms");
+
+        if ((feature & QueryFeatures.FieldScopes) != 0)
+            parts.Add("field-scoped terms");
 
         return string.Join(" and ", parts);
     }

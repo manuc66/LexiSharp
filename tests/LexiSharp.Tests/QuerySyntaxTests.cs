@@ -80,6 +80,92 @@ public class QuerySyntaxTests
         Assert.Throws<ArgumentNullException>(() => QuerySyntax.Detect(null!));
 
     [Fact]
+    public void Detect_FieldScopesOnlyWhenTheNameIsAKnownField()
+    {
+        var fields = new HashSet<string>(["title"], StringComparer.Ordinal);
+
+        Assert.Equal(QueryFeatures.FieldScopes, QuerySyntax.Detect("title:neural", fields));
+        Assert.Equal(
+            QueryFeatures.FieldScopes | QueryFeatures.RequiredTerms,
+            QuerySyntax.Detect("+title:neural", fields));
+        Assert.Equal(QueryFeatures.None, QuerySyntax.Detect("title:neural"));
+
+        // A known field name in a different position is still ordinary text.
+        Assert.Equal(QueryFeatures.None, QuerySyntax.Detect("http://x", fields));
+    }
+
+    [Fact]
+    public void EnsureSupported_NamesFieldScopes()
+    {
+        var fields = new HashSet<string>(["title"], StringComparer.Ordinal);
+
+        var exception = Assert.Throws<NotSupportedException>(() =>
+            QuerySyntax.EnsureSupported("title:neural", QueryFeatures.Phrases, "FakeEngine", fields));
+
+        Assert.Contains("field-scoped", exception.Message);
+    }
+
+    [Fact]
+    public void RankedEngine_DeclaresFieldScopesOnlyWithAFieldScopedScorer()
+    {
+        var index = new InMemoryTextIndex();
+        index.Index(
+        [
+            new SearchDocument("1", "body", TextFields: new Dictionary<string, string> { ["title"] = "heading" }),
+        ]);
+
+        var fieldAware = new RankedTextSearchEngine(index, new Bm25FScorer());
+        var fieldBlind = new RankedTextSearchEngine(index, new Bm25Scorer());
+
+        Assert.Equal(
+            QueryFeatures.Phrases | QueryFeatures.Expansions
+                | QueryFeatures.RequiredTerms | QueryFeatures.ProhibitedTerms | QueryFeatures.FieldScopes,
+            ((IQuerySyntaxSupport)fieldAware).SupportedQueryFeatures);
+
+        Assert.Equal(
+            QueryFeatures.Phrases | QueryFeatures.Expansions
+                | QueryFeatures.RequiredTerms | QueryFeatures.ProhibitedTerms,
+            ((IQuerySyntaxSupport)fieldBlind).SupportedQueryFeatures);
+
+        // The declaration is the truth, not a label: the field-blind engine refuses the query.
+        Assert.Throws<NotSupportedException>(() => fieldBlind.Search("title:heading"));
+    }
+
+    [Fact]
+    public void SqlBackends_DeclareFieldScopesUnsupportedAndRefuseThem()
+    {
+        // No connection is opened: the refusal happens before the data source is used. The caller
+        // has to name the field vocabulary, because a prefix that no one declared is ordinary
+        // text by design (the `key:value` rule) and a backend with no fields cannot guess.
+        using var lexical = new LexiSharp.Postgres.PostgresTextSearchEngine(
+            "Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp",
+            autoCreateSchema: false);
+        using var parade = new LexiSharp.ParadeDB.ParadeDBTextSearchEngine(
+            "Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp",
+            autoCreateSchema: false);
+
+        var options = new SearchOptions(Limit: 5)
+        {
+            KnownFields = new HashSet<string>(["title"], StringComparer.Ordinal),
+        };
+
+        AssertRefused(lexical, options);
+        AssertRefused(parade, options);
+
+        static void AssertRefused(ITextSearchEngine engine, SearchOptions options)
+        {
+            var support = Assert.IsAssignableFrom<IQuerySyntaxSupport>(engine);
+
+            Assert.Equal(QueryFeatures.Phrases, support.SupportedQueryFeatures);
+
+            var exception = Assert.Throws<NotSupportedException>(
+                () => engine.Search("title:machine", options));
+
+            Assert.Contains("field-scoped", exception.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void RankedEngine_DeclaresPhrasesExpansionsAndOperators()
     {
         var engine = new RankedTextSearchEngine(new InMemoryTextIndex(), new Bm25Scorer());

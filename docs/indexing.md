@@ -55,7 +55,7 @@ index.Index(new[]
 
 Two views of the same data, and the distinction is the whole design:
 
-| | `TermFrequency` / `DocumentLength` / `DocumentFrequency` | `FieldTermFrequency` / `FieldLength` / `FieldDocumentFrequency`, on `IFieldStatisticsIndex` |
+| | `TermFrequency` / `DocumentLength` / `DocumentFrequency` | `FieldTermFrequency` / `FieldLength` / `FieldDocumentFrequency` / `FieldTermPositions`, on `IFieldStatisticsIndex` |
 |---|---|---|
 | Sees | the **union** of every field | one named field |
 | Answers | "does this document match, and how long is it" | "how much of the match is in the title" |
@@ -77,6 +77,7 @@ index.FieldTermFrequency("1", "title", "guide"); // 1
 index.FieldLength("1", "title");                 // title tokens only
 index.AverageFieldLength("title");               // over every document declaring that field
 index.FieldDocumentFrequency("title", "ranking");
+index.FieldTermPositions("1", "title", "guide"); // [the position inside the title's own run]
 ```
 
 `TextFields.Default` is the empty string — it names the document's main `Text`, and it is the
@@ -86,7 +87,12 @@ could not be told apart from the default.
 
 **A quoted phrase matches inside one field and never bridges two.** Field tokens are indexed after
 the main text with a gap, so `"body guide"` cannot match across the boundary while `"a guide"`
-still matches inside the title.
+still matches inside the title. A phrase scoped to a field (`title:"a guide"`) reads
+`FieldTermPositions` instead of the document-wide positions, so a phrase satisfied in the body
+cannot stand in for one asked for in the title even when both words also occur in the title.
+`FieldTermPositions` has a default implementation that throws `NotSupportedException`: an index
+written before the member existed keeps compiling and answering the counts, and a scoped phrase
+over it fails by name rather than checking the wrong positions.
 
 **On the typed facade**, `TextFields` defaults to the document's own `SearchDocument.TextFields`
 when you index `SearchDocument` directly, and is otherwise yours to set:
