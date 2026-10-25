@@ -205,6 +205,9 @@ is the same answer as the reference corpus and NFCorpus and the opposite of SciF
 caveats stand over that row: k1=2 and b=1 are both at the edge of the grid, so the optimum may lie
 outside it, and on this corpus the tuner's internal candidate scoring disagrees with the score the
 chosen row reports — see [the harness README](../bench/LexiSharp.Eval/README.md#results-arguana-k10-1406-test-queries).
+The four tuners take an optional `SearchOptions` template, so a run can fit its candidates under the
+convention it reports with (`--tune-search-options` in the harness); the row above was fitted through
+the tuners' default reading and has not been re-fitted that way.
 
 **Reading the tables against an unfitted number.** A +0.017 here comes from comparing BM25+ at a
 *default* `δ` against BM25 at a *fitted* `(k1, b)` — 0.8978 against 0.8812. The gap is the unfitted
