@@ -590,7 +590,9 @@ BM25 tuned's 0.363. So on this corpus BM25F tuned *does* beat a tuned BM25, by 0
 scores at those parameters. One corpus where it leads, one (the reference corpus) where it trails,
 both in-sample. The tuner's own score for that configuration is 0.362 against the row's 0.397,
 which is the query-syntax convention documented under [the tuned rows](#results-arguana-k10-1406-test-queries),
-not a discrepancy.
+not a discrepancy. And the number is **not** the 0.3970 the reference publishes for this corpus:
+that one is BM25 at k1=0.9/b=0.4 under the reference analysis, this one is BM25F at k1=1.5/b=1 under
+the library defaults. The three matching decimals are a coincidence, not a reproduction.
 
 The dense retriever lands at BM25 level on its own (0.304 vs 0.308), and fusing it with BM25
 **beats both the dense-only and the lexical-only engines** (0.323–0.333), above the 0.325 BM25
