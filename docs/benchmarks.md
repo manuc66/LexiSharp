@@ -684,6 +684,103 @@ operand repeats**: an operation once per iteration is overlapped and invisible, 
 *pair* — a norm recomputed for every (query token, document token) cosine — is multiplied by the
 pair count and is where the time is.
 
+## Scale lane (`scale`): index build and tail queries per corpus size
+
+The search-side benchmark classes top out at 10,000 documents: `IndexBenchmarks`,
+`CandidateSearchBenchmarks` and `ScoringPathBenchmarks` all build their corpus at that size (the one
+larger corpus in the project is `StoreWriteBenchmarks`' 20,000-document write path), and the
+crossover tables above contain 100,000- and 1,000,000-document rows that no class in the project
+produces. The scale lane is the in-project command that builds a corpus at one or more of 10,000 /
+100,000 / 1,000,000 documents and reports, per size, what the index cost to build and what a tail
+query costs to serve.
+
+It is a **direct run, not a BenchmarkDotNet report**. A BenchmarkDotNet job rebuilds its setup for
+every invocation, so a 1,000,000-document index would pay the build on every launch and hold several
+gigabytes while it did. The lane builds one index per size, once, in a process that does nothing
+else. The measured rows in this section come from that mode — a `Stopwatch` in a plain process, with
+the warm-up stated below and none of BenchmarkDotNet's outlier removal or confidence intervals — so
+the absolute latencies are host-bound.
+
+```bash
+# the default lane: 10,000 and 100,000 documents
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- scale
+# one size at a time; naming the size is the opt-in
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- scale 10000
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- scale 100000
+# add 1,000,000 to the default set: by flag, or by environment variable
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- scale --include-1m
+LEXISHARP_SCALE_INCLUDE_1M=1 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- scale
+```
+
+A plain `dotnet run --project bench/LexiSharp.Benchmarks -c Release` still runs the BenchmarkDotNet
+suite and nothing else, so the default invocation's cost is unchanged.
+
+**What is reported, per size.**
+
+- **Build** — one `RankedTextSearchEngine.Index` over the corpus, timed with a `Stopwatch`. A
+  discarded 1,000-document build is run first so the reading is not the JIT's first touch; corpus
+  generation is timed separately and excluded. It is a single build, not a mean.
+- **Retained bytes** — `GC.GetTotalMemory` before and after the build, each reading preceded by two
+  forced, blocking, compacting collections, divided by the document count. This is a **managed-heap**
+  measurement: it does not count native or runtime memory (JIT code, thread stacks, the GC's own
+  structures), page cache, or the corpus's `SearchDocument` objects and text — those are alive on
+  both sides of the reading and therefore outside the delta. The `after queries` reading is taken
+  again once the tail queries have run, which prices the flat posting copies the term-at-a-time pass
+  builds on first use.
+- **Query latency** — one tail term (`w20000x`) and three tail terms (`w20000x w25000x w29000x`),
+  the same tail terms `CandidateSearchBenchmarks` uses, at `Limit: 10`. 100 warm-up searches are
+  served at 10,000 documents, 50 at 100,000 and 20 at 1,000,000, followed by 1,000 / 300 / 100 timed
+  searches respectively; `min`, `p50` and `mean` are over individual searches in one process.
+- **Allocation per search** — `GC.GetAllocatedBytesForCurrentThread` over a separate loop of the
+  same length, divided by the iteration count, after the warm-up. It includes the result list the
+  caller receives, so it is what a caller pays for that search.
+
+The corpus is `CorpusFactory.CreateZipfDocuments` (Zipf exponent 1.07, 50 words per document, a
+30,000-term vocabulary), the default tokenizer and `Bm25Scorer` — the same factory the 10,000-document
+classes above use, and the query terms `CandidateSearchBenchmarks` uses, so a 10,000-document row
+here and a row there describe the same corpus and the same queries. The lane prints each query's summed document frequency at every size, because the
+vocabulary is held fixed while the corpus grows: a tail term is in 1 document at 10,000 and in 9 at
+100,000, and the printed `df` is what keeps that visible.
+
+**Measured on 2026-10-25**, four runs of `scale` (the default 10,000 and 100,000 sizes), on
+Manjaro Linux, Intel Core i7-8850H (12 logical processors), .NET 10.0.13, `ServerGC=True`, 15 GiB
+of RAM. The host's load average was 2.1 when the first run started and 7.7 around the fourth; the
+machine was not dedicated to this lane. The build column lists the readings in run order, and the
+fourth run carries the slowest 10,000-document readings. Latency is the median of the four run
+`p50`s with the min–max of those `p50`s beside it. The retained figures printed the same values in
+all four runs, and so did the allocation counts.
+
+| Documents | Build (4 runs) | Retained after build | B/document | Retained after queries | One tail term | p50 | Alloc/search | Three tail terms | p50 | Alloc/search |
+|---:|---|---:|---:|---:|---|---:|---:|---|---:|---:|
+| 10,000 | 668 / 672 / 679 / 831 ms | 76.9 MB | 8,063 | 76.9 MB | df 1, 1 hit | 2.25 µs (2.2–2.7) | 840 B | df sum 2, 2 hits | 4.8 µs (4.7–5.7) | 1,160 B |
+| 100,000 | 4.63 / 4.70 / 6.13 / 6.01 s | 661.5 MB | 6,936 | 663.1 MB | df 9, 9 hits | 13.05 µs (12.7–13.1) | 648 B | df sum 29, 10 hits | 19.15 µs (18.6–20.2) | 688 B |
+
+`hits` is the number of results the search returned at `Limit: 10`; the three-term query at
+100,000 documents has 29 posting entries and returns a full page. The two per-document retention
+figures are 8,063 B at 10,000 and 6,936 B at 100,000; only two sizes were measured, so they are two
+readings rather than a trend, and nothing is implied about 1,000,000. The per-search allocation is
+also lower at 100,000 than at 10,000 for the same query; the lane does not decompose it, and no
+cause is claimed here.
+
+The 100,000-document build spans 4.63–6.13 s across the four runs, and the last two readings are
+roughly 30 % above the first two; the 10,000-document build spans 668–831 ms, its last reading the
+slowest. That is host drift inside one session — the fourth run was taken after the suite with the
+host's load average at 7.7 — not a measurement of the build's variance, and the build column should
+be read as a range on this host rather than as a scaling factor.
+
+**Not measured in this session: 1,000,000 documents.** `scale 1000000` and `--include-1m` reach the
+same block — the header and the warm-up line print, which is how the mode was checked — but the run
+was stopped before the 1,000,000-document build, because this host had about 6.5 GB of available
+memory while the only figure in this repository for a 1,000,000-document Zipf index is 7.1 GB
+resident (the ad-hoc table above). No 1,000,000-document figure is extrapolated from the two rows
+here, and the 10,000 / 100,000 / 1,000,000 crossover table elsewhere on this page is still the
+ad-hoc stopwatch harness's measurement, not this lane's.
+
+**What else this section does not establish.** Only the default tokenizer, BM25 and `Limit: 10` were
+measured; head terms, other analyzers, filtered queries, concurrency, and a distribution beyond
+`min` / `p50` / `mean` are all outside the lane. The retained figure is managed heap only and
+excludes everything listed above, so it is not comparable with an RSS reading.
+
 ## Tokenizer (`TokenizerBenchmarks`)
 
 Tokenizing the same text under different normalizations. The `Ratio` column is only
@@ -749,12 +846,17 @@ dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*Search*
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*ScoringPath*'
 # where a query's bytes go, component by component:
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*QueryAllocationBreakdown*'
+# index build and tail-query cost per corpus size (see the scale lane above):
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- scale
 ```
 
-The three-corpus-size crossover above is **not** in the benchmark project: a 1,000,000-document
-index needs 7.1 GB resident and 57 s to build, which is not something a CI job should do on every
-push. It is a stopwatch harness run deliberately, and the numbers are on this page with the
-conditions they were taken under.
+The three-corpus-size crossover above is **not** a report from this project: a 1,000,000-document
+index needs 7.1 GB resident and 57 s to build in that harness, which is not something a CI job
+should do on every push. The [scale lane](#scale-lane-scale-index-build-and-tail-queries-per-corpus-size)
+is the in-project command that reaches the size; it reports build time, retained bytes and
+tail-query latency, not the fixed-cost / per-posting-entry fit the table above is made of, so the
+two are not interchangeable. Its 1,000,000-document size is opt-in and was not run in the session
+that measured the 10,000- and 100,000-document rows documented there.
 
 Reports land in `BenchmarkDotNet.Artifacts/results/` (CSV, HTML, GitHub-flavored markdown).
 For stable numbers use the default (non-`ShortRun`) job configuration and publish the full
