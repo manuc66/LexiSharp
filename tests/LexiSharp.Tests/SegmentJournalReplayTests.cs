@@ -242,12 +242,118 @@ public class SegmentJournalReplayTests
         byte[] bytes = File.ReadAllBytes(journal);
 
         // The second record's payload, with its framing intact: damage, not a tear.
-        int second = 4 + System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(bytes);
-        bytes[second + 12] ^= 0xFF;
+        int second = 8 + System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(bytes) + 4;
+        bytes[second + 8 + 12] ^= 0xFF;
         File.WriteAllBytes(journal, bytes);
 
         Assert.Throws<InvalidDataException>(() => new SegmentedTextIndex(directory));
     });
+
+    [Fact]
+    public void TheTruncatedTailIsReportedOnTheStore() => WithDirectory(directory =>
+    {
+        using (var store = new SegmentedTextIndex(directory))
+        {
+            for (int i = 0; i < 3; i++)
+                store.Add(Document("doc" + i, "alpha " + i));
+        }
+
+        string journal = Path.Combine(directory, SegmentJournal.FileName);
+        long whole = new FileInfo(journal).Length;
+        File.WriteAllBytes(journal, File.ReadAllBytes(journal).AsSpan(0, (int)whole - 5).ToArray());
+
+        using var reopened = new SegmentedTextIndex(directory);
+
+        Assert.Equal(2, reopened.Count);
+        Assert.True(reopened.TruncatedJournalBytes > 0, "a torn tail has to be reportable, or the store is missing writes with no signal");
+
+        // Opening reads and does not repair, so the tail is still there until a write cuts it back.
+        reopened.Add(Document("late", "alpha late"));
+
+        using var again = new SegmentedTextIndex(directory);
+
+        Assert.Equal(0, again.TruncatedJournalBytes);
+        Assert.Equal(3, again.Count);
+    });
+
+    [Fact]
+    public void ADisabledJournalRefusesToIgnoreEntriesItCannotReplay() => WithDirectory(directory =>
+    {
+        // A durable write from a run that ended without a commit.
+        using (var store = new SegmentedTextIndex(directory))
+            store.Add(Document("a", "alpha"));
+
+        var refusal = Assert.Throws<InvalidDataException>(
+            () => new SegmentedTextIndex(directory, journal: JournalOptions.Disabled));
+
+        Assert.Contains("journal entries", refusal.Message);
+    });
+
+    [Fact]
+    public void ADisabledJournalOpensACommittedStore() => WithDirectory(directory =>
+    {
+        using (var store = new SegmentedTextIndex(directory))
+        {
+            store.Add(Document("a", "alpha"));
+            store.Commit().Dispose();
+        }
+
+        // The journal was truncated by the commit, so disabling the journal has nothing to ignore.
+        using var plain = new SegmentedTextIndex(directory, journal: JournalOptions.Disabled);
+
+        Assert.Equal(1, plain.Count);
+    });
+
+    [Fact]
+    public void AReadOnlyReplicaOpensServesAndRefusesTheFirstWrite()
+    {
+        // A read-only replica is a Unix permission question; the guard keeps the suite runnable on
+        // Windows, where the equivalent needs an ACL and a different test.
+        if (!OperatingSystem.IsWindows())
+            ReadsAReadOnlyReplica();
+    }
+
+    [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+    private static void ReadsAReadOnlyReplica() =>
+        WithDirectory(built =>
+        {
+            using (var store = new SegmentedTextIndex(built))
+            {
+                store.Add(Document("a", "alpha beta"));
+                store.Commit().Dispose();
+            }
+
+            string replica = NewDirectory();
+
+            try
+            {
+                Directory.CreateDirectory(replica);
+
+                foreach (string path in Directory.GetFiles(built))
+                    File.Copy(path, Path.Combine(replica, Path.GetFileName(path)));
+
+                File.SetUnixFileMode(Path.Combine(replica, SegmentJournal.FileName), UnixFileMode.UserRead);
+                File.SetUnixFileMode(replica, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+
+                // Opening a replica is a read: it replays and serves without write access.
+                using var opened = new SegmentedTextIndex(replica);
+
+                Assert.Equal(1, opened.Count);
+                Assert.Equal(new[] { "a" }, Ids(Search(opened, "alpha")));
+
+                // The first write is where write access is needed, and it fails there rather than at open.
+                Assert.Throws<UnauthorizedAccessException>(() => opened.Add(Document("b", "beta")));
+            }
+            finally
+            {
+                File.SetUnixFileMode(replica, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+                foreach (string path in Directory.GetFiles(replica))
+                    File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+                if (Directory.Exists(replica)) Directory.Delete(replica, recursive: true);
+            }
+        });
 
     [Fact]
     public void AnInterruptedFirstCommitIsRebuiltFromTheJournal() => WithDirectory(directory =>

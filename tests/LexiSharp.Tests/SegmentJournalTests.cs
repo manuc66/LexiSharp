@@ -120,25 +120,26 @@ public class SegmentJournalTests
                     Directory.CreateDirectory(truncated);
                     File.WriteAllBytes(Path.Combine(truncated, SegmentJournal.FileName), whole.AsSpan(0, cut).ToArray());
 
-                    long dropped;
+                    var expected = sequencesThatFit(whole, cut);
+                    long boundary = boundaryThatFits(whole, cut);
 
                     using (var journal = SegmentJournal.Open(truncated, Options()))
                     {
-                        dropped = journal.TruncatedBytes;
+                        // Opening is a read: it reports the tear and does not repair it.
+                        Assert.Equal(cut - boundary, journal.TruncatedBytes);
+                        Assert.Equal(expected, journal.ReadFrom(0).Select(entry => entry.Sequence));
 
-                        var entries = journal.ReadFrom(0).ToList();
-                        var expected = sequencesThatFit(whole, cut);
-
-                        Assert.Equal(expected, entries.Select(entry => entry.Sequence));
-
-                        // And the file was cut back to a record boundary, so the next append is whole.
-                        Assert.Equal(cut - dropped, new FileInfo(Path.Combine(truncated, SegmentJournal.FileName)).Length);
+                        // The first append is what cuts the torn tail off, and the record it writes is
+                        // whole because it starts at the boundary.
+                        Assert.Equal(expected.DefaultIfEmpty(0).Max() + 1, journal.Append(JournalOperation.Clear));
                     }
 
-                    using (var journal = SegmentJournal.Open(truncated, Options()))
+                    using (var reopened = SegmentJournal.Open(truncated, Options()))
                     {
-                        long next = journal.Append(JournalOperation.Clear);
-                        Assert.Equal(sequencesThatFit(whole, cut).DefaultIfEmpty(0).Max() + 1, next);
+                        Assert.Equal(
+                            expected.Append(expected.DefaultIfEmpty(0).Max() + 1),
+                            reopened.ReadFrom(0).Select(entry => entry.Sequence));
+                        Assert.Equal(0, reopened.TruncatedBytes);
                     }
                 }
                 finally
@@ -147,26 +148,93 @@ public class SegmentJournalTests
                 }
             }
 
-            // The boundaries the cut walk is checked against: every cut inside a record must yield the
-            // records before it and nothing of it.
+            // The sequences a cut leaves readable: every record whose frame — [int32][uint32][payload][uint32]
+            // — is complete in the bytes available.
             static List<long> sequencesThatFit(byte[] bytes, int available)
             {
                 var sequences = new List<long>();
                 int at = 0;
 
-                while (at + 4 <= available)
+                while (at + 8 <= available)
                 {
                     int length = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(at));
 
-                    if (at + 4 + length + 4 > available)
+                    if (at + 8 + length + 4 > available)
                         break;
 
-                    sequences.Add(System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(bytes.AsSpan(at + 4)));
-                    at += 4 + length + 4;
+                    sequences.Add(System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(bytes.AsSpan(at + 8)));
+                    at += 8 + length + 4;
                 }
 
                 return sequences;
             }
+
+            static long boundaryThatFits(byte[] bytes, int available)
+            {
+                int at = 0;
+
+                while (at + 8 <= available)
+                {
+                    int length = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(at));
+
+                    if (at + 8 + length + 4 > available)
+                        break;
+
+                    at += 8 + length + 4;
+                }
+
+                return at;
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void OpeningReadsAndWritesNothing()
+    {
+        string directory = NewDirectory();
+
+        try
+        {
+            // No journal file was ever created here: opening must not create one, which is what lets a
+            // read-only corpus replica be opened at all.
+            SegmentJournal.Open(directory, Options()).Dispose();
+
+            Assert.False(File.Exists(Path.Combine(directory, SegmentJournal.FileName)));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ACorruptedLengthIsRefusedRatherThanTruncated()
+    {
+        string directory = NewDirectory();
+
+        try
+        {
+            using (var journal = SegmentJournal.Open(directory, Options()))
+            {
+                for (int i = 1; i <= 3; i++)
+                    journal.Append(JournalOperation.Add, Document("doc" + i, "text " + i));
+            }
+
+            string path = Path.Combine(directory, SegmentJournal.FileName);
+            byte[] bytes = File.ReadAllBytes(path);
+
+            // A bit flip in the second record's length. On framing alone this reads as a record that
+            // never finished, which would truncate the third record silently; the header's own checksum
+            // is what tells the two apart.
+            int first = 8 + System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(bytes) + 4;
+            bytes[first + 3] ^= 0x01;
+            File.WriteAllBytes(path, bytes);
+
+            Assert.Throws<InvalidDataException>(() => SegmentJournal.Open(directory, Options()));
         }
         finally
         {
@@ -193,9 +261,9 @@ public class SegmentJournalTests
             // A byte inside the second record's payload: the framing still says where the record ends,
             // so this is damage rather than a tear, and the journal must not guess which operation was
             // meant.
-            int second = 4 + System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(bytes);
+            int second = 8 + System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(bytes) + 4;
 
-            bytes[second + 12] ^= 0xFF;
+            bytes[second + 8 + 12] ^= 0xFF;
             File.WriteAllBytes(path, bytes);
 
             Assert.Throws<InvalidDataException>(() => SegmentJournal.Open(directory, Options()));
