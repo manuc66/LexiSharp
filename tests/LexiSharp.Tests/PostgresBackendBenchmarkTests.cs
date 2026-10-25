@@ -540,6 +540,111 @@ public class PostgresBackendBenchmarkTests
             queries);
     }
 
+    [Fact]
+    public void TheFuzzyBackendDefaultsToOneSimilarityThresholdAndNamesIt()
+    {
+        // pg_trgm's own default is 0.3. A fuzzy row that did not say which threshold it ran at would
+        // be a metric with no match rule attached to it, and at 0.3 a prose query usually matches
+        // nothing: the threshold is the row's most consequential parameter.
+        BackendLane lane = BackendLane.Parse("fuzzy", "Host=db;Database=search", "simple");
+
+        Assert.Equal("Fuzzy", lane.Kind.ToString());
+        Assert.Equal([0.3], lane.Thresholds);
+        Assert.Contains("similarity threshold 0.3", lane.Description, StringComparison.Ordinal);
+        Assert.Contains(
+            lane.Caveats, caveat => caveat.Contains("in-sample threshold sweep", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TheFuzzyBackendKeepsEveryRequestedThresholdInOrderAndPrintsThemAsTheAxis()
+    {
+        // The sweep prints in the order the flag listed it, and each row is labelled with its own
+        // threshold: a table whose rows all read "pg_trgm similarity" would be points a reader could
+        // not tell apart.
+        BackendLane lane = BackendLane.Parse(
+            "fuzzy", "Host=db;Database=search", "simple", similarityThresholds: [0.05, 0.3, 0.001]);
+
+        Assert.Equal([0.05, 0.3, 0.001], lane.Thresholds);
+        Assert.Contains("0.05, 0.3, 0.001", lane.Description, StringComparison.Ordinal);
+
+        var curve = new BackendMeasurement(
+            "engine", "table", 10,
+            [
+                new BackendRow("0.3", new ConfigResult("t=0.3", 7, 0.0, 0.0, 0.0, 0.0, TimeSpan.Zero)),
+                new BackendRow("0.01", new ConfigResult("t=0.01", 7, 0.1, 0.1, 0.1, 0.1, TimeSpan.Zero)),
+            ],
+            [],
+            RowAxis: "threshold");
+
+        string formatted = PostgresBackendBenchmark.Format(curve, "nfcorpus");
+
+        Assert.Contains("threshold", formatted, StringComparison.Ordinal);
+        Assert.Contains("        0.3 |", formatted, StringComparison.Ordinal);
+        Assert.DoesNotContain("ef_search", formatted, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ASimilarityThresholdGivenToANonFuzzyBackendIsRefused()
+    {
+        // The lexical, ParadeDB and vector engines match by term or by embedding; none reads
+        // pg_trgm's threshold. Accepting the flag would label a row with a parameter that never
+        // entered it.
+        ArgumentException error = Assert.Throws<ArgumentException>(() => BackendLane.Parse(
+            "paradedb", "Host=db;Database=search", "simple", similarityThresholds: [0.05]));
+
+        Assert.Contains("--backend-threshold", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheFuzzyBackendGetsTheTitleInTheIndexedText()
+    {
+        // Its index covers the content column alone, like ParadeDB's: a title left in text_fields
+        // would be stored and never compared, so the corpus on one side of a comparison would carry
+        // fewer trigrams than the other.
+        SearchDocument document = Document("d1", "Bile salts", "bile salts emulsify fat");
+
+        SearchDocument shaped = Assert.Single(PostgresBackendBenchmark.Shape(BackendKind.Fuzzy, [document]));
+
+        Assert.Equal("Bile salts\nbile salts emulsify fat", shaped.Text);
+        Assert.Null(shaped.TextFields);
+    }
+
+    [SkippableFact]
+    public void TheFuzzyLaneMeasuresOneRowPerThresholdAndDropsItsTable()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        if (!ExtensionAvailable(ConnectionString!, "pg_trgm"))
+            Skip.If(true, "the pg_trgm extension is not available on the target instance.");
+
+        var corpus = new BeirCorpus
+        {
+            Name = "test",
+            Documents =
+            [
+                new BeirDocument("a", "Bile salts", "bile salts emulsify dietary fat"),
+                new BeirDocument("b", "Unrelated", "vesicle fusion in neurons"),
+            ],
+            Queries = [new BeirQuery("q1", "bile salts")],
+            TestRelevance = new Dictionary<string, IReadOnlyDictionary<string, double>>(StringComparer.Ordinal)
+            {
+                ["q1"] = new Dictionary<string, double> { ["a"] = 1 },
+            },
+        };
+
+        var lane = BackendLane.Parse(
+            "fuzzy", ConnectionString!, "simple", similarityThresholds: [0.3, 0.01]);
+
+        BackendMeasurement measurement = PostgresBackendBenchmark.Measure(
+            lane, corpus, "fuzzy_lane_test", topK: 10, limit: null, NdcgGain.Exponential,
+            excludeQueryDocument: false, jobs: 1);
+
+        Assert.Equal(2, measurement.Documents);
+        Assert.Equal(["0.3", "0.01"], measurement.Rows.Select(row => row.Label));
+        Assert.Equal(1, measurement.Rows[1].Result.Queries);
+        Assert.False(TableExists(measurement.Table), "The lane drops the table it built.");
+    }
+
     private static SearchDocument Document(string id, string title, string text) =>
         new(id, text, null, null, string.IsNullOrEmpty(title) ? null : new Dictionary<string, string> { ["title"] = title });
 
