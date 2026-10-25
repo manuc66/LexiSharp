@@ -45,10 +45,21 @@ namespace LexiSharp.Ranking;
 /// expansion: correctly spelled words are never degraded, only unknown ones are corrected.
 /// </para>
 /// <para>
+/// A leading <c>+</c> or <c>-</c> on a whitespace-delimited token is a <b>required</b> or
+/// <b>prohibited</b> operator: <c>+term</c> gates on the term's presence and scores it like the
+/// same term written without the operator, while <c>-term</c> excludes every document containing
+/// it and never scores it. Both gate before any relevance math is paid, and both apply to quoted
+/// phrases (<c>+"a phrase"</c>, <c>-"a phrase"</c>) and to prefix/fuzzy atoms (<c>+term*</c>,
+/// <c>-term~2</c>) as well as to literal terms. A <c>-</c> inside a token (<c>e-mail</c>) stays
+/// literal. A query of only prohibited atoms is the complement of its gate, scored at <c>1</c>
+/// for every surviving document; a query of only required atoms scores on exactly those terms.
+/// </para>
+/// <para>
 /// An optional <see cref="SynonymMap"/> additionally rewrites <b>free</b> query terms to
 /// their direct synonyms — one-way edges via <c>Add</c>, bidirectional groups via
 /// <c>AddEquivalent</c> — at one level only (never synonyms of synonyms) and never inside
-/// quoted phrases. Entries are tokenized with the engine's tokenizer at construction; each
+/// quoted phrases. Required and prohibited terms are taken literally, so an operator does not
+/// pull in synonyms. Entries are tokenized with the engine's tokenizer at construction; each
 /// must reduce to exactly one term or the constructor throws.
 /// </para>
 /// </remarks>
@@ -67,7 +78,8 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     public const string EngineName = "RankedTextSearchEngine";
 
     /// <inheritdoc />
-    public QueryFeatures SupportedQueryFeatures => QueryFeatures.Phrases | QueryFeatures.Expansions;
+    public QueryFeatures SupportedQueryFeatures =>
+        QueryFeatures.Phrases | QueryFeatures.Expansions | QueryFeatures.RequiredTerms | QueryFeatures.ProhibitedTerms;
 
     private readonly IReadOnlyTextIndex _index;
     private readonly ITextScorer _scorer;
@@ -292,9 +304,14 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
                 options, top, span.Counts.Ordinal, span.Counts.ScoredDocuments, span.ScoreStarted, started, instrumented);
         }
 
-        var (parsed, queryTerms) = BuildQuery(query, options);
+        var (parsed, queryTerms, requiredExpansionTerms, prohibitedExpansionTerms) = BuildQuery(query, options);
 
-        if (queryTerms.Count == 0)
+        // A query whose only positive content is a prohibited operator is still a query: it
+        // matches the complement of what it excludes. Everything else with no positive term
+        // (a whitespace query, a punctuation-only one, a vacuous phrase) matches nothing.
+        bool negativeOnly = queryTerms.Count == 0 && parsed is { HasProhibited: true };
+
+        if (queryTerms.Count == 0 && !negativeOnly)
         {
             if (instrumented)
                 _telemetry.Warning(EngineName, "query produced no searchable term: nothing to match against the vocabulary");
@@ -333,7 +350,11 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         // Cost on the default path: nothing. TermDeduplicator.Distinct returns its input when it
         // can prove the list has no duplicates, so a query with no repeated term resolves to the
         // same instance it would have before, and the plan sees the same terms.
-        var plan = _scorer is IQueryPlannableScorer plannable
+        //
+        // A pure-negative query has no positive term to plan: its survivors are scored at 1.0
+        // below, and handing a scorer an empty term list would ask it a question it was not
+        // written for.
+        var plan = queryTerms.Count > 0 && _scorer is IQueryPlannableScorer plannable
             ? plannable.CreatePlan(queryTerms, _index)
             : null;
 
@@ -379,9 +400,14 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             // and from the ordinal space when they do not. Both are ids-only, so a store never decodes
             // a document it is not returning; the two differ in which documents they visit, not in what
             // they cost per visit. An index that cannot answer by id keeps the document path below.
+            //
+            // A pure-negative query has no positive term to enumerate from, and its complement is the
+            // whole corpus minus the excluded documents, so both enumerations are skipped and the full
+            // scan below runs.
+            bool hasPositiveTerms = distinctQueryTerms.Count > 0;
             IEnumerable<string>? candidateIds = null;
 
-            if (documentFree && _scorer is ITermOverlapScorer)
+            if (documentFree && hasPositiveTerms && _scorer is ITermOverlapScorer)
             {
                 if (_index is ICandidateIdIndex idIndex &&
                     CandidatesCoverFractionOfCorpus(reachableDocuments, _index.Count))
@@ -415,6 +441,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             // shares none (ITermOverlapScorer), score only those candidates: same results,
             // same order, far fewer distance computations. Otherwise fall back to the full scan.
             var candidateDocuments =
+                hasPositiveTerms &&
                 _index is ICandidateIndex candidateIndex &&
                 _scorer is ITermOverlapScorer &&
                 CandidatesCoverFractionOfCorpus(reachableDocuments, _index.Count)
@@ -440,14 +467,20 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             if (document is not null && !options.PassesFilters(document))
                 return;
 
-            // Quoted segments are a hard positional gate: every phrase must appear at
-            // consecutive positions, checked before any relevance math is paid.
-            if (parsed is { HasPhrases: true } phrases && !MatchesPhrases(documentId, phrases.Phrases))
+            // Phrase gates and the required/prohibited operators are hard corpus gates: every one
+            // is checked before any relevance math is paid for.
+            if (parsed is { } gated && (gated.HasPhrases || gated.HasQualifiers)
+                && !PassesQueryGates(documentId, gated, requiredExpansionTerms, prohibitedExpansionTerms))
                 return;
 
-            double score = plan is null
-                ? _scorer.Score(documentId, distinctQueryTerms, _index)
-                : plan.Score(documentId);
+            // A pure-negative query carries no relevance signal, so its survivors get the unit
+            // score: a document is "matched" by not being excluded, and the configured tie-break
+            // orders the page. A scorer is never asked to score an empty term list here.
+            double score = negativeOnly
+                ? 1.0
+                : plan is null
+                    ? _scorer.Score(documentId, distinctQueryTerms, _index)
+                    : plan.Score(documentId);
 
             scoredDocuments++;
 
@@ -807,6 +840,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             _index is not IAccumulatingIndex index ||
             _scorer is not ITermOverlapScorer ||
             parsed is { HasPhrases: true } ||
+            parsed is { HasQualifiers: true } ||
             (filterWouldBeHonoured && !options.AccumulateFilteredQueries))
         {
             return null;
@@ -917,6 +951,78 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     }
 
     /// <summary>
+    /// Every hard query gate that is not a metadata filter: required and prohibited literal terms,
+    /// required and prohibited prefix/fuzzy atoms (one gate per atom), and required, prohibited
+    /// and unqualified phrases. A document must pass every one before it is scored.
+    /// </summary>
+    /// <remarks>
+    /// A required atom must be present and a prohibited one absent; nothing here contributes to a
+    /// score. The resolved expansion term sets are passed separately because the vocabulary is
+    /// consulted once per query, not once per candidate: <c>-term*</c> is one gate over every term
+    /// the prefix matched, never one gate per term.
+    /// </remarks>
+    private bool PassesQueryGates(
+        string documentId,
+        ParsedQuery parsed,
+        IReadOnlyList<string[]> requiredExpansions,
+        IReadOnlyList<string[]> prohibitedExpansions)
+    {
+        var required = parsed.RequiredTerms;
+
+        for (int i = 0; i < required.Count; i++)
+        {
+            if (_index.TermFrequency(documentId, required[i]) == 0)
+                return false;
+        }
+
+        var prohibited = parsed.ProhibitedTerms;
+
+        for (int i = 0; i < prohibited.Count; i++)
+        {
+            if (_index.TermFrequency(documentId, prohibited[i]) > 0)
+                return false;
+        }
+
+        for (int i = 0; i < requiredExpansions.Count; i++)
+        {
+            if (!AnyTermPresent(documentId, requiredExpansions[i]))
+                return false;
+        }
+
+        for (int i = 0; i < prohibitedExpansions.Count; i++)
+        {
+            if (AnyTermPresent(documentId, prohibitedExpansions[i]))
+                return false;
+        }
+
+        if (!MatchesPhrases(documentId, parsed.Phrases))
+            return false;
+
+        if (!MatchesPhrases(documentId, parsed.RequiredPhrases))
+            return false;
+
+        for (int i = 0; i < parsed.ProhibitedPhrases.Count; i++)
+        {
+            if (MatchesPhrase(documentId, parsed.ProhibitedPhrases[i]))
+                return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>Whether the document contains at least one of <paramref name="terms"/>.</summary>
+    private bool AnyTermPresent(string documentId, IReadOnlyList<string> terms)
+    {
+        for (int i = 0; i < terms.Count; i++)
+        {
+            if (_index.TermFrequency(documentId, terms[i]) > 0)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Whether every phrase appears at consecutive document positions; phrases are AND-ed
     /// (one failing constraint rejects the document).
     /// </summary>
@@ -1003,17 +1109,39 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     }
 
     /// <summary>
+    /// The resolved form of a parsed query: the concrete scoring terms, and the vocabulary
+    /// matches of every required and prohibited expansion atom (one entry per atom, in query
+    /// order) so the gates do not resolve the vocabulary per candidate document.
+    /// </summary>
+    private readonly record struct ResolvedQuery(
+        IReadOnlyList<string> ScoringTerms,
+        IReadOnlyList<string[]> RequiredExpansionTerms,
+        IReadOnlyList<string[]> ProhibitedExpansionTerms);
+
+    /// <summary>
     /// Shared by <see cref="Search(string, SearchOptions?, CancellationToken)"/> and <see cref="Explain(string, string)"/>: parse the raw query, then
     /// resolve synonyms and vocabulary expansions into the concrete scoring terms. The parsed
-    /// form still carries the literal phrase constraints for the positional gate, and is null for
-    /// a query that has none — a plain one, which the query language leaves alone.
+    /// form still carries the literal phrase and operator constraints for the gates, and is null
+    /// for a query that has none — a plain one, which the query language leaves alone.
     /// </summary>
-    private (ParsedQuery? Parsed, IReadOnlyList<string> Terms) BuildQuery(ReadOnlySpan<char> query, SearchOptions options)
+    /// <remarks>
+    /// The two expansion term sets are the resolved vocabulary matches of
+    /// <c>+term*</c>/<c>-term*</c> atoms, one entry per atom, so a gate can ask "<i>at least one
+    /// of these</i>" or "<i>none of these</i>" without resolving the vocabulary per candidate
+    /// document.
+    /// </remarks>
+    private (ParsedQuery? Parsed,
+        IReadOnlyList<string> Terms,
+        IReadOnlyList<string[]> RequiredExpansionTerms,
+        IReadOnlyList<string[]> ProhibitedExpansionTerms) BuildQuery(ReadOnlySpan<char> query, SearchOptions options)
     {
         // The literal path skips the query language entirely, so the terms are the tokenizer's and a
-        // quotation mark is a separator like any other. Everything downstream reads the same shape.
+        // quotation mark is a separator like any other. A leading - is ordinary text here too. Every
+        // downstream reader gets the same shape.
         if (!options.ParseQuerySyntax)
-            return (null, TokenizeQueryTerms(query));
+        {
+            return (null, TokenizeQueryTerms(query), Array.Empty<string[]>(), Array.Empty<string[]>());
+        }
 
         // A plain query is what the query language would produce for it anyway: the tokenizer's
         // terms, no phrases and no expansion atoms. Building the ParsedQuery record to say that
@@ -1021,10 +1149,12 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         // Synonyms are the one resolution a plain query still needs, and that path keeps the
         // parsed form rather than duplicating the expansion here.
         if (_synonyms is null && QueryParser.IsPlain(query))
-            return (null, TokenizeQueryTerms(query));
+            return (null, TokenizeQueryTerms(query), Array.Empty<string[]>(), Array.Empty<string[]>());
 
         var parsed = QueryParser.Parse(query, _tokenizer);
-        return (parsed, ResolveQueryTerms(parsed, options.FuzzyOnlyOutOfVocabulary));
+        var resolved = ResolveQueryTerms(parsed, options.FuzzyOnlyOutOfVocabulary);
+
+        return (parsed, resolved.ScoringTerms, resolved.RequiredExpansionTerms, resolved.ProhibitedExpansionTerms);
     }
 
     /// <summary>
@@ -1041,16 +1171,25 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
     /// <summary>
     /// Resolves the literal query into concrete scoring terms: free terms gain their direct
-    /// synonyms (one level, phrases stay literal), then prefix/fuzzy atoms expand against the
-    /// index vocabulary — or fall back to their literal base term when the index cannot
-    /// enumerate its vocabulary. When <paramref name="fuzzyOnlyOutOfVocabulary"/> is set, a
-    /// fuzzy atom whose base term is already in the vocabulary resolves to that exact term
-    /// only (no near-variant expansion), so only unknown words get corrected.
+    /// synonyms (one level, phrases stay literal, and required/prohibited terms stay literal),
+    /// then prefix/fuzzy atoms expand against the index vocabulary — or fall back to their
+    /// literal base term when the index cannot enumerate its vocabulary. When
+    /// <paramref name="fuzzyOnlyOutOfVocabulary"/> is set, a fuzzy atom whose base term is already
+    /// in the vocabulary resolves to that exact term only (no near-variant expansion), so only
+    /// unknown words get corrected.
     /// </summary>
-    private IReadOnlyList<string> ResolveQueryTerms(ParsedQuery parsed, bool fuzzyOnlyOutOfVocabulary)
+    /// <remarks>
+    /// A required atom contributes its resolved terms to the score — it is a gate <i>and</i> a
+    /// scoring term, exactly as the same atom without <c>+</c> — and its resolved set is returned
+    /// so the presence gate can ask whether any one of them occurs. A prohibited atom contributes
+    /// nothing to the score and returns only its resolved set, so the gate can ask whether any one
+    /// of them occurs. The vocabulary is therefore consulted once per query, not once per
+    /// candidate document.
+    /// </remarks>
+    private ResolvedQuery ResolveQueryTerms(ParsedQuery parsed, bool fuzzyOnlyOutOfVocabulary)
     {
         if (_synonyms is null && !parsed.HasExpansions)
-            return parsed.AllTerms;
+            return new ResolvedQuery(parsed.AllTerms, Array.Empty<string[]>(), Array.Empty<string[]>());
 
         var terms = new List<string>(parsed.AllTerms);
 
@@ -1060,6 +1199,9 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
                 AppendSynonyms(terms, parsed.FreeTerms[i]);
         }
 
+        List<string[]>? required = null;
+        List<string[]>? prohibited = null;
+
         if (parsed.HasExpansions)
         {
             var vocabulary = _index as IVocabularyIndex;
@@ -1068,22 +1210,58 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             {
                 var expansion = parsed.Expansions[i];
 
-                if (vocabulary is null)
+                if (expansion.Operator == QueryTermOperator.Prohibited)
                 {
-                    terms.Add(expansion.BaseTerm);
+                    var excluded = new List<string>();
+                    ResolveExpansion(excluded, vocabulary, expansion, fuzzyOnlyOutOfVocabulary);
+                    (prohibited ??= new List<string[]>()).Add(excluded.ToArray());
                     continue;
                 }
 
-                if (expansion.Kind == QueryExpansionKind.Prefix)
-                    ExpandPrefix(terms, vocabulary, expansion);
-                else if (fuzzyOnlyOutOfVocabulary && _index.DocumentFrequency(expansion.BaseTerm) > 0)
-                    terms.Add(expansion.BaseTerm);
-                else
-                    ExpandFuzzy(terms, vocabulary, expansion);
+                int first = terms.Count;
+                ResolveExpansion(terms, vocabulary, expansion, fuzzyOnlyOutOfVocabulary);
+
+                if (expansion.Operator == QueryTermOperator.Required)
+                {
+                    var present = new List<string>(terms.Count - first);
+
+                    for (int t = first; t < terms.Count; t++)
+                        present.Add(terms[t]);
+
+                    (required ??= new List<string[]>()).Add(present.ToArray());
+                }
             }
         }
 
-        return terms;
+        return new ResolvedQuery(
+            terms,
+            (IReadOnlyList<string[]>?)required ?? Array.Empty<string[]>(),
+            (IReadOnlyList<string[]>?)prohibited ?? Array.Empty<string[]>());
+    }
+
+    /// <summary>
+    /// Appends one expansion atom's resolved terms to <paramref name="target"/>: the vocabulary
+    /// matches for a prefix/fuzzy atom, or the literal base term when the index has no vocabulary
+    /// to expand against.
+    /// </summary>
+    private void ResolveExpansion(
+        List<string> target,
+        IVocabularyIndex? vocabulary,
+        QueryExpansion expansion,
+        bool fuzzyOnlyOutOfVocabulary)
+    {
+        if (vocabulary is null)
+        {
+            target.Add(expansion.BaseTerm);
+            return;
+        }
+
+        if (expansion.Kind == QueryExpansionKind.Prefix)
+            ExpandPrefix(target, vocabulary, expansion);
+        else if (fuzzyOnlyOutOfVocabulary && _index.DocumentFrequency(expansion.BaseTerm) > 0)
+            target.Add(expansion.BaseTerm);
+        else
+            ExpandFuzzy(target, vocabulary, expansion);
     }
 
     /// <summary>Appends the free term's direct synonyms, when the map defines any.</summary>
@@ -1285,7 +1463,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         if (_scorer is not IScoreExplainer explainer || !_index.Contains(documentId))
             return null;
 
-        var (_, terms) = BuildQuery(query, SearchOptions.Default);
+        var (_, terms, _, _) = BuildQuery(query, SearchOptions.Default);
         return explainer.Explain(documentId, terms, _index);
     }
 

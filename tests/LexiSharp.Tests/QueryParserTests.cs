@@ -210,6 +210,161 @@ public class QueryParserTests
         Assert.Equal(QueryExpansionKind.Prefix, expansion.Kind);
     }
 
+    [Fact]
+    public void Parse_LeadingPlus_RecordsRequiredTermAndScoresIt()
+    {
+        var parsed = QueryParser.Parse("+neural network", Tokenizer.Default);
+
+        Assert.Equal(new[] { "network" }, parsed.FreeTerms);
+        Assert.Equal(new[] { "neural" }, parsed.RequiredTerms);
+        Assert.Empty(parsed.ProhibitedTerms);
+        // Required terms are literal scoring input; prohibited ones never are.
+        Assert.Equal(new[] { "network", "neural" }, parsed.AllTerms);
+        Assert.True(parsed.HasRequired);
+        Assert.False(parsed.HasProhibited);
+        Assert.True(parsed.HasQualifiers);
+    }
+
+    [Fact]
+    public void Parse_LeadingMinus_RecordsProhibitedTermAndKeepsItOutOfScoring()
+    {
+        var parsed = QueryParser.Parse("neural -network", Tokenizer.Default);
+
+        Assert.Equal(new[] { "neural" }, parsed.FreeTerms);
+        Assert.Equal(new[] { "network" }, parsed.ProhibitedTerms);
+        Assert.Empty(parsed.RequiredTerms);
+        Assert.Equal(new[] { "neural" }, parsed.AllTerms);
+        Assert.False(parsed.HasRequired);
+        Assert.True(parsed.HasProhibited);
+        Assert.True(parsed.HasQualifiers);
+    }
+
+    [Theory]
+    [InlineData("e-mail")]
+    [InlineData("well-being")]
+    [InlineData("foo-bar")]
+    [InlineData("re-enter the room")]
+    public void Parse_HyphenInsideAWord_IsLiteralAndNotAnOperator(string query)
+    {
+        var parsed = QueryParser.Parse(query, Tokenizer.Default);
+
+        Assert.Equal(Tokenizer.Default.Tokenize(query), parsed.FreeTerms);
+        Assert.Equal(Tokenizer.Default.Tokenize(query), parsed.AllTerms);
+        Assert.Empty(parsed.RequiredTerms);
+        Assert.Empty(parsed.ProhibitedTerms);
+        Assert.False(parsed.HasQualifiers);
+        Assert.True(QueryParser.IsPlain(query));
+    }
+
+    [Fact]
+    public void Parse_OnlyALeadingOperatorOnAWhitespaceTokenCounts()
+    {
+        // "foo-bar" starts a token with 'f'; "-bar" is a separate token and does count.
+        var parsed = QueryParser.Parse("foo-bar -baz", Tokenizer.Default);
+
+        Assert.Equal(Tokenizer.Default.Tokenize("foo-bar"), parsed.FreeTerms);
+        Assert.Equal(new[] { "baz" }, parsed.ProhibitedTerms);
+    }
+
+    [Fact]
+    public void Parse_BareSignAndSeparatedSign_AreNotOperators()
+    {
+        var bare = QueryParser.Parse("+ -", Tokenizer.Default);
+        Assert.Empty(bare.RequiredTerms);
+        Assert.Empty(bare.ProhibitedTerms);
+
+        // The sign has to touch its term; separated by whitespace it is a token of its own and
+        // tokenizes to nothing.
+        var separated = QueryParser.Parse("+ neural - network", Tokenizer.Default);
+        Assert.Equal(new[] { "neural", "network" }, separated.FreeTerms);
+        Assert.Empty(separated.RequiredTerms);
+        Assert.Empty(separated.ProhibitedTerms);
+    }
+
+    [Fact]
+    public void Parse_RepeatedOperators_FirstOneDecides()
+    {
+        var required = QueryParser.Parse("++neural", Tokenizer.Default);
+        Assert.Equal(new[] { "neural" }, required.RequiredTerms);
+        Assert.Empty(required.ProhibitedTerms);
+
+        var mixed = QueryParser.Parse("+-neural", Tokenizer.Default);
+        Assert.Equal(new[] { "neural" }, mixed.RequiredTerms);
+        Assert.Empty(mixed.ProhibitedTerms);
+
+        var prohibited = QueryParser.Parse("--neural", Tokenizer.Default);
+        Assert.Equal(new[] { "neural" }, prohibited.ProhibitedTerms);
+
+        var reversed = QueryParser.Parse("-+neural", Tokenizer.Default);
+        Assert.Equal(new[] { "neural" }, reversed.ProhibitedTerms);
+        Assert.Empty(reversed.RequiredTerms);
+    }
+
+    [Theory]
+    [InlineData("+neural*", QueryTermOperator.Required)]
+    [InlineData("-neural*", QueryTermOperator.Prohibited)]
+    [InlineData("+neural~2", QueryTermOperator.Required)]
+    [InlineData("-neural~2", QueryTermOperator.Prohibited)]
+    public void Parse_OperatorOnAnExpansion_IsCarriedByTheAtom(string query, QueryTermOperator expected)
+    {
+        var parsed = QueryParser.Parse(query, Tokenizer.Default);
+
+        var expansion = Assert.Single(parsed.Expansions);
+        Assert.Equal(expected, expansion.Operator);
+        // An expansion resolves later against the vocabulary, so the literal list is empty.
+        Assert.Empty(parsed.AllTerms);
+        Assert.True(parsed.HasQualifiers);
+    }
+
+    [Fact]
+    public void Parse_QualifiedPhrases_AreSeparatedFromUnqualifiedOnes()
+    {
+        var parsed = QueryParser.Parse("+\"machine learning\" -\"neural network\" \"deep learning\" free",
+            Tokenizer.Default);
+
+        Assert.Equal(new[] { "free" }, parsed.FreeTerms);
+
+        var required = Assert.Single(parsed.RequiredPhrases);
+        Assert.Equal(new[] { "machine", "learning" }, required);
+
+        var prohibited = Assert.Single(parsed.ProhibitedPhrases);
+        Assert.Equal(new[] { "neural", "network" }, prohibited);
+
+        var plain = Assert.Single(parsed.Phrases);
+        Assert.Equal(new[] { "deep", "learning" }, plain);
+
+        // Scoring input is free + required literal terms + plain/required phrase terms; a
+        // prohibited phrase's terms never score.
+        Assert.Equal(
+            new[] { "free", "deep", "learning", "machine", "learning" },
+            parsed.AllTerms);
+    }
+
+    [Fact]
+    public void Parse_VacuousPhraseWithAnOperator_ImposesNothing()
+    {
+        var parsed = QueryParser.Parse("-\"\" +\"!!!\"", Tokenizer.Default);
+
+        Assert.Empty(parsed.Phrases);
+        Assert.Empty(parsed.RequiredPhrases);
+        Assert.Empty(parsed.ProhibitedPhrases);
+        Assert.False(parsed.HasQualifiers);
+        Assert.Empty(parsed.AllTerms);
+    }
+
+    [Fact]
+    public void IsPlain_SeesLeadingOperatorsButNotHyphensInsideWords()
+    {
+        Assert.False(QueryParser.IsPlain("-neural"));
+        Assert.False(QueryParser.IsPlain("+neural"));
+        Assert.False(QueryParser.IsPlain("neural -network"));
+        Assert.False(QueryParser.IsPlain("+\"machine learning\""));
+
+        Assert.True(QueryParser.IsPlain("neural network"));
+        Assert.True(QueryParser.IsPlain("e-mail well-being"));
+        Assert.True(QueryParser.IsPlain("+"));
+    }
+
     private static void AssertExpansion(string query, QueryExpansionKind kind, int maxEdits)
     {
         var parsed = QueryParser.Parse(query, Tokenizer.Default);
