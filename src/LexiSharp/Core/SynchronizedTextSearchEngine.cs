@@ -35,7 +35,9 @@ namespace LexiSharp.Core;
 /// <para>
 /// The read lock is not free in principle, and the measured cost on the stock engine is reported
 /// in the remarks of <see cref="Search(ReadOnlySpan{char}, SearchOptions?, CancellationToken)"/> — measured against
-/// the unwrapped engine in the same session, not claimed. A caller who needs the last few percent
+/// the unwrapped engine in the same session, not claimed, and reproducible with the concurrency lane
+/// (<c>dotnet run --project bench/LexiSharp.Benchmarks -c Release -- concurrency --runs 5</c>, documented
+/// in <c>docs/benchmarks.md</c>). A caller who needs the last few percent
 /// of single-threaded latency should keep the engine unwrapped rather than expect a number.
 /// </para>
 /// <para>
@@ -127,21 +129,25 @@ public sealed class SynchronizedTextSearchEngine
     /// <inheritdoc />
     /// <remarks>
     /// The read side of the lock, shared by every search and capability call, so concurrent
-    /// searches still overlap. The uncontended cost of the read pair is one atomic operation plus a
-    /// branch per call; <b>measured</b> against the unwrapped stock engine in the session that
-    /// wrote this, on a 10,000-document corpus, over 2 000 interleaved best-of-5 passes of 64
-    /// queries: the wrapped-to-unwrapped median ratio came out at 0.984x and 1.002x on two runs —
-    /// straddling 1.0, so the uncontended read lock costs nothing a caller can resolve at this
-    /// scale. Do not extrapolate that to a contended lock or to another engine: it is one host, one
-    /// corpus, uncontended, and the two runs differ more between themselves than the lock does.
+    /// searches still overlap. <b>Measured</b> against the unwrapped engine in the same session by
+    /// the concurrency lane: one 100,000-document Zipf corpus, a 1:1:1 mix of a one-term tail query, a
+    /// three-term tail query and a head query, five interleaved runs per caller count. Throughput was
+    /// at parity — 1.006x at one caller, 1.017x at eight — and every per-run throughput range over 1,
+    /// 2, 4 and 8 callers included 1.0. The mix p50 ratio was 0.990x at one caller, 1.035x at two,
+    /// 1.014x at four and 1.004x at eight; the two-caller range (1.013x–1.061x) is the only one that
+    /// excludes 1.0, and the one-caller reading does not reproduce it, so no fixed cost is
+    /// established. On the median, the read pair costs at most a few percent of a 4–10 µs tail call;
+    /// one four-caller p99 run reached 1.126x, so that is not a bound on the tail. Do not extrapolate
+    /// to a contended lock or to another engine: it is one host, one corpus, a read-only workload,
+    /// and the lock's share of a call is bounded by the call's own work — the head query in that mix
+    /// costs about a millisecond.
     /// <para>
-    /// Under write contention the cost stops being nothing — the honest half of the caveat,
-    /// measured in the same session: one writer toggling <c>Add</c>/<c>Remove</c> as fast as it can
-    /// while the same eight readers searched, the readers' combined throughput fell to
-    /// <b>0.15x</b> the uncontended rate over a 3-second window, with no reader starved to zero
-    /// (the least-loaded one still completed 455 searches). Same host, one corpus, one window each
-    /// — a ratio, not a contract, and a reason to keep write-heavy workloads on the unwrapped
-    /// engine rather than expect a number from this one.
+    /// Under write contention the cost stops being nothing, and the concurrency lane does not cover
+    /// it: one writer toggling <c>Add</c>/<c>Remove</c> as fast as it can while the same eight readers
+    /// searched, the readers' combined throughput fell to <b>0.15x</b> the uncontended rate over a
+    /// 3-second window, with no reader starved to zero (the least-loaded one still completed 455
+    /// searches). That figure comes from the session that added this type; no command in this tree
+    /// reproduces it, so read it as a direction rather than a reproducible number.
     /// </para>
     /// </remarks>
     public IReadOnlyList<SearchResult> Search(ReadOnlySpan<char> query, SearchOptions? options = null, CancellationToken cancellationToken = default)
