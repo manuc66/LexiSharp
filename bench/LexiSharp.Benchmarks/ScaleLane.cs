@@ -21,19 +21,28 @@ namespace LexiSharp.Benchmarks;
 /// </para>
 /// <para>
 /// It is a direct run rather than a benchmark class for that reason, and the numbers are therefore
-/// a stopwatch in a plain process, not a BenchmarkDotNet report: no warm-up beyond the discarded
-/// 1,000-document build and the iteration counts printed with each row, no outlier removal, no
-/// forced collections around the measured operation. Read the absolute latencies as host-bound;
-/// the byte counts are exact.
+/// a stopwatch in a plain process, not a BenchmarkDotNet report: no outlier removal, no forced
+/// collections around the measured operation, and no distribution beyond <c>min</c>, <c>p50</c> and
+/// <c>mean</c>. Read the absolute latencies as host-bound; the byte counts are exact.
 /// </para>
 /// <para>
 /// The corpus is <see cref="CorpusFactory.CreateZipfDocuments"/>, which is also what
-/// <see cref="CandidateSearchBenchmarks"/> and <see cref="ScoringPathBenchmarks"/> use, so a row
-/// here is comparable with a row there at 10,000 documents. The query terms are the same three tail
-/// terms <see cref="CandidateSearchBenchmarks"/> uses, and the lane prints each term's document
-/// frequency at every size,
-/// because the vocabulary is held at 30,000 words while the corpus grows: a tail term thickens with
-/// scale, and the printed <c>df</c> is what keeps that visible.
+/// <see cref="CandidateSearchBenchmarks"/> and <see cref="ScoringPathBenchmarks"/> use. The query
+/// terms are the same three tail terms <see cref="CandidateSearchBenchmarks"/> uses, and the lane
+/// prints each term's document frequency at every size, because the vocabulary is held at 30,000
+/// words while the corpus grows: a tail term thickens with scale, and the printed <c>df</c> is what
+/// keeps that visible.
+/// </para>
+/// <para>
+/// Each query is warmed for <see cref="WarmUpDuration"/> before it is timed, and the last 100 ms of
+/// that warm-up is printed beside the measured <c>p50</c>. The warm-up is not politeness: the same
+/// call on the same corpus measures about 3.5 µs per search in the first 400 ms, about 1.3 µs at
+/// half a second, and about 0.6 µs from 0.7 s on, because tiered compilation with dynamic PGO
+/// instruments the call chain before it optimizes it. A 100-search warm-up therefore times the
+/// tier-1 instrumented code, not the search: it reads 2.2 µs for the one-term query that
+/// <see cref="CandidateSearchBenchmarks.OneTerm"/> measures at 537 ns on the same tree, with the
+/// same 840 B allocated per search. With the five-second warm-up the two agree within this host's
+/// run-to-run spread.
 /// </para>
 /// </remarks>
 internal static class ScaleLane
@@ -46,6 +55,14 @@ internal static class ScaleLane
 
     private const int LargestDocumentCount = 1_000_000;
     private const string IncludeLargestVariable = "LEXISHARP_SCALE_INCLUDE_1M";
+
+    /// <summary>
+    /// How long each query is called before it is timed. See the class remarks for the measurement
+    /// that sets this value.
+    /// </summary>
+    private static readonly TimeSpan WarmUpDuration = TimeSpan.FromSeconds(5);
+
+    private const int WarmUpWindowMilliseconds = 100;
 
     private static readonly int[] DefaultDocumentCounts = [10_000, 100_000];
 
@@ -133,11 +150,30 @@ internal static class ScaleLane
         int documentCount)
     {
         var options = new SearchOptions(Limit: 10);
-        int warmup = WarmUpIterations(documentCount);
         int iterations = MeasuredIterations(documentCount);
 
-        for (int i = 0; i < warmup; i++)
+        // Warm by wall time, not by call count: promotion to the optimized tier is a background
+        // recompile, so a handful of milliseconds of calls is not a warm-up however many they are.
+        // The last 100 ms is kept so the printed p50 can be read against it.
+        var warmUp = Stopwatch.StartNew();
+        long warmUpSearches = 0;
+        long windowStarted = Stopwatch.GetTimestamp();
+        long windowSearches = 0;
+        double lastWindowNanosecondsPerSearch = 0;
+
+        while (warmUp.Elapsed < WarmUpDuration)
+        {
             _sink += engine.Search(query, options).Count;
+            warmUpSearches++;
+            windowSearches++;
+
+            if (Stopwatch.GetElapsedTime(windowStarted).TotalMilliseconds >= WarmUpWindowMilliseconds)
+            {
+                lastWindowNanosecondsPerSearch = Stopwatch.GetElapsedTime(windowStarted).TotalNanoseconds / windowSearches;
+                windowStarted = Stopwatch.GetTimestamp();
+                windowSearches = 0;
+            }
+        }
 
         var microseconds = new double[iterations];
         int hits = 0;
@@ -171,7 +207,9 @@ internal static class ScaleLane
             query,
             documentFrequency,
             hits,
-            warmup,
+            warmUp.Elapsed.TotalSeconds,
+            warmUpSearches,
+            lastWindowNanosecondsPerSearch,
             iterations,
             microseconds[0],
             microseconds[iterations / 2],
@@ -189,7 +227,9 @@ internal static class ScaleLane
             $"mean {Time(measurement.MeanMicroseconds),9}  " +
             $"{Number(measurement.AllocatedBytes),5} B/search");
         Console.WriteLine(
-            $"      {measurement.WarmUpIterations} warm-up + {measurement.Iterations} timed searches; " +
+            $"      {Fixed(measurement.WarmUpSeconds, 0, 1)} s warm-up ({Number(measurement.WarmUpSearches)} searches, " +
+            $"last 100 ms {Time(measurement.LastWindowNanosecondsPerSearch / 1_000)}/search) + " +
+            $"{Number(measurement.Iterations)} timed searches; " +
             "allocation over a separate loop of the same length");
     }
 
@@ -257,9 +297,6 @@ internal static class ScaleLane
         return GC.GetTotalMemory(forceFullCollection: false);
     }
 
-    private static int WarmUpIterations(int documentCount) =>
-        documentCount >= 1_000_000 ? 20 : documentCount >= 100_000 ? 50 : 100;
-
     private static int MeasuredIterations(int documentCount) =>
         documentCount >= 1_000_000 ? 100 : documentCount >= 100_000 ? 300 : 1_000;
 
@@ -280,7 +317,9 @@ internal static class ScaleLane
         string Query,
         int DocumentFrequency,
         int Hits,
-        int WarmUpIterations,
+        double WarmUpSeconds,
+        long WarmUpSearches,
+        double LastWindowNanosecondsPerSearch,
         int Iterations,
         double MinimumMicroseconds,
         double MedianMicroseconds,
