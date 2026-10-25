@@ -59,6 +59,16 @@ public partial class SdkPinTests
     /// The roll-forward policies that cannot carry a 10.0 SDK into a later feature band or a later
     /// major version. <c>disable</c> is stricter than needed rather than looser, so it is not here.
     /// </summary>
+    /// <remarks>
+    /// <c>patch</c> is the policy <c>global.json</c> uses, and the difference from <c>latestPatch</c>
+    /// is not stylistic. setup-dotnet turns <c>latestPatch</c> into a channel request —
+    /// <c>install-dotnet.sh --channel 10.0.4xx</c> — so CI installs the newest patch in the band
+    /// rather than the pinned one. When that patch (10.0.403) was advertised by the channel before
+    /// its download was published, every job failed in setup-dotnet with a 409, on a commit whose
+    /// <c>global.json</c> named a version that downloaded fine. <c>patch</c> asks for the exact
+    /// version and rolls forward only when it is missing, so the pin is what CI installs while a
+    /// contributor whose machine carries a later patch still builds.
+    /// </remarks>
     private static readonly string[] BandPreservingRollForwards =
     [
         "patch",
