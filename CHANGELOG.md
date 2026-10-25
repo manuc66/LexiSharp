@@ -52,13 +52,21 @@ workflow.
   so the two cannot disagree. Replaying past it would not be idempotent — re-indexing a document
   tombstones its old ordinal and adds a new one.
 
-  A record is `[int32 length][payload][uint32 crc32]`. The framing distinguishes the two failures a
-  journal meets: a torn tail — the record a crash interrupted — cannot present a length that fits the
-  bytes behind it, so opening drops it and cuts the file back to a record boundary; a record whose
-  length fits and whose checksum does not is damage, and the store refuses to open rather than replay
-  an operation it cannot vouch for. The torn-tail test walks every byte cut of a four-record journal
-  and asserts, per cut, that replay yields exactly the records that fit, that the file was shortened to
-  a boundary, and that the next append is given the next sequence.
+  **Opening is a read.** The journal is validated and replayed at open, and the append handle is opened
+  by the first write, so a corpus replica on a read-only mount opens and serves and only a write asks
+  for write access. `TruncatedJournalBytes` reports what a torn tail cost, and a store opened with
+  `JournalOptions.Disabled` refuses to ignore entries it would otherwise leave out of the corpus.
+
+  A record is `[int32 length][uint32 checksum of the length][payload][uint32 checksum of the payload]`.
+  The two checksums distinguish the two failures a journal meets. A **torn tail** — the record a crash
+  interrupted — cannot present a whole frame, so the open reports it in `TruncatedJournalBytes` and the
+  first append cuts the file back to a boundary; appending after the tear would make the next replay
+  stop in the same place and lose everything after it. A **damaged** record — a length or a payload that
+  does not match its checksum — makes the store refuse to open rather than replay an operation it cannot
+  vouch for. The length carries its own checksum because a corrupted length is indistinguishable from an
+  interrupted write by framing alone, and reading it as one would silently drop every record after it.
+  The torn-tail test walks every byte cut of a four-record journal and asserts, per cut, what replay
+  yields, what the open reports, and that the append after it is given the next sequence and is whole.
 
   The overlay build of 20,000 documents still allocates 395 MB against its 460 MB pin with the journal
   on: the encoder reuses its buffers, so the journal's own share is one serialized copy of each
