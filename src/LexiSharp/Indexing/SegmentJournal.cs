@@ -57,6 +57,17 @@ internal sealed class SegmentJournal : IDisposable
     /// <summary>Sequence plus operation: the shortest payload a record can have.</summary>
     private const int MinimumPayload = sizeof(long) + 1;
 
+    /// <summary>
+    /// The record's fixed framing: <c>[int32 length][uint32 checksum of the length]</c>.
+    /// </summary>
+    /// <remarks>
+    /// The length's checksum is what makes a damaged header distinguishable from an interrupted write.
+    /// A torn tail cannot present a whole header; a header that checksums to a length which does not fit
+    /// the file is damage and is refused, where the length alone would have been read as a tear and the
+    /// rest of the journal silently dropped.
+    /// </remarks>
+    private const int HeaderBytes = 4 + 4;
+
     /// <summary>A record longer than this is a length prefix that cannot be trusted.</summary>
     private const int MaximumPayload = 256 * 1024 * 1024;
 
@@ -64,10 +75,10 @@ internal sealed class SegmentJournal : IDisposable
 
     private readonly string _path;
     private readonly JournalOptions _options;
-    private readonly FileStream _stream;
-    private readonly byte[] _prefix = new byte[4];
+    private readonly byte[] _header = new byte[HeaderBytes];
     private readonly byte[] _checksum = new byte[4];
     private readonly byte[] _writeLength = new byte[4];
+    private readonly byte[] _writeHeaderChecksum = new byte[4];
     private readonly byte[] _writeChecksum = new byte[4];
 
     /// <summary>The payload buffer and its writer, reused by every append.</summary>
@@ -79,18 +90,34 @@ internal sealed class SegmentJournal : IDisposable
     private readonly MemoryStream _payloadBuffer = new();
     private readonly BinaryWriter _payloadWriter;
 
+    /// <summary>
+    /// The append handle, opened by the first write rather than by <see cref="Open"/>.
+    /// </summary>
+    /// <remarks>
+    /// A store that is opened to be searched and never written must not need a writable directory: a
+    /// corpus replica on a read-only mount opens, replays and answers, and only the first append asks
+    /// for write access. Null until then, which is also why <see cref="TruncatedBytes"/> is known before
+    /// any write happens — the open reads the file, and cutting it back waits for the append that needs
+    /// a boundary.
+    /// </remarks>
+    private FileStream? _stream;
+
+    /// <summary>The length of the last whole record: where an append may start.</summary>
+    private long _validLength;
+
     private long _lastSequence;
     private int _unflushed;
     private long _lastFlushAt;
 
-    private SegmentJournal(string path, JournalOptions options, FileStream stream, long lastSequence)
+    private SegmentJournal(string path, JournalOptions options, long lastSequence, long validLength, long truncatedBytes)
     {
         _path = path;
         _options = options;
-        _stream = stream;
         _lastSequence = lastSequence;
+        _validLength = validLength;
         _lastFlushAt = Environment.TickCount64;
         _payloadWriter = new BinaryWriter(_payloadBuffer, Encoding.UTF8, leaveOpen: true);
+        TruncatedBytes = truncatedBytes;
     }
 
     /// <summary>The last sequence this journal holds, or the sequence it was reset to.</summary>
@@ -108,17 +135,23 @@ internal sealed class SegmentJournal : IDisposable
     public long TruncatedBytes { get; private set; }
 
     /// <summary>
-    /// Opens the journal beside the segments in <paramref name="directory"/>, validates every record it
-    /// holds and drops a torn tail.
+    /// Opens the journal beside the segments in <paramref name="directory"/>, reads every record it
+    /// holds and reports what a torn tail costs — without writing anything.
     /// </summary>
-    /// <param name="directory">The store's directory. Created when absent.</param>
+    /// <remarks>
+    /// Reading and writing are separate rights here on purpose. Opening is a read: a corpus replica on
+    /// a read-only mount opens, replays and answers queries, and the append handle is created by the
+    /// first write. The torn tail is therefore measured now and cut back by <see cref="BeginAppend"/>,
+    /// which is the point that needs a boundary to append at.
+    /// </remarks>
+    /// <param name="directory">The store's directory. Created when absent, which is a no-op when it exists.</param>
     /// <param name="options">The flush policy.</param>
     /// <param name="startAt">
     /// A sequence the journal continues above even when it holds no entry of its own — the marker of the
     /// segment the store just committed. Without it a journal truncated by a commit would restart at 1,
     /// and a replay would skip every new entry because the segment's marker already covers them.
     /// </param>
-    /// <exception cref="InvalidDataException">A record is intact by its framing and fails its checksum.</exception>
+    /// <exception cref="InvalidDataException">A record's framing or payload fails its checksum.</exception>
     public static SegmentJournal Open(string directory, JournalOptions options, long startAt = 0)
     {
         ArgumentNullException.ThrowIfNull(directory);
@@ -138,41 +171,78 @@ internal sealed class SegmentJournal : IDisposable
 
         if (File.Exists(path))
         {
-            using (var read = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096))
-            {
-                fileLength = read.Length;
+            using var read = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096);
 
-                foreach (var (sequence, length) in Scan(read))
-                {
-                    lastSequence = sequence;
-                    validLength += length;
-                }
-            }
+            fileLength = read.Length;
 
-            // A torn tail is a record the crash interrupted. Appending after it would make the next
-            // replay stop at the same torn record and lose everything written after it, so the file is
-            // cut back to the last record that is whole before anything is appended.
-            if (fileLength != validLength)
+            foreach (var (sequence, length) in Scan(read))
             {
-                using var truncate = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None);
-                truncate.SetLength(validLength);
+                lastSequence = sequence;
+                validLength += length;
             }
         }
 
-        // Buffering is disabled on purpose: an append reaches the operating system when it is written,
-        // which is what makes OnCommit survive a process crash. The device flush is separate and only a
-        // policy asks for it.
-        //
-        // OpenOrCreate rather than Append: an append-mode stream refuses SetLength, and Reset truncates
-        // the file after a commit. One writer per journal means the position is the end of the file, and
-        // the seek makes that true on open.
-        var stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.Write, FileShare.ReadWrite, bufferSize: 1);
-        stream.Seek(0, SeekOrigin.End);
+        return new SegmentJournal(
+            path,
+            options,
+            Math.Max(startAt, lastSequence),
+            validLength,
+            fileLength - validLength);
+    }
 
-        return new SegmentJournal(path, options, stream, Math.Max(startAt, lastSequence))
+    /// <summary>
+    /// Whether the journal in <paramref name="directory"/> holds an entry above
+    /// <paramref name="sequence"/>, without opening it for writing.
+    /// </summary>
+    /// <remarks>
+    /// A store opened with the journal disabled still has the entries an earlier run made durable, and
+    /// ignoring them would answer with a corpus missing every write since the last commit. The store asks
+    /// this before it decides, and refuses rather than serving that corpus.
+    /// </remarks>
+    public static bool HasEntriesAbove(string directory, long sequence)
+    {
+        ArgumentNullException.ThrowIfNull(directory);
+        string path = Path.Combine(directory, FileName);
+
+        if (!File.Exists(path))
+            return false;
+
+        using var read = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096);
+
+        long last = 0;
+
+        foreach (var (entrySequence, _) in Scan(read))
+            last = entrySequence;
+
+        return last > sequence;
+    }
+
+    /// <summary>
+    /// Opens the append handle, cutting a torn tail back to the last whole record.
+    /// </summary>
+    /// <remarks>
+    /// Buffering is disabled on purpose: an append reaches the operating system when it is written,
+    /// which is what makes OnCommit survive a process crash. The device flush is separate and only a
+    /// policy asks for it. <c>OpenOrCreate</c> rather than <c>Append</c> because an append-mode stream
+    /// refuses <c>SetLength</c>, and both this cut and <see cref="Reset"/> truncate.
+    /// </remarks>
+    private void BeginAppend()
+    {
+        if (_stream is not null)
+            return;
+
+        var stream = new FileStream(_path, FileMode.OpenOrCreate, FileAccess.Write, FileShare.ReadWrite, bufferSize: 1);
+
+        // Appending after a torn record would make the next replay stop at the same record and lose
+        // everything written after it, so the file is cut back to a boundary before anything is added.
+        if (stream.Length != _validLength)
         {
-            TruncatedBytes = fileLength - validLength,
-        };
+            stream.SetLength(_validLength);
+            _validLength = stream.Length;
+        }
+
+        stream.Seek(0, SeekOrigin.End);
+        _stream = stream;
     }
 
     /// <summary>
@@ -199,6 +269,8 @@ internal sealed class SegmentJournal : IDisposable
     {
         long sequence = _lastSequence + 1;
 
+        BeginAppend();
+
         _payloadBuffer.Position = 0;
         _payloadBuffer.SetLength(0);
 
@@ -222,12 +294,15 @@ internal sealed class SegmentJournal : IDisposable
         byte[] payload = _payloadBuffer.GetBuffer();
 
         BinaryPrimitives.WriteInt32LittleEndian(_writeLength, length);
+        BinaryPrimitives.WriteUInt32LittleEndian(_writeHeaderChecksum, Crc32(_writeLength));
         BinaryPrimitives.WriteUInt32LittleEndian(_writeChecksum, Crc32(payload.AsSpan(0, length)));
 
-        _stream.Write(_writeLength);
+        _stream!.Write(_writeLength);
+        _stream.Write(_writeHeaderChecksum);
         _stream.Write(payload, 0, length);
         _stream.Write(_writeChecksum);
 
+        _validLength = _stream.Position;
         _lastSequence = sequence;
         _unflushed++;
 
@@ -260,6 +335,12 @@ internal sealed class SegmentJournal : IDisposable
     /// </remarks>
     public IEnumerable<JournalEntry> ReadFrom(long afterSequence)
     {
+        // Opening is a read, and a store with no journal file is the normal state of a fresh or
+        // committed store: there is nothing to replay, and creating a file to look at would defeat the
+        // reason opening does not write.
+        if (!File.Exists(_path))
+            yield break;
+
         using var stream = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096);
 
         while (TryReadRecord(stream, out long sequence, out byte[] payload, out int length))
@@ -290,10 +371,17 @@ internal sealed class SegmentJournal : IDisposable
 
         // Truncating to nothing is the whole reset: the commit contains every entry the journal had, so
         // there is no prefix to keep. A crash after this and before the next append replays nothing and
-        // the segment is the corpus.
-        _stream.SetLength(0);
-        _stream.Seek(0, SeekOrigin.Begin);
-        _stream.Flush();
+        // the segment is the corpus. A store that never wrote has no file to truncate, and a read-only
+        // directory cannot be asked for one: nothing was journaled, so there is nothing to forget.
+        if (_stream is not null || File.Exists(_path))
+        {
+            BeginAppend();
+            _stream!.SetLength(0);
+            _stream.Seek(0, SeekOrigin.Begin);
+            _stream.Flush();
+        }
+
+        _validLength = 0;
         _lastSequence = sequence;
         _unflushed = 0;
         _lastFlushAt = Environment.TickCount64;
@@ -315,31 +403,32 @@ internal sealed class SegmentJournal : IDisposable
 
         _payloadWriter.Dispose();
         _payloadBuffer.Dispose();
-        _stream.Dispose();
+        _stream?.Dispose();
     }
 
     private void FlushToDevice()
     {
-        _stream.Flush(flushToDisk: true);
+        _stream!.Flush(flushToDisk: true);
         _unflushed = 0;
         _lastFlushAt = Environment.TickCount64;
     }
 
     /// <summary>
     /// Walks the records without decoding any document, yielding each sequence and the record's framed
-    /// length. Stops at the first record the framing cannot complete, which is a torn tail.
+    /// length. Stops at the first record the framing cannot complete, which is a torn tail, and refuses a
+    /// record whose header does not check out.
     /// </summary>
     private static IEnumerable<(long Sequence, int Length)> Scan(FileStream stream)
     {
-        var prefix = new byte[4];
+        var header = new byte[HeaderBytes];
         var checksum = new byte[4];
 
         while (true)
         {
-            if (ReadAtMost(stream, prefix, 4) < 4)
+            if (ReadAtMost(stream, header, HeaderBytes) < HeaderBytes)
                 yield break;
 
-            int length = BinaryPrimitives.ReadInt32LittleEndian(prefix);
+            int length = ReadLength(header, stream.Name);
 
             if (length < MinimumPayload || length > MaximumPayload)
                 yield break;
@@ -354,7 +443,7 @@ internal sealed class SegmentJournal : IDisposable
                 if (Crc32(payload.AsSpan(0, length)) != BinaryPrimitives.ReadUInt32LittleEndian(checksum))
                     throw new InvalidDataException($"the journal '{stream.Name}' holds a record whose checksum does not match its bytes");
 
-                yield return (BinaryPrimitives.ReadInt64LittleEndian(payload), 4 + length + 4);
+                yield return (BinaryPrimitives.ReadInt64LittleEndian(payload), HeaderBytes + length + 4);
             }
             finally
             {
@@ -363,17 +452,17 @@ internal sealed class SegmentJournal : IDisposable
         }
     }
 
-    /// <summary>Reads one framed record, validating its checksum, and stops at a torn tail.</summary>
+    /// <summary>Reads one framed record, validating both checksums, and stops at a torn tail.</summary>
     private bool TryReadRecord(FileStream stream, out long sequence, out byte[] payload, out int length)
     {
         sequence = 0;
         payload = [];
         length = 0;
 
-        if (ReadAtMost(stream, _prefix, 4) < 4)
+        if (ReadAtMost(stream, _header, HeaderBytes) < HeaderBytes)
             return false;
 
-        length = BinaryPrimitives.ReadInt32LittleEndian(_prefix);
+        length = ReadLength(_header, stream.Name);
 
         if (length < MinimumPayload || length > MaximumPayload)
             return false;
@@ -396,6 +485,27 @@ internal sealed class SegmentJournal : IDisposable
 
         sequence = BinaryPrimitives.ReadInt64LittleEndian(payload);
         return true;
+    }
+
+    /// <summary>
+    /// The length a record's header declares, after checking the header's own checksum.
+    /// </summary>
+    /// <remarks>
+    /// The length is the one field whose damage looks exactly like an interrupted write — a length past
+    /// the end of the file is indistinguishable from a record that was never finished — so it carries a
+    /// checksum of its own. Without it a bit flip in the high byte would silently drop every record after
+    /// it, which is the one failure mode this format must not have: the file would open, answer, and be
+    /// missing writes nobody was told about.
+    /// </remarks>
+    private static int ReadLength(ReadOnlySpan<byte> header, string path)
+    {
+        ReadOnlySpan<byte> lengthBytes = header[..4];
+        uint declared = BinaryPrimitives.ReadUInt32LittleEndian(header[4..]);
+
+        if (Crc32(lengthBytes) != declared)
+            throw new InvalidDataException($"the journal '{path}' holds a record whose header checksum does not match its length");
+
+        return BinaryPrimitives.ReadInt32LittleEndian(lengthBytes);
     }
 
     private static JournalEntry Decode(long sequence, byte[] payload, int length)

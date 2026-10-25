@@ -174,26 +174,6 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
         foreach (string path in SegmentFiles(directory))
             newest = path;
 
-        // The journal is opened before the refusal below, because it is what decides that refusal: a
-        // commit interrupted before its rename leaves a temporary segment and no generation, and a
-        // journal holding entries can rebuild the corpus that commit was writing.
-        if (_journalOptions.Enabled)
-            _journal = SegmentJournal.Open(_directory, _journalOptions);
-
-        // No readable generation but a temporary segment means a commit was interrupted before its
-        // rename. Opening that as a new, empty store would answer "no documents" to every query,
-        // which is the one failure mode worse than an exception: a corpus that is still on disk,
-        // reported as absent. A journal with entries is the difference — the writes are still there,
-        // and the replay below rebuilds them.
-        if (newest is null
-            && Directory.Exists(directory)
-            && Directory.GetFiles(directory, SegmentPrefix + "*.lxs.tmp").Length > 0
-            && _journal is not { LastSequence: > 0 })
-        {
-            throw new InvalidDataException(
-                $"{directory} holds an interrupted commit: a temporary segment and no readable generation");
-        }
-
         long segmentSequence = 0;
 
         if (newest is not null)
@@ -207,22 +187,60 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
                 owners.Add(handle.Owner);
         }
 
+        // No readable generation but a temporary segment means a commit was interrupted before its
+        // rename. Opening that as a new, empty store would answer "no documents" to every query,
+        // which is the one failure mode worse than an exception: a corpus that is still on disk,
+        // reported as absent. A journal with entries is the difference — the writes are still there,
+        // and the replay below rebuilds them.
+        if (newest is null
+            && Directory.Exists(directory)
+            && Directory.GetFiles(directory, SegmentPrefix + "*.lxs.tmp").Length > 0
+            && !SegmentJournal.HasEntriesAbove(directory, segmentSequence))
+        {
+            throw new InvalidDataException(
+                $"{directory} holds an interrupted commit: a temporary segment and no readable generation");
+        }
+
         _owners = owners;
         _chain = segments.Count == 0
             ? new SegmentChain([EmptySegment()], _tokenizer)
             : new SegmentChain(segments, _tokenizer);
 
-        if (_journal is not null)
+        if (_journalOptions.Enabled)
         {
+            _journal = SegmentJournal.Open(_directory, _journalOptions);
+
             // A journal whose highest entry sits below the segment's marker was written before that
             // segment — a crash between the rename and the truncation — so the next append has to
             // continue above the marker rather than reuse a sequence the segment already claims.
             if (segmentSequence > _journal.LastSequence)
                 _journal.StartAt(segmentSequence);
 
+            TruncatedJournalBytes = _journal.TruncatedBytes;
             Replay(segmentSequence);
         }
+        else if (SegmentJournal.HasEntriesAbove(directory, segmentSequence))
+        {
+            // Ignoring these would answer with a corpus missing every write since the last commit,
+            // silently — the entries are durable and the store was not asked to forget them, only not to
+            // add to them.
+            throw new InvalidDataException(
+                $"{directory} holds durable journal entries this open was asked to ignore: open it with the journal enabled to replay them, or commit before disabling it");
+        }
     }
+
+    /// <summary>
+    /// How many bytes the open found beyond the last whole journal record, or zero when the journal
+    /// ended on a boundary.
+    /// </summary>
+    /// <remarks>
+    /// A crash leaves a prefix: the record it interrupted does not frame, and the next append cuts it
+    /// off. The count is exposed because that is the one fact an operator cannot otherwise learn — the
+    /// store opens, answers, and is missing the tail of the last write it was given. A non-zero value
+    /// after a clean shutdown means a torn record reached the file, which is worth looking at even
+    /// though the store handled it.
+    /// </remarks>
+    public long TruncatedJournalBytes { get; }
 
     /// <summary>
     /// Applies the journal's entries above the segment's marker, in the order they were written.
@@ -295,10 +313,11 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
 
     /// <inheritdoc />
     /// <remarks>
-    /// The document is indexed first and journaled second: one the tokenizer refuses fails before a
-    /// record is written, and a record that cannot be written leaves the document in the memory of a
-    /// store that is answering queries, with the exception in the caller's hand. Neither order can make
-    /// a failed write durable, and this one cannot make a rejected write replayable.
+    /// Every mutation applies to the corpus first and is journaled second, and this order is the whole
+    /// of the contract: a write the index refuses fails before a record exists, so the journal cannot
+    /// hold an operation a replay would choke on, and a record that cannot be written leaves the change
+    /// in the memory of a store that is answering queries with the exception in the caller's hand.
+    /// Neither order can make a failed write durable; this one cannot make a rejected write replayable.
     /// </remarks>
     public void Add(SearchDocument document)
     {
