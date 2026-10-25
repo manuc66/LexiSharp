@@ -14,10 +14,11 @@ namespace LexiSharp.Core;
 /// whole quoted segment (see <see cref="RequiredPhrases"/> and <see cref="ProhibitedPhrases"/>).
 /// </param>
 /// <param name="AllTerms">
-/// The literal part of the scoring input: free terms, required (<c>+</c>) terms, and the terms of
-/// unqualified and required phrases, in reading order. Prohibited (<c>-</c>) terms are gates and
-/// are deliberately absent. <see cref="Expansions"/> resolve later against the index vocabulary
-/// and are not included.
+/// The literal part of the <i>unscoped</i> scoring input: free terms, required (<c>+</c>) terms,
+/// and the terms of unqualified and required phrases, in reading order. Prohibited (<c>-</c>)
+/// terms are gates and are deliberately absent, and so are field-scoped atoms — those have a field
+/// attached and live in <see cref="ScopedTerms"/>. <see cref="Expansions"/> resolve later against
+/// the index vocabulary and are not included.
 /// </param>
 /// <param name="Expansions">
 /// Free-text atoms carrying a <c>term*</c>/<c>term~N</c> operator, in reading order; empty when
@@ -57,20 +58,94 @@ public sealed record ParsedQuery(
     public IReadOnlyList<IReadOnlyList<string>> ProhibitedPhrases { get; init; } =
         Array.Empty<IReadOnlyList<string>>();
 
-    /// <summary>Whether at least one positional phrase constraint applies.</summary>
+    /// <summary>
+    /// The literal field-scoped terms that score: free <c>title:term</c> atoms, required ones, and
+    /// the terms of unqualified and required scoped phrases, in reading order. Prohibited scoped
+    /// atoms are absent. Each term scores from its field's statistics and contributes zero when
+    /// the field does not carry it.
+    /// </summary>
+    public IReadOnlyList<FieldScopedTerm> ScopedTerms { get; init; } = Array.Empty<FieldScopedTerm>();
+
+    /// <summary>
+    /// Field-scoped terms written with a leading <c>+</c>. Each must occur in its field for the
+    /// document to match, and each also scores (it is also in <see cref="ScopedTerms"/>).
+    /// </summary>
+    public IReadOnlyList<FieldScopedTerm> RequiredScopedTerms { get; init; } =
+        Array.Empty<FieldScopedTerm>();
+
+    /// <summary>
+    /// Field-scoped terms written with a leading <c>-</c>. A document carrying one of them in its
+    /// field is excluded whatever it scores, and they contribute nothing to the score.
+    /// </summary>
+    public IReadOnlyList<FieldScopedTerm> ProhibitedScopedTerms { get; init; } =
+        Array.Empty<FieldScopedTerm>();
+
+    /// <summary>
+    /// Quoted segments written as <c>title:"a phrase"</c>. Each must appear at consecutive
+    /// positions <i>inside its field</i>, and its terms score as
+    /// <see cref="FieldScopedTerm"/>s.
+    /// </summary>
+    public IReadOnlyList<FieldScopedPhrase> ScopedPhrases { get; init; } =
+        Array.Empty<FieldScopedPhrase>();
+
+    /// <summary>
+    /// Quoted segments written as <c>+title:"a phrase"</c>. Each must appear at consecutive
+    /// positions inside its field, and its terms score.
+    /// </summary>
+    public IReadOnlyList<FieldScopedPhrase> RequiredScopedPhrases { get; init; } =
+        Array.Empty<FieldScopedPhrase>();
+
+    /// <summary>
+    /// Quoted segments written as <c>-title:"a phrase"</c>. A document where any of them appears
+    /// inside its field is excluded, and its terms do not score.
+    /// </summary>
+    public IReadOnlyList<FieldScopedPhrase> ProhibitedScopedPhrases { get; init; } =
+        Array.Empty<FieldScopedPhrase>();
+
+    /// <summary>Whether at least one positional phrase constraint applies, scoped or not.</summary>
     public bool HasPhrases =>
-        Phrases.Count > 0 || RequiredPhrases.Count > 0 || ProhibitedPhrases.Count > 0;
+        Phrases.Count > 0 || RequiredPhrases.Count > 0 || ProhibitedPhrases.Count > 0
+        || ScopedPhrases.Count > 0 || RequiredScopedPhrases.Count > 0
+        || ProhibitedScopedPhrases.Count > 0;
 
     /// <summary>Whether at least one prefix/fuzzy atom applies.</summary>
     public bool HasExpansions => Expansions.Count > 0;
 
+    /// <summary>Whether the query writes at least one field scope.</summary>
+    public bool HasFieldScopes
+    {
+        get
+        {
+            if (ScopedTerms.Count > 0 || RequiredScopedTerms.Count > 0 || ProhibitedScopedTerms.Count > 0
+                || ScopedPhrases.Count > 0 || RequiredScopedPhrases.Count > 0
+                || ProhibitedScopedPhrases.Count > 0)
+            {
+                return true;
+            }
+
+            // A scoped prefix/fuzzy atom carries its field on the atom itself: its terms resolve
+            // later, against the vocabulary, so no literal scoped term exists yet.
+            for (int i = 0; i < Expansions.Count; i++)
+            {
+                if (Expansions[i].Field is not null)
+                    return true;
+            }
+
+            return false;
+        }
+    }
+
     /// <summary>Whether the query writes at least one <c>+</c> operator.</summary>
     public bool HasRequired =>
-        RequiredTerms.Count > 0 || RequiredPhrases.Count > 0 || HasExpansionOperator(QueryTermOperator.Required);
+        RequiredTerms.Count > 0 || RequiredPhrases.Count > 0
+        || RequiredScopedTerms.Count > 0 || RequiredScopedPhrases.Count > 0
+        || HasExpansionOperator(QueryTermOperator.Required);
 
     /// <summary>Whether the query writes at least one <c>-</c> operator.</summary>
     public bool HasProhibited =>
-        ProhibitedTerms.Count > 0 || ProhibitedPhrases.Count > 0 || HasExpansionOperator(QueryTermOperator.Prohibited);
+        ProhibitedTerms.Count > 0 || ProhibitedPhrases.Count > 0
+        || ProhibitedScopedTerms.Count > 0 || ProhibitedScopedPhrases.Count > 0
+        || HasExpansionOperator(QueryTermOperator.Prohibited);
 
     /// <summary>Whether the query uses <c>+</c> or <c>-</c> to qualify a term, phrase or atom.</summary>
     public bool HasQualifiers => HasRequired || HasProhibited;
@@ -134,41 +209,68 @@ public sealed record RawQuerySegments(
 /// surviving document — it carries no relevance signal, so the configured tie-break ranks it.
 /// A query of only required atoms and no free term scores on those required terms.
 /// </para>
+/// <para>
+/// <b>Field scopes.</b> When the caller supplies a field vocabulary (<c>fields</c>, the engine's
+/// index fields or <see cref="SearchOptions.KnownFields"/>), a token whose first colon separates a
+/// <i>known</i> name from a non-empty remainder scopes that atom to the field:
+/// <c>title:term</c>, <c>title:"a phrase"</c>, <c>+title:term</c>, <c>-title:term</c>, and the
+/// prefix/fuzzy forms <c>title:term*</c>/<c>title:term~N</c>. A name that is not in the vocabulary
+/// is not a scope, so <c>http://x</c>, <c>12:30</c> and <c>key:value</c> tokenize exactly as they
+/// did before the feature. The scope must begin the token (after an optional leading
+/// <c>+</c>/<c>-</c>) and must be followed immediately by the atom: <c>title: term</c>,
+/// <c>title:</c> alone, and <c>title:-term</c> are ordinary text, and a scope inside quotes is
+/// literal. Field names are matched by the vocabulary's own comparer.
+/// </para>
 /// </remarks>
 public static class QueryParser
 {
     /// <summary>
     /// Tokenizes <paramref name="query"/> into free terms, phrase constraints and expansion
-    /// atoms. A query without quotes or operators yields exactly
+    /// atoms. A query without quotes, operators or a field scope yields exactly
     /// <c>tokenizer.Tokenize(query)</c> as its free terms — byte-for-byte parity with plain
     /// tokenization.
     /// </summary>
-    public static ParsedQuery Parse(string query, ITokenizer tokenizer)
+    /// <param name="query">The raw query.</param>
+    /// <param name="tokenizer">The tokenizer the index was built with.</param>
+    /// <param name="fields">
+    /// The names a <c>name:</c> prefix may name. <c>null</c> means the query has no field grammar,
+    /// so every colon is ordinary text — the default, which is what keeps this parser from
+    /// guessing that <c>key:value</c> is a scope.
+    /// </param>
+    public static ParsedQuery Parse(
+        string query,
+        ITokenizer tokenizer,
+        IReadOnlySet<string>? fields = null)
     {
         ArgumentNullException.ThrowIfNull(query);
-        return Parse(query.AsSpan(), tokenizer);
+        return Parse(query.AsSpan(), tokenizer, fields);
     }
 
     /// <summary>
-    /// Whether <paramref name="query"/> is plain: no double quote, no prefix or fuzzy operator and
-    /// no leading required/prohibited operator, so the query language has nothing to add to it. A
-    /// plain query tokenizes to exactly <c>tokenizer.Tokenize(query)</c>, which is what lets a caller
-    /// with no use for the phrases and expansions of a <see cref="ParsedQuery"/> skip building one.
+    /// Whether <paramref name="query"/> is plain: no double quote, no prefix or fuzzy operator, no
+    /// leading required/prohibited operator and no field scope, so the query language has nothing
+    /// to add to it. A plain query tokenizes to exactly <c>tokenizer.Tokenize(query)</c>, which is
+    /// what lets a caller with no use for the phrases and expansions of a
+    /// <see cref="ParsedQuery"/> skip building one.
     /// </summary>
-    public static bool IsPlain(ReadOnlySpan<char> query) =>
+    public static bool IsPlain(ReadOnlySpan<char> query, IReadOnlySet<string>? fields = null) =>
         query.IndexOf('"') < 0
         && !ContainsExpansionMarker(query)
-        && !ContainsOperatorToken(query);
+        && !ContainsOperatorToken(query)
+        && !ContainsFieldScope(query, fields);
 
     /// <summary>
     /// Tokenizes <paramref name="query"/> into free terms, phrase constraints and expansion
     /// atoms, without materializing the query as a string.
     /// </summary>
-    public static ParsedQuery Parse(ReadOnlySpan<char> query, ITokenizer tokenizer)
+    public static ParsedQuery Parse(
+        ReadOnlySpan<char> query,
+        ITokenizer tokenizer,
+        IReadOnlySet<string>? fields = null)
     {
         ArgumentNullException.ThrowIfNull(tokenizer);
 
-        if (IsPlain(query))
+        if (IsPlain(query, fields))
         {
             var plainTerms = tokenizer.Tokenize(query);
             return new ParsedQuery(
@@ -185,11 +287,13 @@ public static class QueryParser
         var requiredPhrases = new List<IReadOnlyList<string>>();
         var prohibitedPhrases = new List<IReadOnlyList<string>>();
         var expansions = new List<QueryExpansion>();
+        var scope = new ScopeState();
 
         int freeStart = 0;
         int phraseStart = 0;
         bool inPhrase = false;
         QueryTermOperator phraseOperator = QueryTermOperator.None;
+        string? phraseField = null;
 
         for (int i = 0; i < query.Length; i++)
         {
@@ -199,38 +303,40 @@ public static class QueryParser
             if (!inPhrase)
             {
                 var segment = query[freeStart..i];
-                var operatorBeforeQuote = TakeTrailingOperator(ref segment);
+                var operatorBeforeQuote = TakeTrailingScope(ref segment, fields, out var fieldBeforeQuote);
 
                 if (segment.Length > 0)
                 {
                     AppendFreeSegment(
-                        freeTerms, requiredTerms, prohibitedTerms, expansions, segment, tokenizer);
+                        freeTerms, requiredTerms, prohibitedTerms, expansions, scope, segment, tokenizer, fields);
                 }
 
                 inPhrase = true;
                 phraseStart = i + 1;
                 phraseOperator = operatorBeforeQuote;
+                phraseField = fieldBeforeQuote;
             }
             else
             {
-                AppendPhrase(phraseOperator, phrases, requiredPhrases, prohibitedPhrases,
+                AppendPhrase(phraseOperator, phraseField, phrases, requiredPhrases, prohibitedPhrases, scope,
                     tokenizer.Tokenize(query[phraseStart..i]));
                 inPhrase = false;
                 phraseOperator = QueryTermOperator.None;
+                phraseField = null;
                 freeStart = i + 1;
             }
         }
 
         if (inPhrase)
         {
-            AppendPhrase(phraseOperator, phrases, requiredPhrases, prohibitedPhrases,
+            AppendPhrase(phraseOperator, phraseField, phrases, requiredPhrases, prohibitedPhrases, scope,
                 tokenizer.Tokenize(query[phraseStart..]));
         }
         else if (freeStart < query.Length)
         {
             AppendFreeSegment(
-                freeTerms, requiredTerms, prohibitedTerms, expansions,
-                query[freeStart..], tokenizer);
+                freeTerms, requiredTerms, prohibitedTerms, expansions, scope,
+                query[freeStart..], tokenizer, fields);
         }
 
         var allTerms = new List<string>(freeTerms.Count + requiredTerms.Count);
@@ -250,6 +356,12 @@ public static class QueryParser
             ProhibitedTerms = prohibitedTerms,
             RequiredPhrases = requiredPhrases,
             ProhibitedPhrases = prohibitedPhrases,
+            ScopedTerms = scope.Scoring,
+            RequiredScopedTerms = scope.Required,
+            ProhibitedScopedTerms = scope.Prohibited,
+            ScopedPhrases = scope.Phrases,
+            RequiredScopedPhrases = scope.RequiredPhrases,
+            ProhibitedScopedPhrases = scope.ProhibitedPhrases,
         };
     }
 
@@ -257,7 +369,7 @@ public static class QueryParser
     /// Quote-level split without tokenizing: the free text (outside-quote segments, trimmed and
     /// joined by single spaces) and each quoted segment's literal interior. Interiors that are
     /// empty, whitespace-only, or that the default tokenizer empties are dropped — the same
-    /// vacuous-phrase rule as <see cref="Parse(string, ITokenizer)"/>.
+    /// vacuous-phrase rule as <see cref="Parse(string, ITokenizer, IReadOnlySet{string})"/>.
     /// </summary>
     /// <remarks>
     /// This is a raw split and stays one: a leading <c>+</c>/<c>-</c> operator remains part of the
@@ -378,25 +490,76 @@ public static class QueryParser
     }
 
     /// <summary>
-    /// Appends one free-text (outside-quote) segment. With no leading <c>+</c>/<c>-</c> token it is
-    /// exactly the pre-operator behavior — the whole segment is tokenized — so a query that does
-    /// not use the new syntax takes the same path it always did. With an operator token the segment
-    /// is walked one whitespace-delimited token at a time, so a <c>-</c> inside a word stays literal.
+    /// Takes the qualifier a quoted segment carries: a trailing <c>[sign]field:</c> token
+    /// (<c>title:"..."</c>, <c>+title:"..."</c>, <c>-title:"..."</c>) or a bare trailing
+    /// <c>+</c>/<c>-</c>. The prefix has to touch the quote and begin the token, and the name has
+    /// to be known; otherwise the segment is left for the tokenizer and the quote is just a quote.
+    /// </summary>
+    private static QueryTermOperator TakeTrailingScope(
+        ref ReadOnlySpan<char> segment,
+        IReadOnlySet<string>? fields,
+        out string? field)
+    {
+        field = null;
+
+        if (fields is { Count: > 0 } && segment.Length > 1 && segment[^1] == ':')
+        {
+            int start = segment.Length - 1;
+
+            while (start > 0 && !char.IsWhiteSpace(segment[start - 1]))
+                start--;
+
+            var token = segment[start..];
+            int nameStart = 0;
+            var scopeOperator = QueryTermOperator.None;
+
+            if (token.Length > 2 && token[0] is '+' or '-')
+            {
+                scopeOperator = token[0] == '+' ? QueryTermOperator.Required : QueryTermOperator.Prohibited;
+                nameStart = 1;
+            }
+
+            var name = token[nameStart..^1];
+
+            if (name.Length > 0)
+            {
+                string candidate = name.ToString();
+
+                if (fields.Contains(candidate))
+                {
+                    field = candidate;
+                    segment = segment[..start];
+                    return scopeOperator;
+                }
+            }
+        }
+
+        return TakeTrailingOperator(ref segment);
+    }
+
+    /// <summary>
+    /// Appends one free-text (outside-quote) segment. With no leading <c>+</c>/<c>-</c> token and
+    /// no field prefix it is exactly the pre-operator behavior — the whole segment is tokenized —
+    /// so a query that uses neither syntax takes the same path it always did. Otherwise the
+    /// segment is walked one whitespace-delimited token at a time, so a <c>-</c> inside a word or
+    /// a colon that does not separate a known field stays literal.
     /// </summary>
     private static void AppendFreeSegment(
         List<string> freeTerms,
         List<string> requiredTerms,
         List<string> prohibitedTerms,
         List<QueryExpansion> expansions,
+        ScopeState scope,
         ReadOnlySpan<char> segment,
-        ITokenizer tokenizer)
+        ITokenizer tokenizer,
+        IReadOnlySet<string>? fields)
     {
         if (segment.Length == 0)
             return;
 
-        if (!ContainsOperatorToken(segment))
+        if (!ContainsOperatorToken(segment) && !ContainsFieldScope(segment, fields))
         {
-            AppendFree(freeTerms, expansions, segment, tokenizer);
+            AppendFree(freeTerms, expansions, segment, tokenizer, field: null);
             return;
         }
 
@@ -424,6 +587,16 @@ public static class QueryParser
                 token = token[1..];
             }
 
+            if (TrySplitFieldScope(token, fields, out string field, out var scopedToken))
+            {
+                var literal = new List<string>(4);
+                int firstScopedExpansion = expansions.Count;
+                AppendFree(literal, expansions, scopedToken, tokenizer, field);
+                ApplyOperator(expansions, firstScopedExpansion, termOperator);
+                scope.Add(literal, termOperator, field);
+                continue;
+            }
+
             var target = termOperator switch
             {
                 QueryTermOperator.Required => requiredTerms,
@@ -432,27 +605,38 @@ public static class QueryParser
             };
 
             int firstExpansion = expansions.Count;
-            AppendFree(target, expansions, token, tokenizer);
-
-            if (termOperator != QueryTermOperator.None)
-            {
-                for (int e = firstExpansion; e < expansions.Count; e++)
-                    expansions[e] = expansions[e] with { Operator = termOperator };
-            }
+            AppendFree(target, expansions, token, tokenizer, field: null);
+            ApplyOperator(expansions, firstExpansion, termOperator);
         }
+    }
+
+    /// <summary>
+    /// Stamps the trailing <c>+</c>/<c>-</c> onto the expansion atoms one token produced. A sign
+    /// with nothing after it stamps nothing: the expansions were already made without one.
+    /// </summary>
+    private static void ApplyOperator(
+        List<QueryExpansion> expansions, int firstExpansion, QueryTermOperator termOperator)
+    {
+        if (termOperator == QueryTermOperator.None)
+            return;
+
+        for (int e = firstExpansion; e < expansions.Count; e++)
+            expansions[e] = expansions[e] with { Operator = termOperator };
     }
 
     /// <summary>
     /// Appends one free-text atom: plain terms plus any <c>term*</c>/<c>term~N</c> expansion
     /// atoms, in reading order. Text between atoms tokenizes normally; an atom whose base does
     /// not tokenize to exactly one term falls back to plain text (the operators are separators
-    /// for the tokenizer).
+    /// for the tokenizer). <paramref name="field"/> is stamped onto every expansion atom so its
+    /// resolved terms inherit the scope.
     /// </summary>
     private static void AppendFree(
         List<string> terms,
         List<QueryExpansion> expansions,
         ReadOnlySpan<char> segment,
-        ITokenizer tokenizer)
+        ITokenizer tokenizer,
+        string? field)
     {
         if (segment.Length == 0)
             return;
@@ -484,7 +668,10 @@ public static class QueryParser
                 expansions.Add(new QueryExpansion(
                     baseTerms[0],
                     segment[i] == '*' ? QueryExpansionKind.Prefix : QueryExpansionKind.Fuzzy,
-                    maxEdits));
+                    maxEdits)
+                {
+                    Field = field,
+                });
             }
             else
             {
@@ -557,13 +744,21 @@ public static class QueryParser
 
     private static void AppendPhrase(
         QueryTermOperator termOperator,
+        string? field,
         List<IReadOnlyList<string>> phrases,
         List<IReadOnlyList<string>> requiredPhrases,
         List<IReadOnlyList<string>> prohibitedPhrases,
+        ScopeState scope,
         IReadOnlyList<string> terms)
     {
         if (terms.Count == 0)
             return;
+
+        if (field is not null)
+        {
+            scope.AddPhrase(field, termOperator, terms);
+            return;
+        }
 
         var target = termOperator switch
         {
@@ -573,6 +768,141 @@ public static class QueryParser
         };
 
         target.Add(terms);
+    }
+
+    /// <summary>
+    /// Whether any whitespace-delimited token begins with <c>name:</c> for a known name and has
+    /// something after the colon — the cheap test that keeps a colon that is ordinary text on the
+    /// plain path.
+    /// </summary>
+    private static bool ContainsFieldScope(ReadOnlySpan<char> text, IReadOnlySet<string>? fields)
+    {
+        if (fields is not { Count: > 0 } || text.IndexOf(':') < 0)
+            return false;
+
+        int i = 0;
+
+        while (i < text.Length)
+        {
+            while (i < text.Length && char.IsWhiteSpace(text[i]))
+                i++;
+
+            int start = i;
+
+            while (i < text.Length && !char.IsWhiteSpace(text[i]))
+                i++;
+
+            if (start == i)
+                break;
+
+            var token = text[start..i];
+
+            if (token.Length > 1 && token[0] is '+' or '-')
+                token = token[1..];
+
+            if (TrySplitFieldScope(token, fields, out _, out _))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Splits <c>name:rest</c> into a known field and the rest of the token. The name is the text
+    /// before the first colon; it must be known, and the rest must be non-empty and must not start
+    /// with a sign (a sign is an operator only at the start of a token, never after a scope).
+    /// </summary>
+    private static bool TrySplitFieldScope(
+        ReadOnlySpan<char> token,
+        IReadOnlySet<string>? fields,
+        out string field,
+        out ReadOnlySpan<char> rest)
+    {
+        field = string.Empty;
+        rest = token;
+
+        if (fields is not { Count: > 0 })
+            return false;
+
+        int colon = token.IndexOf(':');
+
+        if (colon <= 0 || colon == token.Length - 1)
+            return false;
+
+        if (token[colon + 1] is '+' or '-')
+            return false;
+
+        string name = token[..colon].ToString();
+
+        if (!fields.Contains(name))
+            return false;
+
+        field = name;
+        rest = token[(colon + 1)..];
+        return true;
+    }
+
+    /// <summary>
+    /// The field-scoped atoms one parse collected, kept together so the parsing helpers pass one
+    /// object instead of six lists.
+    /// </summary>
+    private sealed class ScopeState
+    {
+        /// <summary>Scoped terms that score, including required ones and phrase terms.</summary>
+        public List<FieldScopedTerm> Scoring { get; } = [];
+
+        /// <summary>Scoped terms written with <c>+</c>.</summary>
+        public List<FieldScopedTerm> Required { get; } = [];
+
+        /// <summary>Scoped terms written with <c>-</c>.</summary>
+        public List<FieldScopedTerm> Prohibited { get; } = [];
+
+        public List<FieldScopedPhrase> Phrases { get; } = [];
+
+        public List<FieldScopedPhrase> RequiredPhrases { get; } = [];
+
+        public List<FieldScopedPhrase> ProhibitedPhrases { get; } = [];
+
+        /// <summary>
+        /// Records the terms one scoped token produced: prohibited ones gate only, required ones
+        /// gate and score, unqualified ones score.
+        /// </summary>
+        public void Add(IReadOnlyList<string> terms, QueryTermOperator termOperator, string field)
+        {
+            for (int i = 0; i < terms.Count; i++)
+            {
+                var term = new FieldScopedTerm(field, terms[i]);
+
+                if (termOperator != QueryTermOperator.Prohibited)
+                    Scoring.Add(term);
+
+                if (termOperator == QueryTermOperator.Required)
+                    Required.Add(term);
+                else if (termOperator == QueryTermOperator.Prohibited)
+                    Prohibited.Add(term);
+            }
+        }
+
+        public void AddPhrase(string field, QueryTermOperator termOperator, IReadOnlyList<string> terms)
+        {
+            // A prohibited phrase contributes no score; the others score term by term, exactly as
+            // an unscoped phrase does.
+            if (termOperator != QueryTermOperator.Prohibited)
+            {
+                for (int i = 0; i < terms.Count; i++)
+                    Scoring.Add(new FieldScopedTerm(field, terms[i]));
+            }
+
+            var phrase = new FieldScopedPhrase(field, terms) { Operator = termOperator };
+            var target = termOperator switch
+            {
+                QueryTermOperator.Required => RequiredPhrases,
+                QueryTermOperator.Prohibited => ProhibitedPhrases,
+                _ => Phrases,
+            };
+
+            target.Add(phrase);
+        }
     }
 
     private static void AppendRawPhrase(List<string> phrases, ReadOnlySpan<char> interior)

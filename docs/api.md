@@ -40,7 +40,8 @@ are listed first.
 | `IEmbeddingProvider` | — | Contract for producing text embeddings. LexiSharp never computes embeddings itself: implementing this interface is up to the consumer — a local ONNX model, an… | [guide](reference.md) |
 | `IExplainableSearchEngine` | — | Optional capability of an ITextSearchEngine that can explain why a document received the score it did for a query, when its scorer is an IScoreExplainer. | [guide](reference.md) |
 | `IFacetedSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that can return, alongside the ranked results, facet counts over Fields. | [guide](reference.md) |
-| `IFieldStatisticsIndex` | `IReadOnlyTextIndex` | Capability for an index that tracks per-field statistics: how many times a term occurs in one field of one document, how long each field is, and the corpus… | [guide](reference.md) |
+| `IFieldScopedScorer` | `ITextScorer` | Capability for a scorer that can score a query term from one field's statistics instead of the whole document's: the arithmetic behind title:term. | [guide](reference.md) |
+| `IFieldStatisticsIndex` | `IReadOnlyTextIndex` | Capability for an index that tracks per-field statistics: how many times a term occurs in one field of one document, how long each field is, the corpus averages… | [guide](reference.md) |
 | `IGraphSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that can return, alongside the ranked page, the knowledge-graph facts connected to the query — the search-side half… | [guide](reference.md) |
 | `IIncrementalTextClassifier` | `ITextClassifier` | Optional capability of an ITextClassifier: add or retract single labelled documents without a retraining pass over the whole corpus. Detected with pattern… | [guide](reference.md) |
 | `IKnowledgeGraphBridge` | — | Contracts for connecting the engines to a knowledge graph — the GraphRAG seam. LexiSharp never runs a model or a graph itself: relation extraction is the model… | [guide](reference.md) |
@@ -154,6 +155,8 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `FacetBucket` | record | — | Value counts for one facet field. |
 | `FacetValue` | record | — | A distinct field value and how many counted documents carry it. |
 | `FacetedSearchResult` | record | — | Ranked results plus one bucket per requested facet field. |
+| `FieldScopedPhrase` | record | — | A double-quoted phrase restricted to a single field: title:"ssh tunnel" asks for the phrase at consecutive positions inside that field. |
+| `FieldScopedTerm` | record | — | One query term restricted to a single field: title:ssh is new FieldScopedTerm("title", "ssh"). |
 | `FieldType` | enum | — | The shape of a document field, used by MetadataFilter to interpret the stored string value when no explicit parsing is requested. |
 | `GraphAwareSearchEngine` | class | `IGraphSearchEngine`, `ITextSearchEngine` | A decorator that layers a IKnowledgeGraphBridge over an existing engine: searching and writing are forwarded unchanged, and the IGraphSearchEngine surface adds… |
 | `GraphContext` | record | — | The answer a IKnowledgeGraphBridge returns for a sub-graph query around a set of entities: the local facts that touch them, plus the community summaries the… |
@@ -307,7 +310,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `Bm25FGridPoint` | record | — | One evaluated BM25F configuration and the quality it achieved. |
 | `Bm25FParameterTuner` | class | — | Finds the BM25F parameters (k1, b, and a weight per named field) that best satisfy a set of labeled validation queries, by brute-force grid search in two… |
 | `Bm25FParameters` | record | — | BM25F tuning knobs: term-frequency saturation (k1), document-length normalization (b), and how much each field counts for. |
-| `Bm25FScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | BM25F ranking: BM25 over a document split into weighted fields, so a term in a title can count for more than the same term in a body. |
+| `Bm25FScorer` | class | `IFieldScopedScorer`, `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | BM25F ranking: BM25 over a document split into weighted fields, so a term in a title can count for more than the same term in a body. |
 | `Bm25FTuningResult` | record | — | The outcome of a Tune run: the best configuration found, the quality it achieved, and the full evaluation grid for inspection. |
 | `Bm25GridPoint` | record | — | One evaluated (k1, b) combination and the quality it achieved. |
 | `Bm25LGridPoint` | record | — | One evaluated BM25L configuration and the quality it achieved. |

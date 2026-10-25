@@ -420,7 +420,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         // ParseQuerySyntax: false is the caller saying "literal text, do not consult the query
         // parser" — and EnsureSupported is a parser call.
         if (options.ParseQuerySyntax)
-            QuerySyntax.EnsureSupported(query, SupportedQueryFeatures, nameof(PostgresVectorSearchEngine));
+            QuerySyntax.EnsureSupported(query, SupportedQueryFeatures, nameof(PostgresVectorSearchEngine), options.KnownFields);
 
         // One query vector per channel: a column-aware provider may encode the same query
         // differently per column (e.g. centering each channel in its own space). Computed here,
