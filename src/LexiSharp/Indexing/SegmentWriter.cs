@@ -56,10 +56,10 @@ internal static class SegmentWriter
     internal const uint Magic = 0x3153584C;
 
     /// <summary>Format version. A reader refuses anything else rather than guessing.</summary>
-    internal const int Version = 4;
+    internal const int Version = 5;
 
     /// <summary>Fixed header size: everything else in the file is reached through it.</summary>
-    internal const int HeaderBytes = 4 + 4 + 4 + 4 + (3 * 8);
+    internal const int HeaderBytes = 4 + 4 + 4 + 4 + (3 * 8) + 8;
 
     /// <summary>
     /// The largest segment this format can hold: every offset in it is an <c>int32</c>, so a corpus
@@ -68,15 +68,25 @@ internal static class SegmentWriter
     private const long MaxSegmentBytes = int.MaxValue;
 
     /// <summary>Writes <paramref name="index"/> as a new segment and returns its bytes.</summary>
+    /// <param name="index">The corpus to write.</param>
+    /// <param name="journalSequence">
+    /// The last write-ahead journal entry this segment contains, or zero for a segment written without
+    /// a journal. It travels in the header so that replaying the journal after a crash can skip the
+    /// entries the segment already carries — the one thing that makes replay idempotent, since a
+    /// re-applied write is not the same write (its ordinal differs and it tombstones the old one).
+    /// </param>
     /// <remarks>
     /// One allocation of exactly the segment's length, and no copy: the body is assembled in the array
     /// that is returned. Before the measure, the body was assembled in a growing buffer and copied out
     /// of it, which was a second array of the segment's size on every write — 1,203 MB allocated for a
     /// commit whose segment is 267 MB, of which this copy was the larger half.
     /// </remarks>
-    public static byte[] Write(ITextIndex index)
+    public static byte[] Write(ITextIndex index, long journalSequence = 0)
     {
         ArgumentNullException.ThrowIfNull(index);
+
+        if (journalSequence < 0)
+            throw new ArgumentOutOfRangeException(nameof(journalSequence), journalSequence, "a journal sequence cannot be negative");
 
         // One plan, one array. The plan is built and consumed inside this call and never kept, so the
         // pass that sizes the corpus and the pass that writes it read the same corpus — and so a caller
@@ -85,7 +95,7 @@ internal static class SegmentWriter
 
         var segment = new byte[plan.Total];
 
-        int written = Build(index, plan, segment);
+        int written = Build(index, plan, segment, journalSequence);
 
         // Two directions of failure, and neither is silent. An overrun is stopped by the span's own
         // bounds check inside Build, which has a destination the exact size of the plan. An underrun is
@@ -200,7 +210,7 @@ internal static class SegmentWriter
     /// The index cannot be read through the capabilities a segment needs, or it holds a gap where a
     /// document was removed.
     /// </exception>
-    private static int Build(ITextIndex index, in SegmentPlan plan, Span<byte> segment)
+    private static int Build(ITextIndex index, in SegmentPlan plan, Span<byte> segment, long journalSequence)
     {
         ISpanAccumulatingIndex source = Requires(index);
         var terms = plan.Terms;
@@ -317,6 +327,7 @@ internal static class SegmentWriter
         BinaryPrimitives.WriteInt64LittleEndian(header[16..], documentsTableOffset);
         BinaryPrimitives.WriteInt64LittleEndian(header[24..], lengthsOffset);
         BinaryPrimitives.WriteInt64LittleEndian(header[32..], termsTableOffset);
+        BinaryPrimitives.WriteInt64LittleEndian(header[40..], journalSequence);
 
         return HeaderBytes + body.Position;
     }

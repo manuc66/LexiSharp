@@ -292,7 +292,8 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     /// reader see a consistent corpus while the write happens — see <see cref="Merge"/> for the
     /// switch-over.
     /// </remarks>
-    public SegmentTextIndex Flush() => new(SegmentWriter.Write((ITextIndex)new SegmentFlushSource(this)));
+    public SegmentTextIndex Flush(long journalSequence = 0) =>
+        new(SegmentWriter.Write((ITextIndex)new SegmentFlushSource(this), journalSequence));
 
     /// <summary>
     /// Collapses the chain to one segment and returns it, leaving this chain untouched.
@@ -323,9 +324,9 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     /// rather than triggered.
     /// </para>
     /// </remarks>
-    public SegmentChain Merge(ITokenizer? tokenizer = null)
+    public SegmentChain Merge(ITokenizer? tokenizer = null, long journalSequence = 0)
     {
-        SegmentTextIndex merged = Flush();
+        SegmentTextIndex merged = Flush(journalSequence);
 
         return new SegmentChain([merged], tokenizer ?? _tokenizer);
     }

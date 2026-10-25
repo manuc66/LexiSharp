@@ -212,6 +212,9 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     /// </summary>
     internal byte[]? TryGetBytes() => _reader.TryGetBytes();
 
+    /// <summary>The last write-ahead journal entry this segment carries, or zero when it carries none.</summary>
+    internal long JournalSequence => _reader.JournalSequence;
+
     /// <summary>
     /// Every term this segment holds, in dictionary order. Internal so a chain can merge the
     /// dictionaries of its generations rather than assuming the vocabularies are disjoint — which they
