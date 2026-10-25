@@ -1,4 +1,5 @@
 using LexiSharp.Core;
+using LexiSharp.Embeddings;
 using LexiSharp.Indexing;
 using LexiSharp.Ranking;
 using Xunit;
@@ -89,6 +90,25 @@ public class QuerySyntaxTests
             QueryFeatures.Phrases | QueryFeatures.Expansions
                 | QueryFeatures.RequiredTerms | QueryFeatures.ProhibitedTerms,
             ((IQuerySyntaxSupport)engine).SupportedQueryFeatures);
+    }
+
+    [Fact]
+    public void LiteralQuerySyntax_DoesNotConsultTheSyntaxCheck()
+    {
+        var engine = new InMemoryVectorSearchEngine(new HashingEmbeddingProvider(32));
+        engine.Add(new SearchDocument("d1", "neural networks"));
+
+        // The engine declares no query syntax, so the operator is refused.
+        Assert.Throws<NotSupportedException>(
+            () => engine.Search("+neural", new SearchOptions(Limit: 5)));
+
+        // ParseQuerySyntax: false is the caller saying the parser is not consulted at all — so the
+        // same operator text is an ordinary query string to embed, and the syntax check must not
+        // turn it into a refusal.
+        Assert.Null(Record.Exception(
+            () => engine.Search("+neural", new SearchOptions(Limit: 5, ParseQuerySyntax: false))));
+        Assert.Null(Record.Exception(
+            () => engine.Search("-neural", new SearchOptions(Limit: 5, ParseQuerySyntax: false))));
     }
 
     [Fact]
