@@ -37,11 +37,12 @@ engine does everything else. Swap the scorer, keep the index.
 **The measurements are not all flattering, and publishing them is the point.** Each of the
 three measured sections below ends with what it actually scored on the corpora tried here:
 tuned on their own `δ`, the BM25 variants **tie** a tuned BM25 on the reference corpus and
-NFCorpus and edge it by 0.002–0.004 on SciFact — an in-sample margin, not a result to quote;
-BM25F has **no** measured case of beating a tuned BM25, and its tuner reports
-`WeightingHelped = false` on every corpus it has been run on; proximity is neutral at quarter
-strength and negative at full strength. On these corpora, fitting parameters is worth more than
-adding a scorer — see [Evaluation](evaluation.md).
+NFCorpus and edge it by 0.002–0.004 on SciFact; tuned BM25F **beats** a tuned BM25 on ArguAna
+and SciFact and **trails** it on NFCorpus and the reference corpus, and its tuner reports
+`WeightingHelped = false` on every corpus it has been run on, so the field weight is never what
+moves the margin; proximity is neutral at quarter strength and negative at full strength. Every
+one of those margins is in-sample, an upper bound rather than a result to quote. On these
+corpora, fitting parameters is worth more than adding a scorer — see [Evaluation](evaluation.md).
 
 ## Conventions, not mathematics
 
