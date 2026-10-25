@@ -106,6 +106,18 @@ public sealed class ExpandingTextSearchEngine : IQueryCostProbe, IFacetedSearchE
     }
 
     /// <inheritdoc />
+    /// <exception cref="NotSupportedException">The wrapped engine does not implement <see cref="IFacetedSearchEngine"/>.</exception>
+    public FacetedSearchResult SearchWithNumericFacets(
+        string query,
+        SearchOptions? options = null,
+        IReadOnlyList<string>? facetFields = null,
+        IReadOnlyList<NumericFacetRequest>? numericFacets = null)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        return Faceted().SearchWithNumericFacets(ExpandQuery(query), options, facetFields, numericFacets);
+    }
+
+    /// <inheritdoc />
     /// <exception cref="NotSupportedException">The wrapped engine does not implement <see cref="IDetailedSearchEngine"/>.</exception>
     public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {

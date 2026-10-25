@@ -33,4 +33,12 @@ public sealed record LexiSharpHit<TDocument>(
 public sealed record LexiSharpFacetedResult<TDocument>(
     IReadOnlyList<LexiSharpHit<TDocument>> Results,
     IReadOnlyList<FacetBucket> Buckets)
-    where TDocument : class;
+    where TDocument : class
+{
+    /// <summary>
+    /// Numeric buckets in requested order; empty when no numeric facet was requested, or when no
+    /// counted document carries any requested field.
+    /// </summary>
+    public IReadOnlyList<NumericFacetBucket> NumericBuckets { get; init; } =
+        Array.Empty<NumericFacetBucket>();
+}
