@@ -303,11 +303,12 @@ un-tuned gap was BM25F's defaults (k1=1.2) being a worse fit for a 42-document c
 (k1=1.5), not a per-field length term doing something useful. Read those two tuned rows as fitted on
 nDCG@5: fitting on **F1@5**, which is flat on this corpus (0.3588 for every configuration), leaves the
 tuner no signal to fit and hands both the first grid point, which puts them equal at 0.8812 and hides
-the loss. So the comparison stands on the nDCG-fitted rows: no measured case where BM25F beats BM25
-after both are tuned. The ArguAna 0.379 stands as an
-**un-tuned** comparison: BM25F was never tuned there, and the tuned BM25 that exists for that corpus
-now reads 0.363, below the untuned BM25F — an untuned-versus-tuned comparison in the other
-direction, which settles nothing either way.
+the loss. So the comparison stands on the nDCG-fitted rows, and its sign depends on the corpus:
+BM25F tuned **leads** BM25 tuned by 0.034 on ArguAna (0.397 against 0.363), by 0.004 on SciFact,
+**trails** it by 0.002 on NFCorpus and by 0.011 on the reference corpus. Its tuner leaves the title
+weight at 1.0 every time, so `WeightingHelped = false` and the margin is the single-field BM25F
+score at the fitted `(k1, b)`, not a per-field term. What has never been observed, on any corpus, is
+the weighting itself helping.
 
 **What the tuner adds is the negative answer, which is the useful one.** `Bm25FParameterTuner` reports
 `WeightingHelped = false` on the reference corpus: it searched the title weight and could not beat

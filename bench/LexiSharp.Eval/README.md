@@ -74,6 +74,7 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset all --no-tuned
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dense               # add dense retrieval (e5-small)
 dotnet run --project bench/LexiSharp.Eval -c Release -- --rerank              # add cross-encoder reranking (MiniLM)
 dotnet run --project bench/LexiSharp.Eval -c Release -- --rerank-top 50       # rerank depth (default 100)
+dotnet run --project bench/LexiSharp.Eval -c Release -- --tune-bm25f          # fit BM25F's k1/b and the field weights
 dotnet run --project bench/LexiSharp.Eval -c Release -- --limit 5            # smoke run
 dotnet run --project bench/LexiSharp.Eval -c Release -- --stem porter       # English stemming
 dotnet run --project bench/LexiSharp.Eval -c Release -- --data /path/to/dir  # custom data dir
@@ -528,6 +529,7 @@ whose `(k1, b)` were fitted is not a comparison of anything.
 |---|---|---|---|---|---|
 | NFCorpus | 0.311 (k1=2, b=0.5) | 0.311 (δ=0) | 0.311 (δ=0) | 0.311 | false, both |
 | SciFact | 0.664 (k1=1.5, b=1) | 0.666 (δ=0.25) | 0.668 (δ=0.25) | **0.664** | true, both |
+| ArguAna | 0.363 (k1=2, b=1) | 0.363 (δ=0) | 0.363 (δ=0) | 0.328 † | false, both |
 
 On NFCorpus the three tuners independently select identical parameters and identical scores, so
 those three rows are one result reported three times: the δ search picks no bound and hands back
@@ -535,8 +537,9 @@ BM25. On SciFact δ = 0.25 wins, and the **unfloored baseline the harness prints
 `BM25 tuned`'s score**, which confirms at corpus scale that both variants reduce to BM25 at δ = 0.
 That makes the +0.002 / +0.004 attributable to δ rather than to a wider grid, since both searches
 cover the same 25 `(k1, b)` pairs. It is still 300 queries, binary relevance, best-of-125, fitted
-in-sample on the queries it is scored on: an upper bound, not a result. ArguAna was run
-`--no-tuned`, so it has no variant rows at all rather than a half-affordable one.
+in-sample on the queries it is scored on: an upper bound, not a result. ArguAna's row was fitted
+afterwards and is in the table above: both variants pick δ = 0 and read the tuned BM25's 0.363, so
+the omitted bound is what closes the untuned 0.051/0.044 gap.
 
 **Proximity rows** (`BM25 + proximity`, three shapes, identical first stage so the difference is
 proximity alone): damp at full strength 0.302, damp at quarter 0.308, boost 0.308, against BM25's
@@ -551,18 +554,43 @@ The honest reading is that these rows compare **default parameters**, not tuned 
 reference corpus, tuning settles it: `bm25f-tuned` reaches **0.8867 nDCG@5 against
 `bm25-tuned`'s 0.8978**, from BM25F's untuned 0.8189. So the un-tuned gap was BM25F's default
 k1=1.2 being a worse fit for a 42-document corpus than BM25's k1=1.5 — **not** a per-field length
-term doing something useful. There is no measured case in this repository where BM25F beats BM25
-after both are tuned.
+term doing something useful.
+
+**BM25F tuned against BM25 tuned, on the three corpora** (`--tune-bm25f`, 29 configurations each,
+fitted in-sample on the queries they are scored on — oracles, not fair baselines):
+
+| Corpus | `BM25 tuned` | `BM25F tuned` | fitted `(k1, b, title)` | `WeightingHelped` |
+|---|---:|---:|---|---|
+| NFCorpus | 0.311 | 0.309 | 2, 0.25, 1.0 | false |
+| SciFact | 0.664 | 0.668 | 1, 0.5, 1.0 | false |
+| ArguAna | 0.363 | **0.397** | 1.5, 1, 1.0 | false |
+| reference corpus | 0.8978 (nDCG@5) | 0.8867 | — | false |
+
+† ArguAna's unfloored baseline prints 0.328 against the row's 0.363: the tuner scores candidates
+with query syntax on and the table reports with it off, which costs 0.031 on this corpus. Every
+tuned row in this file is chosen under the tuner's convention; the ArguAna section documents it.
+
+So the comparison has a sign that depends on the corpus — BM25F ahead by 0.034 on ArguAna, 0.004 on
+SciFact, behind by 0.002 on NFCorpus and 0.011 on the reference corpus — and **the field weighting
+is never what moves it**: every fitted title weight is 1.0, i.e. neutral. What ArguAna's +0.034
+buys is BM25F's single-field length term at (k1=1.5, b=1), not a title boost. That is the same
+conclusion the reference corpus reached, now measured three more times.
 
 Those two figures were **equal at 0.8812** in an earlier version of this file. The equality was an
 artifact of the objective, not a property: the run tuned on F1@5, which is flat on the reference
 corpus (0.3588 for every configuration), so neither tuner had any signal to fit and both took the
 first grid point their tie-break reached. Re-fitted on nDCG@5 — the metric they are reported in —
-BM25F tuned *loses* to BM25 tuned by 0.011. The conclusion is unchanged and better supported.
+BM25F tuned *loses* to BM25 tuned by 0.011. The conclusion for the reference corpus is unchanged
+and better supported.
 
-Which leaves the ArguAna 0.379 as an **untested** claim, not a result: it too is default-vs-default,
-and whether it survives a tuned BM25 was not measured, because a grid over 1406 queries did not fit
-the compute available here. Do not quote it as a length-term advantage.
+Which leaves the ArguAna 0.379 as an **untuned** claim that has now been tested, and it survives:
+`--tune-bm25f` fits `(k1=1.5, b=1)`, keeps the title at **1.0**, and reads **0.397** — against
+BM25 tuned's 0.363. So on this corpus BM25F tuned *does* beat a tuned BM25, by 0.034, and
+`WeightingHelped = False` says the margin is not the field weight: it is what a single-field BM25F
+scores at those parameters. One corpus where it leads, one (the reference corpus) where it trails,
+both in-sample. The tuner's own score for that configuration is 0.362 against the row's 0.397,
+which is the query-syntax convention documented under [the tuned rows](#results-arguana-k10-1406-test-queries),
+not a discrepancy.
 
 The dense retriever lands at BM25 level on its own (0.304 vs 0.308), and fusing it with BM25
 **beats both the dense-only and the lexical-only engines** (0.323–0.333), above the 0.325 BM25
@@ -635,6 +663,7 @@ Default tokenizer, **no stemming** — see [Stemming](#stemming) for the same ru
 | BM25F (unweighted)                 |   0.379 |  0.254 |  0.254 | 0.773 |
 | BM25F (title 2.0)                  |   0.379 |  0.253 |  0.253 | 0.775 |
 | BM25F (title 4.0)                  |   0.375 |  0.249 |  0.249 | 0.772 |
+| BM25F tuned (k1=1.5, b=1, title=1) |   0.397 |  0.269 |  0.269 | 0.797 |
 | BM25+ (delta=1.0)                  |   0.269 |  0.172 |  0.172 | 0.578 |
 | BM25L (delta=0.5)                  |   0.276 |  0.178 |  0.178 | 0.587 |
 | BM25 tuned (k1=2, b=1)             |   0.363 |  0.240 |  0.240 | 0.751 |
@@ -685,15 +714,14 @@ served from the first row's passes** (44 %). An `ef_search` curve for this corpu
 for a different reason — the vector engine refuses 148 of the 1,406 test queries as phrases, so the
 curve would be over a reduced query set.
 
-**The largest BM25F margin anywhere in this harness, and not because of the weighting — but also not
-established as a real gain.** 0.379 against BM25's 0.320 on 1406 queries, both under the library
-defaults. Hold this one loosely for a second reason as well: the default table is no longer the
-comparable one (see above), so this margin is a default-versus-default comparison in a table whose
-own caveats apply. Two reasons to hold it
-loosely. The three rows say the weighting is not the cause: unweighted, title 2.0 and title 4.0 are
-within 0.004 of each other, and the heaviest weight is the worst. And it is a **default-vs-default**
-comparison — on the reference corpus, tuning moved this kind of gap by 0.011, and on NFCorpus and
-SciFact it closed. Whether a tuned BM25 also reaches 0.379 here is unmeasured.
+**The largest BM25F margin anywhere in this harness, and now with its tuned row.** 0.379 against
+BM25's 0.320 on 1406 queries, both under the library defaults, and **0.397** once `(k1, b)` are
+fitted — the tuner chose `k1=1.5, b=1` and kept the title weight at **1.0**, so `WeightingHelped`
+is `False` and the weighting is not the cause. The three fixed rows say the same: unweighted,
+title 2.0 and title 4.0 are within 0.004 of each other, and the heaviest weight is the worst. What
+the fitted row does establish is that **this corpus is one where BM25F tuned beats BM25 tuned**
+(0.397 against 0.363); the reference corpus is where it trails, by 0.011. Two corpora, opposite
+signs, both in-sample.
 
 ArguAna is also the corpus least like ordinary search — counter-argument retrieval, very long
 queries, a `title` that is a topic phrase rather than a headline. One more caveat on reading that

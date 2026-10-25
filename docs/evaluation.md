@@ -254,7 +254,8 @@ What that table says:
   0.022, and on ArguAna it loses to all three;
 - **BM25F sits below BM25 here and the title weight moves nothing** — a negative result, and
   the reason is default parameters rather than the technique: tuned against tuned, the two
-  are identical on the reference corpus. See
+  are within 0.002 of each other on this corpus (0.309 against 0.311) and the fitted title
+  weight is 1.0. See
   [BM25F](ranking.md#bm25f-field-weighted-bm25) for that correction in full.
 
 What it does **not** say:
@@ -272,9 +273,10 @@ What it does **not** say:
   [Tokenizer customization](indexing.md#tokenizer-customization). What that comparison leaves out is
   the stop word list, which is the larger half of the analysis: `--analyzer english` (Porter plus
   the conventional 33 words) takes SciFact to 0.692 and NFCorpus to 0.327;
-- ArguAna's BM25F 0.379 is **still untested, not a result** — BM25F was never tuned there. A tuned
-  BM25 for that corpus now exists (**0.363**, k1=2/b=1), and the untuned BM25F reads *above* it,
-  which is an untuned-versus-tuned comparison in the other direction and settles nothing.
+- ArguAna's BM25F row has a tuned counterpart: **0.397** at k1=1.5, b=1, with the title weight left
+  at **1.0** — `WeightingHelped = false`, so the margin is not the weighting. A tuned **BM25** reads
+  0.363 there, so BM25F does beat one on this corpus; on the reference corpus it trails one by 0.011.
+  Both are in-sample oracles, and the sign of the comparison is corpus-dependent.
 
 ## The SQL backends, on the same corpora
 
@@ -476,8 +478,9 @@ var engine = new RankedTextSearchEngine(index, new Bm25FScorer(result.Parameters
 Two things it deliberately reports rather than hides:
 
 - **`WeightingHelped` is the answer to "does weighting help on my corpus".** It is `false` on the
-  reference corpus and on all three BEIR corpora tried. `1.0` belongs in `weightValues` for exactly
-  this reason: without a neutral candidate the search cannot conclude that nothing helps.
+  reference corpus and on all three BEIR corpora, measured by this harness with `--tune-bm25f`
+  (title weight 1.0 in every case). `1.0` belongs in `weightValues` for exactly this reason:
+  without a neutral candidate the search cannot conclude that nothing helps.
 - **The best score is an oracle, not a fair baseline.** The winner was fitted on the same queries it
   is scored on, and the more configurations were tried the more of the gain is fitting noise. Score
   the result on a held-out set or treat it as an upper bound. `Bm25Tuned` has carried this caveat

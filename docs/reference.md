@@ -101,15 +101,19 @@ was designed from:
   trusting its margin, and check that the objective is not flat: a tuner pointed at a flat metric
   has no signal to fit, and two figures in this repository's history were wrong for exactly that
   reason. See [Tuning](evaluation.md#tuning-bm25-bm25f-bm25-and-bm25l).
-- **No scorer here has a measured win over a tuned BM25.** The three that could plausibly have one
-  came back negative or null, and publishing that is the point:
+- **No scorer here has a general measured win over a tuned BM25.** Two of the three that could
+  plausibly have one came back null, and the third wins on one corpus and loses on another —
+  publishing that is the point:
   - *BM25+ and BM25L*, tuned on their own `δ`, **tie** a tuned BM25 on the reference corpus and
     NFCorpus, and edge it by 0.002–0.004 on SciFact — an in-sample margin, so an upper bound rather
     than a result. On ArguAna, at a fixed `δ`, they **lose** 0.040–0.046; tuned there, both pick
     `δ = 0` and read the tuned BM25's 0.363, so the gap closes by removing the bound rather than by
     finding a better one. See [BM25 variants](ranking.md#bm25-variants).
-  - *BM25F*'s tuner reports `WeightingHelped = false` on every corpus tried, and on the reference
-    corpus — re-fitted on the metric being reported — BM25F tuned trails BM25 tuned by 0.011. See
+  - *BM25F*'s tuner reports `WeightingHelped = false` on every corpus it was fitted on, so the
+    field weight is never what moves it. Against BM25 tuned it **wins on two corpora and loses on
+    two**: 0.397 against 0.363 on ArguAna, 0.668 against 0.664 on SciFact, 0.309 against 0.311 on
+    NFCorpus, 0.8867 against 0.8978 (nDCG@5) on the reference corpus — with the title weight left
+    at 1.0 in all four. Every one of those is fitted in-sample. See
     [BM25F](ranking.md#bm25f-field-weighted-bm25).
   - *Proximity* is neutral at quarter strength and negative at full strength. See
     [Proximity](ranking.md#proximity).
