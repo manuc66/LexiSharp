@@ -20,7 +20,8 @@ internal sealed record Bm25VariantSearchRequest(
     IReadOnlyList<Bm25ValidationQuery> ValidationQueries,
     int TopK,
     TuningMetric Metric,
-    int MaxConfigurations);
+    int MaxConfigurations,
+    SearchOptions? SearchOptions = null);
 
 /// <summary>What a variant grid search found, before it is shaped into a variant's public result.</summary>
 internal sealed record Bm25VariantSearchResult(
@@ -125,6 +126,27 @@ internal static class Bm25VariantTunerCore
     }
 
     /// <summary>
+    /// The options one validation query is scored with: <paramref name="template"/> when given, with
+    /// the tuning depth and this query's own exclusions applied over it.
+    /// </summary>
+    /// <remarks>
+    /// The template is the caller's conventions — <see cref="SearchOptions.ParseQuerySyntax"/> is the
+    /// one that changes which documents a query can match — while <see cref="SearchOptions.Limit"/> and
+    /// <see cref="SearchOptions.ExcludedDocumentIds"/> belong to the tuning run and to the query. A
+    /// <c>null</c> template is the library default, which is what every tuner used before the template
+    /// existed.
+    /// </remarks>
+    internal static SearchOptions ResolveSearchOptions(
+        SearchOptions? template,
+        int topK,
+        IReadOnlySet<string>? excludedDocumentIds) =>
+        (template ?? SearchOptions.Default) with
+        {
+            Limit = topK,
+            ExcludedDocumentIds = excludedDocumentIds,
+        };
+
+    /// <summary>
     /// Scores every <c>(k1, b, delta)</c> combination and returns the grid, the winner and the best
     /// any combination reached with <b>no</b> lower bound — the baseline the bound has to beat.
     /// </summary>
@@ -198,7 +220,10 @@ internal static class Bm25VariantTunerCore
         foreach (var validationQuery in request.ValidationQueries)
         {
             var retrievedIds = engine
-                .Search(validationQuery.Query, new SearchOptions(topK, ExcludedDocumentIds: validationQuery.ExcludedDocumentIds))
+                .Search(
+                    validationQuery.Query,
+                    ResolveSearchOptions(
+                        request.SearchOptions, topK, validationQuery.ExcludedDocumentIds))
                 .Select(result => result.DocumentId)
                 .ToArray();
 

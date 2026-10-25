@@ -106,6 +106,7 @@ public sealed class Bm25LParameterTuner
     private readonly ITextIndex _index;
     private readonly ITokenizer _tokenizer;
     private readonly IReadOnlyList<Bm25ValidationQuery> _validationQueries;
+    private readonly SearchOptions? _searchOptions;
 
     /// <param name="index">The indexed corpus to tune against (read-only for the tuner).</param>
     /// <param name="validationQueries">
@@ -115,18 +116,29 @@ public sealed class Bm25LParameterTuner
     /// <param name="tokenizer">
     /// Tokenizer for queries; should be the same one the index was built with.
     /// </param>
+    /// <param name="searchOptions">
+    /// Options every candidate search starts from, or <c>null</c> for the library defaults. Used as a
+    /// template: <see cref="SearchOptions.Limit"/> and
+    /// <see cref="SearchOptions.ExcludedDocumentIds"/> are replaced per query by the tuning depth and
+    /// by the validation query's own exclusions, and every other setting is kept. Pass the options the
+    /// final ranking is reported with when they differ from the defaults — most importantly
+    /// <see cref="SearchOptions.ParseQuerySyntax"/>, because a quoted phrase is adjacency to a tuner
+    /// left on the default and literal text to a harness that reports with syntax off.
+    /// </param>
     /// <exception cref="ArgumentException">
     /// The validation set is empty, or a query lists no relevant document.
     /// </exception>
     public Bm25LParameterTuner(
         ITextIndex index,
         IEnumerable<Bm25ValidationQuery> validationQueries,
-        ITokenizer? tokenizer = null)
+        ITokenizer? tokenizer = null,
+        SearchOptions? searchOptions = null)
     {
         ArgumentNullException.ThrowIfNull(index);
 
         _index = index;
         _tokenizer = tokenizer ?? Tokenizer.Default;
+        _searchOptions = searchOptions;
         _validationQueries = Bm25VariantTunerCore.ValidateValidationSet(
             validationQueries, nameof(validationQueries));
     }
@@ -168,7 +180,8 @@ public sealed class Bm25LParameterTuner
         var (k1Grid, bGrid, deltaGrid) = Bm25VariantTunerCore.ResolveGrids(k1Values, bValues, deltaValues);
 
         var found = Bm25VariantTunerCore.Run(
-            new Bm25VariantSearchRequest(_index, _tokenizer, _validationQueries, topK, metric, maxConfigurations),
+            new Bm25VariantSearchRequest(
+                _index, _tokenizer, _validationQueries, topK, metric, maxConfigurations, _searchOptions),
             (k1Grid, bGrid, deltaGrid),
             (k1, b, delta) => new Bm25LScorer(k1, b, delta));
 
