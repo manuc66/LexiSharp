@@ -85,6 +85,9 @@ public static class Program
         // which of the two ran is part of what a number means.
         bool parseQuerySyntax = false;
         bool querySyntaxReference = false;
+        // BM25F's own tuner is 29 evaluations where BM25's is 25 and the deltas' are 125; opt-in so a
+        // default run and the pinned replay do not pay for a row that answers a narrower question.
+        bool tuneBm25F = false;
         bool segment = false;
 
         for (int i = 0; i < args.Length; i++)
@@ -173,6 +176,9 @@ public static class Program
                     break;
                 case "--segment":
                     segment = true;
+                    break;
+                case "--tune-bm25f":
+                    tuneBm25F = true;
                     break;
                 case "--index-cache" when i + 1 < args.Length:
                     indexCache = args[++i];
@@ -395,7 +401,7 @@ public static class Program
                 excludeQueryDocument, fingerprintOnly, referenceBm25, queryFrequency, scoreRounding,
                 saturationConstant, singlePrecision, dense, denseSeq,
                 tuned, reranker, rerankCandidates, runPath, jobs, indexCache, parseQuerySyntax,
-                querySyntaxReference, segment, analyzePath, analyzeBaseline, analyzeCandidate,
+                querySyntaxReference, segment, tuneBm25F, analyzePath, analyzeBaseline, analyzeCandidate,
                 disagreementLeft, disagreementRight,
                 expandDensities, expandRankings, annEfValues, annConnection, backendLane, rerankCacheDir);
             Console.WriteLine();
@@ -519,7 +525,7 @@ public static class Program
         Bm25Parameters? referenceBm25, bool queryFrequency, bool scoreRounding, bool saturationConstant,
         bool singlePrecision, bool dense, int denseSeq, bool tuned,
         IReranker? reranker, int rerankCandidates, string? runPath, int jobs, string? indexCache,
-        bool parseQuerySyntax, bool referenceIndexStatistics, bool segment,
+        bool parseQuerySyntax, bool referenceIndexStatistics, bool segment, bool tuneBm25F,
         string? analyzePath, string analyzeBaseline, string? analyzeCandidate,
         string? disagreementLeft, string? disagreementRight,
         IReadOnlyList<double> expandDensities, IReadOnlyList<ExpansionRanking> expandRankings,
@@ -655,7 +661,8 @@ public static class Program
             corpus, runIndex, topK, limit, tokenizer, excludeQueryDocument, gain, referenceBm25,
             queryFrequency, scoreRounding, saturationConstant, singlePrecision, denseVectors, tuned, reranker,
             rerankCandidates,
-            jobs, parseQuerySyntax, captureOutcomes: analyzePath is not null, queryExpansions: queryExpansions);
+            jobs, parseQuerySyntax, captureOutcomes: analyzePath is not null, queryExpansions: queryExpansions,
+            tuneBm25F: tuneBm25F);
 
         foreach (string note in notes)
             Console.WriteLine($"Note: {note}");
@@ -1155,7 +1162,7 @@ public static class Program
     {
         Console.WriteLine("""
             Usage: LexiSharp.Eval [--data <dir>] [--dataset <name|all>] [--top-k <n>] [--limit <n>]
-                     [--no-tuned] [--stem porter] [--dense] [--dense-seq <n>] [--rerank] [--rerank-top <n>]
+                     [--no-tuned] [--tune-bm25f] [--stem porter] [--dense] [--dense-seq <n>] [--rerank] [--rerank-top <n>]
                      [--rerank-cache <dir>]
                      [--backend <lexical|paradedb|vector> --backend-connection <s>]
                      [--backend-bm25 <k1,b>] [--backend-ef <list>] [--backend-config <name>]
@@ -1169,6 +1176,13 @@ public static class Program
               --no-tuned        Skip the in-sample k1/b oracle tuning (fast on heavy datasets
                                 like arguana, where the 5×5 grid over long queries is the
                                 dominant cost).
+              --tune-bm25f      Add an in-sample BM25F row fitted by Bm25FParameterTuner: (k1, b)
+                                first, then the weight of each text field against a neutral 1.0.
+                                Opt-in because it is 29 evaluations over the whole validation set,
+                                and because it answers one question the fixed weights cannot —
+                                whether weighting beats leaving the fields neutral when both are
+                                fitted. Reports WeightingHelped. Needs a corpus with titles and an
+                                index that keeps per-field statistics; skipped with a note otherwise.
               --stem porter     Stem every term with LexiSharp.Linguistics.PorterStemmer (English,
                                 opt-in; off by default, so the tables stay comparable).
               --analyzer <name> Analysis for the whole run: 'default' (lowercase, diacritics folded,

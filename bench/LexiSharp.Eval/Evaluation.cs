@@ -104,7 +104,7 @@ internal static class Evaluation
         bool singlePrecision = false,
         DenseVectors? dense = null,
         bool tuned = true, IReranker? reranker = null, int rerankCandidates = 100, int jobs = 1,
-        bool parseQuerySyntax = false, bool captureOutcomes = false,
+        bool parseQuerySyntax = false, bool captureOutcomes = false, bool tuneBm25F = false,
         IReadOnlyList<(string Name, ITermExpander Expander)>? queryExpansions = null)
     {
         // Excluding a query's own document id is a no-op unless the corpus numbers its queries as
@@ -266,6 +266,44 @@ internal static class Evaluation
                 buildersList.Add(($"Hybrid RRF (top{rerankCandidates})+CrossRerank", () =>
                     RerankEngines.Reranked(rrf, rerankCandidates, reranker)));
             }
+        }
+
+        // BM25F's own tuner, opt-in. It costs 25 (k1, b) evaluations plus one per field weight where
+        // the other tuned rows cost 25 or 125, so a default run and the pinned replay do not pay for
+        // it — and the row exists to answer one question the fixed weights cannot: whether a weight
+        // beats leaving the fields neutral when both are fitted.
+        if (tuneBm25F && anyTitle && fieldStatistics)
+        {
+            var validation = queries
+                .Select(evaluated => new Bm25ValidationQuery(
+                    evaluated.Query.Text,
+                    evaluated.Graded.Keys.ToArray(),
+                    evaluated.Excluded))
+                .ToList();
+
+            Bm25FTuningResult fitted = new Bm25FParameterTuner(index, validation, tokenizer)
+                .Tune(weightedFields: ["title"], topK: topK, metric: TuningMetric.Ndcg);
+
+            double titleWeight = fitted.Parameters.FieldWeights is { } weights
+                && weights.TryGetValue("title", out double weight)
+                    ? weight
+                    : 1.0;
+
+            buildersList.Add((
+                $"BM25F tuned (k1={fitted.Parameters.K1.ToString("0.##", CultureInfo.InvariantCulture)}, "
+                + $"b={fitted.Parameters.B.ToString("0.##", CultureInfo.InvariantCulture)}, "
+                + $"title={titleWeight.ToString("0.##", CultureInfo.InvariantCulture)})",
+                () => Ranked(index, new Bm25FScorer(fitted.Parameters), tokenizer)));
+
+            notes.Add(
+                $"BM25F tuned in-sample: k1={fitted.Parameters.K1.ToString("0.##", CultureInfo.InvariantCulture)}, "
+                + $"b={fitted.Parameters.B.ToString("0.##", CultureInfo.InvariantCulture)}, "
+                + $"title={titleWeight.ToString("0.##", CultureInfo.InvariantCulture)}, "
+                + $"{fitted.EvaluatedConfigurations} configurations, "
+                + $"WeightingHelped={fitted.WeightingHelped} "
+                + $"(fitted {fitted.MetricScore.ToString("0.###", CultureInfo.InvariantCulture)} against "
+                + $"{fitted.UnweightedMetricScore.ToString("0.###", CultureInfo.InvariantCulture)} unweighted). "
+                + "In-sample and an oracle, like every other tuned row.");
         }
 
         var results = new List<ConfigResult>();
