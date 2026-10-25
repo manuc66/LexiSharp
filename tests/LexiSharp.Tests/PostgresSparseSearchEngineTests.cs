@@ -1,5 +1,6 @@
 using LexiSharp.Core;
 using LexiSharp.Postgres;
+using Npgsql;
 using Xunit;
 
 namespace LexiSharp.Tests;
@@ -47,9 +48,34 @@ public class PostgresSparseSearchEngineTests
         using var connection = new Npgsql.NpgsqlConnection(ConnectionString);
         connection.Open();
 
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT 1 FROM pg_extension WHERE extname = 'vector'";
-        return command.ExecuteScalar() is not null;
+        if (Installed())
+            return true;
+
+        // The extension ships in the image but is installed lazily by whichever engine creates its
+        // schema first, so on a fresh database these tests used to skip themselves instead of
+        // installing what they need — and a second run against the same database then ran them.
+        // Installing here makes the result independent of test order. A server that does not
+        // package pgvector still skips, because the CREATE fails and nothing is installed.
+        try
+        {
+            using var install = connection.CreateCommand();
+            install.CommandText = "CREATE EXTENSION IF NOT EXISTS vector";
+            install.ExecuteNonQuery();
+        }
+        catch (PostgresException)
+        {
+            // Another test class can install the same extension concurrently. What matters is
+            // that the extension exists, not which caller created it.
+        }
+
+        return Installed();
+
+        bool Installed()
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT 1 FROM pg_extension WHERE extname = 'vector'";
+            return command.ExecuteScalar() is not null;
+        }
     }
 
     private static PostgresSparseSearchEngine NewEngine(
