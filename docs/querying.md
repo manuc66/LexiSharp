@@ -141,7 +141,9 @@ leading hyphens, in the same way it is the path for prose that contains quotatio
 `RankedTextSearchEngine` implements both. Every other backend declares the features it
 supports through `IQuerySyntaxSupport.SupportedQueryFeatures`, and using an operator a backend
 does not declare raises `NotSupportedException` before any query runs — never a silent
-retrieval of documents containing the term that was supposed to be excluded:
+retrieval of documents containing the term that was supposed to be excluded.
+`ParseQuerySyntax: false` opts out of that check along with the rest of the query language: the
+raw text is then that backend's own grammar to read.
 
 | Engine | Query syntax |
 |---|---|
