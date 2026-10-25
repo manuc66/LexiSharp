@@ -191,6 +191,40 @@ public sealed class SynchronizedTextSearchEngine
     }
 
     /// <inheritdoc />
+    /// <exception cref="NotSupportedException">The wrapped engine does not implement <see cref="IFacetedSearchEngine"/>.</exception>
+    public FacetedSearchResult SearchWithNumericFacets(
+        string query,
+        SearchOptions? options = null,
+        IReadOnlyList<string>? facetFields = null,
+        IReadOnlyList<NumericFacetRequest>? numericFacets = null)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        return SearchWithNumericFacets(query.AsSpan(), options, facetFields, numericFacets);
+    }
+
+    /// <inheritdoc />
+    /// <exception cref="NotSupportedException">The wrapped engine does not implement <see cref="IFacetedSearchEngine"/>.</exception>
+    public FacetedSearchResult SearchWithNumericFacets(
+        ReadOnlySpan<char> query,
+        SearchOptions? options = null,
+        IReadOnlyList<string>? facetFields = null,
+        IReadOnlyList<NumericFacetRequest>? numericFacets = null)
+    {
+        var faceted = Faceted();
+
+        _lock.EnterReadLock();
+
+        try
+        {
+            return faceted.SearchWithNumericFacets(query, options, facetFields, numericFacets);
+        }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
+    }
+
+    /// <inheritdoc />
     /// <exception cref="NotSupportedException">The wrapped engine does not implement <see cref="IDetailedSearchEngine"/>.</exception>
     public IReadOnlyList<DetailedSearchResult> SearchWithDetails(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
     {

@@ -399,6 +399,40 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
     }
 
     /// <summary>
+    /// Same search as <see cref="Search"/>, plus string-facet buckets and numeric ranges or
+    /// histograms over the whole match set.
+    /// </summary>
+    /// <param name="query">Raw query text.</param>
+    /// <param name="options">Optional per-search options.</param>
+    /// <param name="facetFields">Fields to count by value; null/empty yields no string buckets.</param>
+    /// <param name="numericFacets">
+    /// Numeric facets to count; null/empty yields no numeric buckets. Order is preserved.
+    /// </param>
+    public LexiSharpFacetedResult<TDocument> SearchWithNumericFacets(
+        string query,
+        LexiSharpQueryOptions? options = null,
+        IReadOnlyList<string>? facetFields = null,
+        IReadOnlyList<NumericFacetRequest>? numericFacets = null)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        var effectiveQuery = Fuzzify(query);
+        var coreOptions = (options ?? LexiSharpQueryOptions.Default).ToCore()
+            with { FuzzyOnlyOutOfVocabulary = _fuzzyOnlyOutOfVocabulary };
+
+        if (coreOptions.IsEmpty)
+            return new LexiSharpFacetedResult<TDocument>(Array.Empty<LexiSharpHit<TDocument>>(), Array.Empty<FacetBucket>());
+
+        var faceted = _baseEngine.SearchWithNumericFacets(effectiveQuery, coreOptions, facetFields, numericFacets);
+        var results = MapHits(_engine.Search(effectiveQuery, coreOptions), null);
+
+        return new LexiSharpFacetedResult<TDocument>(results, faceted.Buckets)
+        {
+            NumericBuckets = faceted.NumericBuckets,
+        };
+    }
+
+    /// <summary>
     /// Explains why a document received its score for a query, term by term. Delegates to the
     /// underlying scorer's <see cref="IScoreExplainer"/>; returns <c>null</c> when the active
     /// scorer cannot explain itself or the document is unknown.
