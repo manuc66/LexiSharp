@@ -844,6 +844,11 @@ English or Porter2 stemmer", and it over-stems by design (`relate` and `relation
 - `BM25 tuned` (shown at run time) tunes k1/b **in-sample** on the very queries being scored —
   an oracle, not a fair baseline; it is reported only to exercise
   `Bm25ParameterTuner` end to end.
+- `--heldout <share>` fits every tuner on a hash-chosen part of the validation queries and puts each
+  tuned row's fit-set figure beside its score-set figure, so the oracle becomes a measured pair
+  instead of a caveat. The split is FNV-1a 64 of the query id modulo 1,000,000, so the command
+  reproduces it; the measured pairs and the remaining upper bounds are in
+  [docs/evaluation.md](../../docs/evaluation.md#held-out-measurement---heldout).
 
 ## Decisions worth knowing
 
