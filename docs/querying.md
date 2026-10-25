@@ -21,6 +21,9 @@ say so in the notes (`NotSupportedException` rather than a silent no-op — see
   every SQL backend.
 - **Phrase queries** — a double-quoted segment must appear at consecutive positions while
   the free terms around it keep scoring. See [Phrase queries](#phrase-queries).
+- **Required & prohibited terms** — a leading `+` on a whitespace-delimited token requires it,
+  a leading `-` excludes every document containing it. See
+  [Required and prohibited terms](#required-and-prohibited-terms).
 - **Highlighting** — `TextHighlighter` wraps query matches in the original text or returns
   word-snapped snippets, driven by the tokenizer's span mode. See
   [Highlighting](#highlighting).
@@ -82,8 +85,79 @@ The SQL backends honor the same syntax natively: PostgreSQL through
 `websearch_to_tsquery`, ParadeDB through the `###` phrase operator (on that backend only
 phrases shape the match set when quotes are present — free terms stay out of `WHERE`, exactly
 mirroring the stock engine's scoring-only role for them). An engine without phrase support
-(fuzzy, vector, sparse) rejects a quoted query with `NotSupportedException` rather than ignoring
-the quotes.
+(fuzzy, vector, sparse) rejects a quoted query with `NotSupportedException` rather than
+ignoring the quotes.
+
+## Required and prohibited terms
+
+Put `+` or `-` immediately before a whitespace-delimited token to require it or exclude it.
+The token may be a word, a quoted phrase, or a prefix/fuzzy atom:
+
+```csharp
+engine.Search("+apple");                 // only documents containing "apple"
+engine.Search("apple -tart");            // "apple" scores; a document containing "tart" is out
+engine.Search("+apple -tart");           // both gates
+engine.Search("+\"machine learning\"");  // the quoted phrase must be adjacent
+engine.Search("-catt~2");                // no near-variant of "catt" may occur
+engine.Search("+neural*");               // at least one term starting with "neural" must occur
+```
+
+**Grammar.** The operator is the first character of a whitespace-delimited token, and it must
+touch what it qualifies: `+term`, `-term*`, `-"a phrase"`. A `-` anywhere else is ordinary
+text, so `e-mail`, `well-being` and `foo-bar` tokenize exactly as they do without the query
+language, and `+ machine` is a bare `+` token (which tokenizes to nothing) followed by an
+unqualified term. When a token starts with several operator characters the first one decides:
+`++a` and `+-a` mean `+a`, `--a` and `-+a` mean `-a`. A qualifier on a segment that produces no
+terms — `-""`, or `+a` where the tokenizer drops the single character — is dropped with that
+segment and imposes no constraint; a query whose only content is such a token has no term to
+match, so it returns nothing, the same as any other query with no terms. A token that tokenizes
+to several terms is used whole: `+foo-bar` requires both `foo` and `bar`, and `-foo-bar` excludes
+a document containing either.
+
+**What the operators do.** Both are gates checked before any relevance math:
+
+- A **required** atom must be present: every literal term of the token, at least one term
+  matched by a `+` prefix/fuzzy expansion, or the whole phrase for `+"..."`. A required term
+  then scores exactly as the same term written without `+`, so `+apple +red` ranks on both
+  terms, not on a constant.
+- A **prohibited** atom must be absent: any document where it occurs is dropped whatever it
+  would have scored, and its terms contribute nothing to the score.
+- A query made **only of prohibited atoms** is the complement of its gate: every surviving
+  document scores `1.0`, so the configured tie-break — not relevance — orders the page. A
+  `MinimumScore` above `1` removes them all, which is the explicit way to say "I wanted a
+  ranking signal, not a filter".
+- A query made **only of required atoms** with no free term scores on exactly those terms.
+
+Required and prohibited words are taken literally: the synonym map rewrites free query terms
+only, and never a `+`/`-` term. `QueryParser.Parse` exposes the split as
+`RequiredTerms`/`ProhibitedTerms`, `RequiredPhrases`/`ProhibitedPhrases` and
+`QueryExpansion.Operator`; `ParsedQuery.AllTerms` — the scoring input, and what highlighting
+uses — contains the required terms and omits the prohibited ones.
+
+`SearchOptions.ParseQuerySyntax` decides whether any of this is read. It defaults to `true`.
+With it set to `false`, `-term` is literal text in which the tokenizer treats `-` as a
+separator, so the query searches `term`. That is the path for a corpus of prose that contains
+leading hyphens, in the same way it is the path for prose that contains quotation marks.
+
+### Which engines honor the operators
+
+`RankedTextSearchEngine` implements both. Every other backend declares the features it
+supports through `IQuerySyntaxSupport.SupportedQueryFeatures`, and using an operator a backend
+does not declare raises `NotSupportedException` before any query runs — never a silent
+retrieval of documents containing the term that was supposed to be excluded.
+`ParseQuerySyntax: false` opts out of that check along with the rest of the query language: the
+raw text is then that backend's own grammar to read.
+
+| Engine | Query syntax |
+|---|---|
+| `RankedTextSearchEngine` | phrases, prefix/fuzzy, required and prohibited terms |
+| `PostgresTextSearchEngine`, `ParadeDBTextSearchEngine` | phrases |
+| `PostgresFuzzySearchEngine`, `PostgresVectorSearchEngine`, `PostgresSparseSearchEngine`, `InMemoryVectorSearchEngine`, `SparseTextSearchEngine` | plain queries only |
+
+The SQL backends are declared unsupported rather than approximated: the lexical engine forwards
+its query text to `websearch_to_tsquery`, which has its own grammar, and the ParadeDB engine
+forwards it to `pg_search`; neither would honor this grammar on the terms this library
+tokenizes. A `+`/`-` query against them is refused, and the message names the missing feature.
 
 ## Highlighting
 
@@ -127,8 +201,9 @@ Operators are only recognized when suffixed to word characters, never inside quo
 (a `"machine*"` phrase stays literal). They are a LexiSharp query syntax, so an engine that does
 not interpret them rejects such a query with `NotSupportedException` instead of silently treating
 the operator as plain text — `IQuerySyntaxSupport.SupportedQueryFeatures` exposes each engine's
-supported matrix (`RankedTextSearchEngine`: phrases + expansions; PostgreSQL lexical and
-ParadeDB: phrases; fuzzy/vector/sparse: plain queries only).
+supported matrix (`RankedTextSearchEngine`: phrases, expansions, required and prohibited terms;
+PostgreSQL lexical and ParadeDB: phrases; fuzzy/vector/sparse: plain queries only). See
+[Which engines honor the operators](#which-engines-honor-the-operators).
 
 ## Synonyms
 

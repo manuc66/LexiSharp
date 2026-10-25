@@ -267,7 +267,10 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
         if (options.IsEmpty || string.IsNullOrWhiteSpace(query))
             return Array.Empty<SearchResult>();
 
-        QuerySyntax.EnsureSupported(query, SupportedQueryFeatures, nameof(PostgresSparseSearchEngine));
+        // ParseQuerySyntax: false is the caller saying "literal text, do not consult the query
+        // parser" — and EnsureSupported is a parser call.
+        if (options.ParseQuerySyntax)
+            QuerySyntax.EnsureSupported(query, SupportedQueryFeatures, nameof(PostgresSparseSearchEngine));
 
         var weights = await _embeddings.GetSparseEmbeddingAsync(query, EmbeddingUse.Query, cancellationToken).ConfigureAwait(false);
         var queryCoordinates = ToCoordinates(weights);

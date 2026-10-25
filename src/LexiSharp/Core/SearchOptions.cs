@@ -34,9 +34,11 @@ namespace LexiSharp.Core;
 /// </param>
 /// <param name="ParseQuerySyntax">
 /// When <c>true</c> (the default), the query is read as query syntax: <c>"a phrase"</c> requires
-/// positional adjacency, <c>term*</c> is a prefix and <c>term~</c> is fuzzy. When <c>false</c>, the
-/// query is literal text and <c>QueryParser</c> is not consulted at all, so the terms are exactly
-/// <c>ITokenizer.Tokenize(query)</c>.
+/// positional adjacency, <c>term*</c> is a prefix and <c>term~</c> is fuzzy, and a leading
+/// <c>+</c>/<c>-</c> on a whitespace-delimited token makes that term, phrase or expansion
+/// required or prohibited. When <c>false</c>, the query is literal text and <c>QueryParser</c> is
+/// not consulted at all, so the terms are exactly <c>ITokenizer.Tokenize(query)</c> — including
+/// for a token that starts with <c>-</c>, which is then an ordinary separator.
 /// <para>
 /// The distinction matters because a double quote is ordinary text in prose, and a query language
 /// cannot tell a quotation mark from a phrase delimiter. Measured on BEIR ArguAna, where all 1,406
@@ -45,6 +47,11 @@ namespace LexiSharp.Core;
 /// own could satisfy it. 91 of them returned nothing at all and 20 returned a single result, at any
 /// retrieval depth. Set this to <c>false</c> for a corpus of natural-language queries; a search over
 /// prose that silently drops 9.8% of its queries is not a ranking question, it is a lost query.
+/// </para>
+/// <para>
+/// A leading <c>-</c> is the same kind of decision: it is an exclusion in the query language and
+/// an ordinary hyphen in prose, so a query set that writes <c>-word</c> literally belongs on this
+/// <c>false</c> path too.
 /// </para>
 /// </param>
 /// <param name="TieBreak">

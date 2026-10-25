@@ -15,4 +15,16 @@ public enum QueryFeatures
 
     /// <summary>Prefix (<c>term*</c>) and fuzzy (<c>term~</c>/<c>term~N</c>) atoms.</summary>
     Expansions = 2,
+
+    /// <summary>
+    /// A leading <c>+</c> on a whitespace-delimited token (<c>+term</c>, <c>+"a phrase"</c>,
+    /// <c>+term*</c>): the document must contain it.
+    /// </summary>
+    RequiredTerms = 4,
+
+    /// <summary>
+    /// A leading <c>-</c> on a whitespace-delimited token (<c>-term</c>, <c>-"a phrase"</c>,
+    /// <c>-term~N</c>): the document must not contain it.
+    /// </summary>
+    ProhibitedTerms = 8,
 }
