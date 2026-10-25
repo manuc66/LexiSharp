@@ -500,6 +500,14 @@ workflow.
 
 ### Changed
 
+- **The segment format is version 5.** The header gained an eight-byte field: the last write-ahead
+  journal entry the segment contains, zero for a segment written without a journal. It lives in the
+  segment rather than in a side file because it has to be atomic with the bytes it describes — the
+  rename publishes both at once — and because a re-applied journal entry is not harmless: writing an
+  id that is already present tombstones its old ordinal and adds a new one, so a replay has to be
+  able to stop rather than repeat. A store written by an earlier build cannot be opened by this one;
+  the reader refuses a version it does not read rather than guessing.
+
 - **Query-time routing is measured, and the library routes nothing by default.**
   Fusing a dense lane with the lexical one gains where the lexical one fails — **+0.116** nDCG@10 on
   average over the 60 SciFact queries where BM25 scores zero, **+0.025** over 104 on NFCorpus, 39

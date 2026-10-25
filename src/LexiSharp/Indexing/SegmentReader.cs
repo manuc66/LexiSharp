@@ -70,7 +70,23 @@ internal sealed class SegmentReader
         _documentsTableOffset = TableOffset(16, DocumentCount, sizeof(int), "documents");
         _lengthsOffset = TableOffset(24, DocumentCount, sizeof(int), "lengths");
         _termsTableOffset = TableOffset(32, TermCount, sizeof(int), "terms");
+        JournalSequence = source.ReadInt64(40);
+
+        if (JournalSequence < 0)
+            throw new InvalidDataException("the segment declares a negative journal sequence");
     }
+
+    /// <summary>
+    /// The last write-ahead journal entry this segment contains, or zero for a segment written without
+    /// a journal.
+    /// </summary>
+    /// <remarks>
+    /// The journal is replayed over the newest generation when a store opens, and this is where the
+    /// replay stops: an entry at or below this sequence is already in the segment. Re-applying one
+    /// instead would not be harmless — a write of an existing id tombstones the old ordinal and adds a
+    /// new one, which changes the corpus rather than reproducing it.
+    /// </remarks>
+    public long JournalSequence { get; }
 
     /// <summary>The bytes this segment was read from, or <c>null</c> when the source does not hold them.</summary>
     public byte[]? TryGetBytes() => _source is ArraySegmentSource source ? source.Bytes : null;

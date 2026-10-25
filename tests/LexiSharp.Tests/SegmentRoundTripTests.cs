@@ -191,6 +191,30 @@ public class SegmentRoundTripTests
             bytes.AsSpan(offset, length).CopyTo(destination);
     }
 
+    [Fact]
+    public void TheSegmentCarriesTheJournalSequenceItWasWrittenWith()
+    {
+        var index = Build(3);
+
+        // Zero is what every segment written before a journal existed carries, and what a store
+        // without one still writes: "no entry is already contained".
+        Assert.Equal(0L, new SegmentReader(SegmentWriter.Write(index)).JournalSequence);
+        Assert.Equal(41L, new SegmentReader(SegmentWriter.Write(index, 41)).JournalSequence);
+
+        // A negative sequence cannot be a count of journal entries, and a reader that accepted one
+        // would skip every entry and lose the writes it was asked to replay.
+        Assert.Throws<ArgumentOutOfRangeException>(() => SegmentWriter.Write(index, -1));
+    }
+
+    [Fact]
+    public void ANegativeJournalSequenceInAHeaderIsRefused()
+    {
+        byte[] bytes = SegmentWriter.Write(Build(3));
+        System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(40), -1);
+
+        Assert.Throws<InvalidDataException>(() => new SegmentReader(bytes));
+    }
+
     private static InMemoryTextIndex Build(int documents)
     {
         var index = new InMemoryTextIndex();
