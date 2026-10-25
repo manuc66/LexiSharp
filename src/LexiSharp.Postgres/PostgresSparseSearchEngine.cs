@@ -199,10 +199,11 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
         await using var command = connection.CreateCommand();
 
         string tsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content", "EXCLUDED.text_fields");
+        string tsvInsertExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "@content", "@text_fields");
 
         string insertSql = $"""
-            INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, sparse)
-            VALUES (@id, @content, @category, @fields, @text_fields, @sparse::sparsevec)
+            INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, sparse, tsv)
+            VALUES (@id, @content, @category, @fields, @text_fields, @sparse::sparsevec, {tsvInsertExpr})
             ON CONFLICT (id) DO UPDATE
                 SET content = EXCLUDED.content,
                     category = EXCLUDED.category,

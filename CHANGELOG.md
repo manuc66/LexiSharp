@@ -464,6 +464,14 @@ workflow.
 
 ### Fixed
 
+- **The vector and sparse engines write `tsv` on the insert, not only on a conflict.**
+
+  Both `INSERT` statements listed `tsv` only in their `ON CONFLICT DO UPDATE` clause, so a document
+  added to a fresh table through either engine left `tsv` `NULL` and was invisible to the lexical
+  engine — on the shared table whose whole point is that one row serves both. Both statements now
+  carry the column and `PostgresSchema.TsvExpression` on the way in as well as on the upsert, and an
+  integration test compares the vector the lexical and vector engines store for one document.
+
 - **`Commit` forces the segment to the device before the rename, and refuses an interrupted commit
   instead of opening an empty store.**
 
