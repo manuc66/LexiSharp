@@ -193,8 +193,11 @@ leading `+`/`-`, it must name a field the query knows about (see below), and it 
 scopes: `title:term`, `title:"a phrase"`, `+title:term`, `-title:"a phrase"`, `title:term*`,
 `title:term~2`. `title: term`, a bare `title:`, `title:-term` and `"title:term"` (inside quotes)
 are ordinary text. Field names are matched exactly as the index spells them — ordinal, so
-`Title:term` is not `title:term` unless the index has a `Title` field. A scoped token that
-tokenizes to no term is dropped with its scope, exactly as a vacuous `+` atom is.
+`Title:term` is not `title:term` unless the index has a `Title` field. The name is the text before
+the **first** colon, so a field whose own name contains a colon cannot be addressed by a prefix (a
+name with whitespace is equally out of reach); `Fields` will report it, and it remains searchable
+unscoped. A scoped token that tokenizes to no term is dropped with its scope, exactly as a vacuous
+`+` atom is.
 
 **The colon is the dangerous character, and the rule is the field vocabulary.** A name before a
 colon is a scope only when it is a *known field*: the corpus's own `IReadOnlyTextIndex.Fields` by
