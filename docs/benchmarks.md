@@ -817,6 +817,146 @@ measured; head terms, other analyzers, filtered queries, concurrency, and a dist
 `min` / `p50` / `mean` are all outside the lane. The retained figure is managed heap only and
 excludes everything listed above, so it is not comparable with an RSS reading.
 
+## Concurrency lane (`concurrency`): one index at 1, 2, 4 and 8 callers
+
+Every other timing on this page is single-threaded. `ConcurrentSearchTests` establishes that
+concurrent read-only searches return what a lone search returns; it says nothing about throughput or
+tail latency. The concurrency lane is the measurement for the question a server asks: one read-only
+index, several callers, and what the opt-in `SynchronizedTextSearchEngine`'s read lock costs when the
+wrapped and unwrapped engines are measured against each other in the same session.
+
+```bash
+# five interleaved runs per row — the measurement below
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- concurrency --runs 5
+# the default is three runs per row
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- concurrency
+```
+
+A plain `dotnet run --project bench/LexiSharp.Benchmarks -c Release` still runs the BenchmarkDotNet
+suite and nothing else.
+
+**Corpus, queries and method.**
+
+- One `InMemoryTextIndex` built from `CorpusFactory.CreateZipfDocuments(100_000, 50, 30_000)` — Zipf
+  exponent 1.07, 50 words per document, a 30,000-term vocabulary — and one `RankedTextSearchEngine`
+  over it with the default tokenizer and `Bm25Scorer`. Every worker searches that same instance.
+- Three queries are issued round-robin 1:1:1, so the mix is not only the cheap case:
+
+  | shape | text | `df` | hits at `Limit: 10` |
+  |---|---:|---:|---:|
+  | `tail-1` | `w20000x` | 9 | 9 |
+  | `tail-3` | `w20000x w25000x w29000x` | 29 (sum) | 10 |
+  | `head-1` | `w1x` | 95,402 | 10 |
+
+  The head query is in 95.4 % of the corpus and costs about a millisecond; the two tail queries cost
+  microseconds.
+- Each shape — one engine kind at one caller count — is warmed for **five seconds of wall time**, not
+  a call count, because tiered compilation promotes the search chain at roughly 0.5–0.7 s on this
+  host; the scale lane's section above records the measurement that established it. Workers are
+  dedicated threads released from a gate together, not pool threads.
+- Each run is a **2 s timing pass plus a separate 1 s allocation pass**. Throughput is completed
+  searches divided by the wall time from gate release to the last worker's exit; p50 and p99 are
+  nearest-rank over every call the run made; allocation per search sums each worker's
+  `GC.GetAllocatedBytesForCurrentThread` delta and divides by the calls, after 64 unpriced calls per
+  worker so the pooled score buffers are in place.
+- Five runs per row. Raw and synchronized alternate within a run number and the order flips on every
+  run, so neither side is always measured second. The per-call interval contains two
+  `Stopwatch.GetTimestamp()` reads and no correction is applied.
+
+**Host, and how quiet it was.** Measured on 2026-10-25 starting 22:16 local time: Manjaro Linux,
+Intel Core i7-8850H (6 physical cores, 12 logical processors), .NET 10.0.13, `ServerGC=True`,
+latency mode `Interactive`, 15.2 GiB of RAM. `vmstat` read the host 90 % idle immediately before the
+run; the 1-minute load average was **1.9 at the start and 5.7 at the end**, the latter including this
+lane's own eight worker threads. `ps` showed no other agent's build or test process running at the
+start of the pass. A second
+five-run pass eight minutes earlier read 2,867 / 5,562 / 9,490 / 12,329 searches/s for the four raw
+rows — **within 2 %** of the table below in both directions. An earlier pass made while another
+session's test suite was running read 1,952 searches/s at one caller raw against 2,841 here, 31 %
+low; it is not used. The absolute rates are this host's and this hour's; the raw/synchronized
+comparison is what the interleaving buys, and the spread is stated with every row.
+
+**Measured — median of five runs, min–max across those runs in parentheses:**
+
+| callers | engine | throughput (searches/s) | mix p50 | mix p99 | allocation/search |
+|---:|---|---:|---:|---:|---:|
+| 1 | raw | 2,841 (2,765–2,872) | 4.73 µs (4.61–4.94) | 1.34 ms (1.29–1.80) | 669 B |
+| 1 | synchronized | 2,858 (2,818–2,875) | 4.69 µs (4.46–4.82) | 1.35 ms (1.29–1.42) | 669 B |
+| 2 | raw | 5,630 (5,606–5,667) | 4.58 µs (4.49–4.67) | 1.39 ms (1.34–1.57) | 669 B |
+| 2 | synchronized | 5,634 (5,553–5,666) | 4.74 µs (4.56–4.84) | 1.39 ms (1.36–1.53) | 669 B |
+| 4 | raw | 9,636 (9,290–10,312) | 5.70 µs (5.28–6.02) | 1.66 ms (1.57–1.80) | 669 B |
+| 4 | synchronized | 9,603 (9,309–9,630) | 5.78 µs (5.68–6.13) | 1.69 ms (1.59–1.93) | 669 B |
+| 8 | raw | 12,068 (11,768–12,346) | 9.54 µs (9.36–9.66) | 2.75 ms (2.74–2.77) | 669 B |
+| 8 | synchronized | 12,279 (12,007–12,419) | 9.58 µs (9.49–9.62) | 2.77 ms (2.74–2.78) | 669 B |
+
+The allocation column is the five-run median; the per-run range is 669–673 B on every row.
+
+`synchronized / raw`, as the ratio of the five-run medians with the per-run ratio range beside it:
+
+| callers | throughput | mix p50 | mix p99 |
+|---:|---:|---:|---:|
+| 1 | 1.006× (0.992–1.028) | 0.990× (0.933–1.017) | 1.006× (0.764–1.058) |
+| 2 | 1.001× (0.990–1.006) | 1.035× (1.013–1.061) | 1.001× (0.934–1.024) |
+| 4 | 0.997× (0.934–1.037) | 1.014× (0.944–1.092) | 1.019× (0.939–1.126) |
+| 8 | 1.017× (0.973–1.046) | 1.004× (0.982–1.019) | 1.007× (0.997–1.009) |
+
+Per query, median of the five run `p50` / `p99` values:
+
+| callers | engine | `tail-1` p50 / p99 | `tail-3` p50 / p99 | `head-1` p50 / p99 |
+|---:|---|---:|---:|---:|
+| 1 | raw | 3.74 / 21.74 µs | 4.43 / 19.04 µs | 1.02 / 1.48 ms |
+| 1 | synchronized | 3.71 / 20.97 µs | 4.34 / 21.27 µs | 1.01 / 1.53 ms |
+| 2 | raw | 3.77 / 13.28 µs | 4.44 / 15.33 µs | 1.02 / 1.77 ms |
+| 2 | synchronized | 3.87 / 14.92 µs | 4.53 / 14.16 µs | 1.01 / 1.66 ms |
+| 4 | raw | 4.50 / 21.35 µs | 5.34 / 22.78 µs | 1.18 / 1.92 ms |
+| 4 | synchronized | 4.57 / 23.48 µs | 5.41 / 25.54 µs | 1.19 / 1.95 ms |
+| 8 | raw | 7.65 / 17.16 µs | 8.67 / 17.00 µs | 1.56 / 2.77 ms |
+| 8 | synchronized | 7.63 / 16.71 µs | 8.28 / 17.61 µs | 1.51 / 2.80 ms |
+
+**What the rows say.**
+
+- **The read lock is at the edge of this lane's resolution, and no direction is established.**
+  Throughput is at parity at every caller count — the medians are 0.997×–1.017×, and every per-run
+  range includes 1.0. The mix p99 medians are 1.001×–1.019×, and those ranges include 1.0 too, though
+  one four-caller p99 run reached 1.126×, so the median statement is not a bound on the tail. The
+  one per-run range that excludes 1.0 is the mix **p50 at two callers**: 1.013×–1.061×, a 3.5 %
+  median increase. The same comparison is 1 % *lower* at one caller and 0.4 % higher at eight, so it
+  does not describe a fixed cost that survives the caller count, and it is left as this host's
+  drift rather than promoted to a finding. The honest bound is that, on the median, the read pair
+  costs at most a few percent of a 4–10 µs tail call here, which confirms the conclusion the type's
+  remarks state while making the measurement reproducible.
+- **Throughput scales sublinearly, and the head query is why.** Relative to one caller, the raw rows
+  read 1.98× at two callers, 3.39× at four and 4.25× at eight. The `head-1` p50 rises from 1.02 ms at
+  one caller to 1.18 ms at four and 1.56 ms at eight, and the tail p50s roughly double, because
+  eight workers on six physical cores are sharing the same execution units and memory bandwidth; the
+  lane measures callers, not cores.
+- **The mix p99 is the head query's tail, not the tail queries'.** Because the mix is 1:1:1, the 99th
+  percentile of all calls falls inside the head distribution; the per-query table is what separates
+  them. Per-query p99 across caller counts is noisy in both directions (13.3–23.5 µs for `tail-1`
+  across the eight rows) and is not a scaling curve; read the mix row for load and the per-query
+  p50 rows for shape.
+- **Allocation is 669 B/search in every row.** Both engines and all four caller counts read the same
+  five-run median, with a 669–673 B per-run range: the wrapper adds no measurable allocation, and the
+  engine's rented score buffers return to `ArrayPool` rather than being charged per call. The 669 B is
+  the returned page and the query's fixed cost, not index memory; this lane does not re-measure the
+  index's retained bytes, which the scale lane reports separately.
+- **The four-caller row's spread is larger than any difference in it.** Its raw throughput spans
+  9,290–10,312 searches/s around a 9,636 median, while the synchronized median is 9,603; the per-run
+  throughput ratio ranges 0.934–1.037. No direction is claimed there. The same caveat applies to the
+  one-caller p99 ratio (0.764–1.058), whose low end is one raw run at 1.80 ms against a 1.34 ms
+  median.
+
+**What this lane does not measure.** Other machines, other core counts and NUMA placement; the
+effect of SMT or CPU affinity; write concurrency — `Add`, `Remove`, `Clear` or `Index` while readers
+search, which is the case `SynchronizedTextSearchEngine`'s write-lock remarks describe and this lane
+does not touch; `AtomicEngineReference`'s swap path; filtered queries; other analyzers and scorers;
+corpora other than 100,000 documents; sustained load beyond a two-second window; GC pause
+attribution; and any latency statistic beyond p50 and p99 (no p99.9, max or full distribution).
+`SearchOptions.Trace` and `SearchOptions.Costs` are also outside it: both are mutable per-request
+collectors that a concurrent caller must give one instance per search (see
+[observability](observability.md#per-query-cost-sheet-searchcosts)), and the lane attaches neither.
+Correctness under concurrency is `ConcurrentSearchTests`'s job, not this lane's.
+
+
 ## Tokenizer (`TokenizerBenchmarks`)
 
 Tokenizing the same text under different normalizations. The `Ratio` column is only
@@ -884,6 +1024,8 @@ dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*Scoring
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*QueryAllocationBreakdown*'
 # index build and tail-query cost per corpus size (see the scale lane above):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- scale
+# one shared index at 1/2/4/8 callers, raw and synchronized (see the concurrency lane above):
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- concurrency --runs 5
 ```
 
 The three-corpus-size crossover above is **not** a report from this project: a 1,000,000-document
