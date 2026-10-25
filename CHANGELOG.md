@@ -62,6 +62,28 @@ workflow.
   the vector, sparse and fuzzy backends, which already refuse the rest of it; with
   `ParseQuerySyntax: false` the raw text is that backend's own grammar to read.
 
+- **A query can scope an atom to one field: `title:term`, `title:"a phrase"`.**
+
+  A known field name followed by a colon restricts the atom to that field. It combines with the
+  existing operators (`+title:term` requires it, `-title:term` excludes it, `+title:"a phrase"`)
+  and with the prefix/fuzzy atoms (`title:obsid*`). A scoped term matches only when the field
+  carries it, and scores from that field's statistics — term frequency, field length, field
+  document frequency — instead of the whole document's; a scoped phrase must sit at consecutive
+  positions *inside* the field, so a body occurrence can never satisfy a title phrase. The scoped
+  contribution is added to the unscoped terms of the same query, so `title:obsidian notes` ranks
+  on both. `FieldScopedTerm`, `FieldScopedPhrase` and `ParsedQuery.ScopedTerms` expose the parsed
+  split, and `IFieldScopedScorer.ScoreScoped` is the seam a scorer implements to score one field;
+  `Bm25FScorer` is the built-in implementation.
+
+  `RankedTextSearchEngine` declares `QueryFeatures.FieldScopes` only when its scorer implements
+  `IFieldScopedScorer` and its index implements `IFieldStatisticsIndex`, and refuses a scoped
+  query otherwise with `NotSupportedException` naming the missing capability. A name the index
+  does not have is refused the same way rather than returning nothing. `IFieldStatisticsIndex`
+  gains `FieldTermPositions` for the phrase check; it has a default implementation that throws, so
+  an external index keeps compiling and answering the four statistics, and a scoped phrase over
+  one that does not implement it fails loudly. `Explain` refuses a field-scoped query because a
+  `ScoreExplanation` has no field per contribution.
+
 - **The evaluation harness can fit BM25F, and reports whether the weighting earned it.**
 
   `--tune-bm25f` adds a row fitted by `Bm25FParameterTuner`: `(k1, b)` first, then the weight of
@@ -604,6 +626,25 @@ workflow.
   suffix per threshold fails it.
 
 ### Changed
+
+- **A `name:` prefix that names a real field is a scope; every other colon is unchanged.**
+
+  With `SearchOptions.ParseQuerySyntax` at its default `true`, a corpus whose index has a `title`
+  field and a query `title:term` now means "`term` in the title" rather than the two tokens
+  `title` and `term`; `title:"a phrase"` likewise. The prefix is a field **only when the name is a
+  field of the index**, or a name the caller declared through the new
+  `SearchOptions.KnownFields`. `http://x`, `12:30` and `key:value` therefore tokenize exactly as
+  they did on any corpus without fields by those names — a prefix is never inferred from
+  "a word followed by a colon". A name in `KnownFields` that the index does not have raises
+  `NotSupportedException` instead of quietly returning no results.
+
+  The SQL backends keep their phrase-only declaration and refuse a scoped query when the caller
+  sets `KnownFields`; without that set the text reaches the backend's own grammar, since a backend
+  with no field model cannot tell a scope from a colon in prose. `ParseQuerySyntax: false` returns
+  the colon to the tokenizer, exactly as it does for `"` and a leading `-`.
+
+  An earlier `title:term` query is only affected on a corpus that has a `title` field — the case
+  where the new reading is the intended one; elsewhere the query is unchanged.
 
 - **A store journals by default, and the store a commit replaces refuses writes.**
   `SegmentedTextIndex(directory)` now opens or creates `journal.wal` and replays it; pass
