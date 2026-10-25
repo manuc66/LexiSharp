@@ -43,23 +43,24 @@ namespace LexiSharp.Indexing;
 /// deletions costs most of the tax, which is where <see cref="ShouldMerge"/>'s threshold sits.
 /// </para>
 /// <para>
-/// <b>Durability, stated exactly.</b> Writes are visible immediately and live as long as the process.
-/// <see cref="Commit"/> makes them durable by writing one merged segment to the directory and swapping
-/// it in atomically: the segment's bytes are flushed to the device before the rename, so a power loss
-/// cannot expose a final-named file whose content was never written. The <b>directory entry</b> is not
-/// fsynced — .NET has no portable API for it and this type does not call into libc — so the order in
-/// which the filesystem commits the rename and the cleanup of the replaced generation is the
-/// filesystem's: after a power loss the store may still show the previous generation, which is a lost
-/// commit rather than a corrupt one, and a directory that lost its segment entirely is refused rather
-/// than opened as an empty corpus. A reader in flight never sees a half-written store. A crash after
-/// that rename
-/// and before the cleanup can leave the replaced generation on disk beside its successor; the store
-/// opens <b>the newest generation only</b>, because the successor is the flush of everything live at
-/// commit time — chaining both would return every shared document twice and bring back the ones the
-/// commit deleted. What is <b>not</b> durable
-/// is the overlay between writes: a crash after an <see cref="Add"/> and before a <see cref="Commit"/>
-/// loses that document. That is a write-ahead log, it is not this increment, and the type does not
-/// pretend otherwise.
+/// <b>Durability, stated exactly.</b> Every write is appended to a <b>write-ahead journal</b> beside the
+/// segments and replayed when the store opens, so a crash loses at most the entries the flush policy
+/// has not forced to the device — a hundred writes or fifty milliseconds with the default, none with
+/// <see cref="JournalFlushPolicy.PerWrite"/>, and everything since the last commit with
+/// <see cref="JournalFlushPolicy.OnCommit"/>. A segment carries the last journal entry it contains, so
+/// a replay stops at what the segment already holds rather than applying a write twice.
+/// <see cref="Commit"/> makes the writes durable a second way and compacts them: one merged segment is
+/// written to the directory and swapped in atomically, its bytes flushed to the device before the
+/// rename, so a power loss cannot expose a final-named file whose content was never written. The
+/// <b>directory entry</b> is not fsynced — .NET has no portable API for it and this type does not call
+/// into libc — so the order in which the filesystem commits the rename and the cleanup of the replaced
+/// generation is the filesystem's: after a power loss the store may still show the previous generation,
+/// which is a lost commit rather than a corrupt one, and a directory that lost its segment entirely is
+/// refused rather than opened as an empty corpus unless the journal can rebuild it. A reader in flight
+/// never sees a half-written store. A crash after that rename and before the cleanup can leave the
+/// replaced generation on disk beside its successor; the store opens <b>the newest generation only</b>,
+/// because the successor is the flush of everything live at commit time — chaining both would return
+/// every shared document twice and bring back the ones the commit deleted.
 /// </para>
 /// <para>
 /// <b>One writer, any number of readers.</b> Mutations are not safe to interleave with a search in
@@ -86,18 +87,29 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
 
     private SegmentChain _chain;
 
+    /// <summary>The journal, or <c>null</c> when it is disabled or this store was replaced by a commit.</summary>
+    private SegmentJournal? _journal;
+
+    /// <summary>The policy this store's journal uses, so the store a commit returns opens the same one.</summary>
+    private readonly JournalOptions _journalOptions;
+
+    /// <summary>Whether a commit or merge replaced this store, after which it refuses to write.</summary>
+    private bool _superseded;
+
     private SegmentedTextIndex(
         string directory,
         ITokenizer tokenizer,
         SegmentChain chain,
         SegmentSourceMode mode,
-        int? decodedCacheEntries)
+        int? decodedCacheEntries,
+        JournalOptions journalOptions)
     {
         _directory = directory;
         _tokenizer = tokenizer;
         _chain = chain;
         _mode = mode;
         _decodedCacheEntries = decodedCacheEntries;
+        _journalOptions = journalOptions;
         _caches = [];
     }
 
@@ -125,18 +137,27 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     /// The budget is <b>per segment</b>, never shared: a cache is keyed on the term, and the same term
     /// exists in two segments with different postings.
     /// </param>
-    /// <exception cref="InvalidDataException">A segment in the directory is not one this reader knows.</exception>
+    /// <param name="journal">
+    /// What the write-ahead journal does. Default <see cref="JournalOptions.Default"/>: every write is
+    /// appended and replayed when the store opens, flushed in groups of a hundred entries or fifty
+    /// milliseconds. <see cref="JournalOptions.Disabled"/> restores the behaviour of a store with no
+    /// journal, where a crash before the next <see cref="Commit"/> loses the writes since the last one.
+    /// </param>
+    /// <exception cref="InvalidDataException">A segment in the directory is not one this reader knows,
+    /// or the journal holds a record its checksum does not match.</exception>
     public SegmentedTextIndex(
         string directory,
         ITokenizer? tokenizer = null,
         SegmentSourceMode mode = SegmentSourceMode.Array,
-        int? decodedCacheEntries = null)
+        int? decodedCacheEntries = null,
+        JournalOptions? journal = null)
     {
         ArgumentNullException.ThrowIfNull(directory);
 
         _directory = directory;
         _tokenizer = tokenizer ?? Linguistics.Tokenizer.Default;
         _mode = mode;
+        _journalOptions = (journal ?? JournalOptions.Default).Validated();
         _caches = [];
 
         var segments = new List<SegmentTextIndex>();
@@ -153,23 +174,34 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
         foreach (string path in SegmentFiles(directory))
             newest = path;
 
+        // The journal is opened before the refusal below, because it is what decides that refusal: a
+        // commit interrupted before its rename leaves a temporary segment and no generation, and a
+        // journal holding entries can rebuild the corpus that commit was writing.
+        if (_journalOptions.Enabled)
+            _journal = SegmentJournal.Open(_directory, _journalOptions);
+
         // No readable generation but a temporary segment means a commit was interrupted before its
         // rename. Opening that as a new, empty store would answer "no documents" to every query,
         // which is the one failure mode worse than an exception: a corpus that is still on disk,
-        // reported as absent.
+        // reported as absent. A journal with entries is the difference — the writes are still there,
+        // and the replay below rebuilds them.
         if (newest is null
             && Directory.Exists(directory)
-            && Directory.GetFiles(directory, SegmentPrefix + "*.lxs.tmp").Length > 0)
+            && Directory.GetFiles(directory, SegmentPrefix + "*.lxs.tmp").Length > 0
+            && _journal is not { LastSequence: > 0 })
         {
             throw new InvalidDataException(
                 $"{directory} holds an interrupted commit: a temporary segment and no readable generation");
         }
+
+        long segmentSequence = 0;
 
         if (newest is not null)
         {
             var handle = OpenSegment(newest, _tokenizer, mode, decodedCacheEntries);
 
             segments.Add(handle.Index);
+            segmentSequence = handle.Index.JournalSequence;
 
             if (handle.Owner is not null)
                 owners.Add(handle.Owner);
@@ -179,7 +211,69 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
         _chain = segments.Count == 0
             ? new SegmentChain([EmptySegment()], _tokenizer)
             : new SegmentChain(segments, _tokenizer);
+
+        if (_journal is not null)
+        {
+            // A journal whose highest entry sits below the segment's marker was written before that
+            // segment — a crash between the rename and the truncation — so the next append has to
+            // continue above the marker rather than reuse a sequence the segment already claims.
+            if (segmentSequence > _journal.LastSequence)
+                _journal.StartAt(segmentSequence);
+
+            Replay(segmentSequence);
+        }
     }
+
+    /// <summary>
+    /// Applies the journal's entries above the segment's marker, in the order they were written.
+    /// </summary>
+    /// <remarks>
+    /// The entries are the operations themselves, not a snapshot: an <see cref="Add"/> is re-indexed, a
+    /// <see cref="Remove"/> is applied to the chain, and a <see cref="Clear"/> starts a new chain. That
+    /// is what makes the journal small — it holds what changed rather than the corpus — and it is why
+    /// the replay must stop at the marker: re-indexing a document that is already in the segment adds a
+    /// second copy and tombstones the first, which is not the corpus the caller wrote.
+    /// </remarks>
+    private void Replay(long segmentSequence)
+    {
+        foreach (JournalEntry entry in _journal!.ReadFrom(segmentSequence))
+        {
+            switch (entry.Operation)
+            {
+                case JournalOperation.Add:
+                    _chain.Add(entry.Document!);
+                    break;
+
+                case JournalOperation.Remove:
+                    _chain.Remove(entry.DocumentId!);
+                    break;
+
+                case JournalOperation.Clear:
+                    _chain = new SegmentChain([EmptySegment()], _tokenizer);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>Refuses a write through a store that a commit or merge has replaced.</summary>
+    private void EnsureWritable()
+    {
+        if (_superseded)
+        {
+            throw new InvalidOperationException(
+                "this store was replaced by Commit or Merge: write through the store it returned");
+        }
+    }
+
+    /// <summary>
+    /// Forces every journaled write to the device now, whatever the flush policy.
+    /// </summary>
+    /// <remarks>
+    /// The grouped policy bounds its window on the next append or on disposal, so a writer that stops
+    /// stops with its last flushed entry. This is how a caller closes that window at a cadence of its
+    /// own — after a request, before answering a client — without paying a device flush per write.
+    /// </remarks>
+    public void FlushJournal() => _journal?.Flush();
 
     /// <summary>How this store's segments are opened. A commit keeps the mode it was opened with.</summary>
     public SegmentSourceMode Mode => _mode;
@@ -200,36 +294,62 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     public bool ShouldMerge() => _chain.ShouldMerge();
 
     /// <inheritdoc />
+    /// <remarks>
+    /// The document is indexed first and journaled second: one the tokenizer refuses fails before a
+    /// record is written, and a record that cannot be written leaves the document in the memory of a
+    /// store that is answering queries, with the exception in the caller's hand. Neither order can make
+    /// a failed write durable, and this one cannot make a rejected write replayable.
+    /// </remarks>
     public void Add(SearchDocument document)
     {
         ArgumentNullException.ThrowIfNull(document);
+        EnsureWritable();
 
         _chain.Add(document);
+        _journal?.Append(JournalOperation.Add, document);
     }
 
     /// <inheritdoc />
     public bool Remove(string documentId)
     {
         ArgumentNullException.ThrowIfNull(documentId);
+        EnsureWritable();
 
-        return _chain.Remove(documentId);
+        if (!_chain.Remove(documentId))
+            return false;
+
+        _journal?.Append(JournalOperation.Remove, documentId: documentId);
+
+        return true;
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Replaces the corpus and journals one <see cref="JournalOperation.Clear"/> rather than a removal
+    /// per document: a caller that rebuilds a corpus should not make the journal carry the old one.
+    /// </remarks>
     public void Index(IEnumerable<SearchDocument> documents)
     {
         ArgumentNullException.ThrowIfNull(documents);
+        EnsureWritable();
 
         _chain = new SegmentChain([EmptySegment()], _tokenizer);
+        _journal?.Append(JournalOperation.Clear);
 
         foreach (var document in documents)
+        {
             _chain.Add(document);
+            _journal?.Append(JournalOperation.Add, document);
+        }
     }
 
     /// <inheritdoc />
     public void Clear()
     {
+        EnsureWritable();
+
         _chain = new SegmentChain([EmptySegment()], _tokenizer);
+        _journal?.Append(JournalOperation.Clear);
     }
 
     /// <summary>
@@ -239,13 +359,25 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     /// Returns a new index rather than mutating this one: the fold reads the segments, their bases and
     /// the length array, so a write between those reads would fold half the old chain and half the new
     /// one. A caller that needs a merge to be invisible to readers swaps the index their engine holds —
-    /// the pattern this repository publishes as <c>AtomicEngineReference</c>.
+    /// the pattern this repository publishes as <c>AtomicEngineReference</c>. The journal moves to the
+    /// store this returns, and this one stops writing: a directory holds one journal, and two stores
+    /// appending to it would hand out the same sequences.
     /// </remarks>
     public SegmentedTextIndex Merge()
     {
-        SegmentChain merged = _chain.Merge();
+        EnsureWritable();
 
-        return new SegmentedTextIndex(_directory, _tokenizer, merged, _mode, _decodedCacheEntries);
+        long sequence = _journal?.LastSequence ?? 0;
+        SegmentChain merged = _chain.Merge(_tokenizer, sequence);
+        var result = new SegmentedTextIndex(_directory, _tokenizer, merged, _mode, _decodedCacheEntries, _journalOptions)
+        {
+            _journal = _journal,
+        };
+
+        _journal = null;
+        _superseded = true;
+
+        return result;
     }
 
     /// <summary>
@@ -262,18 +394,36 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     /// </para>
     /// <para>
     /// The segment is written to a temporary file and renamed over the store's only segment, so a crash
-    /// mid-write leaves the previous segment intact rather than a truncated one.
+    /// mid-write leaves the previous segment intact rather than a truncated one. Its header carries the
+    /// last journal entry it contains, and the journal is truncated after the rename: a crash between
+    /// the two replays entries the segment already holds, which the marker makes the replay skip.
+    /// </para>
+    /// <para>
+    /// The journal belongs to the store this returns, and this one stops writing — see
+    /// <see cref="Merge"/>.
     /// </para>
     /// </remarks>
     public SegmentedTextIndex Commit()
     {
+        EnsureWritable();
+
+        long sequence = _journal?.LastSequence ?? 0;
+
         // One merge, one write: the live corpus is compacted and the resulting segment's bytes are
         // written out. Compacting a second time to produce bytes that are a pure function of a corpus
         // that has not changed would pay the about 0.9 s and 126 MB twice for nothing.
-        SegmentTextIndex merged = _chain.Flush();
-        var committed = new SegmentedTextIndex(_directory, _tokenizer, new SegmentChain([merged], _tokenizer), _mode, _decodedCacheEntries);
+        SegmentTextIndex merged = _chain.Flush(sequence);
+        var committed = new SegmentedTextIndex(_directory, _tokenizer, new SegmentChain([merged], _tokenizer), _mode, _decodedCacheEntries, _journalOptions);
 
         committed.WriteToDisk(merged);
+
+        _journal?.Reset(sequence);
+        _journal?.Dispose();
+        _journal = null;
+        _superseded = true;
+
+        if (_journalOptions.Enabled)
+            committed._journal = SegmentJournal.Open(_directory, _journalOptions, sequence);
 
         return committed;
     }
@@ -345,6 +495,9 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     /// </remarks>
     public void Dispose()
     {
+        _journal?.Dispose();
+        _journal = null;
+
         foreach (var owner in _owners)
             owner.Dispose();
 
@@ -517,6 +670,13 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
             if (!string.Equals(path, target, StringComparison.Ordinal))
                 File.Delete(path);
         }
+
+        // A temporary segment beside a readable generation is the tail of a commit that was interrupted
+        // after this one's predecessor — the journal may have rebuilt the corpus it was writing. It is
+        // stale, and leaving it beside a live generation would make a later reader's "is this directory
+        // an interrupted commit?" answer depend on debris nobody will read.
+        foreach (string stale in Directory.GetFiles(_directory, SegmentPrefix + "*.lxs.tmp"))
+            File.Delete(stale);
 
         // Reopen from what is now on disk, so the returned store is the one the directory holds, and in
         // the mode it was opened with.

@@ -330,18 +330,21 @@ Four things a caller has to know, and each one is a consequence of a measurement
   which is where most of that tax sits. A merge of 40,000 documents — 100,000-term vocabulary, 124
   tokens each, writing a 108 MB segment — costs about 0.9 s and 126 MB allocated, so it is a batch
   operation a caller schedules.
-- **A write is visible to the very next search.** Adding a document is a tokenization and a dictionary
-  write, not a segment write; an overlay of 1,000 documents reads at 1.02× the same documents committed
-  into a segment. What an overlay is not is durable: it is lost on a crash. `Commit()` is what makes
-  the writes durable: it writes one segment to a temporary file, **flushes it to the device**, then
-  renames it into place. The file's contents therefore cannot be torn by a power loss; the directory
-  entry is not fsynced (no portable API), so which of the rename and the cleanup the filesystem keeps
-  is its own choice — a crash costs at most the commit, never a corpus of zeros.
+- **A write is visible to the very next search, and survives a crash.** Adding a document is a
+  tokenization and a dictionary write, not a segment write; an overlay of 1,000 documents reads at
+  1.02× the same documents committed into a segment. Every write is also appended to a **write-ahead
+  journal** (`journal.wal`, beside the segments) and replayed when the store opens, so a crash loses
+  only the entries the flush policy has not forced to the device. `Commit()` is the second, stronger
+  point: it writes one segment to a temporary file, **flushes it to the device**, then renames it into
+  place. The file's contents therefore cannot be torn by a power loss; the directory entry is not
+  fsynced (no portable API), so which of the rename and the cleanup the filesystem keeps is its own
+  choice — a crash costs at most the commit, never a corpus of zeros.
 - **A commit interrupted between its rename and its cleanup opens the newest generation only.** The
   successor is the flush of everything live at commit time, so the replaced file is a subset of it;
   chaining both would return every shared document twice and bring back the ones the commit deleted.
   A directory left with a temporary segment and no readable generation is **refused**, because opening
-  it as a new store would report an empty corpus instead of a lost one. The mapped-mode commit of that
+  it as a new store would report an empty corpus instead of a lost one — unless the journal holds
+  entries, in which case those entries are the corpus and the store replays them. The mapped-mode commit of that
   path is **unverified on Windows**: Windows refuses to delete a file while a mapping is open, and
   every CI job here runs on Ubuntu. On Windows, dispose a mapped store before committing it.
 - **Merging returns a new index rather than mutating this one.** A search in flight reads the segments,
@@ -383,7 +386,46 @@ third plane of the posting block, and they cost about 15% of a segment on the me
 a segment that is already 72% document text. A segment written before this format is refused by the
 reader rather than misread.
 
-Not in this increment: a write-ahead log, so the overlay between writes is not durable.
+### The write-ahead journal
+
+A store opened and written to keeps **one file of what changed** rather than a corpus per write. Opening
+it replays those entries over the newest segment, so a process that ends without a commit costs at most
+the tail the flush policy has not forced to the device.
+
+```csharp
+using var store = new SegmentedTextIndex("./corpus");          // journal on, flushed in groups
+using var durable = new SegmentedTextIndex("./corpus", journal: new JournalOptions
+{
+    Flush = JournalFlushPolicy.PerWrite,                       // or OnCommit, or Grouped (default)
+    MaxRecords = 100,                                          // grouped: entries per flush
+    MaxDelay = TimeSpan.FromMilliseconds(50),                  // grouped: time before a flush
+});
+```
+
+Three policies, and what a power loss reaches back through:
+
+| policy | what a crash costs | what it costs to write |
+|---|---|---|
+| `Grouped` (default) | the last `MaxRecords` entries, or `MaxDelay` | one device flush per group |
+| `PerWrite` | nothing already returned | a device flush per write |
+| `OnCommit` | everything since the last commit | nothing beyond the write itself |
+
+The grouped bound is checked on append and on dispose, so it bounds a **stream** of writes: a writer
+that stops stops with its last flushed entry, and `FlushJournal()` closes the window at a cadence of
+your own — after a request, before answering a client. `OnCommit` reaches the operating system as each
+write happens, which survives a process crash but not a power loss.
+
+Two consequences worth knowing. The segment records the last journal entry it contains, so a replay
+stops at what the commit already holds rather than applying a write twice — re-indexing a document is
+not idempotent, it tombstones the old ordinal and adds a new one. And a directory holds **one journal
+and one writer**: `Commit` and `Merge` return the store that owns the journal, and the store they
+replaced refuses further writes. A store opened with `JournalOptions.Disabled` writes no journal, and a
+crash before its next commit loses the overlay — the behaviour of a corpus assembled as one batch.
+
+The journal grows until a commit truncates it, and opening replays what it holds at about the cost of
+adding each document once (58 µs measured); a store that never commits pays that on every open, so the
+commit still has a cadence to choose — the journal makes it a choice rather than the only durability
+point.
 
 ### The store through the typed facade
 
