@@ -697,7 +697,11 @@ detail here: running the whole harness with `--query-syntax` takes BM25 at the d
 to **0.289**, a 0.031 drop, and that is the size of the disagreement above (0.363 against the
 tuner's 0.328 for the same δ=0 point). The tuned row is therefore a parameter choice made under one
 convention and reported under another; on NFCorpus and SciFact the two are identical, because no
-query in either carries syntax. The four tuners take no `SearchOptions`, which is the gap behind it.
+query in either carries syntax. The four tuners take an optional `SearchOptions` template, and
+`--tune-search-options` passes the run's own options to all four, so a run can fit its candidates
+under the convention it reports with. The row above predates that switch and has not been re-fitted
+through it, which is why the flag is off by default: turning it on changes a published parameter
+choice without re-measuring it.
 
 **Fusion beats both parents here too, and it is the second corpus where that holds.** Dense alone
 reads 0.313, just below BM25's 0.320; BM25+dense reaches **0.349** (weighted) and **0.350** (RRF),
