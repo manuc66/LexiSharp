@@ -259,6 +259,8 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `FieldPrefixContextEnricher` | class | `IChunkContextEnricher` | A model-free IChunkContextEnricher that prefixes a document's text with the values of named Fields — the deterministic, offline cousin of a context-injection… |
 | `InMemoryTextIndex` | class | `ICandidateIndex`, `IFieldStatisticsIndex`, `IReadOnlyTextIndex`, `ITextIndex`, `IVocabularyIndex` | In-memory inverted index: for each term, the documents containing it and the positions within each document. Exposes the corpus statistics required by scorers. |
 | `InMemoryVectorSearchEngine` | class | `IQueryCostProbe`, `IQuerySyntaxSupport`, `ITextSearchEngine` | In-memory dense (vector) search engine: embeds documents with an IEmbeddingProvider and answers queries by cosine similarity over the whole corpus — a linear… |
+| `JournalFlushPolicy` | enum | — | How long a write-ahead journal entry may sit unflushed. |
+| `JournalOptions` | record | — | What a store's write-ahead journal does: whether it exists, when it flushes, and how much it may let accumulate. |
 | `SegmentSourceMode` | enum | — | How a store opens the segments already in its directory. |
 | `SegmentedTextIndex` | class | `ICandidateIndex`, `IDisposable`, `IReadOnlyTextIndex`, `ITextIndex`, `IVocabularyIndex` | A search index that can be written to and read back from disk: immutable segments, a live overlay, and tombstones that survive until a merge reclaims them. |
 | `SparseIndexEntry` | record | — | A document together with its stored sparse vector — the atomic unit of Export and Import, and what a persistence backend serializes to reload a corpus without… |
