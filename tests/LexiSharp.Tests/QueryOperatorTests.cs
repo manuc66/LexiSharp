@@ -204,6 +204,19 @@ public class QueryOperatorTests
     }
 
     [Fact]
+    public void VacuousQualifiedAtom_LeavesAnEmptyQuery()
+    {
+        var engine = Engine(Index());
+
+        // The parser documents that a qualifier on a segment producing no terms is dropped with
+        // that segment. A query whose only content is such a token therefore has no term to match,
+        // like any other empty query — it does not become "everything" or "nothing" by accident.
+        Assert.Empty(engine.Search("-\"\"", new SearchOptions(Limit: 10)));
+        Assert.Empty(engine.Search("+\"!!!\"", new SearchOptions(Limit: 10)));
+        Assert.Empty(engine.Search("-a", new SearchOptions(Limit: 10)));
+    }
+
+    [Fact]
     public void LiteralQuerySyntax_TreatsTheSignAsASeparator()
     {
         var engine = Engine(Index());
