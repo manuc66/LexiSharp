@@ -183,11 +183,15 @@ is [Scope and limits](https://github.com/manuc66/LexiSharp/blob/main/docs/refere
   that touches the library or the harness, and weekly — see [evaluation](https://github.com/manuc66/LexiSharp/blob/main/docs/evaluation.md).
 - **An earlier figure published for ArguAna was withdrawn;** it is not reproducible by any code
   path in this repository. See the [changelog](https://github.com/manuc66/LexiSharp/blob/main/CHANGELOG.md).
-- **No scorer here has a measured win over a tuned BM25.** BM25+ and BM25L, tuned on their own
-  `δ`, **tie** a tuned BM25 on the reference corpus and NFCorpus and edge it by 0.002–0.004 on
-  SciFact — an in-sample margin, so an upper bound rather than a result. On ArguAna, untuned,
-  they lose, and no `δ`-tuned ArguAna row exists, so whether tuning closes that gap is
-  **unmeasured** ([ranking](https://github.com/manuc66/LexiSharp/blob/main/docs/ranking.md#bm25-variants)).
+- **One scorer beats a tuned BM25, on two corpora of four, and never through its weighting.**
+  BM25+ and BM25L, tuned on their own `δ`, **tie** a tuned BM25 on the reference corpus and
+  NFCorpus and edge it by 0.002–0.004 on SciFact; on ArguAna both pick `δ = 0` and read the tuned
+  BM25's 0.363, so the bound is not what closes a gap. **BM25F tuned** reads 0.397 against that
+  0.363 on ArguAna, 0.668 against 0.664 on SciFact, 0.309 against 0.311 on NFCorpus, and 0.8867
+  against 0.8978 on the reference corpus — and its tuner reports `WeightingHelped = false` with a
+  title weight of 1.0 every time, so the margin is the single-field BM25F score at the fitted
+  `(k1, b)`, never the field weighting. All in-sample, all upper bounds
+  ([ranking](https://github.com/manuc66/LexiSharp/blob/main/docs/ranking.md#bm25f-field-weighted-bm25)).
 - **The SQL backends are measured on ranking, not on every engine.** The two PostgreSQL engines
   that rank on their own are scored over the same BEIR queries and qrels as the in-memory table: at
   matched k1=0.9/b=0.4, ParadeDB's Tantivy BM25 reads **0.3055** and **0.6633** on NFCorpus and

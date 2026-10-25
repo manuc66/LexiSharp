@@ -20,6 +20,15 @@ workflow.
 
 ### Added
 
+- **The evaluation harness can fit BM25F, and reports whether the weighting earned it.**
+
+  `--tune-bm25f` adds a row fitted by `Bm25FParameterTuner`: `(k1, b)` first, then the weight of
+  each text field against a neutral `1.0`, with `WeightingHelped` printed beside both scores.
+  Opt-in, because it is 29 evaluations over the whole validation set where BM25's grid is 25 and the
+  pinned reference replays the default table. It exists to answer one question the fixed weights
+  cannot — whether a weight beats leaving the fields neutral when both are fitted — and the answer
+  is the same on all three BEIR corpora and the reference corpus: no fitted title weight leaves 1.0.
+
 - **The store keeps a write-ahead journal, so a write survives a crash.**
 
   `SegmentedTextIndex` wrote the corpus to disk at `Commit` and kept everything written since in
