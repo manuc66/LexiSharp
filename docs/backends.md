@@ -40,9 +40,11 @@ installation, the query paths, and exact cosine behaviour for the vector engine.
 `--backend lexical|paradedb|vector|fuzzy` adds a nDCG row for the same BEIR corpus, queries and
 qrels as the in-memory table, and [the evaluation
 page](evaluation.md#the-sql-backends-on-the-same-corpora) carries the figures and what each one is
-comparable with. What is **not** measured against a public benchmark is the **sparse** engine: no
-sparse model is wired into the harness, so there is no query representation to index or score, and
-the integration tests are what cover it. PostgreSQL-native scores are also **not** numerically
+comparable with. What is **not** measured against a public benchmark is the PostgreSQL **sparse**
+engine: the harness has no `sparsevec` lane, so the integration tests are what cover it. The
+**in-memory** sparse engine is measured — `--sparse` scores SPLADE vectors that were precomputed
+outside the harness — and [the evaluation page](evaluation.md#learned-sparse-splade-through-onnx)
+carries that row's provenance and limits. PostgreSQL-native scores are also **not** numerically
 comparable to `Bm25Scorer`; feed several backends to the
 [hybrid merger](pipelines.md#hybrid-engine) when you need one consistent ordering.
 
