@@ -516,6 +516,29 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
             return true;
         }
+
+        /// <inheritdoc />
+        public bool TryScoreDocuments(IPostingArrayIndex index, IDocumentScoreSink sink)
+        {
+            if (_index.Count == 0 || _shape.AverageLength <= 0 || index.LengthsByOrdinal is not { } lengths)
+                return false;
+
+            int terms = _terms.Count;
+            var weights = new Bm25Weight[terms];
+            var postings = new PostingArrays[terms];
+
+            for (int i = 0; i < terms; i++)
+            {
+                weights[i] = new Bm25Weight(_terms[i], _idf[i], _shape);
+
+                if (!index.TryResolvePostingArrays(_terms[i], out postings[i]))
+                    postings[i] = PostingArrays.Empty;
+            }
+
+            DocumentAtATime.Score(weights, postings, lengths, sink);
+
+            return true;
+        }
     }
 
     /// <summary>
@@ -559,6 +582,41 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
                 index.AccumulateResolved(postings, new Bm25ResolvedWeight(idf[i], shape), accumulator);
             }
+
+            return true;
+        }
+
+        /// <inheritdoc />
+        public bool TryScoreSpanDocuments(
+            ISpanPostingArrayIndex index,
+            ReadOnlySpan<NormalizedTerm> terms,
+            ReadOnlySpan<char> source,
+            IDocumentScoreSink sink)
+        {
+            if (index.Count == 0 || shape.AverageLength <= 0 || index.LengthsByOrdinal is not { } lengths)
+                return false;
+
+            var weights = new Bm25ResolvedWeight[terms.Length];
+            var postings = new PostingArrays[terms.Length];
+
+            for (int i = 0; i < terms.Length; i++)
+            {
+                weights[i] = new Bm25ResolvedWeight(idf[i], shape);
+
+                // `Terms` collapses a repeated query term unless the scorer counts occurrences; a
+                // collapsed occurrence keeps its slot with nothing to walk, so the query's term order
+                // and the weights' alignment are unchanged.
+                if (distinct && NormalizedTerm.IsRepeated(terms, i, source))
+                {
+                    postings[i] = PostingArrays.Empty;
+                    continue;
+                }
+
+                if (!index.TryResolvePostingArrays(terms[i].View(source), out postings[i]))
+                    postings[i] = PostingArrays.Empty;
+            }
+
+            DocumentAtATime.Score(weights, postings, lengths, sink);
 
             return true;
         }

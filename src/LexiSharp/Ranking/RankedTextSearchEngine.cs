@@ -109,6 +109,55 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     private readonly RetrievalTelemetry _telemetry;
 
     /// <summary>
+    /// The scoring pass a query takes, for a caller that reports it — the cursor lane prints it and
+    /// asserts it against allocation — and for the parity tests, which force one side.
+    /// </summary>
+    internal enum ScoringPass
+    {
+        /// <summary>No accumulating pass: each candidate is scored by document id.</summary>
+        PerDocument,
+
+        /// <summary>The term-at-a-time accumulator.</summary>
+        Accumulator,
+
+        /// <summary>The document-at-a-time cursor traversal.</summary>
+        Cursor,
+    }
+
+    /// <summary>
+    /// Which pass a query of this reach takes over this index, without running it. This is the same
+    /// decision <see cref="TryRunSpanQuery"/> and <see cref="TryRunAccumulatingQuery"/> make, in one
+    /// place, so a caller that reports the pass cannot tell a different story from the engine.
+    /// </summary>
+    /// <remarks>
+    /// A query below the accumulation floor takes the per-document loop whichever side of the density
+    /// threshold it is on, and an index that cannot lend its posting arrays takes the accumulator even
+    /// when the density would prefer the cursor. A scorer that is not an
+    /// <see cref="IAccumulatingQueryPlan"/> also takes the per-document loop, but that is a property of
+    /// the scorer rather than of the reach, so it is not visible here; the lane measures the
+    /// accumulating scorers.
+    /// </remarks>
+    internal static ScoringPass PassFor(IAccumulatingIndex index, int reachableDocuments)
+    {
+        if (reachableDocuments < AccumulationThreshold(index.OrdinalSpace))
+            return ScoringPass.PerDocument;
+
+        if (index is not IPostingArrayIndex arrays || arrays.LengthsByOrdinal is null)
+            return ScoringPass.Accumulator;
+
+        return reachableDocuments <= index.OrdinalSpace / CursorDensityDivisor
+            ? ScoringPass.Cursor
+            : ScoringPass.Accumulator;
+    }
+
+    /// <summary>
+    /// Forces a scoring pass when the engine would take the accumulating path at all, for the parity
+    /// tests and the lane's cross-check against allocation. <c>null</c> — the default — takes the
+    /// measured decision.
+    /// </summary>
+    internal ScoringPass? ForcedPass { get; init; }
+
+    /// <summary>
     /// Documents by ordinal, for the page window's ties and page cut. One delegate per engine, not
     /// per query: the index never changes, so nothing about the resolver does either.
     /// </summary>
@@ -794,6 +843,20 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             // Read here rather than at the top of the caller's branch, so the sheet's score stage
             // covers the fold and not the parse — the same accounting the string path has.
             long scoreStarted = options.Costs is not null ? RetrievalTelemetry.StartTimer() : 0;
+
+            // The document-at-a-time pass, when the index can lend the postings as arrays and the
+            // query reaches little enough of the corpus to be worth more than the accumulator's
+            // fixed cost. It writes the window directly, so it runs before the accumulator is
+            // rented — and the plan declines before its first write, which makes the fall-through
+            // safe.
+            if (spanIndex is ISpanPostingArrayIndex arrayIndex && ShouldUseCursorPass(spanIndex, reachable))
+            {
+                var sink = new DocumentScoreSink(spanIndex, plan, options, facets, top, cancellationToken);
+
+                if (plan.TryScoreSpanDocuments(arrayIndex, terms, query, sink))
+                    return (sink.Counts, scoreStarted);
+            }
+
             var accumulator = ScoreAccumulator.Rent(spanIndex.OrdinalSpace);
 
             try
@@ -949,6 +1012,17 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         if (reachableDocuments < minimumEntries)
             return null;
 
+        // The document-at-a-time alternative, for an index that can lend the query terms' postings as
+        // arrays. The plan declines before its first write when it cannot serve the pass; the
+        // accumulator below is then the answer, unchanged.
+        if (index is IPostingArrayIndex arrayIndex && ShouldUseCursorPass(index, reachableDocuments))
+        {
+            var sink = new DocumentScoreSink(index, accumulating, options, facets, top, cancellationToken);
+
+            if (accumulating.TryScoreDocuments(arrayIndex, sink))
+                return sink.Counts;
+        }
+
         var accumulator = ScoreAccumulator.Rent(index.OrdinalSpace);
 
         try
@@ -978,6 +1052,102 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// but a document paid for and scored zero is counted here and not there.
     /// </param>
     private readonly record struct AccumulatedCounts(long Ordinal, long ScoredDocuments);
+
+    /// <summary>
+    /// The share of the corpus a query may reach, at most, for the document-at-a-time cursor pass to
+    /// be preferred: one reached document per this many in the index.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The cursor pass removes the accumulator's corpus-sized clear but pays a per-document cursor scan
+    /// and a window offer, so it wins on <b>sparse</b> queries and loses on dense ones at every corpus
+    /// size measured. The divisor below sits inside the measured interval, and the list records where
+    /// each interval is.
+    /// </para>
+    /// <para>
+    /// <b>Measured 2026-10-26</b> with <c>cursor &lt;size&gt; --sweep</c>, alternating the build
+    /// before and after the cursor pass, on the Zipf corpus the scale lane builds. Interval in which
+    /// the crossing lies, at each size, as (last reached term that won, first that lost):
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>10,000 — wins at df 50 (2.50 against 2.80 µs), loses at df 250 (10.20 against 9.90 µs)</description></item>
+    /// <item><description>25,000 — wins at df 250 (11.60 against 12.10 µs), loses at df 1,005 (38.70 against 36.50 µs)</description></item>
+    /// <item><description>50,000 — wins at df 250 (9.90 against 11.30 µs), loses at df 5,014 (107.30 against 144.60 µs)</description></item>
+    /// <item><description>100,000 — wins at df 250 (10.00 against 11.00 µs), loses at df 1,002 (48.80 against 45.00 µs)</description></item>
+    /// <item><description>500,000 — wins at df 1,000 (50.60 against 57.90 µs), loses at df 5,006 (155.00 against 143.80 µs)</description></item>
+    /// </list>
+    /// <para>
+    /// The 50,000 row's losing figure is the one doubtful reading: the baseline's p50 there was
+    /// 144.6 µs against a minimum of 82.0, while the cursor pass read 107.3 against 105.5, so the
+    /// relative order of the medians rests on a noisy baseline. The divisor of 200 gives a cap of
+    /// 50 / 125 / 250 / 500 / 2,500 at those sizes, which is inside every interval above.
+    /// <b>Not measured:</b> the exact crossing between each pair, and any corpus size other than
+    /// those five.
+    /// </para>
+    /// </remarks>
+    private const int CursorDensityDivisor = 200;
+
+    /// <summary>Whether the cursor pass should serve this corpus and this query reach.</summary>
+    private bool ShouldUseCursorPass(IAccumulatingIndex index, int reachableDocuments) =>
+        (ForcedPass ?? PassFor(index, reachableDocuments)) == ScoringPass.Cursor;
+
+    /// <summary>
+    /// The engine's end of a document-at-a-time pass: the same gates, the same finalisation and the
+    /// same window the accumulator's finish loop applies, one document at a time.
+    /// </summary>
+    /// <remarks>
+    /// It exists because the traversal must not know what a candidate costs past its score. The
+    /// checks here are deliberately the same list <see cref="FinishAccumulatedPass"/> runs, in the
+    /// same order — that is what makes the two passes produce one answer rather than two.
+    /// </remarks>
+    private sealed class DocumentScoreSink(
+        IAccumulatingIndex index,
+        IAccumulatedScoreFinisher finisher,
+        SearchOptions options,
+        FacetCollector? facets,
+        TopRankedWindow top,
+        CancellationToken cancellationToken) : IDocumentScoreSink
+    {
+        private readonly bool _needsDocument = options.Filters is { Count: > 0 }
+            || options.ExcludedDocumentIds is not null
+            || facets is not null;
+
+        /// <summary>Documents that reached the window.</summary>
+        public long Ordinal { get; private set; }
+
+        /// <summary>Documents whose relevance score was computed, zero scores included.</summary>
+        public long Scored { get; private set; }
+
+        public AccumulatedCounts Counts => new(Ordinal, Scored);
+
+        public void Score(int ordinal, double score)
+        {
+            Scored++;
+
+            if ((Scored & 0x3FF) == 0)
+                cancellationToken.ThrowIfCancellationRequested();
+
+            score = finisher.Finalise(score);
+
+            if (double.IsNaN(score) || double.IsInfinity(score) || score == 0 || score < options.MinimumScore)
+                return;
+
+            if (_needsDocument)
+            {
+                var document = index.DocumentAt(ordinal)
+                    ?? throw new InvalidOperationException(
+                        $"the document pass produced candidate {ordinal}, which the index cannot resolve");
+
+                if (!options.PassesFilters(document))
+                    return;
+
+                facets?.Count(document);
+            }
+
+            top.Add(score, ordinal, resolved: null, ordinal: Ordinal);
+            Ordinal++;
+        }
+    }
 
     /// <summary>
     /// Sum of the query terms' document frequencies: an upper bound on the union of the candidate

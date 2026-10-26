@@ -86,7 +86,7 @@ namespace LexiSharp.Indexing;
 /// interleaves them.
 /// </para>
 /// </remarks>
-internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICandidateIndex, ICandidateIdIndex, IOrdinalIdIndex, ITermCursorIndex, IVocabularyPrefixIndex
+internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICandidateIndex, ICandidateIdIndex, IOrdinalIdIndex, ITermCursorIndex, IVocabularyPrefixIndex, IPostingArrayIndex
 {
     private readonly SegmentTextIndex[] _segments;
     private readonly int[] _bases;
@@ -566,6 +566,47 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
         }
 
         _overlay.Accumulate(weight, accumulator, _segmentOrdinalSpace, _overlay.Lengths);
+    }
+
+    /// <summary>
+    /// Whether this chain can lend its postings as arrays: one segment at base zero, no overlay and
+    /// no tombstones, so a segment-local ordinal is a chain ordinal and one array covers the space.
+    /// </summary>
+    /// <remarks>
+    /// A chain with an overlay or several generations would have to union and renumber the segments'
+    /// arrays into a new one per query — an allocation and a copy proportional to the term's
+    /// postings, which is the work the cursor pass exists to avoid. Those chains keep the
+    /// accumulator. A single segment is the shape a committed store opens, which is the read path
+    /// that matters for tail queries.
+    /// <para>
+    /// The arrays themselves come from the segment's decoded-postings cache, so a store opened with
+    /// <c>decodedCacheEntries: null</c> — the default — cannot lend them and falls back. The cache is
+    /// what makes the arrays outlive the query without the traversal owning their lifetime.
+    /// </para>
+    /// </remarks>
+    private bool CanLendPostings =>
+        _segments.Length == 1
+        && _bases.Length == 1
+        && _bases[0] == 0
+        && _overlay.Count == 0
+        && _dead.Count == 0
+        && _lengths.Length == _segmentOrdinalSpace
+        && _segments[0].CanDecodePostings;
+
+    /// <inheritdoc />
+    int[]? IPostingArrayIndex.LengthsByOrdinal => CanLendPostings ? _lengths : null;
+
+    /// <inheritdoc />
+    bool IPostingArrayIndex.TryResolvePostingArrays(string term, out PostingArrays postings)
+    {
+        if (!CanLendPostings || !_segments[0].TryGetPostingArrays(term, out var ordinals, out var frequencies))
+        {
+            postings = default;
+            return false;
+        }
+
+        postings = new PostingArrays(ordinals, frequencies);
+        return true;
     }
 
     /// <inheritdoc />

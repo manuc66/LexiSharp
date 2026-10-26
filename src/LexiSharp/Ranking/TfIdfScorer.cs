@@ -171,6 +171,28 @@ public sealed class TfIdfScorer : ITermOverlapScorer, IQueryPlannableScorer, ISc
 
             return true;
         }
+
+        /// <inheritdoc />
+        public bool TryScoreDocuments(IPostingArrayIndex index, IDocumentScoreSink sink)
+        {
+            if (_index.Count == 0 || index.LengthsByOrdinal is not { } lengths)
+                return false;
+
+            var weights = new TfIdfWeight[_terms.Length];
+            var postings = new PostingArrays[_terms.Length];
+
+            for (int i = 0; i < _terms.Length; i++)
+            {
+                weights[i] = new TfIdfWeight(_terms[i], _idf[i]);
+
+                if (!index.TryResolvePostingArrays(_terms[i], out postings[i]))
+                    postings[i] = PostingArrays.Empty;
+            }
+
+            DocumentAtATime.Score(weights, postings, lengths, sink);
+
+            return true;
+        }
     }
 
     private readonly struct TfIdfWeight(string term, double idf) : IPostingWeight
