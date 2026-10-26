@@ -38,11 +38,14 @@ engine does everything else. Swap the scorer, keep the index.
 three measured sections below ends with what it actually scored on the corpora tried here:
 tuned on their own `δ`, the BM25 variants **tie** a tuned BM25 on the reference corpus and
 NFCorpus and edge it by 0.002–0.004 on SciFact; tuned BM25F **beats** a tuned BM25 on ArguAna
-and SciFact and **trails** it on NFCorpus and the reference corpus, and its tuner reports
-`WeightingHelped = false` on every corpus it has been run on, so the field weight is never what
-moves the margin; proximity is neutral at quarter strength and negative at full strength. Every
-one of those margins is in-sample, an upper bound rather than a result to quote. On these
-corpora, fitting parameters is worth more than adding a scorer — see [Evaluation](evaluation.md).
+and SciFact and **trails** it on NFCorpus and the reference corpus, and on the full query set its
+tuner reports `WeightingHelped = false` on every corpus it has been run on, so the field weight is
+never what moves those margins (on a held-out half it reports `true`, by less than a thousandth
+except on ArguAna's 0.002 — see
+[Evaluation](evaluation.md#held-out-measurement---heldout)); proximity is neutral at quarter strength
+and negative at full strength. Every one of those full-set margins is in-sample, an upper bound
+rather than a result to quote; the held-out cells are measured on queries the tuner did not see. On
+these corpora, fitting parameters is worth more than adding a scorer — see [Evaluation](evaluation.md).
 
 ## Conventions, not mathematics
 
@@ -309,10 +312,14 @@ nDCG@5: fitting on **F1@5**, which is flat on this corpus (0.3588 for every conf
 tuner no signal to fit and hands both the first grid point, which puts them equal at 0.8812 and hides
 the loss. So the comparison stands on the nDCG-fitted rows, and its sign depends on the corpus:
 BM25F tuned **leads** BM25 tuned by 0.034 on ArguAna (0.397 against 0.363), by 0.004 on SciFact,
-**trails** it by 0.002 on NFCorpus and by 0.011 on the reference corpus. Its tuner leaves the title
-weight at 1.0 every time, so `WeightingHelped = false` and the margin is the single-field BM25F
-score at the fitted `(k1, b)`, not a per-field term. What has never been observed, on any corpus, is
-the weighting itself helping.
+**trails** it by 0.002 on NFCorpus and by 0.011 on the reference corpus. On the full query set its
+tuner leaves the title weight at 1.0 every time, so `WeightingHelped = false` and the margin is the
+single-field BM25F score at the fitted `(k1, b)`, not a per-field term. The full-set fits have never
+shown the weighting itself helping. On a held-out half the tuner does find a positive margin —
+`true` on all three corpora, below the printed precision on NFCorpus and SciFact and 0.002 on
+ArguAna, where it picks `title=3` — and the withheld cells put it at −0.001, −0.001 and +0.077
+against untuned BM25; that +0.077 is the whole fitted configuration, not the weight alone. See
+[Evaluation](evaluation.md#held-out-measurement---heldout).
 
 **What the tuner adds is the negative answer, which is the useful one.** `Bm25FParameterTuner` reports
 `WeightingHelped = false` on the reference corpus: it searched the title weight and could not beat
