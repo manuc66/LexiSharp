@@ -21,6 +21,13 @@ public static class Program
             return;
         }
 
+        // The share of posting entries a block bound can skip, per query and corpus size. See WandLane.
+        if (args.Length > 0 && args[0] == "wand")
+        {
+            WandLane.Run(args[1..]);
+            return;
+        }
+
         // One shared index under 1/2/4/8 callers, raw and synchronized. See ConcurrencyLane.
         if (args.Length > 0 && args[0] == "concurrency")
         {
