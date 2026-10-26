@@ -103,7 +103,7 @@ was designed from:
   reason. See [Tuning](evaluation.md#tuning-bm25-bm25f-bm25-and-bm25l).
 - **No scorer here has a general measured win over a tuned BM25.** Two of the three that could
   plausibly have one came back null, and the third wins on one corpus and loses on another —
-  publishing that is the point. The learned-sparse row reads above BM25 on two corpora, and that
+  publishing that is the point. The learned-sparse row reads above BM25 on three corpora, and that
   margin belongs to the external model: the library stores and scores vectors it is handed and
   implements no part of SPLADE. See
   [Learned sparse](evaluation.md#learned-sparse-splade-through-onnx).
