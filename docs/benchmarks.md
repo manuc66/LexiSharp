@@ -817,6 +817,147 @@ measured; head terms, other analyzers, filtered queries, concurrency, and a dist
 `min` / `p50` / `mean` are all outside the lane. The retained figure is managed heap only and
 excludes everything listed above, so it is not comparable with an RSS reading.
 
+## Pruning headroom lane (`wand`): the posting entries a block bound can skip
+
+A block-max WAND or MaxScore traversal pays only where it can skip posting entries the
+term-at-a-time pass reads and scores. The lane measures that share on the same Zipf corpora and two
+of the same tail queries the scale lane prices, plus a head term, so the question "is pruning worth
+implementing here" is answered by a count rather than by the shape of the format.
+
+```bash
+# 100,000 documents
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- wand 100000
+# 500,000 documents: about 3.2 GB of managed heap, so the size is named explicitly
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- wand 500000
+```
+
+**What it computes.** One index per size, from `CorpusFactory.CreateZipfDocuments` exactly as the
+scale lane builds it. Each query term's postings are read out of the index's flat arrays (ordinals
+ascending, term frequencies, document lengths), cut into the 128-ordinal windows `PostingBlocks`
+writes (`ordinal / BlockSpan`, the same alignment, which is what makes the windows of different terms
+summable), and each window is given the bound its largest term frequency and shortest document imply:
+
+```
+idf · maxTf · (k1 + 1) / (maxTf + k1 · (1 − b + b · minLen / avgdl))
+```
+
+That is the pair the block header stores — `maxFrequency` and `minDocumentLength` — evaluated through
+BM25's monotone contribution, so it is a **true block bound**, not a term-level maximum. The lane
+checks every entry against its own window's bound while building it. It also runs a term-level
+variant, because the two have different costs: a global maximum can rule out *scoring* a document but
+cannot skip the entry that would have to be read to know the document is there.
+
+The traversal is document-at-a-time over those arrays with a top-10 window it fills itself. Let `d`
+be the smallest current ordinal and `w` the earliest window end among the terms' current windows.
+For a document `x` in `[d, w]`, a term whose cursor is at or below `x` has `x` inside its current
+window, and a term whose cursor is above `x` does not hold `x` at all — so the sum of the current
+window bounds bounds every document in the range. When that sum is below the threshold, every cursor
+jumps past `w` and those entries are never read. A second test applies the same bound to the single
+document at `d`, and a third variant uses the term-level maxima. No essential/non-essential ordering
+is needed: the cursors say exactly which terms hold the document at `d`, so the bound is taken over
+the terms that can contribute rather than over a prefix chosen by maximum, which is the refinement
+MaxScore's ordering exists to approximate. Every final page is compared with the
+engine's own answer, id for id and score bit for score; all of the compared pages match exactly.
+
+**This is a lower bound, not a faithful BMW.** A real block-max WAND uses its pivot to advance over
+documents this traversal still scores, so the skipped fractions here are a lower bound on what WAND
+would skip. The threshold is grown from the window the traversal itself fills, never taken from the
+exhaustive pass, so the count is not an oracle's.
+
+**Where the bound comes from, and what is not reachable.** `InMemoryTextIndex` — the index the scale
+lane measures — stores flat posting arrays and no blocks, so this lane computes the bounds from those
+arrays. A segment written by `PostingBlocks` already carries the same bound in every block header,
+and `PostingBlockReader` exposes it as `MaxFrequency` and `MinDocumentLength`, so a segment built
+from this corpus carries the same bound over the same windows. This lane traverses the in-memory
+postings, not a segment, and does not measure the segment path. The *cost* of
+obtaining the bound does not transfer, and this lane measures neither side of it: a segment pays it
+once, at write time; an in-memory pass would need a per-window array built at index time or a
+per-query walk of the postings, and the latter is the work pruning is meant to avoid.
+`PostingBlockReader` is internal to `LexiSharp`, and the benchmark project has no access to it, so no
+production accessor was added or needed for this measurement.
+
+**Measured on 2026-10-26**, Manjaro Linux, Intel Core i7-8850H (12 logical processors), .NET 10.0.13,
+`ServerGC=True`, 15 GiB of RAM. The host was shared with another session's build and test runs, which
+is why the lane prints the load average beside each size; the entry counts are deterministic and did
+not move across runs, and the latencies did. The table below is one run of both sizes (load 2.9 at
+the 100,000-document build, 3.4 at the 500,000-document build). The quietest readings of the same
+tree were 3.40 / 4.10 µs and 1.19 ms at 100,000 documents and 13.10 / 19.30 µs and 5.40 ms at
+500,000; a run at load 7–9 read 22.9 / 27.0 µs and 11.2 ms on identical counts.
+
+| Documents | Query | df | Postings | Read | Skipped by the block bound | Skipped | Contributions computed | Ceiling, reads | Ceiling, weight | Contributions under the term-level bound |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 100,000 | `w20000x` | 9 | 9 | 9 | 0 | 0.0 % | 9 | 1.00× | 1.00× | 9 |
+| 100,000 | `w20000x w25000x w29000x` | 29 | 29 | 29 | 0 | 0.0 % | 29 | 1.00× | 1.00× | 29 |
+| 100,000 | `w1x` | 95,402 | 95,402 | 11,503 | 83,899 | 87.9 % | 11,503 | 8.29× | 8.29× | 95,402 |
+| 500,000 | `w20000x` | 90 | 90 | 90 | 0 | 0.0 % | 90 | 1.00× | 1.00× | 90 |
+| 500,000 | `w20000x w25000x w29000x` | 220 | 220 | 219 | 1 | 0.5 % | 64 | 1.00× | 3.44× | 64 |
+| 500,000 | `w1x` | 477,361 | 477,361 | 16,719 | 460,642 | 96.5 % | 16,719 | 28.55× | 28.55× | 477,361 |
+
+`df` is the summed document frequency of the query terms; `Read` is posting entries the traversal
+touches, which is postings minus `Skipped`; `Contributions computed` is the entries whose BM25 weight
+is evaluated, which for the block bound is the same as `Read` except on the three-term row, where 155
+touched entries were cleared by the per-document test. The two ceilings divide the posting count by
+`Read` and by `Contributions computed`: they are the speedup a traversal would get **if a posting
+entry cost nothing but its read and its weight, and the traversal's bookkeeping and heap were free**.
+They are not latency predictions.
+
+The same queries, timed through `RankedTextSearchEngine.Search` at `Limit: 10` in the same process,
+warmed for five seconds the way the scale lane warms them:
+
+| Documents | Query | p50 | Postings at 12.6 ns/entry | Isolated accumulator clear |
+|---:|---|---:|---:|---:|
+| 100,000 | `w20000x` | 3.50 µs | 3.2 % | 2.3 µs (66 %) |
+| 100,000 | `w20000x w25000x w29000x` | 4.10 µs | 8.9 % | 2.3 µs (56 %) |
+| 100,000 | `w1x` | 1.23 ms | 98 % | 2.3 µs (0.2 %) |
+| 500,000 | `w20000x` | 13.50 µs | 8.4 % | 9.6 µs (71 %) |
+| 500,000 | `w20000x w25000x w29000x` | 21.40 µs | 13.0 % | 9.6 µs (45 %) |
+| 500,000 | `w1x` | 6.42 ms | 94 % | 9.6 µs (0.1 %) |
+
+The 12.6 ns per entry is the figure the repository carries from an earlier session at 1,000,000
+documents; it is not re-measured here. Across these runs the head row implies **11.3–13.4 ns** per
+entry (5.40–6.42 ms over 477,361 entries), so the share is the right order of magnitude and not a
+precise fraction. The clear column is an isolated `Array.Clear` of the ordinal-space-sized `byte[]`
+that `ScoreAccumulator.Rent` hands the accumulating pass, best of seven; it is a bracket, not the
+clear's marginal cost inside a search.
+
+**What the numbers say.** On the two queries the scale lane prices at 500,000 documents, a block
+bound skips **0.0 %** and **0.5 %** of the posting entries. The reason is visible in the lane's own
+density column: the rare terms occupy about one entry per 128-ordinal window (96.6 % and 100 % of
+their windows hold a single entry), so there is nothing inside a window to clear; and in the
+one-term query every one of the 90 candidates has the same score, because the term occurs once in
+each of them, so no document is strictly below tenth place and no bound that respects the id
+tie-break may skip one. The term-level bound does better on the three-term query — 64 of 220
+contributions, a 3.44× ceiling on the weight arithmetic — but it reads every entry: a MaxScore pass
+would save arithmetic, not reads.
+
+The third query is a single head term, where windows hold 122 entries and the bound skips **96.5 %**
+of the postings. That is the one place in this lane with a real ceiling: **28.55×** on the postings
+and the weight, at a measured p50 of **5.40–6.42 ms**. The 477,361 entries account for essentially
+the whole of that p50, so the pass is postings-bound and the bound has something to win. Whether it is
+worth W7 depends on a question this lane does not answer — how much of real traffic is head-term
+queries — and the scale-lane table, which is the published tail-latency row, contains neither this
+query nor any other head term.
+
+**The fixed cost pruning cannot touch, and the one it could.** Every accumulating search rents and
+clears a byte array as long as the ordinal space: 9.1–9.6 µs isolated at 500,000 documents, 69–71 %
+and 45–47 % of the two tail queries' p50 across the runs above, against postings shares of 8.4–8.7 %
+and 13.0–14.4 %. A pruning pass keeps that clear. A document-at-a-time traversal — which is what WAND and MaxScore are — would not need the
+corpus-sized accumulator at all, because it sums one document at a time and keeps only the page
+window; but that is a property of changing the traversal, not of the bound, and this lane does not
+measure it. For the tail rows the traversal is the larger question, and the bound is not.
+
+**What is not measured.** The traversal's bookkeeping — pivot and cursor comparisons, the binary
+searches a skip performs, heap updates, allocation — so neither ceiling is an end-to-end prediction.
+The cost of building the bounds, in memory or in a segment. The segment and store index paths: only
+`InMemoryTextIndex` is measured. P99, concurrency, and query mixing. Queries with phrases, filters,
+expansions or several head terms. Other analyzers, `k1`, `b`, `Limit`, or corpus sizes. Document
+lengths are exactly 50 tokens for every document in this corpus, so the length half of the bound is a
+constant and the bound is as tight as the term-frequency distribution allows; a corpus with variable
+lengths gives a looser bound and a lower skipped share, so the 96.5 % head figure is not an estimate
+for another corpus. The one-term tail's 0.0 % holds for the queries this lane runs, whose rare term
+occurs at most once per document; a tail term with repeated occurrences in some documents does have a
+threshold above its common contribution and can be pruned.
+
 ## Concurrency lane (`concurrency`): one index at 1, 2, 4 and 8 callers
 
 Every other timing on this page is single-threaded. `ConcurrentSearchTests` establishes that
@@ -1024,6 +1165,8 @@ dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*Scoring
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*QueryAllocationBreakdown*'
 # index build and tail-query cost per corpus size (see the scale lane above):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- scale
+# posting entries a block bound can skip, per query and corpus size (see the pruning lane above):
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- wand 100000
 # one shared index at 1/2/4/8 callers, raw and synchronized (see the concurrency lane above):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- concurrency --runs 5
 ```
