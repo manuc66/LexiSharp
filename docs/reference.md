@@ -112,11 +112,13 @@ was designed from:
     than a result. On ArguAna, at a fixed `δ`, they **lose** 0.040–0.046; tuned there, both pick
     `δ = 0` and read the tuned BM25's 0.363, so the gap closes by removing the bound rather than by
     finding a better one. See [BM25 variants](ranking.md#bm25-variants).
-  - *BM25F*'s tuner reports `WeightingHelped = false` on every corpus it was fitted on, so the
-    field weight is never what moves it. Against BM25 tuned it **wins on two corpora and loses on
-    two**: 0.397 against 0.363 on ArguAna, 0.668 against 0.664 on SciFact, 0.309 against 0.311 on
-    NFCorpus, 0.8867 against 0.8978 (nDCG@5) on the reference corpus — with the title weight left
-    at 1.0 in all four. Every one of those is fitted in-sample. See
+  - *BM25F*'s tuner reports `WeightingHelped = false` on the full query set of every corpus it was
+    fitted on, so the field weight is never what moves those margins (a held-out half reports `true`
+    by at most 0.002; see [Evaluation](evaluation.md#held-out-measurement---heldout)). Against BM25
+    tuned it **wins on two corpora and loses on two**: 0.397 against 0.363 on ArguAna, 0.668 against
+    0.664 on SciFact, 0.309 against 0.311 on NFCorpus, 0.8867 against 0.8978 (nDCG@5) on the
+    reference corpus — with the title weight left at 1.0 in all four. Every one of those is fitted
+    in-sample. See
     [BM25F](ranking.md#bm25f-field-weighted-bm25).
   - *Proximity* is neutral at quarter strength and negative at full strength. See
     [Proximity](ranking.md#proximity).
