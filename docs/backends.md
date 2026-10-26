@@ -36,14 +36,14 @@ instantiation:
 in CI (`pgvector/pgvector:pg16` and `paradedb/paradedb:pg16`) and self-skip without
 `POSTGRES_TEST_CONNECTION`, so what they cover is executed on every build: schema
 installation, the query paths, and exact cosine behaviour for the vector engine. Retrieval
-*quality* is measured for the three engines that rank on their own: the evaluation harness's
-`--backend lexical|paradedb|vector` adds a nDCG row for the same BEIR corpus, queries and qrels as
-the in-memory table, and [the evaluation page](evaluation.md#the-sql-backends-on-the-same-corpora)
-carries the figures and what each one is comparable with. What is **not** measured against a public
-benchmark is the **sparse** and **fuzzy** engines: no sparse model is wired into the harness, and
-trigram similarity is not a ranking of prose, so the integration tests are what cover them.
-PostgreSQL-native scores are also **not** numerically comparable to
-`Bm25Scorer`; feed several backends to the
+*quality* is measured for the four engines that rank on their own: the evaluation harness's
+`--backend lexical|paradedb|vector|fuzzy` adds a nDCG row for the same BEIR corpus, queries and
+qrels as the in-memory table, and [the evaluation
+page](evaluation.md#the-sql-backends-on-the-same-corpora) carries the figures and what each one is
+comparable with. What is **not** measured against a public benchmark is the **sparse** engine: no
+sparse model is wired into the harness, so there is no query representation to index or score, and
+the integration tests are what cover it. PostgreSQL-native scores are also **not** numerically
+comparable to `Bm25Scorer`; feed several backends to the
 [hybrid merger](pipelines.md#hybrid-engine) when you need one consistent ordering.
 
 ## PostgreSQL backend (`LexiSharp.Postgres`)
@@ -271,6 +271,27 @@ convention). `Nearest` mode orders with the GiST kNN operator (`content <-> quer
 mode ranks by `similarity()` above the configured threshold. These are the classic building
 blocks for autocomplete, de-duplication of names/addresses and "did you mean". PostgreSQL-native
 scores again call for `ReciprocalRankFusionMerger` when mixing with other engines.
+
+**Measured quality.** The harness measures this engine on the same BEIR corpora, queries and qrels
+as the other backends, with one row per similarity threshold
+(`--backend fuzzy --backend-threshold 0.3,0.1,0.05,0.01,0.005,0.001,0.0001`; the command and the
+other metrics are on [the evaluation page](evaluation.md#the-sql-backends-on-the-same-corpora)).
+nDCG@10, harness defaults, title concatenated into the compared content:
+
+| Corpus (queries) | default 0.3 | lower end of the sweep |
+|---|---:|---:|
+| NFCorpus (323) | 0.0000 | 0.0981 at 0.005 and below |
+| SciFact (300) | 0.0033 | 0.2186 at 0.05 and below |
+
+At the default threshold the lane finds almost nothing, and lowering it only recovers a fraction of
+what BM25 scores on the same corpus (NFCorpus 0.308, SciFact 0.662). That is the property the mode
+has by construction: a trigram similarity divides shared character trigrams by the sum of both
+trigram sets, so a short query against a whole document scores near zero however relevant the
+document is. The engine is a typo-tolerant matcher for short labels, de-duplication and "did you
+mean" — not a ranking of prose, and the rows above are what that costs on a prose benchmark. They
+are in-sample: each threshold was scored on the qrels it is reported against, so the best row is an
+upper bound and not a tuned configuration. `Nearest` mode, the Levenshtein and phonetic refinements,
+and `%>`/`word_similarity` are not measured.
 
 ## ParadeDB BM25 backend (`ParadeDBTextSearchEngine`)
 
