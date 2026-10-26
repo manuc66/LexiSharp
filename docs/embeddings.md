@@ -79,6 +79,19 @@ and `Export()` / `Import()` reload a corpus from its stored vectors without call
 `InMemoryVectorSearchEngine` also implements `IQueryCostProbe` (a scan touches every document),
 so `RoutedSearchEngine` can weigh it against the lexical engines.
 
+Vectors are float32 by default. `InMemoryVectorSearchOptions` can store and scan them as int8
+instead — signed bytes with one scale per vector, a quarter of the payload, and a squared norm
+recomputed from the stored components so a cosine still divides by the length of the vector the
+scan reads. It is **opt-in**: the recall cost depends on the embedding distribution, so the measured
+recall, memory per vector and scan latency, with the command that produces them and the limits of
+the measurement, are on [the benchmarks page](benchmarks.md#dense-quantisation-lane-quantize).
+
+```csharp
+ITextSearchEngine dense = new InMemoryVectorSearchEngine(
+    myOnnxMiniLm,
+    new InMemoryVectorSearchOptions { Quantization = VectorQuantization.Int8 });
+```
+
 To make the seam usable with **no model at all**, the core ships
 `HashingEmbeddingProvider`: a deterministic feature-hashing embedding (FNV-1a, sign hashing,
 L2-normalized) implementing both `IEmbeddingProvider` and `ITokenEmbeddingProvider`. It is

@@ -20,6 +20,25 @@ workflow.
 
 ### Added
 
+- **`InMemoryVectorSearchEngine` can store and scan int8 vectors.**
+
+  `InMemoryVectorSearchOptions.Quantization = VectorQuantization.Int8` stores each row as signed
+  bytes plus one scale (`scale = max|v| / 127`) and scans it in the quantised domain, keeping a
+  quarter of the float32 payload: at 384 dimensions the layout is 392 B per vector against 1,540 B,
+  because the per-vector scale and the cached squared norm do not shrink. The squared norm is
+  recomputed from the stored components, `Σqᵢ²`, not copied from the float vector the row was made
+  from — the cosine has to divide by the length of the vector the scan reads, or the engine ranks
+  with a norm that belongs to a vector it does not hold. The per-vector scale cancels between the
+  dot product and the norm, so it is not part of the ranking; it is stored because `Export` hands
+  back the dequantised rows, and `Import` reproduces the same ranking.
+
+  It is **opt-in and off by default**: `VectorQuantization.None` is the float32 block and the scan
+  it always ran, and a test pins the default engine's exported vectors to the provider's exactly.
+  Quantisation is not a default because its recall cost is a property of the embedding model and
+  the corpus. The measured recall@10, memory per vector and scan latency, with the command, the
+  corpus and what the measurement does not cover, are on
+  [the benchmarks page](docs/benchmarks.md#dense-quantisation-lane-quantize).
+
 - **The evaluation harness measures the sparse engine over precomputed SPLADE vectors.**
 
   `--sparse <dir>` adds a retrieval-quality row for `SparseTextSearchEngine` on the same BEIR queries
