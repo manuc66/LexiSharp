@@ -435,9 +435,9 @@ lane. The in-memory sparse engine has a row, and it is the next section.
 ## Learned sparse (SPLADE, through ONNX)
 
 The sparse engine ranks by the dot product of two learned sparse vectors, and LexiSharp computes
-neither: a model runs outside the library, once, and the harness scores what it wrote. `--sparse
-<dir>` loads precomputed vectors into `SparseTextSearchEngine` and measures them on the same test
-queries, the same qrels and through the same `RetrievalMetrics` as every row above:
+neither: a model runs outside the library, once, and the harness scores what it wrote. The
+`--sparse <dir>` flag loads precomputed vectors into `SparseTextSearchEngine` and measures them on
+the same test queries, the same qrels and through the same `RetrievalMetrics` as every row above:
 
 ```bash
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
@@ -470,10 +470,9 @@ same runs:
 | SciFact, SPLADE-v3 | **0.6678** | **0.6814** | **0.8157** |
 
 - **SPLADE is above BM25 on both corpora at this configuration** — by 0.037 nDCG@10 on NFCorpus and
-  0.029 on SciFact, and by every other metric on both. That is the opposite of what a small BEIR
-  corpus often produces for a learned-sparse model, so the row is worth reading carefully rather
-  than as a headline: it is one model, one truncation and one pruning budget, and the two corpora
-  differ in length and in judgement density.
+  0.029 on SciFact, and by every other metric on both. The row is one model, one truncation and one
+  pruning budget: it does not say whether another budget would move the margin, and it is not a
+  statement about learned-sparse retrieval in general.
 - **Aligned SciFact reads 0.6788 without `--query-term-frequency` and 0.6759 with it** (R@10 0.806 →
   0.800), and NFCorpus 0.3215 against 0.3208. The flag scores a repeated query term once per
   occurrence, which is the published BM25 convention, and on SciFact it moves the row by 0.003. The
@@ -486,12 +485,12 @@ same runs:
   API runs it.
 - **The title is in the document text, not weighted.** `SparseTextSearchEngine` has no field
   concept, so `title + "\n" + text` is one string on both sides. Unlike the BM25F rows, no title
-  weight exists here, and the same push (`--sparse`) against another corpus has to encode the same
-  rule or the two rows would differ in what they indexed.
+  weight exists here, and the producer applies this rule for every corpus — otherwise two rows
+  would differ in what they indexed without either of them saying so.
 - **Top-256 is a pruning budget, and it binds.** The export emits every non-zero term; on a
   30-document NFCorpus sample it emitted a median of 254 and a maximum of 339, and 13 of the 30 were
-  cut. The dropped terms are the lowest-weighted ones, which is what the dot product is least
-  sensitive to, but the row measures the pruned vectors, not the full ones.
+  cut. The dropped terms are the lowest-weighted ones, and the row measures the pruned vectors, not
+  the full ones.
 - **The tokenizer is assembled, not loaded.** The checkpoint's tokenizer files are behind a gated
   repository, so the encoder builds a WordPiece tokenizer from the published vocabulary; it agrees
   token-for-token with a public copy of the checkpoint's `tokenizer.json` on all 13 162 texts of the

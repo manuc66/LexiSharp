@@ -99,8 +99,9 @@ done
 ```
 
 `--threads 6` because ONNX Runtime was measured faster at 6 intra-op threads than at 12 on the
-12-core host these vectors were produced on (a single document, 256 tokens: 401 ms at 6, 545 ms at
-12). Two encoders run side by side, one per corpus, at 6 threads each.
+12-core host these vectors were produced on (per-document mean over twelve 256-token NFCorpus
+documents: 401 ms at 6 threads, 545 ms at 12). Two encoders run side by side, one per corpus, at 6
+threads each.
 
 ## Output
 
