@@ -302,6 +302,77 @@ public static class VectorSimilarity
     }
 
     /// <summary>
+    /// The dot product of an int8 row with a float32 vector, in the integer domain: <c>Σ qᵢ·vᵢ</c>,
+    /// with the row's per-vector scale factored out.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every component is widened back to float32 before the multiplication, so the only difference
+    /// from the same sum over the dequantised row is the dequantisation itself and the order of the
+    /// accumulation. The scale is not applied: a stored row means <c>scale · q</c>, and a cosine
+    /// divides by the norm of that row, so the scale cancels. Leaving it out of both sides keeps a
+    /// row whose components are near the bottom of the float range from underflowing its own norm.
+    /// </para>
+    /// <para>
+    /// Internal because the representation it reads — signed bytes plus a per-row scale — is the
+    /// <see cref="Indexing.InMemoryVectorSearchEngine"/>'s storage decision, not a public vector
+    /// format. A caller shipping int8 vectors between processes chooses its own layout.
+    /// </para>
+    /// </remarks>
+    internal static float QuantizedDotProduct(ReadOnlySpan<sbyte> quantized, ReadOnlySpan<float> query)
+    {
+        if (quantized.Length != query.Length)
+            throw new ArgumentException(
+                $"Vectors must have the same length (got {quantized.Length} and {query.Length}).");
+
+        return QuantizedDotProductUnchecked(quantized, query);
+    }
+
+    /// <summary>
+    /// The int8/float32 multiply-accumulate, widened through <c>Vector.Widen</c> rather
+    /// than converted element by element so the conversion rides on the SIMD lanes.
+    /// </summary>
+    /// <remarks>
+    /// <c>Vector&lt;sbyte&gt;.Count</c> components are consumed per step: widening twice turns them
+    /// into four <c>Vector&lt;int&gt;</c> slices, each converted to float and multiplied by the
+    /// matching slice of <paramref name="query"/>. The two accumulators keep the two chains
+    /// independent, as in <see cref="DotProductUnchecked"/>. Lengths are assumed equal: the only
+    /// caller has checked.
+    /// </remarks>
+    private static float QuantizedDotProductUnchecked(ReadOnlySpan<sbyte> quantized, ReadOnlySpan<float> query)
+    {
+        int width = Vector<sbyte>.Count;
+        int lanes = Vector<int>.Count;
+        int i = 0;
+
+        ref sbyte rq = ref MemoryMarshal.GetReference(quantized);
+        ref float rv = ref MemoryMarshal.GetReference(query);
+
+        Vector<float> sum0 = Vector<float>.Zero;
+        Vector<float> sum1 = Vector<float>.Zero;
+
+        for (; i <= quantized.Length - width; i += width)
+        {
+            Vector.Widen(Vector.LoadUnsafe(ref rq, (nuint)i), out Vector<short> low, out Vector<short> high);
+            Vector.Widen(low, out Vector<int> q0, out Vector<int> q1);
+            Vector.Widen(high, out Vector<int> q2, out Vector<int> q3);
+
+            sum0 += (Vector.ConvertToSingle(q0) * Vector.LoadUnsafe(ref rv, (nuint)i))
+                  + (Vector.ConvertToSingle(q1) * Vector.LoadUnsafe(ref rv, (nuint)(i + lanes)));
+
+            sum1 += (Vector.ConvertToSingle(q2) * Vector.LoadUnsafe(ref rv, (nuint)(i + (2 * lanes))))
+                  + (Vector.ConvertToSingle(q3) * Vector.LoadUnsafe(ref rv, (nuint)(i + (3 * lanes))));
+        }
+
+        float sum = Vector.Sum(sum0 + sum1);
+
+        for (; i < quantized.Length; i++)
+            sum += quantized[i] * query[i];
+
+        return sum;
+    }
+
+    /// <summary>
     /// Multiplies two equal-length spans elementwise and accumulates, vectorized with
     /// <see cref="Unroll"/> independent chains so the FMA latency is not the loop's critical path.
     /// Lengths are assumed equal: every public entry point has already checked.
