@@ -39,6 +39,15 @@ public sealed record VectorIndexEntry(SearchDocument Document, ReadOnlyMemory<fl
 /// underlying async work; prefer <see cref="AddAsync"/> and <see cref="SearchAsync"/>. Mutations
 /// are not thread-safe; synchronize externally.
 /// </para>
+/// <para>
+/// Vectors are stored as float32 unless <see cref="InMemoryVectorSearchOptions.Quantization"/> asks
+/// for int8, which keeps a quarter of the payload and scans the same block in the quantised domain.
+/// A quantised vector's norm is the norm of the row the scan reads — <c>Σq²</c> over the stored
+/// components, computed once at insert — not the float norm it was made from, so a cosine is still
+/// a cosine. Quantisation
+/// is opt-in because the ranking change is a property of the embedding distribution; the dense page
+/// carries the recall it was measured at.
+/// </para>
 /// </remarks>
 public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntaxSupport, IQueryCostProbe
 {
@@ -48,6 +57,13 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
     private readonly IEmbeddingProvider _embeddings;
     private readonly Dictionary<string, SearchDocument> _documents = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _slotById = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Whether the scan reads <see cref="_quantizedData"/> instead of <see cref="_vectorData"/>.
+    /// Captured once from the options: a vector block that changed representation mid-corpus would
+    /// silently mix two scales in one ranking.
+    /// </summary>
+    private readonly bool _quantized;
 
     // Memoized query embeddings, invalidated on every mutation. Bounded: once full it is cleared
     // rather than evicted entry-by-entry, which keeps the hot path allocation-free.
@@ -62,7 +78,21 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
     private SearchDocument?[] _slotDocument = Array.Empty<SearchDocument?>();
 
     /// <summary>The scan buffer, <c>slot * _stride</c> being a document's vector start.</summary>
+    /// <remarks>Empty in the quantised representation: the float payload is not retained.</remarks>
     private float[] _vectorData = Array.Empty<float>();
+
+    /// <summary>
+    /// The int8 scan buffer, allocated only when the engine quantises. One <see cref="sbyte"/> per
+    /// component, <c>slot * _stride</c> being a document's vector start; the value at index
+    /// <c>i</c> means <c>_quantizedScales[slot] · data[i]</c>.
+    /// </summary>
+    private sbyte[] _quantizedData = Array.Empty<sbyte>();
+
+    /// <summary>
+    /// Per-slot dequantisation scale: <c>max|vector| / 127</c>, so the largest component maps to
+    /// <c>±127</c>. Zero only for a zero vector, which never matches.
+    /// </summary>
+    private float[] _quantizedScales = Array.Empty<float>();
 
     /// <summary>
     /// Per-slot squared Euclidean norm, computed once when the vector is stored. Cosine similarity
@@ -90,13 +120,19 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
     private int _stride;
 
     /// <param name="embeddings">External embedding producer; never implemented inside LexiSharp.</param>
+    /// <param name="options">Storage options (defaults: float32 vectors, unchanged ranking).</param>
     /// <exception cref="ArgumentNullException"><paramref name="embeddings"/> is null.</exception>
-    public InMemoryVectorSearchEngine(IEmbeddingProvider embeddings)
+    public InMemoryVectorSearchEngine(IEmbeddingProvider embeddings, InMemoryVectorSearchOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(embeddings);
         _embeddings = embeddings;
         _resolveDocument = slot => _slotDocument[slot];
+        Options = options ?? InMemoryVectorSearchOptions.Default;
+        _quantized = Options.Quantization == VectorQuantization.Int8;
     }
+
+    /// <summary>The storage options this engine was constructed with.</summary>
+    public InMemoryVectorSearchOptions Options { get; }
 
     /// <summary>Documents currently indexed, unordered.</summary>
     public IReadOnlyCollection<SearchDocument> Documents => _documents.Values;
@@ -174,6 +210,8 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
         _queryEmbeddingCache.Clear();
         _slotDocument = Array.Empty<SearchDocument?>();
         _vectorData = Array.Empty<float>();
+        _quantizedData = Array.Empty<sbyte>();
+        _quantizedScales = Array.Empty<float>();
         _squaredNorms = Array.Empty<float>();
         _freeSlots.Clear();
         _slotCount = 0;
@@ -192,8 +230,10 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
             int slot = _slotById[documentId];
 
             // Copied out of the shared block: Export is a snapshot, and the buffer is reused when
-            // the engine is later mutated, so a handed-out view must not alias it.
-            entries.Add(new VectorIndexEntry(document, ReadVector(slot).ToArray()));
+            // the engine is later mutated, so a handed-out view must not alias it. A quantised
+            // engine hands out the dequantised vector — the one its scan actually compares — so a
+            // reload through Import reproduces the same ranking rather than a mixture of the two.
+            entries.Add(new VectorIndexEntry(document, ReadVectorCopy(slot)));
         }
 
         return entries;
@@ -307,6 +347,12 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
         var data = _vectorData;
         var norms = _squaredNorms;
 
+        // One representation for the whole corpus, so the branch is on the engine rather than on
+        // the slot: the quantised block is walked with the same loop, offsets and result window as
+        // the float one, which is what makes the two scans comparable.
+        bool quantized = _quantized;
+        var quantizedData = _quantizedData;
+
         for (int slot = 0; slot < _slotCount; slot++)
         {
             var document = _slotDocument[slot];
@@ -325,8 +371,12 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
                 continue; // zero vector: never a match
 
             // Cosine ∈ [−1, 1]; clamp negatives/orthogonal to 0 = "no match" (LexiSharp convention).
-            double score = VectorSimilarity.DotProduct(querySpan, ReadVectorAt(data, slot, stride))
-                           / (queryNorm * documentNorm);
+            double score = quantized
+                ? VectorSimilarity.QuantizedDotProduct(
+                      quantizedData.AsSpan(slot * stride, stride), querySpan)
+                  / (queryNorm * documentNorm)
+                : VectorSimilarity.DotProduct(querySpan, ReadVectorAt(data, slot, stride))
+                  / (queryNorm * documentNorm);
 
             if (!(score > 0) || score < options.MinimumScore)
                 continue;
@@ -390,8 +440,79 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
         _slotDocument[slot] = document;
 
         var source = vector.Span;
-        source.CopyTo(_vectorData.AsSpan(slot * _stride, _stride));
-        _squaredNorms[slot] = VectorSimilarity.NormSquared(source);
+
+        if (_quantized)
+        {
+            StoreQuantized(slot, source);
+        }
+        else
+        {
+            source.CopyTo(_vectorData.AsSpan(slot * _stride, _stride));
+            _squaredNorms[slot] = VectorSimilarity.NormSquared(source);
+        }
+    }
+
+    /// <summary>
+    /// Writes <paramref name="vector"/> into slot <paramref name="slot"/> as int8 components plus a
+    /// per-vector scale, and records the squared norm of <b>that</b> vector.
+    /// </summary>
+    /// <remarks>
+    /// The norm decision is the one that changes ranking without changing the vectors. A cosine is
+    /// <c>q·v / (‖q‖·‖v‖)</c> for the vectors the scan actually reads, so the document norm must
+    /// come from the stored components, not from the float vector they were rounded from. Reusing
+    /// the float norm would divide by a length the stored row does not have: every score would be
+    /// off by a factor the corpus cannot see, and a document compared with itself could score above
+    /// 1. The quantity stored is <c>Σqᵢ²</c> — the squared norm of the integer row, exact in a
+    /// <see cref="long"/> — because the per-vector scale is a common factor of the dot product and
+    /// the norm and cancels; the scale itself still defines the dequantised row <see cref="Export"/>
+    /// hands back.
+    /// </remarks>
+    private void StoreQuantized(int slot, ReadOnlySpan<float> vector)
+    {
+        float maxAbs = 0;
+
+        for (int i = 0; i < vector.Length; i++)
+            maxAbs = MathF.Max(maxAbs, MathF.Abs(vector[i]));
+
+        // max|v| maps to ±127, the largest magnitude an sbyte holds: the representable component
+        // spacing is as fine as a per-vector scale can make it.
+        float scale = maxAbs / sbyte.MaxValue;
+
+        var destination = _quantizedData.AsSpan(slot * _stride, _stride);
+        long sumOfSquares = 0;
+
+        if (scale == 0)
+        {
+            // The zero vector: no direction, so it must never match. The float path stores a zero
+            // norm for it and the scan skips it; the same zero norm is what it gets here. This is
+            // also where a row whose largest component is below max/127's smallest representable
+            // float lands, and treating it as no direction is the same convention rather than a
+            // scale that would dequantise to a different vector.
+            destination.Clear();
+        }
+        else
+        {
+            // Double, not float: a row whose largest component sits near the bottom of the float
+            // range has a scale whose reciprocal overflows a float, and the components would be
+            // garbage. The product below is at most 127 by construction, so the double is only
+            // there to keep the reciprocal finite.
+            double inverse = 1.0 / scale;
+
+            for (int i = 0; i < vector.Length; i++)
+            {
+                int component = (int)Math.Round(vector[i] * inverse, MidpointRounding.AwayFromZero);
+
+                // Only the mathematical maximum can round past the range, and it belongs at the
+                // edge rather than at an undefined cast.
+                component = Math.Clamp(component, -sbyte.MaxValue, sbyte.MaxValue);
+
+                destination[i] = (sbyte)component;
+                sumOfSquares += component * component;
+            }
+        }
+
+        _quantizedScales[slot] = scale;
+        _squaredNorms[slot] = sumOfSquares;
     }
 
     /// <summary>
@@ -420,14 +541,45 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
         Array.Resize(ref _slotDocument, capacity);
 
         // The vector block is sized in floats, so it grows with the slot capacity times the
-        // dimension rather than doubling on its own.
-        Array.Resize(ref _vectorData, capacity * _stride);
+        // dimension rather than doubling on its own. Only the block in use grows: the quantised
+        // representation does not retain the float payload, and the float representation does not
+        // allocate the int8 one.
+        if (_quantized)
+        {
+            Array.Resize(ref _quantizedData, capacity * _stride);
+            Array.Resize(ref _quantizedScales, capacity);
+        }
+        else
+        {
+            Array.Resize(ref _vectorData, capacity * _stride);
+        }
+
         Array.Resize(ref _squaredNorms, capacity);
     }
 
     /// <summary>One stored vector, as a span over the shared block.</summary>
     private ReadOnlySpan<float> ReadVector(int slot) =>
         _vectorData.AsSpan(slot * _stride, _stride);
+
+    /// <summary>
+    /// One stored vector as a fresh <c>float[]</c>: the block's row in the float representation, or
+    /// the dequantised row in the int8 one — <c>scale · q</c>, which is the vector the scan divides
+    /// by and compares.
+    /// </summary>
+    private float[] ReadVectorCopy(int slot)
+    {
+        if (!_quantized)
+            return ReadVector(slot).ToArray();
+
+        var copy = new float[_stride];
+        float scale = _quantizedScales[slot];
+        ReadOnlySpan<sbyte> row = _quantizedData.AsSpan(slot * _stride, _stride);
+
+        for (int i = 0; i < copy.Length; i++)
+            copy[i] = row[i] * scale;
+
+        return copy;
+    }
 
     /// <summary>One stored vector from an already-captured block, so the scan avoids re-reading fields.</summary>
     private static ReadOnlySpan<float> ReadVectorAt(float[] data, int slot, int stride) =>
