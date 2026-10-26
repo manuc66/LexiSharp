@@ -93,10 +93,10 @@ internal sealed record BackendLane(
             "vector" => BackendKind.Vector,
             "fuzzy" => BackendKind.Fuzzy,
             "sparse" => throw new ArgumentException(
-                "--backend sparse has no row: no sparse model is wired into this harness, so there is "
-                + "no query representation to index or score. The engines with a row are 'lexical', "
-                + "'paradedb', 'vector' and 'fuzzy'; the sparse engine's integration suite is what "
-                + "covers it."),
+                "--backend sparse has no row: --backend measures a SQL backend, and the pgvector "
+                + "sparsevec engine is not wired into this harness. The in-memory sparse engine is "
+                + "measured through --sparse, which consumes vectors produced outside the harness. "
+                + "The backends with a row are 'lexical', 'paradedb', 'vector' and 'fuzzy'."),
             _ => throw new ArgumentException(
                 $"--backend expects 'lexical', 'paradedb', 'vector' or 'fuzzy', got '{kind}'."),
         };

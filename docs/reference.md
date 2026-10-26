@@ -103,7 +103,10 @@ was designed from:
   reason. See [Tuning](evaluation.md#tuning-bm25-bm25f-bm25-and-bm25l).
 - **No scorer here has a general measured win over a tuned BM25.** Two of the three that could
   plausibly have one came back null, and the third wins on one corpus and loses on another —
-  publishing that is the point:
+  publishing that is the point. The learned-sparse row reads above BM25 on two corpora, and that
+  margin belongs to the external model: the library stores and scores vectors it is handed and
+  implements no part of SPLADE. See
+  [Learned sparse](evaluation.md#learned-sparse-splade-through-onnx).
   - *BM25+ and BM25L*, tuned on their own `δ`, **tie** a tuned BM25 on the reference corpus and
     NFCorpus, and edge it by 0.002–0.004 on SciFact — an in-sample margin, so an upper bound rather
     than a result. On ArguAna, at a fixed `δ`, they **lose** 0.040–0.046; tuned there, both pick
