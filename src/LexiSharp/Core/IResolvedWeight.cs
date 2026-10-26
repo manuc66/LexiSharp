@@ -9,8 +9,6 @@ namespace LexiSharp.Core;
 /// resolved postings carries no string, which is what lets a term that is its own normalized form go
 /// from tokenizer to accumulator without becoming one.
 /// </remarks>
-internal interface IResolvedWeight
+internal interface IResolvedWeight : IWeightFunction
 {
-    /// <summary>The contribution of one posting entry, from the term's frequency in the document and the document's length.</summary>
-    double Weight(int termFrequency, int documentLength);
 }
