@@ -468,6 +468,7 @@ reason the last bullet gives:
 | NFCorpus | 0.308 | 0.322 | **0.3596** |
 | SciFact | 0.662 | 0.676 | **0.7083** |
 | ArguAna | 0.320 | — | **0.3836** |
+| ArguAna, `--exclude-query-doc` | 0.425 | — | **0.5216** |
 
 The three other metrics for the sparse rows, against BM25 at the aligned operating point where the
 run has one (NFCorpus, SciFact), and at the harness-default parameters on ArguAna, which has none:
@@ -480,6 +481,8 @@ run has one (NFCorpus, SciFact), and at the harness-default parameters on ArguAn
 | SciFact, SPLADE-v3 | **0.6678** | **0.6814** | **0.8157** |
 | ArguAna, BM25 defaults | 0.207 | 0.207 | 0.679 |
 | ArguAna, SPLADE-v3 | **0.2530** | **0.2530** | **0.7980** |
+| ArguAna, BM25 (exclusion) | 0.341 | 0.341 | 0.697 |
+| ArguAna, SPLADE-v3 (exclusion) | **0.4300** | **0.4300** | **0.8179** |
 
 - **SPLADE is above BM25 on all three corpora at this configuration** — by **0.052** nDCG@10 against
   the harness-default BM25 row on NFCorpus, **0.046** on SciFact and **0.064** on ArguAna, or
@@ -511,11 +514,18 @@ run has one (NFCorpus, SciFact), and at the harness-default parameters on ArguAn
   token-for-token with a public copy of the checkpoint's `tokenizer.json` on all 13 162 texts of
   NFCorpus and SciFact. That check and its limitation are in the producer's README, and it does not
   cover ArguAna, which was encoded in this session.
-- **ArguAna has no aligned cell, and the reason is a convention.** On ArguAna 1 298 of the 1 406 test
-  queries name a document, so the page's aligned and tuned rows there pass `--exclude-query-doc`. The
-  sparse lane was run without it, which is the default and the same convention as the 0.320 BM25 row
-  in that row's first column; the two are therefore comparable with each other and not with the
-  page's aligned ArguAna figures. A sparse row under `--exclude-query-doc` is not measured.
+- **ArguAna is measured under both conventions, and the convention is worth 0.14 nDCG@10.** On
+  ArguAna 1 298 of the 1 406 test queries name a document, so the page's aligned and tuned rows
+  there pass `--exclude-query-doc`. The sparse lane now has both: **0.3836 → 0.5216** with the
+  exclusion, against BM25's **0.320 → 0.425** in the same two runs. Both engines gain about the same
+  amount, which is what a convention does rather than a property of either. The exclusion row is the
+  one that belongs beside the ArguAna rows above; the aligned column has no ArguAna cell because the
+  lexical backend refuses two of that corpus's queries as prefix syntax, not because the row is
+  missing.
+- **The analysis is still not the page's.** SPLADE scores the model's WordPiece vocabulary, the
+  aligned rows use the English analyzer with `k1=0.9, b=0.4`. The 0.5216 and the 0.3970 are two
+  retrieval systems on one corpus and one qrels set, not two analyses of one index, and no exclusion
+  makes them the same thing.
 - **Not measured:** truncation at 512 tokens, any top-k other than 256, and the `pgvector sparsevec`
   backend, which has no harness lane at all. The 8-bit export has no row either; at the vector level
   it is not a near-copy of the full-precision one — on the 300 SciFact queries the two exports'
