@@ -73,6 +73,7 @@ public static class Program
         string backendConfig = "simple";
         Bm25Parameters? backendBm25 = null;
         var backendEfValues = new List<int>();
+        var backendThresholds = new List<double>();
 
         // The lexical row's tsv weighting, as "title=A[,summary=B]" — parsed after the pair check
         // below, so a malformed spec fails on a message rather than an unhandled exception.
@@ -238,6 +239,9 @@ public static class Program
                 case "--backend-ef" when i + 1 < args.Length:
                     backendEfValues.AddRange(ParsePositiveInts(args[++i], "--backend-ef"));
                     break;
+                case "--backend-threshold" when i + 1 < args.Length:
+                    backendThresholds.AddRange(ParseThresholds(args[++i]));
+                    break;
                 case "--backend-field-weights" when i + 1 < args.Length:
                     backendFieldWeights = args[++i];
                     break;
@@ -339,6 +343,14 @@ public static class Program
             return 2;
         }
 
+        if (backendThresholds.Count > 0 && backendKind is null)
+        {
+            Console.Error.WriteLine(
+                "--backend-threshold sets pg_trgm's similarity threshold, so it needs --backend fuzzy " +
+                "with --backend-connection.");
+            return 2;
+        }
+
         BackendLane? backendLane = null;
 
         if (backendKind is not null && backendConnection is not null)
@@ -351,7 +363,8 @@ public static class Program
                     backendConfig,
                     backendBm25,
                     backendEfValues,
-                    backendFieldWeights is null ? null : ParseFieldWeights(backendFieldWeights));
+                    backendFieldWeights is null ? null : ParseFieldWeights(backendFieldWeights),
+                    backendThresholds);
             }
             catch (ArgumentException error)
             {
@@ -1068,6 +1081,28 @@ public static class Program
         }
     }
 
+    /// <summary>
+    /// The <c>--backend-threshold</c> list: <c>pg_trgm</c> requires a threshold in (0, 1], and the
+    /// engine's own validation rejects anything outside it. Empty entries are refused rather than
+    /// skipped, because <c>"0.3,,0.05"</c> is a typo and a silently shorter sweep is a different set of
+    /// rows from the one the command names.
+    /// </summary>
+    private static IEnumerable<double> ParseThresholds(string value)
+    {
+        foreach (string part in value.Split(',', StringSplitOptions.TrimEntries))
+        {
+            if (!double.TryParse(part, NumberStyles.Float, CultureInfo.InvariantCulture, out double threshold)
+                || !double.IsFinite(threshold) || threshold is <= 0 or > 1)
+            {
+                throw new ArgumentException(
+                    $"--backend-threshold expects a comma-separated list of similarities in (0, 1], "
+                    + $"got '{part}'.");
+            }
+
+            yield return threshold;
+        }
+    }
+
     private static IEnumerable<double> ParseDensities(string value)
     {
         foreach (string part in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
@@ -1399,8 +1434,9 @@ public static class Program
             Usage: LexiSharp.Eval [--data <dir>] [--dataset <name|all>] [--top-k <n>] [--limit <n>]
                      [--no-tuned] [--tune-bm25f] [--tune-search-options] [--heldout <share>] [--stem porter] [--dense] [--dense-seq <n>] [--rerank] [--rerank-top <n>]
                      [--rerank-cache <dir>]
-                     [--backend <lexical|paradedb|vector> --backend-connection <s>]
-                     [--backend-bm25 <k1,b>] [--backend-ef <list>] [--backend-config <name>]
+                     [--backend <lexical|paradedb|vector|fuzzy> --backend-connection <s>]
+                     [--backend-bm25 <k1,b>] [--backend-ef <list>] [--backend-threshold <list>]
+                     [--backend-config <name>]
 
               --data <dir>      Base directory for datasets (default: <project>/data).
                                 Downloaded and checksum-verified on first run.
@@ -1548,8 +1584,9 @@ public static class Program
               --backend <name>  Add a retrieval-quality row measured through a SQL backend on the same
                                 corpus, queries and qrels: 'lexical' (tsvector + ts_rank_cd over stock
                                 PostgreSQL), 'paradedb' (pg_search + pdb.score, Okapi BM25 computed
-                                by Tantivy; needs the paradedb image) or 'vector' (pgvector HNSW over
-                                the cached dense embeddings, needs --dense). Printed on its own,
+                                by Tantivy; needs the paradedb image), 'vector' (pgvector HNSW over
+                                the cached dense embeddings, needs --dense) or 'fuzzy' (pg_trgm
+                                similarity, one row per similarity threshold). Printed on its own,
                                 because the engine owns its index and its ranking function and the
                                 in-memory table is one index with many scorers. Needs
                                 --backend-connection.
@@ -1561,20 +1598,29 @@ public static class Program
                                 PostgreSQL text search configuration for the lexical backend (default:
                                 simple). This is the row's analysis: 'english' applies PostgreSQL's own
                                 Snowball stemmer and stop list, which is close to — and not identical
-                                with — the harness's --analyzer english. Not read by ParadeDB.
+                                with — the harness's --analyzer english. Not read by ParadeDB, the
+                                vector engine or the fuzzy engine.
               --backend-bm25 <k1,b>
                                 k1 and b the ParadeDB backend is indexed with, e.g. 0.9,0.4 — the
                                 parameters the published baselines were produced at. pg_search takes
                                 them per field at index creation, so the row is built at these values
                                 rather than re-weighted afterwards. Omitted, Tantivy's defaults
                                 (k1=1.2, b=0.75) apply. Refused with --backend lexical, whose
-                                ts_rank_cd has no such parameter.
+                                ts_rank_cd has no such parameter, and with the vector and fuzzy
+                                backends, which have no k1/b.
               --backend-ef <list>
                                 pgvector hnsw.ef_search values the vector backend is measured at,
                                 comma-separated (e.g. 10,40,160). One row per value, over one index:
                                 the index is the same at every value, only the candidate list the
                                 search explores changes. Default 40, pgvector's own. Refused with the
                                 other backends, which do not read it.
+              --backend-threshold <list>
+                                pg_trgm similarity thresholds the fuzzy backend is measured at,
+                                comma-separated values in (0, 1] (e.g. 0.3,0.1,0.05,0.01). One row
+                                per value, over one index: the threshold is the % operator's match
+                                rule, and every surviving document is ranked by similarity. Default
+                                0.3, pg_trgm's own. Refused with the other backends, which match
+                                by term or by embedding and have no threshold.
               --backend-field-weights <field=class,...>
                                 Weight each text field of the lexical backend's tsv with setweight,
                                 e.g. title=A. Classes are PostgreSQL's four (A, B, C, D); A counts

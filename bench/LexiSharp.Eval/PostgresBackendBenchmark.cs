@@ -19,6 +19,12 @@ internal enum BackendKind
 
     /// <summary><c>pgvector</c> ANN over the harness's cached embeddings, cosine distance.</summary>
     Vector,
+
+    /// <summary>
+    /// <c>pg_trgm</c> trigram similarity: documents whose content passes the threshold, ranked by
+    /// <c>similarity(content, query)</c>.
+    /// </summary>
+    Fuzzy,
 }
 
 /// <summary>
@@ -46,16 +52,27 @@ internal enum BackendKind
 /// normalisation to go with them. Without a weighted <c>title</c>, a document's body counts as
 /// much as its title and the row measures nothing new.
 /// </param>
+/// <param name="SimilarityThresholds">
+/// The <c>pg_trgm</c> similarity thresholds a fuzzy row is measured at, one row each. The threshold
+/// is the <c>%</c> operator's match rule (<c>set_limit</c>), not a ranking parameter: a document
+/// either clears it and is ranked by <c>similarity</c>, or it is absent. Empty for the other
+/// engines, and refused there rather than ignored.
+/// </param>
 internal sealed record BackendLane(
     BackendKind Kind,
     string ConnectionString,
     string TextSearchConfig,
     Bm25Parameters? Bm25 = null,
     IReadOnlyList<int>? EfSearchValues = null,
-    IReadOnlyDictionary<string, PostgresFieldWeight>? FieldWeights = null)
+    IReadOnlyDictionary<string, PostgresFieldWeight>? FieldWeights = null,
+    IReadOnlyList<double>? SimilarityThresholds = null)
 {
     /// <summary>The <c>ef_search</c> values in force; pgvector's own default when none was given.</summary>
     public IReadOnlyList<int> EfValues => EfSearchValues is { Count: > 0 } values ? values : [40];
+
+    /// <summary>The similarity thresholds in force; <c>pg_trgm</c>'s own default when none was given.</summary>
+    public IReadOnlyList<double> Thresholds =>
+        SimilarityThresholds is { Count: > 0 } values ? values : [0.3];
 
     /// <summary>Parses <c>--backend</c>, refusing a name it does not implement by name.</summary>
     public static BackendLane Parse(
@@ -64,7 +81,8 @@ internal sealed record BackendLane(
         string textSearchConfig,
         Bm25Parameters? bm25 = null,
         IReadOnlyList<int>? efSearchValues = null,
-        IReadOnlyDictionary<string, PostgresFieldWeight>? fieldWeights = null)
+        IReadOnlyDictionary<string, PostgresFieldWeight>? fieldWeights = null,
+        IReadOnlyList<double>? similarityThresholds = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
@@ -73,10 +91,14 @@ internal sealed record BackendLane(
             "lexical" => BackendKind.Lexical,
             "paradedb" => BackendKind.ParadeDb,
             "vector" => BackendKind.Vector,
+            "fuzzy" => BackendKind.Fuzzy,
+            "sparse" => throw new ArgumentException(
+                "--backend sparse has no row: no sparse model is wired into this harness, so there is "
+                + "no query representation to index or score. The engines with a row are 'lexical', "
+                + "'paradedb', 'vector' and 'fuzzy'; the sparse engine's integration suite is what "
+                + "covers it."),
             _ => throw new ArgumentException(
-                $"--backend expects 'lexical', 'paradedb' or 'vector', got '{kind}'. The sparse and fuzzy "
-                + "engines have no row: no sparse model is wired into this harness, and trigram similarity "
-                + "is not a ranking of prose."),
+                $"--backend expects 'lexical', 'paradedb', 'vector' or 'fuzzy', got '{kind}'."),
         };
 
         if (parsed == BackendKind.Lexical && bm25 is not null)
@@ -112,6 +134,24 @@ internal sealed record BackendLane(
             }
         }
 
+        if (parsed == BackendKind.Fuzzy)
+        {
+            if (bm25 is not null)
+            {
+                throw new ArgumentException(
+                    "--backend-bm25 sets k1/b, which no BM25 parameter reaches in a trigram index: the "
+                    + "ranking there is similarity over character trigrams. Drop the flag.");
+            }
+
+            if (textSearchConfig != "simple")
+            {
+                throw new ArgumentException(
+                    $"--backend-config '{textSearchConfig}' is PostgreSQL's text search configuration, "
+                    + "which the fuzzy engine never reads: its documents are matched by trigram "
+                    + "similarity. Drop the flag, or use --backend lexical.");
+            }
+        }
+
         if (parsed != BackendKind.Vector && efSearchValues is { Count: > 0 })
         {
             throw new ArgumentException(
@@ -119,15 +159,25 @@ internal sealed record BackendLane(
                 + "Drop the flag, or use --backend vector.");
         }
 
+        if (parsed != BackendKind.Fuzzy && similarityThresholds is { Count: > 0 })
+        {
+            throw new ArgumentException(
+                "--backend-threshold sets pg_trgm's similarity threshold, which only the fuzzy backend "
+                + "reads: the other engines match by term or by embedding and have no threshold. Drop "
+                + "the flag, or use --backend fuzzy.");
+        }
+
         if (parsed != BackendKind.Lexical && fieldWeights is { Count: > 0 })
         {
             throw new ArgumentException(
                 "--backend-field-weights configures setweight on the tsv column, which only the lexical "
-                + "backend ranks with: the vector and ParadeDB rows are ranked by an embedding or by "
-                + "pdb.score. Drop the flag, or use --backend lexical.");
+                + "backend ranks with: the vector, ParadeDB and fuzzy rows are ranked by an embedding, "
+                + "by pdb.score or by trigram similarity. Drop the flag, or use --backend lexical.");
         }
 
-        return new BackendLane(parsed, connectionString, textSearchConfig, bm25, efSearchValues, fieldWeights);
+        return new BackendLane(
+            parsed, connectionString, textSearchConfig, bm25, efSearchValues, fieldWeights,
+            similarityThresholds);
     }
 
     /// <summary>
@@ -156,9 +206,16 @@ internal sealed record BackendLane(
         BackendKind.Vector =>
             "pgvector HNSW (cosine) over multilingual-e5-small embeddings, ef_search "
             + string.Join(", ", EfValues.Select(value => value.ToString(CultureInfo.InvariantCulture))),
+        BackendKind.Fuzzy =>
+            "pg_trgm similarity (content % query, ranked by similarity) at similarity threshold "
+            + string.Join(", ", Thresholds.Select(FormatThreshold))
+            + " — index over content only, title concatenated into it",
         _ => $"PostgreSQL lexical (ts_rank_cd, text search config '{TextSearchConfig}' + unaccent"
             + FieldWeightsText + ")",
     };
+
+    private static string FormatThreshold(double threshold) =>
+        threshold.ToString("0.####", CultureInfo.InvariantCulture);
 
     /// <summary>
     /// The weighting the row ran under, spelled into its name: a lexical nDCG with and without
@@ -209,6 +266,20 @@ internal sealed record BackendLane(
             + "pdb.simple with ASCII folding, not this library's tokenizer.",
             AnalysisCaveat,
         ],
+        BackendKind.Fuzzy =>
+        [
+            "The match rule is content % query above the stated pg_trgm similarity threshold, ranked "
+            + "by similarity(content, query). Similarity is shared character trigrams over the sum of "
+            + "both trigram sets: a short query against a whole document divides a handful of shared "
+            + "trigrams by thousands, so a relevant document scores near zero and the threshold decides "
+            + "whether a row has any documents to rank at all. The threshold is a match rule, not a "
+            + "relevance weight.",
+            "Each row is one point of an in-sample threshold sweep, scored on the same qrels it is "
+            + "reported against. The best row of the sweep is an upper bound on what this engine "
+            + "scores on this corpus, not a tuned configuration, and not comparable with a tuned row.",
+            "The index covers content alone and the BEIR title is concatenated into it; the analysis "
+            + "is character trigrams, with no stemming, no stop list and no term weighting.",
+        ],
         _ =>
         [
             "ts_rank_cd is a coverage-based rank, not BM25, and it takes no k1/b. Its ORDER BY has no "
@@ -239,7 +310,8 @@ internal sealed record BackendMeasurement(
     string Table,
     int Documents,
     IReadOnlyList<BackendRow> Rows,
-    IReadOnlyList<string> Caveats);
+    IReadOnlyList<string> Caveats,
+    string RowAxis = "ef_search");
 
 /// <summary>
 /// Retrieval quality of a SQL backend over a BEIR corpus, which the in-memory table cannot express:
@@ -291,6 +363,9 @@ internal static class PostgresBackendBenchmark
 
         if (lane.Kind == BackendKind.Vector)
             return MeasureVector(lane, corpus, documents, table, dense, topK, limit, ndcgGain, excludeQueryDocument, jobs);
+
+        if (lane.Kind == BackendKind.Fuzzy)
+            return MeasureFuzzy(lane, corpus, documents, table, topK, limit, ndcgGain, excludeQueryDocument, jobs);
 
         if (lane.Kind == BackendKind.ParadeDb)
         {
@@ -452,6 +527,74 @@ internal static class PostgresBackendBenchmark
     }
 
     /// <summary>
+    /// One fuzzy row per requested <c>pg_trgm</c> similarity threshold, over one index. The threshold
+    /// is query-side session state (<c>set_limit</c>), so every point reads the same table and the
+    /// sweep measures the match rule rather than a rebuild.
+    /// </summary>
+    private static BackendMeasurement MeasureFuzzy(
+        BackendLane lane,
+        BeirCorpus corpus,
+        IReadOnlyList<SearchDocument> documents,
+        string table,
+        int topK,
+        int? limit,
+        NdcgGain ndcgGain,
+        bool excludeQueryDocument,
+        int jobs)
+    {
+        List<EvaluatedQuery> queries = Evaluation.BuildQueries(corpus, limit, excludeQueryDocument);
+
+        var options = new PostgresFuzzyOptions
+        {
+            Table = table,
+            SearchMode = TrgmSearchMode.Similarity,
+            SimilarityThreshold = lane.Thresholds[0],
+            IndexKind = TrgmIndexKind.Both,
+        };
+
+        try
+        {
+            // Built once. Every threshold reads this table, and the engine truncates it before
+            // indexing, so one builder is also what makes a re-run independent of the last one.
+            using (var indexer = new PostgresFuzzySearchEngine(lane.ConnectionString, options))
+                indexer.Index(documents);
+
+            var rows = new List<BackendRow>(lane.Thresholds.Count);
+
+            foreach (double threshold in lane.Thresholds)
+            {
+                using var engine = new PostgresFuzzySearchEngine(
+                    lane.ConnectionString,
+                    options with { SimilarityThreshold = threshold, AutoCreateSchema = false });
+
+                try
+                {
+                    rows.Add(new BackendRow(
+                        threshold.ToString("0.####", CultureInfo.InvariantCulture),
+                        Evaluation.RunEngine(
+                            corpus, engine,
+                            $"pg_trgm similarity (threshold="
+                            + threshold.ToString("0.####", CultureInfo.InvariantCulture) + ")",
+                            topK, limit, ndcgGain, excludeQueryDocument, jobs)));
+                }
+                catch (Exception error) when (FindRefusal(error) is { } refusal)
+                {
+                    throw Refusal(refusal, engine, queries);
+                }
+            }
+
+            return new BackendMeasurement(
+                lane.Description, table, documents.Count, rows, lane.Caveats, "threshold");
+        }
+        finally
+        {
+            using var dropper = new PostgresFuzzySearchEngine(
+                lane.ConnectionString, options with { AutoCreateSchema = false });
+            dropper.DropSchema();
+        }
+    }
+
+    /// <summary>
     /// Refuses, before any indexing, a query whose syntax the engine declares it cannot read.
     /// </summary>
     /// <remarks>
@@ -559,13 +702,14 @@ internal static class PostgresBackendBenchmark
     /// The ParadeDB index is declared over <c>content</c> alone, so a title left in
     /// <c>text_fields</c> would be stored and never searched — the same corpus indexed with fewer
     /// terms on one side of a comparison, which is a difference nobody would see in the output. It is
-    /// concatenated instead, which is exactly the flat view the in-memory BM25 rows score.
+    /// concatenated instead, which is exactly the flat view the in-memory BM25 rows score. The fuzzy
+    /// engine reads <c>content</c> alone too, so it gets the same shape.
     /// </remarks>
     public static IReadOnlyList<SearchDocument> Shape(BackendKind kind, IReadOnlyList<SearchDocument> documents)
     {
         ArgumentNullException.ThrowIfNull(documents);
 
-        if (kind != BackendKind.ParadeDb)
+        if (kind is not (BackendKind.ParadeDb or BackendKind.Fuzzy))
             return documents;
 
         return documents
@@ -616,7 +760,7 @@ internal static class PostgresBackendBenchmark
         else
         {
             lines.Add(string.Empty);
-            lines.Add("  ef_search | nDCG@10 | MAP@10 | MRR@10 |  R@10 | queries");
+            lines.Add($"  {measurement.RowAxis,9} | nDCG@10 | MAP@10 | MRR@10 |  R@10 | queries");
 
             foreach (BackendRow row in measurement.Rows)
             {

@@ -240,10 +240,14 @@ ratio translated into metric points. The residual at 160 is not attributed: the 
 by pgvector in single precision and in process, and on NFCorpus the planner may already answer with
 an exact scan at that value (see the plan note on the backends page).
 
-The **sparse** and **fuzzy** engines are not in this lane. No sparse model is wired into the
-harness, and trigram similarity is not a ranking of prose, so the integration suite is what covers
-them; the ANN *recall* curve (`--ann-ef`) is a separate measurement, kept because a recall ratio and
-an nDCG are different questions.
+The **sparse** engine is not in this lane: no sparse model is wired into the harness, so there is no
+query representation to index or score, and the integration suite is what covers it. The **fuzzy**
+engine is measured with `--backend fuzzy --backend-threshold`, one row per `pg_trgm` similarity
+threshold. On the same two corpora it scores 0.0981 (NFCorpus) and 0.2186 (SciFact) at the low end of
+an in-sample threshold sweep, and 0.0000 / 0.0033 at the engine's default 0.3 — a threshold on
+trigrams is not a relevance ranking, and [the evaluation page](../../docs/evaluation.md#the-sql-backends-on-the-same-corpora)
+carries the grid and the caveats. The ANN *recall* curve (`--ann-ef`) is a separate measurement,
+kept because a recall ratio and an nDCG are different questions.
 
 ## Per-query analysis
 

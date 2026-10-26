@@ -20,6 +20,19 @@ workflow.
 
 ### Added
 
+- **The evaluation harness measures the `pg_trgm` fuzzy backend.**
+
+  `--backend fuzzy` adds a retrieval-quality row for `PostgresFuzzySearchEngine` on the same BEIR
+  queries and qrels as the other backend rows, with one row per similarity threshold
+  (`--backend-threshold`, comma-separated, default 0.3 — the engine's own). The threshold is the `%`
+  operator's match rule, so the rows are a sweep of that rule over one index rather than a tuning
+  result, and the printed row says so. The row's name carries the mode, the index shape and the
+  thresholds it ran at. `--backend sparse` keeps its refusal, with the reason: no sparse model is
+  wired into the harness.
+
+  The measured rows and what they do and do not establish are on
+  [the evaluation page](docs/evaluation.md#the-sql-backends-on-the-same-corpora).
+
 - **Numeric range facets and histograms alongside the string facets.**
 
   `FacetValue` counts distinct strings, which cannot answer "how many hits under 50" or "a year

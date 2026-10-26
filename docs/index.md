@@ -117,6 +117,11 @@ twice. Every figure below is reproducible with a command on the
   148 as phrases. None of these rows is pinned, and the text engines' analysis is PostgreSQL's
   rather than this library's.
   See [evaluation](evaluation.md#the-sql-backends-on-the-same-corpora).
+- **The fuzzy engine is measured, and it is not a prose ranker.** `pg_trgm` similarity reads
+  **0.0000** on NFCorpus and **0.0033** on SciFact at its default 0.3 threshold, and
+  **0.0981 / 0.2186** at the low end of an in-sample threshold sweep — against BM25's
+  **0.308 / 0.662**. The engine matches labels and typos; the rows are what a threshold on character
+  trigrams costs on prose.
 - **Zero runtime dependencies in the core.** `LexiSharp` references no NuGet package at
   all: index, BM25, every scorer and every decorator are BCL only. The optional packages
   bring their own.
@@ -125,9 +130,8 @@ twice. Every figure below is reproducible with a command on the
   build and self-skip when `POSTGRES_TEST_CONNECTION` is unset.
 - **Not measured, and named rather than glossed over.** The **time** cost of `SearchTrace`
   (its allocation is pinned; the timing was not resolvable on the machine used, so no figure
-  is quoted). The **ranking of the sparse and fuzzy engines** on BEIR: no sparse model is wired into
-  the harness, and trigram similarity is not a ranking of prose, so the integration tests are what
-  cover them. The **learned-sparse and expansion lanes** on
+  is quoted). The **ranking of the sparse engine** on BEIR: no sparse model is wired into
+  the harness, so the integration tests are what cover it. The **learned-sparse and expansion lanes** on
   BEIR: no SPLADE model is
   wired into the harness, and corpus-derived expansion is a *loss* where it has been
   measured (0.8469 against BM25's 0.8751 on the reference corpus). **Not every combination**

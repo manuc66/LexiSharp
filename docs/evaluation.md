@@ -280,8 +280,8 @@ What it does **not** say:
 
 ## The SQL backends, on the same corpora
 
-The three PostgreSQL engines that rank on their own are measured by the same harness, over the same
-test queries and qrels, through the same metric code at the same depth:
+The PostgreSQL engines that rank on their own are measured by the same harness, over the same test
+queries and qrels, through the same metric code at the same depth:
 
 ```bash
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
@@ -291,8 +291,9 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-
 `--backend lexical` measures `PostgresTextSearchEngine` (`tsvector` + `ts_rank_cd`);
 `--backend paradedb` measures `ParadeDBTextSearchEngine` (`pg_search` + `pdb.score`, Tantivy's BM25);
 `--backend vector` measures `PostgresVectorSearchEngine` over the cached dense embeddings, with one
-row per `ef_search`. The lane builds a table named `lexisharp_eval_<dataset>` and drops it when the
-run ends.
+row per `ef_search`; `--backend fuzzy` measures `PostgresFuzzySearchEngine`, with one row per
+`pg_trgm` similarity threshold. The lane builds a table named `lexisharp_eval_<dataset>` and drops it
+when the run ends.
 
 nDCG@10, harness defaults (exponential gains — the convention of the **defaults** rows above). The
 first table is the comparison worth having: ParadeDB's k1 and b are index-time tokenizer arguments in
@@ -364,9 +365,65 @@ precision and in process, and on that corpus the planner may already answer with
 that value ([backends](backends.md)). ArguAna has no curve: the vector engine refuses 148 of its
 1,406 test queries as phrases, and a metric over the rest would be a different query set.
 
-What the lane does **not** cover: the **sparse** and **fuzzy** engines. No sparse model is wired into
-this harness, and trigram similarity is not a ranking of prose; the integration suite is what covers
-them, not a public benchmark.
+The fuzzy engine is measured the same way, over `pg_trgm` trigram similarity in `Similarity` mode:
+the threshold is the `%` operator's match rule (`set_limit`), and every document that clears it is
+ranked by `similarity(content, query)`. `--backend fuzzy --backend-threshold
+0.3,0.1,0.05,0.01,0.005,0.001,0.0001` gives one row per threshold over one index:
+
+```bash
+POSTGRES_TEST_CONNECTION="Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp"
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
+  --backend fuzzy --backend-connection "$POSTGRES_TEST_CONNECTION" \
+  --backend-threshold 0.3,0.1,0.05,0.01,0.005,0.001,0.0001
+```
+
+Measured on one host in one session against a fresh `pgvector/pgvector:pg16` container (the engine
+installs `pg_trgm` itself), harness defaults (exponential gains), 10 documents retrieved and measured
+at 10, both trigram indexes built, and the BEIR title concatenated into the content column the engine
+compares. nDCG@10:
+
+| Corpus (queries) | 0.3 | 0.1 | 0.05 | 0.01 | 0.005 | 0.001 | 0.0001 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| NFCorpus (323) | 0.0000 | 0.0034 | 0.0251 | 0.0961 | 0.0981 | 0.0981 | 0.0981 |
+| SciFact (300) | 0.0033 | 0.1908 | 0.2186 | 0.2186 | 0.2186 | 0.2186 | 0.2186 |
+
+MAP@10, MRR@10 and R@10 at the endpoints of the sweep, so a reader can see the three metrics move
+together:
+
+| Corpus, threshold | MAP@10 | MRR@10 | R@10 |
+|---|---:|---:|---:|
+| NFCorpus 0.3 | 0.0000 | 0.0000 | 0.0000 |
+| NFCorpus 0.005 (saturated) | 0.0545 | 0.1809 | 0.0594 |
+| SciFact 0.3 | 0.0033 | 0.0033 | 0.0033 |
+| SciFact 0.05 (saturated) | 0.1885 | 0.1925 | 0.3104 |
+
+- **A threshold on trigrams is not a relevance ranking, and the rows say how far off it is.** At the
+  engine's default 0.3 the lane scores 0.0000 on NFCorpus and 0.0033 on SciFact. Similarity divides
+  the shared character trigrams by the sum of both trigram sets, and a short query against a whole
+  document puts thousands of trigrams in the denominator, so a relevant document scores near zero
+  and is filtered out before ranking. Trigram similarity is not a ranking of prose, and the rows say
+  how far off it is; the threshold is the parameter that decides whether a row has anything to rank
+  at all.
+- **Lowering the threshold to where the rows stop moving raises the ceiling to 0.0981 and 0.2186.**
+  From 0.005 down on NFCorpus, and from 0.05 down on SciFact, the metrics are identical to four
+  decimals: below that point the threshold no longer changes the top 10 the metric reads, so the row
+  measures the trigram ranking rather than the gate. Those are still far below BM25 on the same
+  corpus (NFCorpus 0.308, SciFact 0.662) — the ranking itself, not just the default threshold, is the
+  limit.
+- **The sweep is in-sample and its best row is an upper bound.** Every threshold was scored on the
+  qrels it is reported against, so the best row is not a tuned configuration and is not comparable
+  with a tuned row. The grid is seven points and all of them are printed, which is what keeps the
+  table from being the best of an unstated sweep; a corpus where the low end had not saturated would
+  need a wider grid to say where its ceiling is.
+- **Not measured:** `Nearest` mode (GiST kNN ordering without a threshold), `UseLevenshteinRefinement`,
+  `IncludePhonetic`, and `%>`/`word_similarity`, which matches a query against the best-matching part
+  of a document rather than the whole of it. The rows above are thresholded whole-content similarity
+  only, which is the mode the engine's default threshold gates. ArguAna has no row: the lane is
+  measured on NFCorpus and SciFact only.
+
+What the lane does **not** cover is the **sparse** engine: no sparse model is wired into this
+harness, so there is no query representation to index or score. The integration suite is what covers
+it, not a public benchmark.
 
 ## Metrics
 
