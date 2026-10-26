@@ -21,9 +21,13 @@ namespace LexiSharp.Benchmarks;
 /// outlier removal.
 /// </para>
 /// <para>
-/// It measures <see cref="RankedTextSearchEngine.Search"/> as it is. Which scoring pass the engine
-/// chooses is the engine's decision, so the same command run against two builds is the A/B; that is
-/// why the lane prints nothing about paths and everything about the search.
+/// It measures <see cref="RankedTextSearchEngine.Search"/> as it is, and prints which scoring pass
+/// served the query — the engine's own decision, from the same reach the engine computes, not a copy
+/// of the rule in bench code. The label is asserted at the point of measurement against the
+/// allocation the pass adds: the same query is run through an engine forced to each accumulating pass,
+/// and the default engine's bytes per search must equal the one the label names. A reader can
+/// therefore tell a cursor row from an accumulator row, and the clear-share column prints a dash for
+/// every row that did not rent an accumulator to clear.
 /// </para>
 /// <para>
 /// Each query is warmed for five seconds of wall time before it is timed — see
@@ -91,6 +95,18 @@ internal static class CursorLane
         var index = new InMemoryTextIndex();
         var engine = new RankedTextSearchEngine(index, new Bm25Scorer());
 
+        // The same query run through each pass on purpose: the lane's label is the engine's own
+        // decision, and comparing the default engine's allocation with each forced pass is what
+        // asserts that the label describes the code that ran.
+        var accumulatorEngine = new RankedTextSearchEngine(index, new Bm25Scorer())
+        {
+            ForcedPass = RankedTextSearchEngine.ScoringPass.Accumulator,
+        };
+        var cursorEngine = new RankedTextSearchEngine(index, new Bm25Scorer())
+        {
+            ForcedPass = RankedTextSearchEngine.ScoringPass.Cursor,
+        };
+
         var build = Stopwatch.StartNew();
         engine.Index(documents);
         build.Stop();
@@ -108,7 +124,7 @@ internal static class CursorLane
                           $"{Number(index.OrdinalSpace)} bytes (best of 7)");
 
         foreach (var query in Queries)
-            MeasureQuery(index, engine, query, documentCount, clearNanoseconds);
+            MeasureQuery(index, engine, accumulatorEngine, cursorEngine, query, documentCount, clearNanoseconds);
 
         if (!sweep)
             return;
@@ -118,6 +134,8 @@ internal static class CursorLane
             MeasureQuery(
                 index,
                 engine,
+                accumulatorEngine,
+                cursorEngine,
                 new QueryShape($"df {Number(df)} sweep", term),
                 documentCount,
                 clearNanoseconds);
@@ -160,6 +178,8 @@ internal static class CursorLane
     private static void MeasureQuery(
         InMemoryTextIndex index,
         RankedTextSearchEngine engine,
+        RankedTextSearchEngine accumulatorEngine,
+        RankedTextSearchEngine cursorEngine,
         QueryShape query,
         int documentCount,
         long clearNanoseconds)
@@ -198,22 +218,84 @@ internal static class CursorLane
 
         long allocated = (GC.GetAllocatedBytesForCurrentThread() - allocatedBefore) / iterations;
 
-        int documentFrequency = 0;
+        // The engine's own decision, not a copy of it: the same reach the engine computes, from the
+        // distinct query terms, fed to the same helper the engine's two accumulating paths call.
+        int reachable = 0;
 
-        foreach (string term in query.Text.Split(' '))
-            documentFrequency += index.DocumentFrequency(term);
+        foreach (string term in query.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.Ordinal))
+            reachable += index.DocumentFrequency(term);
+
+        var pass = RankedTextSearchEngine.PassFor(index, reachable);
+
+        // The cross-check: each pass allocates what it allocates, and the default engine must match
+        // the one the decision names. On a cursor row the two are different, so the assertion also
+        // proves the label is not the accumulator's.
+        long accumulatorAllocated = MeasureAllocation(accumulatorEngine, query.Text, options);
+        long cursorAllocated = MeasureAllocation(cursorEngine, query.Text, options);
+        long expectedAllocated = pass == RankedTextSearchEngine.ScoringPass.Cursor
+            ? cursorAllocated
+            : accumulatorAllocated;
+
+        if (allocated != expectedAllocated)
+        {
+            throw new InvalidOperationException(
+                $"the lane says {pass} for '{query.Text}' but the default engine allocated {allocated} B/search, " +
+                $"not the {expectedAllocated} B/search that pass predicts (cursor {cursorAllocated}, " +
+                $"accumulator {accumulatorAllocated})");
+        }
+
+        if (pass != RankedTextSearchEngine.ScoringPass.PerDocument && cursorAllocated == accumulatorAllocated)
+        {
+            throw new InvalidOperationException(
+                $"'{query.Text}' reports {pass} but the two forced passes allocate identically " +
+                $"({cursorAllocated} B/search), so allocation cannot tell them apart");
+        }
 
         double p50 = microseconds[iterations / 2];
         double p99 = microseconds[Math.Clamp((int)Math.Ceiling(iterations * 0.99) - 1, 0, iterations - 1)];
 
         Console.WriteLine(
-            $"query {query.Text,-28} ({query.Label}) df sum {Number(documentFrequency),7}  hits {Number(hits),3}  " +
-            $"min {Time(microseconds[0]),9}  p50 {Time(p50),9}  p99 {Time(p99),9}  " +
+            $"query {query.Text,-28} ({query.Label}) df sum {Number(reachable),7}  pass {Pass(pass),-11} " +
+            $"hits {Number(hits),3}  min {Time(microseconds[0]),9}  p50 {Time(p50),9}  p99 {Time(p99),9}  " +
             $"mean {Time(microseconds.Average()),9}  {Number(allocated),6} B/search");
         Console.WriteLine(
-            $"      clear share of p50 {Percent(clearNanoseconds / (p50 * 1_000.0), 1),6}  " +
+            $"      clear share of p50 {(pass == RankedTextSearchEngine.ScoringPass.Accumulator ? Percent(clearNanoseconds / (p50 * 1_000.0), 1) : "—"),6}  " +
+            $"allocation check: cursor {Number(cursorAllocated)} B, accumulator {Number(accumulatorAllocated)} B  " +
             $"{Number(warmUpSearches)} warm-up searches in {Fixed(warmUp.Elapsed.TotalSeconds, 0, 1)} s, " +
-            $"{Number(iterations)} timed; allocation over a separate loop of the same length");
+            $"{Number(iterations)} timed");
+    }
+
+    /// <summary>
+    /// The pass as the row should read it: the engine's enum, in the lane's lowercase words. A cursor
+    /// row has no corpus-sized clear to compare against, so its share column prints a dash.
+    /// </summary>
+    private static string Pass(RankedTextSearchEngine.ScoringPass pass) => pass switch
+    {
+        RankedTextSearchEngine.ScoringPass.Cursor => "cursor",
+        RankedTextSearchEngine.ScoringPass.Accumulator => "accumulator",
+        _ => "per-document",
+    };
+
+    /// <summary>
+    /// Allocation per search for one engine and query. Allocation is deterministic on one thread, so
+    /// this is an exact comparison and not a statistical one.
+    /// </summary>
+    private static long MeasureAllocation(
+        RankedTextSearchEngine engine,
+        string query,
+        SearchOptions options,
+        int warmup = 20,
+        int iterations = 200)
+    {
+        for (int i = 0; i < warmup; i++)
+            _sink += engine.Search(query, options).Count;
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+
+        for (int i = 0; i < iterations; i++)
+            _sink += engine.Search(query, options).Count;
+
+        return (GC.GetAllocatedBytesForCurrentThread() - before) / iterations;
     }
 
     private static long MeasureClear(int bytes, int runs)
