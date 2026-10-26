@@ -711,7 +711,8 @@ public static class Program
 
             Console.WriteLine(
                 $"Rerank cache: {rerankCache.CachePath} — {rerankCache.Loaded:N0} pairs loaded"
-                + $"{(rerankCache.Unreadable > 0 ? $", {rerankCache.Unreadable:N0} unreadable line(s) skipped" : string.Empty)}.");
+                + $"{(rerankCache.Unreadable > 0 ? $", {rerankCache.Unreadable:N0} unreadable line(s) skipped" : string.Empty)}"
+                + $"{(rerankCache.Duplicates > 0 ? $", {rerankCache.Duplicates:N0} duplicate line(s) kept once" : string.Empty)}.");
         }
 
         if (annEfValues.Count > 0)
@@ -795,7 +796,7 @@ public static class Program
             rerankCache.Dispose();
             Console.WriteLine(
                 $"Rerank cache: {rerankCache.Reused:N0} pairs reused, {rerankCache.Computed:N0} computed, "
-                + $"{rerankCache.Loaded + rerankCache.Computed:N0} in the file — re-running this command resumes "
+                + $"{rerankCache.Loaded + rerankCache.Appended:N0} in the file — re-running this command resumes "
                 + "from here rather than from the first query.");
         }
     }
