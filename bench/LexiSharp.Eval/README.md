@@ -153,7 +153,12 @@ Runtime, no Python:
   where it stopped instead of at the first query. The file is named for the corpus md5 and the
   model, because a score depends on both; it is append-only, so a kill during a write costs the
   last buffered pairs and nothing already written; and a truncated tail is skipped with a count
-  rather than discarding the file. The three reranked rows of one corpus also share candidates:
+  rather than discarding the file. Every worker started by `--jobs` appends through one lock that
+  covers a whole line and the flush it may trigger, so two queries scoring at once cannot splice
+  one line into another. A pair that two workers miss at the same moment is written once: the
+  second worker's model pass is wasted, and it ranks with the score the first one stored. The
+  loader keeps one line per pair and reports repeated and unreadable lines when it opens the file.
+  The three reranked rows of one corpus also share candidates:
   on ArguAna **175,420 of 394,621 pair-requests (44 %) were served from an earlier row's passes**,
   and on five NFCorpus queries the second row computed nothing at all. Delete the directory to force
   a re-score.
