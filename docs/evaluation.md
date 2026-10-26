@@ -691,20 +691,26 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset scifact --held
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset arguana --heldout 0.5 --jobs 8
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset arguana --heldout 0.5 --jobs 8 --tune-bm25f
 
+# The ArguAna fraction sweep: single-field tuners only, no BM25F.
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset arguana --heldout 0.25 --jobs 8
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset arguana --heldout 0.75 --jobs 8
+
 # The same corpora without the flag, for the published in-sample rows.
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --jobs 4
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset scifact --jobs 4
 ```
 
 **Measured on 2026-10-25 (the three single-field tuner rows on NFCorpus and SciFact) and 2026-10-26
-(the BM25F rows and every ArguAna row), 50 % held out, default analysis.** The first group ran at
-`--jobs 4` and the second at `--jobs 8`; the flag changes wall clock, not a metric, and the later
-re-runs reproduced the three single-field rows on both corpora to the printed precision. nDCG@10 is
-the metric the tuners maximize; Δ fit→held is held-out minus fit-set; Δ vs untuned is held-out minus
-the fixed `BM25 (k1=1.5, b=0.75)` row on the same withheld queries. Wall clock, which is the cost of
-the run and not a benchmark: 23 s NFCorpus, 106 s SciFact, 14 m 20 s ArguAna, and 69 m 46 s ArguAna
-with `--tune-bm25f`. The three shorter runs overlapped the 70-minute one on this host, so their times
-are upper bounds on a solo run.
+(the BM25F rows, the ArguAna rows at 0.5 and the ArguAna fraction sweep), default analysis.** The
+NFCorpus and SciFact single-field rows ran at `--jobs 4` and the rest at `--jobs 8`; the flag changes
+wall clock, not a metric, and the later re-runs reproduced the three single-field rows on both
+corpora to the printed precision. nDCG@10 is the metric the tuners maximize; Δ fit→held is held-out
+minus fit-set; Δ vs untuned is held-out minus the fixed `BM25 (k1=1.5, b=0.75)` row on the same
+withheld queries. Wall clock, which is the cost of the run and not a benchmark: 23 s NFCorpus, 106 s
+SciFact, 14 m 20 s ArguAna at 0.5, 69 m 46 s ArguAna at 0.5 with `--tune-bm25f`, 21 m 35 s ArguAna at
+0.25 and 8 m 47 s ArguAna at 0.75. The three shorter NFCorpus/SciFact runs overlapped the 70-minute
+one on this host, so their times are upper bounds on a solo run; the two fraction-sweep runs did not
+overlap another evaluation.
 
 | Corpus | Split (fit / score) | Row | Fit nDCG@10 | Held-out nDCG@10 | Δ fit→held | Held-out MAP@10 | Held-out R@10 | Δ vs untuned |
 |---|---|---|---|---:|---:|---:|---:|---:|---:|
@@ -718,11 +724,19 @@ are upper bounds on a solo run.
 | | | BM25L tuned (k1=2, b=1, δ=0.25) | 0.652 | 0.684 | +0.032 | 0.635 | 0.822 | +0.004 |
 | | | BM25F tuned (k1=1.2, b=0.5, title=1.5) | 0.655 | 0.679 | +0.024 | 0.631 | 0.814 | −0.001 |
 | | | BM25 (k1=1.5, b=0.75), untuned reference | — | 0.680 | — | 0.632 | 0.814 | — |
+| ArguAna | 1076 / 330 (0.25) | BM25 tuned (k1=2, b=1) | 0.366 | 0.352 | −0.015 | 0.231 | 0.733 | +0.043 |
+| | | BM25+ tuned (k1=2, b=1, δ=0) | 0.366 | 0.352 | −0.015 | 0.231 | 0.733 | +0.043 |
+| | | BM25L tuned (k1=2, b=1, δ=0) | 0.366 | 0.352 | −0.015 | 0.231 | 0.733 | +0.043 |
+| | | BM25 (k1=1.5, b=0.75), untuned reference | — | 0.309 | — | 0.201 | 0.658 | — |
 | ArguAna | 718 / 688 | BM25 tuned (k1=2, b=1) | 0.354 | 0.372 | +0.019 | 0.248 | 0.765 | +0.044 |
 | | | BM25+ tuned (k1=2, b=1, δ=0) | 0.354 | 0.372 | +0.019 | 0.248 | 0.765 | +0.044 |
 | | | BM25L tuned (k1=2, b=1, δ=0) | 0.354 | 0.372 | +0.019 | 0.248 | 0.765 | +0.044 |
 | | | BM25F tuned (k1=2, b=1, title=3) | 0.395 | 0.405 | +0.010 | 0.277 | 0.807 | +0.077 |
 | | | BM25 (k1=1.5, b=0.75), untuned reference | — | 0.328 | — | 0.214 | 0.688 | — |
+| ArguAna | 344 / 1062 (0.75) | BM25 tuned (k1=2, b=1) | 0.358 | 0.365 | +0.007 | 0.241 | 0.756 | +0.044 |
+| | | BM25+ tuned (k1=2, b=1, δ=0) | 0.358 | 0.365 | +0.007 | 0.241 | 0.756 | +0.044 |
+| | | BM25L tuned (k1=2, b=1, δ=0) | 0.358 | 0.365 | +0.007 | 0.241 | 0.756 | +0.044 |
+| | | BM25 (k1=1.5, b=0.75), untuned reference | — | 0.321 | — | 0.208 | 0.684 | — |
 
 The two halves differ in difficulty, so the fit/held-out gap is not an overfitting measure on its
 own. The untuned default row reads 0.308 on all 323 NFCorpus queries and 0.291 on the withheld 167;
@@ -757,6 +771,15 @@ full-set fits; see below.
   which is why the tuner's own score for the winning BM25F configuration (0.358) is below the fit
   column (0.395), and its unfloored BM25 baseline (0.32) below that fit column's 0.354. The held-out
   and untuned columns are both syntax off, so their difference compares like with like.
+- **ArguAna at other fractions.** The three single-field tuners run at 0.25 and 0.75 as well, and the
+  transfer is the same size at all three. At 0.25 (1076 fit / 330 score) the fitted `k1=2, b=1` reads
+  **0.352** held out against the untuned 0.309: **+0.043**; its fit figure is 0.366, so the fit→held
+  gap is −0.015. At 0.75 (344 fit / 1062 score) it reads **0.365** against 0.321: **+0.044**, with a
+  fit figure of 0.358 and a +0.007 gap. Both variants pick `δ=0` and collapse onto BM25 at both
+  fractions, so the margin is the `(k1, b)` fit, not a variant's delta. The held-out margin holds at
+  three fractions on this corpus — 1076/330, 718/688 and 344/1062 — and no fraction in the sweep
+  breaks it. It is a shape on one corpus, not a law: NFCorpus and SciFact are measured at 0.5 only,
+  and the sweep has no BM25F row, because a BM25F run costs about an hour per split.
 
 **What the halves say about BM25F's field weight.** On the full set every fitted title weight is 1.0
 and `WeightingHelped` is false. On the fit halves the tuner chooses 1.5 (NFCorpus, SciFact) and 3.0
@@ -768,13 +791,15 @@ against untuned BM25, which also contains the `(k1, b)` fit and BM25F's single-f
 The held-out runs score the fitted configuration only, so none of the three isolates the weight on
 the withheld half; what is measured there is the whole fitted configuration.
 
-**What remains an upper bound.** Every tuned row not in the table: every fraction other than 0.5;
-every run under another analysis (`--analyzer english`, `--stem porter`, another `--ndcg-gain`);
-every depth other than 10; every lane with no tuned row (the SQL backends and the dense, sparse and
-rerank lanes have no held-out measurement); and the non-BEIR reference-corpus rows, which are
-outside this matrix. BM25F is measured with `title` as the only weighted field; another field set is
-unmeasured. The published full-set rows are intact and still in-sample figures over all queries; the
-pairs above cover three corpora, one fraction and the one analysis the commands name.
+**What remains an upper bound.** Every tuned row not in the table: every fraction other than 0.5 on
+NFCorpus and SciFact, and every fraction other than 0.25, 0.5 and 0.75 on ArguAna; BM25F at any
+fraction other than 0.5; every run under another analysis (`--analyzer english`, `--stem porter`,
+another `--ndcg-gain`); every depth other than 10; every lane with no tuned row (the SQL backends and
+the dense, sparse and rerank lanes have no held-out measurement); and the non-BEIR reference-corpus
+rows, which are outside this matrix. BM25F is measured with `title` as the only weighted field;
+another field set is unmeasured. The published full-set rows are intact and still in-sample figures
+over all queries; the pairs above cover three corpora, three fractions on ArguAna and one on the
+other two, and the one analysis the commands name.
 
 `--heldout` is refused with `--analyze`, `--verify-reference` and `--fingerprint`, whose output
 shapes assume every configuration scores every query or stop before scoring starts. With
