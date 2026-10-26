@@ -124,8 +124,9 @@ harness's `--sparse` flag scores its output:
 - **Output:** one line per text, `sha256(text) \t token:weight …`, keyed on the exact UTF-8 bytes so
   a text the vectors do not cover is refused rather than scored as a non-match.
 
-The measured rows — SPLADE-v3 against this library's BM25 on NFCorpus and SciFact, with the command
-that produces them — are on [the evaluation page](evaluation.md#learned-sparse-splade-through-onnx).
+The measured rows — SPLADE-v3 against this library's BM25 on NFCorpus, SciFact and ArguAna, with the
+command that produces them — are on
+[the evaluation page](evaluation.md#learned-sparse-splade-through-onnx).
 
 Using this outside the harness means running the same script (or your own provider) to produce the
 vectors; the library still runs no model, and nothing in `LexiSharp.dll` references Python, ONNX or
