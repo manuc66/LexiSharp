@@ -272,6 +272,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `FieldPrefixContextEnricher` | class | `IChunkContextEnricher` | A model-free IChunkContextEnricher that prefixes a document's text with the values of named Fields — the deterministic, offline cousin of a context-injection… |
 | `InMemoryTextIndex` | class | `ICandidateIndex`, `IFieldStatisticsIndex`, `IReadOnlyTextIndex`, `ITextIndex`, `IVocabularyIndex` | In-memory inverted index: for each term, the documents containing it and the positions within each document. Exposes the corpus statistics required by scorers. |
 | `InMemoryVectorSearchEngine` | class | `IQueryCostProbe`, `IQuerySyntaxSupport`, `ITextSearchEngine` | In-memory dense (vector) search engine: embeds documents with an IEmbeddingProvider and answers queries by cosine similarity over the whole corpus — a linear… |
+| `InMemoryVectorSearchOptions` | record | — | Options for InMemoryVectorSearchEngine: how its vectors are stored, which is the only choice the engine makes on its own storage. |
 | `JournalFlushPolicy` | enum | — | How long a write-ahead journal entry may sit unflushed. |
 | `JournalOptions` | record | — | What a store's write-ahead journal does: whether it exists, when it flushes, and how much it may let accumulate. |
 | `SegmentSourceMode` | enum | — | How a store opens the segments already in its directory. |
@@ -279,6 +280,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `SparseIndexEntry` | record | — | A document together with its stored sparse vector — the atomic unit of Export and Import, and what a persistence backend serializes to reload a corpus without… |
 | `SparseTextSearchEngine` | class | `IQuerySyntaxSupport`, `ITextSearchEngine` | In-memory sparse search engine: indexes documents as their sparse learned embeddings (SPLADE, uniCOIL, ...) and answers queries by dot-product scoring. |
 | `VectorIndexEntry` | record | — | A document together with its stored dense embedding — the atomic unit of Export / Import, letting a corpus be reloaded without re-embedding it. |
+| `VectorQuantization` | enum | — | How InMemoryVectorSearchEngine stores the document vectors it scans. |
 
 #### `LexiSharp.Keywords`
 
