@@ -824,14 +824,22 @@ The table above is the full 6-config, full-split run. Reproduce it with
 is not comparable with a full-split one.
 
 ArguAna queries are whole argument texts (~200+ tokens), which makes every query score a large
-share of the 8674 single-claim documents — but the cost is not the same for every scorer. Measured
-on this host (12 logical cores, `--jobs 8`, 1406 test queries, one session): **BM25 takes 0.8 s,
-about 0.57 ms a query**; the scorers that walk documents instead of postings pay for the length —
-the BM25+QL hybrid takes 41.4 s (29 ms/query) and one BM25F row 59.4 s (42 ms/query), roughly
-fifty to seventy times BM25. The whole twelve-config table is 306 s. An earlier version of this
-paragraph said "BM25 takes 117 s for 1406 queries (~83 ms/query)": that 117 s was the table's wall
-clock, dominated by the two slow scorers, and attributing it to BM25 was wrong by two orders of
-magnitude.
+share of the 8674 single-claim documents — but the cost is not the same for every scorer. Read the
+two timings apart, because the harness's per-config seconds are **wall clock at `--jobs`**, not
+per-query latency. Measured on this host in one session, 1406 test queries:
+
+| config | `--jobs 8`, whole run | per query at 8 workers | `--jobs 1`, 100-query sample |
+|---|---:|---:|---:|
+| BM25 | 0.8 s | 0.57 ms | **4.0 ms** |
+| Hybrid BM25+QL | 41.4 s | 29 ms | **161 ms** |
+| BM25F (one row) | 59.4 s | 42 ms | **213 ms** |
+
+So the 0.57 ms is throughput, not latency: eight workers finishing 1406 queries in 0.8 s is about
+4 ms of work per query. The scorers that walk documents instead of postings pay for the length —
+fifty to seventy times BM25 — and the whole twelve-config table is 306 s at eight workers. An
+earlier version of this paragraph said "BM25 takes 117 s for 1406 queries (~83 ms/query)": that
+117 s was the table's wall clock, dominated by the two slow scorers, and attributing it to BM25 was
+wrong by two orders of magnitude.
 
 Tuning is still expensive on this corpus, for a narrower reason: the oracle grid multiplies the
 *slow* configs, and `Bm25FParameterTuner` evaluates its candidates serially — 29 evaluations at a
