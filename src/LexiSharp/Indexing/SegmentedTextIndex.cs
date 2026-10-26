@@ -74,7 +74,7 @@ namespace LexiSharp.Indexing;
 /// find the terms it indexed.
 /// </para>
 /// </remarks>
-public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumulatingIndex, ICandidateIndex, ICandidateIdIndex, IOrdinalIdIndex, ITermCursorIndex, IVocabularyPrefixIndex, IDisposable
+public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumulatingIndex, ICandidateIndex, ICandidateIdIndex, IOrdinalIdIndex, ITermCursorIndex, IVocabularyPrefixIndex, IPostingArrayIndex, IDisposable
 {
     private readonly string _directory;
     private readonly ITokenizer _tokenizer;
@@ -612,6 +612,14 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     /// </remarks>
     void IAccumulatingIndex.Accumulate<TWeight>(TWeight weight, ScoreAccumulator accumulator) =>
         _chain.Accumulate(weight, accumulator);
+
+    /// <inheritdoc />
+    int[]? IPostingArrayIndex.LengthsByOrdinal =>
+        ((IPostingArrayIndex)_chain).LengthsByOrdinal;
+
+    /// <inheritdoc />
+    bool IPostingArrayIndex.TryResolvePostingArrays(string term, out PostingArrays postings) =>
+        ((IPostingArrayIndex)_chain).TryResolvePostingArrays(term, out postings);
 
     /// <summary>
     /// The id of the document at this ordinal, without decoding it.

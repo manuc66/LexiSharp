@@ -53,6 +53,12 @@
          want. -->
     <InternalsVisibleTo Include="LexiSharp.Eval" />
     <InternalsVisibleTo Include="LexiSharp.Tests" />
+    <!-- The benchmark lanes print which scoring pass served a query, and assert it against the
+         allocation the pass adds. That is the engine's own decision and it lives in an internal
+         helper; duplicating the density divisor and the accumulation floor in bench code would let
+         the printed label drift from the code it describes. Nothing ships from bench/, so this is
+         the same trade as the two above. -->
+    <InternalsVisibleTo Include="LexiSharp.Benchmarks" />
   </ItemGroup>
 
 </Project>

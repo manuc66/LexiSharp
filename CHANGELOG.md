@@ -700,6 +700,26 @@ workflow.
 
 ### Changed
 
+- **A sparse query is scored document-at-a-time on the cursor pass, and no ranking changes.**
+
+  The accumulating scorers (BM25, BM25+, BM25L, TF-IDF) already received each term's postings in one
+  pass; they now can receive the whole query as one cursor per term, summing one document at a time
+  into the page window. The traversal needs no buffer as long as the ordinal space, so it does not pay
+  the corpus-sized `Array.Clear` that measured 9.1–9.6 µs of a 13–21 µs tail query at 500,000
+  documents. It is taken when the index can lend its postings as arrays **and** the query reaches at
+  most `corpus / 200` documents — the density at which the crossing was measured, not a guess.
+  `InMemoryTextIndex` always lends; a `SegmentedTextIndex` lends when it was opened with
+  `decodedCacheEntries`, and every other index, and every denser query, keeps the accumulator
+  unchanged.
+
+  **No ranking change.** The cursor pass sums a document's terms in the same query order, with the
+  same write-on-first-touch and adds after it, as the accumulator's fold; `QueryPlanParityTests` and
+  the golden master are unchanged, and `CursorPassParityTests` compares the two passes on ids and
+  score bits through the public surface for every accumulating scorer, with filters, exclusions and
+  facets. The golden master is **132 unchanged, 0 changed**, and the full suite is **2,093 passed,
+  0 failed, 114 skipped**. The measured latency and allocation are on
+  [the benchmarks page](docs/benchmarks.md#cursor-lane-cursor-a-tail-querys-p50-p99-and-allocation).
+
 - **A `name:` prefix that names a real field is a scope; every other colon is unchanged.**
 
   With `SearchOptions.ParseQuerySyntax` at its default `true`, a corpus whose index has a `title`

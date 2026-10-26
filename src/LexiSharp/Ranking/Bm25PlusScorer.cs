@@ -280,6 +280,28 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
 
             return true;
         }
+
+        /// <inheritdoc />
+        public bool TryScoreDocuments(IPostingArrayIndex index, IDocumentScoreSink sink)
+        {
+            if (_index.Count == 0 || _avgLength <= 0 || index.LengthsByOrdinal is not { } lengths)
+                return false;
+
+            var weights = new Bm25PlusWeight[_terms.Length];
+            var postings = new PostingArrays[_terms.Length];
+
+            for (int i = 0; i < _terms.Length; i++)
+            {
+                weights[i] = new Bm25PlusWeight(_terms[i], _idf[i], _k1, _b, _delta, _avgLength);
+
+                if (!index.TryResolvePostingArrays(_terms[i], out postings[i]))
+                    postings[i] = PostingArrays.Empty;
+            }
+
+            DocumentAtATime.Score(weights, postings, lengths, sink);
+
+            return true;
+        }
     }
 
     private readonly struct Bm25PlusWeight(
