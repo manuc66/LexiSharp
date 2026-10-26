@@ -441,7 +441,7 @@ the same test queries, the same qrels and through the same `RetrievalMetrics` as
 
 ```bash
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
-  --ndcg-gain linear --sparse bench/LexiSharp.Eval/data/sparse-vectors
+  --sparse bench/LexiSharp.Eval/data/sparse-vectors
 ```
 
 The vectors are SPLADE-v3 through the full-precision ONNX export (`splade-v3.onnx`, 532 138 951
@@ -451,13 +451,16 @@ terms per text. Documents are encoded as `title + "\n" + text`; queries as their
 download, the tokenizer route and the file format. The vectors are **not** committed: they are
 tens of megabytes derived from a CC BY-NC-SA model, and the README is how to regenerate them.
 
-Measured on 2026-10-26, one host (12 cores, `--jobs` default 8), nDCG@10 (linear gains — the
-convention the aligned rows above use), with the BM25 rows from the same runs:
+Measured on 2026-10-26, one host (12 cores, `--jobs` default 8), nDCG@10 at **exponential gains —
+the harness default, and the convention every other row on this page uses**. The aligned column is
+`--analyzer english --reference-bm25 0.9,0.4 --query-term-frequency`, the published BM25 convention;
+without that flag the page's aligned rows read 0.3215 / 0.6788, as the note below records. All three
+columns come from runs in this session:
 
 | Corpus | BM25 defaults (1.5 / 0.75) | BM25 aligned (English analysis, 0.9 / 0.4) | SPLADE-v3 (256 tokens, top 256) |
 |---|---:|---:|---:|
-| NFCorpus | 0.307 | 0.321 | **0.3576** |
-| SciFact | 0.662 | 0.679 | **0.7083** |
+| NFCorpus | 0.308 | 0.322 | **0.3596** |
+| SciFact | 0.662 | 0.676 | **0.7083** |
 
 The three other metrics for the sparse rows, against BM25 at the aligned operating point, with the
 same runs:
@@ -466,11 +469,12 @@ same runs:
 |---|---:|---:|---:|
 | NFCorpus, BM25 aligned | 0.234 | 0.523 | 0.152 |
 | NFCorpus, SPLADE-v3 | **0.2646** | **0.5714** | **0.1709** |
-| SciFact, BM25 aligned | 0.633 | 0.644 | 0.806 |
+| SciFact, BM25 aligned | 0.631 | 0.642 | 0.800 |
 | SciFact, SPLADE-v3 | **0.6678** | **0.6814** | **0.8157** |
 
-- **SPLADE is above BM25 on both corpora at this configuration** — by 0.037 nDCG@10 on NFCorpus and
-  0.029 on SciFact, and by every other metric on both. The row is one model, one truncation and one
+- **SPLADE is above BM25 on both corpora at this configuration** — by **0.052** nDCG@10 against the
+  harness-default BM25 row on NFCorpus and **0.046** on SciFact, or **0.038** and **0.032** against
+  the aligned operating point, and by every other metric on both. The row is one model, one truncation and one
   pruning budget: it does not say whether another budget would move the margin, and it is not a
   statement about learned-sparse retrieval in general.
 - **Aligned SciFact reads 0.6788 without `--query-term-frequency` and 0.6759 with it** (R@10 0.806 →
