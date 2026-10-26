@@ -443,8 +443,11 @@ the same test queries, the same qrels and through the same `RetrievalMetrics` as
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
   --sparse bench/LexiSharp.Eval/data/sparse-vectors
 
-# The ArguAna row, whose vectors were produced in this session; no --exclude-query-doc, which the
-# page's aligned rows there pass: see the last bullet.
+# ArguAna's test queries are documents, so the reported row passes --exclude-query-doc, the
+# convention the published reference figure uses. The second command is the control with the query
+# document left in the corpus.
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset arguana --no-tuned \
+  --sparse bench/LexiSharp.Eval/data/sparse-vectors --exclude-query-doc
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset arguana --no-tuned \
   --sparse bench/LexiSharp.Eval/data/sparse-vectors
 ```
@@ -460,18 +463,26 @@ Measured on 2026-10-26, one host (12 cores, `--jobs` default 8), nDCG@10 at **ex
 the harness default, and the convention every other row on this page uses**. The aligned column is
 `--analyzer english --reference-bm25 0.9,0.4 --query-term-frequency`, the published BM25 convention;
 without that flag the page's aligned rows read 0.3215 / 0.6788, as the note below records. All three
-columns come from runs in this session on NFCorpus and SciFact; ArguAna has no aligned cell, for the
-reason the last bullet gives:
+columns come from runs in this session on NFCorpus and SciFact, and the two ArguAna rows come from
+this session's two runs over the same vectors. ArguAna has no aligned cell — the aligned column is a
+BM25 analysis the sparse model does not use — and its rows carry the two task conventions, because
+1 298 of its 1 406 test queries name a document and the published reference figure drops it:
 
 | Corpus | BM25 defaults (1.5 / 0.75) | BM25 aligned (English analysis, 0.9 / 0.4) | SPLADE-v3 (256 tokens, top 256) |
 |---|---:|---:|---:|
 | NFCorpus | 0.308 | 0.322 | **0.3596** |
 | SciFact | 0.662 | 0.676 | **0.7083** |
-| ArguAna | 0.320 | — | **0.3836** |
 | ArguAna, `--exclude-query-doc` | 0.425 | — | **0.5216** |
+| ArguAna, query document kept | 0.320 | — | 0.3836 |
+
+The first ArguAna row is the convention the 0.3970 reference figure was produced under. Dropping the
+query's own document lifts BM25 by **0.105** nDCG@10 (0.320 → 0.425) and SPLADE by **0.1380**
+(0.3836 → 0.5216), so the exclusion is worth more than the sparse row's margin over BM25 under either
+convention (**+0.097** excluded, **+0.064** kept).
 
 The three other metrics for the sparse rows, against BM25 at the aligned operating point where the
-run has one (NFCorpus, SciFact), and at the harness-default parameters on ArguAna, which has none:
+run has one (NFCorpus, SciFact), and at the harness-default parameters on ArguAna under both task
+conventions:
 
 | Corpus, engine | MAP@10 | MRR@10 | R@10 |
 |---|---:|---:|---:|
@@ -479,28 +490,32 @@ run has one (NFCorpus, SciFact), and at the harness-default parameters on ArguAn
 | NFCorpus, SPLADE-v3 | **0.2646** | **0.5714** | **0.1709** |
 | SciFact, BM25 aligned | 0.631 | 0.642 | 0.800 |
 | SciFact, SPLADE-v3 | **0.6678** | **0.6814** | **0.8157** |
-| ArguAna, BM25 defaults | 0.207 | 0.207 | 0.679 |
-| ArguAna, SPLADE-v3 | **0.2530** | **0.2530** | **0.7980** |
-| ArguAna, BM25 (exclusion) | 0.341 | 0.341 | 0.697 |
-| ArguAna, SPLADE-v3 (exclusion) | **0.4300** | **0.4300** | **0.8179** |
+| ArguAna, BM25 defaults, excluded | 0.341 | 0.341 | 0.697 |
+| ArguAna, SPLADE-v3, excluded | **0.4300** | **0.4300** | **0.8179** |
+| ArguAna, BM25 defaults, query document kept | 0.207 | 0.207 | 0.679 |
+| ArguAna, SPLADE-v3, query document kept | **0.2530** | **0.2530** | **0.7980** |
 
 - **SPLADE is above BM25 on all three corpora at this configuration** — by **0.052** nDCG@10 against
-  the harness-default BM25 row on NFCorpus, **0.046** on SciFact and **0.064** on ArguAna, or
-  **0.038** and **0.032** against the aligned operating point on the first two, and by every other
-  metric on all three. The row is one model, one truncation and one pruning budget: it does not say
-  whether another budget would move the margin, and it is not a statement about learned-sparse
-  retrieval in general.
+  the harness-default BM25 row on NFCorpus, **0.046** on SciFact and **0.097** on ArguAna under the
+  exclusion (0.064 with the query document kept), or **0.038** and **0.032** against the aligned
+  operating point on the first two, and by every other metric on all three. On ArguAna the aligned
+  reference is **0.3970** at the published English analysis and k1=0.9/b=0.4, so the sparse row is
+  **0.1246 above it** — a comparison of one task convention, one query list and one qrels set, not a
+  like-for-like comparison of rankings: the analysis and the retrieval model both differ. The row is
+  one model, one truncation and one pruning budget: it does not say whether another budget would move
+  the margin, and it is not a statement about learned-sparse retrieval in general.
 - **Aligned SciFact reads 0.6788 without `--query-term-frequency` and 0.6759 with it** (R@10 0.806 →
   0.800), and NFCorpus 0.3215 against 0.3208. The flag scores a repeated query term once per
   occurrence, which is the published BM25 convention, and on SciFact it moves the row by 0.003. The
   sparse row is unaffected either way: the flag reaches BM25's scorer only.
 - **What the row is not.** The metrics contain no encode cost — the model ran offline, before the
   harness started, and its time is the producer's (48.1 min for NFCorpus's 3 633 documents and 3 237
-  queries, 57.2 min for SciFact's 5 183 and 1 109, two encoders side by side at 6 threads each; 23.2
-  min for ArguAna's 8 674 documents and 1 406 queries, one encoder at 6 threads, of which 20.0 min
-  were documents and 3.2 min queries). The score run itself took 5 m 04 s at `--jobs 8`. The row is
-  not pinned: `pinned.json` keys on analyzer and BM25 parameters, and the pinned job has no vectors,
-  so a pin could only ever skip. The model is not part of the library and no `LexiSharp` API runs it.
+  queries, 57.2 min for SciFact's 5 183 and 1 109, two encoders side by side at 6 threads each; 28.7
+  min for ArguAna's 8 674 documents and 1 406 queries, one encoder at 6 threads, of which 25.4 min
+  were documents and 3.3 min queries). The score run for the exclusion row took 9 m 58 s at
+  `--jobs 8`. The row is not pinned: `pinned.json` keys on analyzer and BM25 parameters, and the
+  pinned job has no vectors, so a pin could only ever skip. The model is not part of the library and
+  no `LexiSharp` API runs it.
 - **The title is in the document text, not weighted.** `SparseTextSearchEngine` has no field
   concept, so `title + "\n" + text` is one string on both sides. Unlike the BM25F rows, no title
   weight exists here, and the producer applies this rule for every corpus — otherwise two rows
@@ -514,18 +529,20 @@ run has one (NFCorpus, SciFact), and at the harness-default parameters on ArguAn
   token-for-token with a public copy of the checkpoint's `tokenizer.json` on all 13 162 texts of
   NFCorpus and SciFact. That check and its limitation are in the producer's README, and it does not
   cover ArguAna, which was encoded in this session.
-- **ArguAna is measured under both conventions, and the convention is worth 0.14 nDCG@10.** On
-  ArguAna 1 298 of the 1 406 test queries name a document, so the page's aligned and tuned rows
-  there pass `--exclude-query-doc`. The sparse lane now has both: **0.3836 → 0.5216** with the
-  exclusion, against BM25's **0.320 → 0.425** in the same two runs. Both engines gain about the same
-  amount, which is what a convention does rather than a property of either. The exclusion row is the
-  one that belongs beside the ArguAna rows above; the aligned column has no ArguAna cell because the
-  lexical backend refuses two of that corpus's queries as prefix syntax, not because the row is
-  missing.
-- **The analysis is still not the page's.** SPLADE scores the model's WordPiece vocabulary, the
-  aligned rows use the English analyzer with `k1=0.9, b=0.4`. The 0.5216 and the 0.3970 are two
-  retrieval systems on one corpus and one qrels set, not two analyses of one index, and no exclusion
-  makes them the same thing.
+- **ArguAna is measured under both conventions, and the exclusion is worth 0.105-0.138 nDCG@10.**
+  1 298 of the 1 406 test queries name a document. Dropping it lifts BM25 from 0.320 to 0.425 and
+  SPLADE from 0.3836 to 0.5216 in the same two runs; both pairs are in the tables above. The
+  exclusion row is the one whose task convention matches the 0.3970 reference figure.
+- **The tuned ArguAna rows are not at that convention.** BM25 tuned (0.363) and BM25F tuned (0.397)
+  are in-sample oracles at the harness-default analysis, and both sit below the untuned BM25's 0.425
+  under the exclusion. The tuner's 25-point grid contains (1.5, 0.75), so an in-sample best over that
+  grid on the excluded queries cannot be lower; those two rows are scored with the query document
+  kept, and neither is a fair baseline beside the sparse row.
+- **What the exclusion does not align is the analysis.** SPLADE scores the model's WordPiece
+  vocabulary and ranks by a learned sparse dot product; the aligned rows use the English analyzer
+  with `k1=0.9, b=0.4`. The 0.5216 and the 0.3970 are two retrieval systems on one corpus, one query
+  list and one qrels set, not two analyses of one index, and no task convention makes them the same
+  thing.
 - **Not measured:** truncation at 512 tokens, any top-k other than 256, and the `pgvector sparsevec`
   backend, which has no harness lane at all. The 8-bit export has no row either; at the vector level
   it is not a near-copy of the full-precision one — on the 300 SciFact queries the two exports'
