@@ -164,7 +164,7 @@ The three corpora the row is measured on, encoded on 2026-10-26 with the command
 |---|---:|---:|---|---:|---|
 | NFCorpus | 3 633 | 3 237 | 99 / 232.3 / 256 | 48.1 min | 16.3 MB + 1.8 MB |
 | SciFact | 5 183 | 1 109 | 99 / 241.2 / 256 | 57.2 min | 24.2 MB + 2.9 MB |
-| ArguAna | 8 674 | 1 406 | 33 / 247.2 / 256 | 23.2 min (one encoder, 6 threads) | 42.4 MB + 6.9 MB |
+| ArguAna | 8 674 | 1 406 | 33 / 247.2 / 256 | 28.7 min (one encoder, 6 threads) | 42.4 MB + 6.9 MB |
 
 Query vectors average 25.8 terms (NFCorpus), 132.6 (SciFact) and 249.6 (ArguAna) — SciFact's
 `queries.jsonl` carries long claim sentences, of which 300 have test judgements, and every ArguAna
