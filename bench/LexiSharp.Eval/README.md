@@ -617,9 +617,11 @@ tuned row in this file is chosen under the tuner's convention; the ArguAna secti
 
 So the comparison has a sign that depends on the corpus — BM25F ahead by 0.034 on ArguAna, 0.004 on
 SciFact, behind by 0.002 on NFCorpus and 0.011 on the reference corpus — and **the field weighting
-is never what moves it**: every fitted title weight is 1.0, i.e. neutral. What ArguAna's +0.034
-buys is BM25F's single-field length term at (k1=1.5, b=1), not a title boost. That is the same
-conclusion the reference corpus reached, now measured three more times.
+is never what moves those full-set fits**: every fitted title weight is 1.0, i.e. neutral. (A
+held-out half picks 1.5, 1.5 and 3.0 and reports `WeightingHelped = true`; see
+[the evaluation page](../../docs/evaluation.md#held-out-measurement---heldout).) What ArguAna's
++0.034 buys is BM25F's single-field length term at (k1=1.5, b=1), not a title boost. That is the
+same conclusion the reference corpus reached, now measured three more times.
 
 Those two figures were **equal at 0.8812** in an earlier version of this file. The equality was an
 artifact of the objective, not a property: the run tuned on F1@5, which is flat on the reference
