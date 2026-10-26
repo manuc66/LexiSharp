@@ -117,6 +117,56 @@ internal sealed class SparseVectorSet
     }
 
     /// <summary>
+    /// Refuses a set that does not cover every document, naming how many and one example.
+    /// </summary>
+    /// <remarks>
+    /// Both sparse lanes — the in-memory one and the PostgreSQL one — index the same texts, so both
+    /// ask this of the same file, with the same words. A metric over the documents that happened to
+    /// have a vector reads like a ranking result and is a smaller corpus than the row beside it.
+    /// </remarks>
+    public void EnsureCoversDocuments(IReadOnlyList<SearchDocument> documents, string dataset)
+    {
+        ArgumentNullException.ThrowIfNull(documents);
+
+        var missing = new List<string>();
+
+        foreach (SearchDocument document in documents)
+        {
+            if (!Documents.ContainsKey(HashText(document.Text)))
+                missing.Add(document.Id);
+        }
+
+        if (missing.Count > 0)
+        {
+            throw new SparseVectorsException(
+                $"{missing.Count:N0} of {documents.Count:N0} {dataset} documents have no vector in "
+                + $"'{Directory}' (for example document '{missing[0]}'), so the index would "
+                + "silently omit them and the metric would be read over a smaller corpus than the row "
+                + "beside it. Re-encode this corpus, or point --sparse at its vectors.");
+        }
+    }
+
+    /// <summary>Refuses a set that does not cover every test query, naming how many and one example.</summary>
+    public void EnsureCoversQueries(IReadOnlyList<EvaluatedQuery> queries, string dataset)
+    {
+        ArgumentNullException.ThrowIfNull(queries);
+
+        var missing = queries
+            .Where(query => !Queries.ContainsKey(HashText(query.Query.Text)))
+            .Select(query => query.Query.Id)
+            .ToList();
+
+        if (missing.Count > 0)
+        {
+            throw new SparseVectorsException(
+                $"{missing.Count:N0} of {queries.Count:N0} test queries in {dataset} have no "
+                + $"vector in '{Directory}' (for example query '{missing[0]}'). A query with "
+                + "no vector matches nothing, which reads as a ranking result rather than as a missing "
+                + "file, so no row is produced. Re-encode this corpus's queries.jsonl.");
+        }
+    }
+
+    /// <summary>
     /// Loads <c>&lt;corpus&gt;.meta.json</c>, <c>&lt;corpus&gt;.docs.tsv</c> and
     /// <c>&lt;corpus&gt;.queries.tsv</c> from <paramref name="directory"/>.
     /// </summary>
