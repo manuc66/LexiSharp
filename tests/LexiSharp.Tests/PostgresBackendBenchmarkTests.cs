@@ -66,28 +66,99 @@ public class PostgresBackendBenchmarkTests
     [Theory]
     [InlineData("paradedb")]
     [InlineData("vector")]
+    [InlineData("sparse")]
     public void FieldWeightsAreRefusedByTheBackendsThatDoNotRankOnTheTsv(string kind)
     {
         ArgumentException error = Assert.Throws<ArgumentException>(() => BackendLane.Parse(
             kind,
             "Host=db;Database=search",
             "simple",
-            fieldWeights: new Dictionary<string, PostgresFieldWeight> { ["title"] = PostgresFieldWeight.A }));
+            fieldWeights: new Dictionary<string, PostgresFieldWeight> { ["title"] = PostgresFieldWeight.A },
+            // Every kind but sparse accepts and ignores this; sparse would refuse the combination
+            // below for a missing directory first, which is a different refusal than the one asserted.
+            sparseVectorsDirectory: "/tmp/lexisharp-unused-vectors"));
 
         Assert.Contains("--backend-field-weights", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void AnUnknownEngineNameIsRefusedAndTheMessageSaysWhatIsMissing()
+    public void AnUnknownEngineNameIsRefusedAndTheMessageListsEveryNameItAccepts()
     {
-        // The sparse and fuzzy engines implement ITextSearchEngine too, so their absence from the list
-        // is a decision a caller will ask about. The message answers it, because a bare
-        // "unknown backend" sends the reader looking for the wrong defect.
+        // The message is what a caller reads after a typo, so it names the five lanes rather than
+        // leaving the reader to grep for them. `sparse` is one of them: the engine has a row now.
+        ArgumentException error = Assert.Throws<ArgumentException>(
+            () => BackendLane.Parse("sqlite", "Host=db;Database=search", "simple"));
+
+        foreach (string name in new[] { "lexical", "paradedb", "vector", "fuzzy", "sparse" })
+            Assert.Contains(name, error.Message, StringComparison.Ordinal);
+
+        Assert.Contains("sqlite", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheSparseBackendNeedsTheVectorsDirectoryItIndexesAndSaysWhatItIsFor()
+    {
+        // The engine has no model: a sparse row without vectors would index nothing. The refusal
+        // names the flag and rules out the plausible substitute, which is the dense lane's --dense.
         ArgumentException error = Assert.Throws<ArgumentException>(
             () => BackendLane.Parse("sparse", "Host=db;Database=search", "simple"));
 
-        Assert.Contains("lexical", error.Message, StringComparison.Ordinal);
         Assert.Contains("--sparse", error.Message, StringComparison.Ordinal);
+        Assert.Contains("--dense is not a substitute", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheSparseBackendIsTheEngineItNamesAndKeepsItsVectorsDirectory()
+    {
+        BackendLane lane = BackendLane.Parse(
+            "sparse", "Host=db;Database=search", "simple",
+            sparseVectorsDirectory: "/tmp/lexisharp-arguana-vectors");
+
+        Assert.Equal("Sparse", lane.Kind.ToString());
+        Assert.Equal(Path.GetFullPath("/tmp/lexisharp-arguana-vectors"), lane.SparseVectorsDirectory);
+        Assert.Contains("sparsevec", lane.Description, StringComparison.Ordinal);
+        Assert.Contains("inner product", lane.Description, StringComparison.Ordinal);
+        Assert.Contains("ef_search 40", lane.Description, StringComparison.Ordinal);
+        Assert.Contains(
+            lane.Caveats, caveat => caveat.Contains("not the model", StringComparison.Ordinal));
+        Assert.Contains(
+            lane.Caveats, caveat => caveat.Contains("verbatim", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AVectorsDirectoryGivenToANonSparseBackendIsAcceptedBecauseSparseIsAlsoItsOwnRow()
+    {
+        // `--backend lexical --sparse <dir>` asks for two rows over one corpus: the SQL lexical row
+        // and the in-memory sparse row. Refusing the flag here would refuse a legitimate command.
+        BackendLane lane = BackendLane.Parse(
+            "lexical", "Host=db;Database=search", "simple",
+            sparseVectorsDirectory: "/tmp/lexisharp-arguana-vectors");
+
+        Assert.Equal("Lexical", lane.Kind.ToString());
+        Assert.NotNull(lane.SparseVectorsDirectory);
+    }
+
+    [Fact]
+    public void AK1AndBGivenToTheSparseBackendIsRefusedBecauseItsRankingIsADotProduct()
+    {
+        ArgumentException error = Assert.Throws<ArgumentException>(() => BackendLane.Parse(
+            "sparse", "Host=db;Database=search", "simple", new Bm25Parameters(0.9, 0.4),
+            sparseVectorsDirectory: "/tmp/lexisharp-arguana-vectors"));
+
+        Assert.Contains("inner product", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnEfSearchValueGivenToTheSparseBackendIsRefusedBecauseTheEngineCannotReachIt()
+    {
+        // The row runs at pgvector's default 40: accepting the flag would label it with a value no
+        // code path set. A server-level setting would apply, and the message says so.
+        ArgumentException error = Assert.Throws<ArgumentException>(() => BackendLane.Parse(
+            "sparse", "Host=db;Database=search", "simple", efSearchValues: [160],
+            sparseVectorsDirectory: "/tmp/lexisharp-arguana-vectors"));
+
+        Assert.Contains("hnsw.ef_search", error.Message, StringComparison.Ordinal);
+        Assert.Contains("default 40", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -609,6 +680,20 @@ public class PostgresBackendBenchmarkTests
         Assert.Null(shaped.TextFields);
     }
 
+    [Fact]
+    public void TheSparseBackendGetsTheTitleInTheTextTheEncoderHashed()
+    {
+        // The producer hashed title + "\n" + text, and the engine has no field concept, so this is the
+        // only text whose SHA-256 is in the vector file. A title left in text_fields would be stored
+        // and never scored, and every document would then look like a missing vector.
+        SearchDocument document = Document("d1", "Bile salts", "bile salts emulsify fat");
+
+        SearchDocument shaped = Assert.Single(PostgresBackendBenchmark.Shape(BackendKind.Sparse, [document]));
+
+        Assert.Equal("Bile salts\nbile salts emulsify fat", shaped.Text);
+        Assert.Null(shaped.TextFields);
+    }
+
     [SkippableFact]
     public void TheFuzzyLaneMeasuresOneRowPerThresholdAndDropsItsTable()
     {
@@ -642,6 +727,53 @@ public class PostgresBackendBenchmarkTests
         Assert.Equal(2, measurement.Documents);
         Assert.Equal(["0.3", "0.01"], measurement.Rows.Select(row => row.Label));
         Assert.Equal(1, measurement.Rows[1].Result.Queries);
+        Assert.False(TableExists(measurement.Table), "The lane drops the table it built.");
+    }
+
+    [SkippableFact]
+    public void TheSparseLaneMeasuresTheIndexAndTheExactScanAndDropsItsTable()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        if (!ExtensionAvailable(ConnectionString!, "vector"))
+            Skip.If(true, "the vector extension is not available on the target instance.");
+
+        var corpus = new BeirCorpus
+        {
+            Name = "test",
+            Documents = [new BeirDocument("a", string.Empty, "alpha beta"), new BeirDocument("b", string.Empty, "beta gamma")],
+            Queries = [new BeirQuery("q1", "alpha")],
+            TestRelevance = new Dictionary<string, IReadOnlyDictionary<string, double>>(StringComparer.Ordinal)
+            {
+                ["q1"] = new Dictionary<string, double> { ["a"] = 1 },
+            },
+        };
+
+        // A directory on disk, in the producer's format: the lane reads it exactly as it reads
+        // ArguAna's, and the two-row contract does not depend on the size of the corpus.
+        using var vectors = new SparseVectorDirectory("sparse_lane_test");
+        vectors.Write(
+            documents: [("alpha beta", "alpha:1\tbeta:0.5"), ("beta gamma", "beta:1\tgamma:1")],
+            queries: [("alpha", "alpha:1")]);
+
+        var lane = BackendLane.Parse(
+            "sparse", ConnectionString!, "simple", sparseVectorsDirectory: vectors.Path);
+
+        BackendMeasurement measurement = PostgresBackendBenchmark.Measure(
+            lane, corpus, "sparse_lane_test", topK: 10, limit: null, NdcgGain.Exponential,
+            excludeQueryDocument: false, jobs: 1);
+
+        Assert.Equal(2, measurement.Documents);
+        Assert.Equal(2, measurement.Rows.Count);
+
+        // "exact" is the row after DROP INDEX, always. The first row's label is the plan's answer:
+        // a two-document table is small enough that PostgreSQL may skip the index altogether, which
+        // is why the label is read from EXPLAIN rather than assumed.
+        Assert.Contains(measurement.Rows[0].Label, new[] { "hnsw", "sequential" });
+        Assert.Equal("exact", measurement.Rows[^1].Label);
+        Assert.All(measurement.Rows, row => Assert.Equal(1.0, row.Result.NdcgAt10));
+        Assert.Contains(
+            measurement.Caveats, caveat => caveat.Contains("plan PostgreSQL chose", StringComparison.Ordinal));
         Assert.False(TableExists(measurement.Table), "The lane drops the table it built.");
     }
 

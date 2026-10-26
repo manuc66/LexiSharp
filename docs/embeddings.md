@@ -27,8 +27,9 @@ testable offline with no model at all.
 
 **What is measured here, and what is not.** The BEIR evaluation runs a *real* ONNX model for
 its dense lane (`multilingual-e5-small`) and reports it next to the lexical engines, so the
-dense path has published numbers. No learned-sparse model is wired into that harness, and
-corpus-derived expansion is **not** an improvement where it has been measured: on the
+dense path has published numbers. The sparse path is measured from vectors a SPLADE export
+produced offline: the harness loads term weights and runs no model itself, and its rows are
+that producer's. Corpus-derived expansion is **not** an improvement where it has been measured: on the
 reference corpus the `bm25-semantic` lane scores **0.8469** nDCG@5 against plain BM25's
 **0.8751** — 2 queries degraded, none improved, reproducible with
 `diff --baseline bm25 --candidate bm25-semantic` (see

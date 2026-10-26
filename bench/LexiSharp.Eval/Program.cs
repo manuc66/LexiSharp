@@ -373,7 +373,8 @@ public static class Program
                     backendBm25,
                     backendEfValues,
                     backendFieldWeights is null ? null : ParseFieldWeights(backendFieldWeights),
-                    backendThresholds);
+                    backendThresholds,
+                    sparseVectorsDir);
             }
             catch (ArgumentException error)
             {
@@ -893,6 +894,14 @@ public static class Program
         }
         catch (NotSupportedException refusal)
         {
+            Console.WriteLine($"== {dataset.Name}, backend ==");
+            Console.WriteLine($"Not measured: {refusal.Message}");
+        }
+        catch (SparseVectorsException refusal)
+        {
+            // A dataset whose vectors are not in the directory is refused the same way the in-memory
+            // sparse row refuses it, not as an unhandled stack trace: with --dataset all, one corpus
+            // without a vector file must not abort the others.
             Console.WriteLine($"== {dataset.Name}, backend ==");
             Console.WriteLine($"Not measured: {refusal.Message}");
         }
@@ -1525,7 +1534,7 @@ public static class Program
             Usage: LexiSharp.Eval [--data <dir>] [--dataset <name|all>] [--top-k <n>] [--limit <n>]
                      [--no-tuned] [--tune-bm25f] [--tune-search-options] [--heldout <share>] [--stem porter] [--dense] [--dense-seq <n>] [--rerank] [--rerank-top <n>]
                      [--rerank-cache <dir>]
-                     [--backend <lexical|paradedb|vector|fuzzy> --backend-connection <s>]
+                     [--backend <lexical|paradedb|vector|fuzzy|sparse> --backend-connection <s>]
                      [--backend-bm25 <k1,b>] [--backend-ef <list>] [--backend-threshold <list>]
                      [--backend-config <name>]
                      [--sparse <vectors-dir>]
@@ -1677,11 +1686,12 @@ public static class Program
                                 corpus, queries and qrels: 'lexical' (tsvector + ts_rank_cd over stock
                                 PostgreSQL), 'paradedb' (pg_search + pdb.score, Okapi BM25 computed
                                 by Tantivy; needs the paradedb image), 'vector' (pgvector HNSW over
-                                the cached dense embeddings, needs --dense) or 'fuzzy' (pg_trgm
-                                similarity, one row per similarity threshold). Printed on its own,
-                                because the engine owns its index and its ranking function and the
-                                in-memory table is one index with many scorers. Needs
-                                --backend-connection.
+                                the cached dense embeddings, needs --dense), 'fuzzy' (pg_trgm
+                                similarity, one row per similarity threshold) or 'sparse' (pgvector
+                                sparsevec over the --sparse vectors, one row with the engine's HNSW
+                                index and one after dropping it). Printed on its own, because the
+                                engine owns its index and its ranking function and the in-memory
+                                table is one index with many scorers. Needs --backend-connection.
               --backend-connection <s>
                                 Npgsql connection string for --backend. The lane builds a table named
                                 lexisharp_eval_<dataset> and drops it afterwards, so it never reads or
@@ -1691,21 +1701,22 @@ public static class Program
                                 simple). This is the row's analysis: 'english' applies PostgreSQL's own
                                 Snowball stemmer and stop list, which is close to — and not identical
                                 with — the harness's --analyzer english. Not read by ParadeDB, the
-                                vector engine or the fuzzy engine.
+                                vector, sparse or fuzzy engines.
               --backend-bm25 <k1,b>
                                 k1 and b the ParadeDB backend is indexed with, e.g. 0.9,0.4 — the
                                 parameters the published baselines were produced at. pg_search takes
                                 them per field at index creation, so the row is built at these values
                                 rather than re-weighted afterwards. Omitted, Tantivy's defaults
                                 (k1=1.2, b=0.75) apply. Refused with --backend lexical, whose
-                                ts_rank_cd has no such parameter, and with the vector and fuzzy
-                                backends, which have no k1/b.
+                                ts_rank_cd has no such parameter, and with the vector, sparse and
+                                fuzzy backends, which have no k1/b.
               --backend-ef <list>
                                 pgvector hnsw.ef_search values the vector backend is measured at,
                                 comma-separated (e.g. 10,40,160). One row per value, over one index:
                                 the index is the same at every value, only the candidate list the
                                 search explores changes. Default 40, pgvector's own. Refused with the
-                                other backends, which do not read it.
+                                other backends, which do not read it — including the sparse backend,
+                                whose engine exposes no option that reaches hnsw.ef_search.
               --backend-threshold <list>
                                 pg_trgm similarity thresholds the fuzzy backend is measured at,
                                 comma-separated values in (0, 1] (e.g. 0.3,0.1,0.05,0.01). One row
@@ -1728,7 +1739,11 @@ public static class Program
                                 manifest, not from a flag, and the row's metrics contain no encoding
                                 cost. Generate the vectors with bench/LexiSharp.Eval/sparse/
                                 encode_splade.py; the run refuses a directory that is absent and a
-                                corpus the vectors do not cover rather than scoring a subset.
+                                corpus the vectors do not cover rather than scoring a subset. The
+                                same directory is what --backend sparse needs to put the pgvector
+                                sparsevec engine on the same vectors: with both flags the run prints
+                                the in-memory row and the SQL rows, and the difference between them
+                                is the index rather than the model.
               --analyze <file>  Write one row per query per configuration: the query's lexical coverage
                                 of its own judged documents, the metrics, and the per-query deltas
                                 against --analyze-baseline. Off by default — capturing a ranking per
