@@ -1079,6 +1079,121 @@ committed store opened with `decodedCacheEntries` lends its arrays; one without 
 the accumulator and serves the same page) and is **not** timed. P99 under concurrency, query mixing,
 other analyzers, other scorers, other `Limit` values and corpora above 500,000 documents are not
 measured; nor is the 1,000,000-document size, for the memory reason the scale lane gives.
+## Dense quantisation lane (`quantize`)
+
+`InMemoryVectorSearchEngine` holds its vectors in one contiguous float32 block: 384 components is
+1,536 B per document, or about 1.5 GB at 1,000,000 documents. `InMemoryVectorSearchOptions` can store
+the same rows as signed bytes plus one scale per row instead, and scan them in the quantised domain;
+this lane measures what that costs in ranking and what it saves in memory and time. It is a direct
+run rather than a BenchmarkDotNet class for the scale lane's reason: the block it measures is the
+thing being built, and a job that rebuilt it per invocation would measure the build. One engine per
+representation is built per size, timed, and released before the next is built.
+
+```bash
+# the three sizes in the table below
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- quantize --sizes 10000,100000,500000 --queries 200
+# the default lane: the same three sizes, 200 queries
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- quantize
+```
+
+The lane reads the cached `multilingual-e5-small` vectors the evaluation harness writes
+(`bench/LexiSharp.Eval/data/<corpus>/e5-small.docs.bin`, `.queries.bin` and `.json`, produced by any
+`--dense` run). With no cache it falls back to a deterministic Gaussian pool and says so in its
+header; the rows below are from the cache.
+
+**Representation.** Symmetric per-vector int8: `scale = max|v| / 127` and `qᵢ = round(vᵢ / scale)`
+clamped to `[-127, 127]`, so the largest component of each row uses the full range and the stored row
+is `scale · q`. The float32 block is not retained beside it. Two decisions worth naming:
+
+- **The norm is recomputed in the quantised domain**, `Σqᵢ²`, accumulated once at insert over the
+  integer components. The float vector's norm is *not* carried: it is the length of a vector the
+  scan never reads, and dividing by it would make the quantised cosine of a document with itself
+  less than 1 while leaving the vectors unchanged.
+  `TheQuantizedCosineAgainstItsOwnStoredVectorIsOne` pins it. The stored quantity is the integer sum
+  rather than `scale²·Σqᵢ²` because the per-vector scale is a common factor of the dot product and
+  of the norm — it cancels — and a row whose components sit near the bottom of the float range would
+  otherwise underflow its own squared norm to zero and silently stop matching.
+- **The scale is still stored**, because it is what defines the dequantised row `Export` hands back
+  and what keeps a re-imported corpus on the same components.
+
+**Corpus and query set.** The real pool is the three caches the harness has on this host: ArguAna
+(8,674 documents, 1,406 queries), NFCorpus (3,633, 3,237) and SciFact (5,183, 1,109) — 17,490
+document vectors and 5,752 query vectors, all 384-dimensional unit vectors.
+
+- **10,000 documents, real.** The first 10,000 pooled document vectors (ArguAna's 8,674, then
+  NFCorpus's first 1,326).
+- **100,000 and 500,000 documents, synthetic.** No cached corpus here is larger than ArguAna's 8,674
+  documents, so a larger real corpus is not available without encoding one. Those rows are drawn from
+  a **64-cluster Gaussian fitted to the real pool**: k-means centers, each document a draw around its
+  center with that cluster's RMS residual, renormalized. The fit preserves the concentration of the
+  real embedding distribution rather than assuming isotropic random directions, which is what makes
+  the quantisation error comparable; it is still a fitted corpus, not a retrieval result, and the
+  lane labels the column.
+- **Queries: 200 real query vectors at every size**, the first 200 in the pool (ArguAna's), at
+  `Limit: 10`. Recall@10 is the overlap between the int8 top 10 and the float32 top 10 for the same
+  query on the same vectors.
+- Both engines receive the vectors through `Import`, the stored-vector path, so no encoder runs and
+  no ONNX session is in the measurement. Each is warmed for five seconds of wall time on the same
+  calls that are timed, then 200 searches are timed individually.
+
+**Measured on 2026-10-26**, two runs of the command above (A, then B), on Manjaro Linux, Intel Core
+i7-8850H (12 logical processors), .NET 10.0.13, `ServerGC=True`, 15 GiB of RAM, load average 3.2–3.3
+(other sessions were building on the host). Recall and the byte counts are deterministic and
+identical across the two runs; the timing columns are each run's own.
+
+| Documents | Corpus | Representation | Engine B/vector | Payload B/vector | recall@10 | p50 (A / B) | mean (A / B) | ns/document (A / B) |
+|---:|---|---|---:|---:|---:|---:|---:|---:|
+| 10,000 | real | float32 | 2,635 | 1,540 | — | 1.00 / 0.84 ms | 1.02 / 0.87 ms | 101.7 / 86.6 |
+| 10,000 | real | int8 | 754 | 392 | 0.9885 | 0.49 / 0.51 ms | 0.50 / 0.54 ms | 49.8 / 53.5 |
+| 100,000 | synthetic | float32 | 2,117 | 1,540 | — | 9.12 / 9.24 ms | 9.18 / 9.79 ms | 91.8 / 97.9 |
+| 100,000 | synthetic | int8 | 612 | 392 | 0.9735 | 5.57 / 5.72 ms | 5.61 / 5.79 ms | 56.1 / 57.9 |
+| 500,000 | synthetic | float32 | 1,699 | 1,540 | — | 46.13 / 45.55 ms | 48.58 / 45.89 ms | 97.2 / 91.8 |
+| 500,000 | synthetic | int8 | 495 | 392 | 0.9710 | 28.91 / 27.86 ms | 29.24 / 29.63 ms | 58.5 / 59.3 |
+
+**What the columns mean.**
+
+- **Payload B/vector** is the layout's cost per stored row: `4·dimension + 4` for float32 (components
+  plus the cached squared norm) and `dimension + 4 + 4` for int8 (components, scale, squared norm).
+  At 384 dimensions that is **1,540 B against 392 B, a factor of 3.93** — a quarter of the payload,
+  less the two scalars that do not shrink.
+- **Engine B/vector** is the measured managed-heap delta of building the engine, divided by the
+  document count: `GC.GetTotalMemory(forceFullCollection: true)` before and after the `Import`, with
+  the corpus and the `SearchDocument` array allocated before the first reading so they are outside
+  the delta. It is larger than the payload at 10,000 and 100,000 documents because the slot block
+  doubles from 16 and the measured figure includes that slack (131,072 slots for 100,000 documents is
+  31 % slack; 524,288 for 500,000 is 4.9 %) plus the per-slot document array and the two dictionaries
+  keyed by document id, which cost the same in both representations. The measured ratio is therefore
+  **3.4–3.5×** rather than 3.93×, and a corpus that lands just under a power of two gets the larger
+  ending.
+- **recall@10** is the fraction of the float page's slots the int8 page reproduces. On the real
+  10,000-document row it is **0.9885**; on the fitted corpora **0.9735** and **0.9710**. The direction
+  is expected — more documents means more near-ties for quantisation to reorder — but the two
+  synthetic points are not a trend line for a real corpus, because the only real point is at 10,000.
+- **ns/document** divides the total measured milliseconds by documents × queries. It is the scan's
+  per-candidate cost, and it is what the latency difference actually is: 87–102 ns for float32
+  against 50–59 ns for int8, a little over half. The int8 row moves a quarter of the bytes in about
+  half the time, so the scan is **not memory-bandwidth-bound at these sizes**: the widening
+  (`sbyte → short → int`), the conversion to float and the multiply cost more per element than the
+  float32 path's two-chained FMA, and a kernel built for integer dot products would have more
+  headroom. That is not measured here, and the **1.6–2.0×** p50 ratio is what this kernel reads.
+
+**What this changes about the default.** Nothing. `InMemoryVectorSearchOptions.Quantization`
+defaults to `VectorQuantization.None`, the float32 block and its scan are the code path they were,
+and `VectorQuantizationTests` pins the default engine's `Export` to the provider's vectors exactly.
+Quantisation is opt-in because a 1–3 % loss of the float page is a property of the model and the
+corpus: 0.9885 on `multilingual-e5-small` is a measurement of this model on this corpus, not a
+tolerance for another one.
+
+**Not measured.** 1,000,000 documents: the float32 block alone is about 1.5 GB and the lane would
+hold it beside the 1.5 GB corpus, against a host another session was already using — the memory
+figure extrapolates (392 B × 1,000,000 ≈ 392 MB of int8 payload against 1.54 GB of float32) but the
+latency does not, and neither is a result. Other embedding models, other dimensions (only 384 was
+measured; a smaller dimension pays proportionally more for the scale and norm, a larger one less),
+dot-product rather than cosine (the engine is cosine-only), ANN indexes, structured filters,
+`MinimumScore`, concurrency, and any query set but the 200 ArguAna ones named above. The latency
+columns are `p50` and `mean` over 200 searches; no percentile beyond that, no distribution, and the
+host was shared. The memory figure is managed heap only — no native, JIT, thread or GC-structure
+memory — and the per-vector dictionaries are included at their measured cost, not divided out.
 
 ## Concurrency lane (`concurrency`): one index at 1, 2, 4 and 8 callers
 
