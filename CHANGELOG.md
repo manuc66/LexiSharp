@@ -50,11 +50,24 @@ workflow.
   manifest rather than from a flag, and its metrics contain no encode cost. A directory that is
   absent, a manifest that is missing, a malformed line, or a corpus the vectors do not cover is
   refused with the count and an example, because a metric over the covered subset would be a
-  different corpus from the row beside it. `--backend sparse` keeps its refusal, now for the right
-  reason: `--backend` measures a SQL backend and the `pgvector sparsevec` engine is not wired in.
+  different corpus from the row beside it.
 
   The measured rows, the vectors' provenance and what they do not establish are on
   [the evaluation page](docs/evaluation.md#learned-sparse-splade-through-onnx).
+
+- **The evaluation harness measures the PostgreSQL `sparsevec` engine on those same vectors.**
+
+  `--backend sparse` adds a retrieval-quality row for `PostgresSparseSearchEngine` over the
+  directory `--sparse` already names, so the SQL sparse engine and the in-memory one are scored on
+  the same corpus, the same queries, the same qrels and the same SPLADE vectors: the difference
+  between the rows is the index, not the model. The lane prints two rows over one table named
+  `lexisharp_eval_<dataset>` and drops it afterwards — the engine's HNSW index, and the same table
+  with `DROP INDEX` — and reports the plan PostgreSQL chose, labelling the first row from that plan
+  rather than assuming the graph answered. The vocabulary is the sorted union of the terms in the
+  run's vectors; `hnsw.ef_search` is pgvector's default 40, because the engine exposes no option
+  that reaches it, and `--backend-ef` is refused with this backend rather than ignored. The
+  measured row and what it does not cover are on
+  [the evaluation page](docs/evaluation.md#the-sql-backends-on-the-same-corpora).
 
 - **The evaluation harness measures the `pg_trgm` fuzzy backend.**
 

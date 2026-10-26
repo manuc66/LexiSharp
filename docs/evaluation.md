@@ -300,8 +300,10 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-
 `--backend paradedb` measures `ParadeDBTextSearchEngine` (`pg_search` + `pdb.score`, Tantivy's BM25);
 `--backend vector` measures `PostgresVectorSearchEngine` over the cached dense embeddings, with one
 row per `ef_search`; `--backend fuzzy` measures `PostgresFuzzySearchEngine`, with one row per
-`pg_trgm` similarity threshold. The lane builds a table named `lexisharp_eval_<dataset>` and drops it
-when the run ends.
+`pg_trgm` similarity threshold; `--backend sparse` measures `PostgresSparseSearchEngine` over the
+`--sparse` vectors, with one row for the engine's HNSW index and one for the same table after the
+index is dropped. The lane builds a table named `lexisharp_eval_<dataset>` and drops it when the
+run ends.
 
 nDCG@10, harness defaults (exponential gains — the convention of the **defaults** rows above). The
 first table is the comparison worth having: ParadeDB's k1 and b are index-time tokenizer arguments in
@@ -429,8 +431,65 @@ together:
   only, which is the mode the engine's default threshold gates. ArguAna has no row: the lane is
   measured on NFCorpus and SciFact only.
 
-What the lane does **not** cover is the PostgreSQL **sparse** engine: the harness has no `sparsevec`
-lane. The in-memory sparse engine has a row, and it is the next section.
+The sparse engine is measured the same way, over the vectors the in-memory sparse row reads.
+`--backend sparse` is refused without `--sparse <dir>`, and with both flags one command prints the
+in-memory row and two SQL rows over one table:
+
+```bash
+docker run -d --name lexisharp-pg-sparsevec -p 5432:5432 \
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=lexisharp pgvector/pgvector:pg16
+
+POSTGRES_TEST_CONNECTION="Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp"
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset arguana --no-tuned \
+  --backend sparse --backend-connection "$POSTGRES_TEST_CONNECTION" \
+  --sparse bench/LexiSharp.Eval/data/sparse-vectors --exclude-query-doc
+```
+
+The lane indexes the corpus into `PostgresSparseSearchEngine` — a `sparsevec` column of 23 099
+coordinates, one per term the vector set carries, with an HNSW index at `m = 16` and
+`ef_construction = 64` (pgvector's defaults) — in a table named `lexisharp_eval_arguana`, which is
+dropped when the run ends. It then scores the corpus twice: with that index in place, and after
+`DROP INDEX`, which leaves the same column answered by an exact scan. Measured on 2026-10-26 on one
+host against a fresh container, 1 406 test queries, harness defaults (exponential gains),
+`--exclude-query-doc`:
+
+| ArguAna, `--exclude-query-doc` | nDCG@10 | MAP@10 | MRR@10 | R@10 |
+|---|---:|---:|---:|---:|
+| SPLADE-v3, in memory (`--sparse`, same run) | **0.5216** | 0.4300 | 0.4300 | 0.8179 |
+| `sparsevec` + HNSW, `hnsw.ef_search` 40 | 0.5200 | 0.4272 | 0.4272 | 0.8201 |
+| `sparsevec`, exact scan (index dropped) | 0.5202 | 0.4280 | 0.4280 | 0.8179 |
+
+- **The index costs 0.0002 nDCG@10 here.** 0.5200 with the graph against 0.5202 without it is the
+  whole of what the HNSW candidate list of 40 costs on this corpus; the 0.0014 between the exact
+  row and the in-memory row is the same vectors summed by a different code path, and this run does
+  not apportion it between pgvector's arithmetic and the order of a page.
+- **The plan says which path answered, and the lane prints it.** `EXPLAIN` over the engine's own
+  search shape returns `Index Scan using lexisharp_eval_arguana_sparse_hnsw on
+  lexisharp_eval_arguana`, and the row's label is read from that plan, so a table cannot say "hnsw"
+  about a sequential scan. The second row is the same table after `DROP INDEX`: "exact" is a fact
+  about the table, not an inference from the first row.
+- **`hnsw.ef_search` is one point, at the server's default.** The engine exposes no option that
+  reaches it, so the row runs at pgvector's default 40 — and `--backend-ef` is refused with this
+  backend rather than accepted and ignored. What a larger candidate list would buy is not measured;
+  the vector lane's curve is not a substitute, because that index is dense and cosine.
+- **The query set is the in-memory row's, all 1 406 queries.** The two text rows refuse 2 of
+  ArguAna's queries as prefix operators and the vector row refuses 148 as phrases; this engine is
+  called with query syntax off and hands the text to the encoder, which hashed it verbatim, so it
+  scores every query. A query whose text had no vector is refused by the lane with its id rather
+  than skipped.
+- **R@10 moves the other way, and the reason is not measured.** The exact row reads 0.8179 and the
+  indexed one 0.8201, so exactness is not an upper bound on R@10 here: the metric reads a page, the
+  SQL `ORDER BY` has no tie-break where the in-memory engine breaks ties by document id, and which
+  of several equally-scored documents fills rank 10 is then the executor's choice. That is a
+  candidate explanation for the difference; this run does not separate ties from rounding, and no
+  figure above depends on the explanation.
+- **Not measured:** the query-document-kept convention (the SQL counterpart of the 0.3836 row),
+  NFCorpus and SciFact (a sparse row needs a vector set per corpus, and ArguAna's is the one this
+  page measures both in memory and in PostgreSQL), recall@k as a ratio against an exact top-k, the
+  cost of loading the table (one `INSERT` per document, no latency reported — every search opens a
+  connection, which is the lane's shape rather than a property of the engine), and any vocabulary
+  that does not cover every term in the vectors: the lane builds one that does, which is what makes
+  the SQL dot product the same sum the in-memory engine computes.
 
 ## Learned sparse (SPLADE, through ONNX)
 
@@ -543,13 +602,15 @@ conventions:
   with `k1=0.9, b=0.4`. The 0.5216 and the 0.3970 are two retrieval systems on one corpus, one query
   list and one qrels set, not two analyses of one index, and no task convention makes them the same
   thing.
-- **Not measured:** truncation at 512 tokens, any top-k other than 256, and the `pgvector sparsevec`
-  backend, which has no harness lane at all. The 8-bit export has no row either; at the vector level
+- **Not measured:** truncation at 512 tokens and any top-k other than 256. The 8-bit export has no
+  row either; at the vector level
   it is not a near-copy of the full-precision one — on the 300 SciFact queries the two exports'
   sparse vectors have a mean cosine of 0.904 (minimum 0.762), a mean maximum per-query weight
   difference of 1.03, and the quantised export activates 13.5 more
   terms per query on average. A row measured on it would be a different retrieval model, which is
-  why the encoder records `quantised` in the manifest and the row prints it.
+  why the encoder records `quantised` in the manifest and the row prints it. The PostgreSQL
+  `sparsevec` engine's row is in [the SQL backend section](#the-sql-backends-on-the-same-corpora):
+  two rows over the same ArguAna vectors, and what separates them is the index.
 
 
 ## Metrics

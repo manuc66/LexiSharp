@@ -36,17 +36,17 @@ instantiation:
 in CI (`pgvector/pgvector:pg16` and `paradedb/paradedb:pg16`) and self-skip without
 `POSTGRES_TEST_CONNECTION`, so what they cover is executed on every build: schema
 installation, the query paths, and exact cosine behaviour for the vector engine. Retrieval
-*quality* is measured for the four engines that rank on their own: the evaluation harness's
-`--backend lexical|paradedb|vector|fuzzy` adds a nDCG row for the same BEIR corpus, queries and
-qrels as the in-memory table, and [the evaluation
+*quality* is measured for the five engines that rank on their own: the evaluation harness's
+`--backend lexical|paradedb|vector|fuzzy|sparse` adds a nDCG row for the same BEIR corpus,
+queries and qrels as the in-memory table, and [the evaluation
 page](evaluation.md#the-sql-backends-on-the-same-corpora) carries the figures and what each one is
-comparable with. What is **not** measured against a public benchmark is the PostgreSQL **sparse**
-engine: the harness has no `sparsevec` lane, so the integration tests are what cover it. The
-**in-memory** sparse engine is measured — `--sparse` scores SPLADE vectors that were precomputed
-outside the harness — and [the evaluation page](evaluation.md#learned-sparse-splade-through-onnx)
-carries that row's provenance and limits. PostgreSQL-native scores are also **not** numerically
-comparable to `Bm25Scorer`; feed several backends to the
-[hybrid merger](pipelines.md#hybrid-engine) when you need one consistent ordering.
+comparable with. `--backend sparse` indexes the same precomputed SPLADE vectors as the in-memory
+`--sparse` row — the same directory, the same loader — and reports two rows, the engine's HNSW
+index and the same table with the index dropped, so what the index costs is separated from where
+the dot product runs. The **in-memory** sparse engine's own row, and the vectors' provenance and
+limits, are on [the evaluation page](evaluation.md#learned-sparse-splade-through-onnx).
+PostgreSQL-native scores are also **not** numerically comparable to `Bm25Scorer`; feed several
+backends to the [hybrid merger](pipelines.md#hybrid-engine) when you need one consistent ordering.
 
 ## PostgreSQL backend (`LexiSharp.Postgres`)
 
@@ -242,9 +242,10 @@ format, the **vocabulary (term → coordinate) is an index-layout decision**: it
 once and shared between the provider at index time and the one at query time. Terms outside the
 vocabulary are ignored; a query with no known term returns nothing. HNSW — unlike IVFFlat —
 works on empty tables and supports inserts, so there is no "index after first batch" step.
-`sparsevec` caps a vector at 1000 non-zero elements. Scores are PostgreSQL-native and again
-depend on the chosen distance; route through `ReciprocalRankFusionMerger` when mixing with the
-lexical engine.
+`sparsevec` caps a vector at 1000 non-zero elements. The engine exposes no option for
+`hnsw.ef_search`, so a search runs at whatever the server's setting is (pgvector's default 40);
+the measured row states the value it ran at. Scores are PostgreSQL-native and again depend on the
+chosen distance; route through `ReciprocalRankFusionMerger` when mixing with the lexical engine.
 
 **Fuzzy (`PostgresFuzzySearchEngine`)** — approximate, typo-tolerant matching over `pg_trgm`
 trigrams, with optional `fuzzystrmatch` (edit distance + phonetics):

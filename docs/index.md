@@ -106,7 +106,7 @@ twice. Every figure below is reproducible with a command on the
   it improves every first stage on NFCorpus (0.346, about 2.1 points above BEIR's BM25), helps one
   of three on SciFact, and **loses to all three on ArguAna**. Those two lanes are the only ones
   that use a real model, and the model comes from the harness, not from the library.
-- **The SQL backends, on the same corpora.** The three PostgreSQL engines that rank on their own are
+- **The SQL backends, on the same corpora.** The PostgreSQL text, BM25 and vector engines are
   scored over the same queries and qrels as the in-memory table: at matched k1=0.9/b=0.4, ParadeDB's
   Tantivy BM25 reads **0.3055** and **0.6633** on NFCorpus and SciFact against this library's
   **0.305** and **0.655**, `ts_rank_cd` reads **0.1864** and **0.0188** — mostly its matcher, which
@@ -115,7 +115,10 @@ twice. Every figure below is reproducible with a command on the
   SciFact against **0.655**: that gap is the index's cost in nDCG. ArguAna produces no row from any
   of the three: the text engines reject 2 of its 1,406 test queries, and the vector engine rejects
   148 as phrases. None of these rows is pinned, and the text engines' analysis is PostgreSQL's
-  rather than this library's.
+  rather than this library's. The sparse engine, like the dense one, is measured in memory and
+  through the SQL backend on the same vectors: on ArguAna under `--exclude-query-doc`, SPLADE-v3
+  reads **0.5216** in memory and **0.5200** through pgvector's HNSW index, so 0.0002 of that
+  difference is the index and the rest is the same dot product computed in SQL.
   See [evaluation](evaluation.md#the-sql-backends-on-the-same-corpora).
 - **The fuzzy engine is measured, and it is not a prose ranker.** `pg_trgm` similarity reads
   **0.0000** on NFCorpus and **0.0033** on SciFact at its default 0.3 threshold, and
@@ -130,12 +133,10 @@ twice. Every figure below is reproducible with a command on the
   build and self-skip when `POSTGRES_TEST_CONNECTION` is unset.
 - **Not measured, and named rather than glossed over.** The **time** cost of `SearchTrace`
   (its allocation is pinned; the timing was not resolvable on the machine used, so no figure
-  is quoted). The **ranking of the sparse engine** on BEIR: no sparse model is wired into
-  the harness, so the integration tests are what cover it. The **learned-sparse and expansion lanes** on
-  BEIR: no SPLADE model is
-  wired into the harness, and corpus-derived expansion is a *loss* where it has been
-  measured (0.8469 against BM25's 0.8751 on the reference corpus). **Not every combination**
-  of engine, scorer, reranker and merger is exercised by a test.
+  is quoted). The **learned-sparse lane** runs no model: it scores vectors a SPLADE export
+  produced offline, and its rows are that model's, not this library's. Corpus-derived expansion
+  is a *loss* where it has been measured (0.8469 against BM25's 0.8751 on the reference corpus).
+  **Not every combination** of engine, scorer, reranker and merger is exercised by a test.
 
 ## Where to go next
 

@@ -177,6 +177,8 @@ same qrels as the table above, through the same metric code at the same depth:
 | `lexical` | `PostgresTextSearchEngine` | `ts_rank_cd` | stock PostgreSQL (the lane installs `unaccent`) |
 | `paradedb` | `ParadeDBTextSearchEngine` | `pdb.score`, Tantivy's BM25 | `paradedb/paradedb:pg16` (`pg_search`) |
 | `vector` | `PostgresVectorSearchEngine` | cosine over pgvector HNSW | `--dense` (it ranks the cached e5 vectors) |
+| `fuzzy` | `PostgresFuzzySearchEngine` | `similarity(content, query)` over `pg_trgm` | stock PostgreSQL (the lane installs `pg_trgm`) |
+| `sparse` | `PostgresSparseSearchEngine` | inner product over `pgvector sparsevec` | `--sparse` (it ranks the precomputed SPLADE vectors) |
 
 The row is printed on its own rather than appended to the table: every row above is a different
 scorer over one shared in-memory index, and these engines own both their index and their ranking
@@ -244,13 +246,23 @@ ratio translated into metric points. The residual at 160 is not attributed: the 
 by pgvector in single precision and in process, and on NFCorpus the planner may already answer with
 an exact scan at that value (see the plan note on the backends page).
 
-The **sparse** engine has its own lane (`--sparse`, below) rather than a `--backend` value: it takes
-precomputed vectors and needs no server. The **fuzzy** engine is measured with `--backend fuzzy
---backend-threshold`, one row per `pg_trgm` similarity threshold. On the same two corpora it scores
-0.0981 (NFCorpus) and 0.2186 (SciFact) at the low end of an in-sample threshold sweep, and 0.0000 /
-0.0033 at the engine's default 0.3 — a threshold on trigrams is not a relevance ranking, and [the
-evaluation page](../../docs/evaluation.md#the-sql-backends-on-the-same-corpora) carries the grid and
-the caveats. The ANN *recall* curve (`--ann-ef`) is a separate measurement, kept because a recall
+The **sparse** engine is measured twice over the same vectors: `--sparse <dir>` scores the
+in-memory `SparseTextSearchEngine` (below), and `--backend sparse --sparse <dir>` scores
+`PostgresSparseSearchEngine` on the same corpus, the same queries and the same vector directory.
+The SQL lane prints two rows over one table — the engine's HNSW index (pgvector's default
+`hnsw.ef_search` of 40, which the engine exposes no option for) and the same table after `DROP
+INDEX` — and reads the plan PostgreSQL chose with `EXPLAIN`, so the row label says which path
+answered. The distance between the two is what the index costs in nDCG; the distance between the
+exact row and the in-memory row is where the dot product runs, not the model. The two text rows
+refuse ArguAna's two prefix-operator queries and the vector row refuses its 148 quoted queries;
+this lane refuses neither, because the engine is called with query syntax off and the text is
+hashed verbatim by the encoder — it scores the same 1,406 queries as the in-memory sparse row.
+The **fuzzy** engine is measured with `--backend fuzzy --backend-threshold`, one row per `pg_trgm`
+similarity threshold. On the same two corpora it scores 0.0981 (NFCorpus) and 0.2186 (SciFact) at
+the low end of an in-sample threshold sweep, and 0.0000 / 0.0033 at the engine's default 0.3 — a
+threshold on trigrams is not a relevance ranking, and [the evaluation
+page](../../docs/evaluation.md#the-sql-backends-on-the-same-corpora) carries the grid and the
+caveats. The ANN *recall* curve (`--ann-ef`) is a separate measurement, kept because a recall
 ratio and an nDCG are different questions.
 
 ## Learned sparse (optional, ONNX Runtime outside .NET)
@@ -266,7 +278,9 @@ The row's name — model, truncation, top-k — is read from `<dir>/<dataset>.me
 same pass as the vectors, so the printed configuration cannot disagree with the file that was read.
 A directory that is absent, a manifest that is missing, a malformed line, or a corpus the vectors do
 not cover is refused by name (with the count and an example) instead of producing a metric over the
-subset that happened to be encodable.
+subset that happened to be encodable. The same directory is what `--backend sparse` indexes into
+`PostgresSparseSearchEngine`: with both flags the run prints the in-memory row and the SQL rows, and
+what separates them is the index rather than the model.
 
 Measured on 2026-10-26 with SPLADE-v3 (`splade-v3.onnx`, 532 MB, sha256 `9e472022…`), 256-token
 truncation, top 256 terms, documents as `title + "\n" + text`, linear gains:
@@ -279,8 +293,9 @@ truncation, top 256 terms, documents as `title + "\n" + text`, linear gains:
 The sparse row's MAP@10 / MRR@10 / R@10 read 0.2646 / 0.5714 / 0.1709 on NFCorpus and 0.6678 /
 0.6814 / 0.8157 on SciFact, against BM25's 0.234 / 0.523 / 0.152 and 0.633 / 0.644 / 0.806 at the
 aligned operating point. What the row does and does not establish — the encode cost it excludes, the
-missing ArguAna row, the pruning budget, the 8-bit export's distance from the full-precision one —
-is on [the evaluation page](../../docs/evaluation.md#learned-sparse-splade-through-onnx), which is
+ArguAna rows under both task conventions, the pruning budget, the 8-bit export's distance from the
+full-precision one — is on
+[the evaluation page](../../docs/evaluation.md#learned-sparse-splade-through-onnx), which is
 where this repository keeps measured numbers.
 
 ## Per-query analysis

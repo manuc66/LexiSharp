@@ -3,6 +3,7 @@ using LexiSharp.Core;
 using LexiSharp.ParadeDB;
 using LexiSharp.Postgres;
 using LexiSharp.Ranking;
+using Npgsql;
 
 namespace LexiSharp.Eval;
 
@@ -25,6 +26,12 @@ internal enum BackendKind
     /// <c>similarity(content, query)</c>.
     /// </summary>
     Fuzzy,
+
+    /// <summary>
+    /// <c>pgvector sparsevec</c> + HNSW over precomputed learned-sparse vectors: inner product
+    /// between the query's term weights and each document's.
+    /// </summary>
+    Sparse,
 }
 
 /// <summary>
@@ -58,6 +65,13 @@ internal enum BackendKind
 /// either clears it and is ranked by <c>similarity</c>, or it is absent. Empty for the other
 /// engines, and refused there rather than ignored.
 /// </param>
+/// <param name="SparseVectorsDirectory">
+/// The directory of precomputed sparse vectors a sparse row indexes, in the producer's format
+/// (<c>&lt;dataset&gt;.docs.tsv</c>, <c>.queries.tsv</c>, <c>.meta.json</c>). Required by
+/// <see cref="BackendKind.Sparse"/> and ignored by every other kind — not refused there, because
+/// <c>--sparse</c> is also its own in-memory row, so <c>--backend lexical --sparse &lt;dir&gt;</c> is
+/// a legitimate pair of rows rather than a flag that reached the wrong lane.
+/// </param>
 internal sealed record BackendLane(
     BackendKind Kind,
     string ConnectionString,
@@ -65,7 +79,8 @@ internal sealed record BackendLane(
     Bm25Parameters? Bm25 = null,
     IReadOnlyList<int>? EfSearchValues = null,
     IReadOnlyDictionary<string, PostgresFieldWeight>? FieldWeights = null,
-    IReadOnlyList<double>? SimilarityThresholds = null)
+    IReadOnlyList<double>? SimilarityThresholds = null,
+    string? SparseVectorsDirectory = null)
 {
     /// <summary>The <c>ef_search</c> values in force; pgvector's own default when none was given.</summary>
     public IReadOnlyList<int> EfValues => EfSearchValues is { Count: > 0 } values ? values : [40];
@@ -82,7 +97,8 @@ internal sealed record BackendLane(
         Bm25Parameters? bm25 = null,
         IReadOnlyList<int>? efSearchValues = null,
         IReadOnlyDictionary<string, PostgresFieldWeight>? fieldWeights = null,
-        IReadOnlyList<double>? similarityThresholds = null)
+        IReadOnlyList<double>? similarityThresholds = null,
+        string? sparseVectorsDirectory = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
@@ -92,14 +108,47 @@ internal sealed record BackendLane(
             "paradedb" => BackendKind.ParadeDb,
             "vector" => BackendKind.Vector,
             "fuzzy" => BackendKind.Fuzzy,
-            "sparse" => throw new ArgumentException(
-                "--backend sparse has no row: --backend measures a SQL backend, and the pgvector "
-                + "sparsevec engine is not wired into this harness. The in-memory sparse engine is "
-                + "measured through --sparse, which consumes vectors produced outside the harness. "
-                + "The backends with a row are 'lexical', 'paradedb', 'vector' and 'fuzzy'."),
+            "sparse" => BackendKind.Sparse,
             _ => throw new ArgumentException(
-                $"--backend expects 'lexical', 'paradedb', 'vector' or 'fuzzy', got '{kind}'."),
+                $"--backend expects 'lexical', 'paradedb', 'vector', 'fuzzy' or 'sparse', got '{kind}'."),
         };
+
+        if (parsed == BackendKind.Sparse)
+        {
+            if (string.IsNullOrWhiteSpace(sparseVectorsDirectory))
+            {
+                throw new ArgumentException(
+                    "--backend sparse measures PostgresSparseSearchEngine over precomputed learned-sparse "
+                    + "vectors, and the engine has no model of its own: give them with --sparse <dir>, the "
+                    + "same directory the in-memory sparse row reads. --dense is not a substitute — those "
+                    + "are the dense lane's embeddings, not sparse term weights.");
+            }
+
+            if (bm25 is not null)
+            {
+                throw new ArgumentException(
+                    "--backend-bm25 sets k1/b, and the sparse row ranks by the inner product of two "
+                    + "learned sparse vectors: no BM25 parameter reaches it. Drop the flag.");
+            }
+
+            if (textSearchConfig != "simple")
+            {
+                throw new ArgumentException(
+                    $"--backend-config '{textSearchConfig}' is PostgreSQL's text search configuration, "
+                    + "which the sparse engine never reads: the shared table's tsv column is written but "
+                    + "the sparse ranking is a dot product over term coordinates. Drop the flag, or use "
+                    + "--backend lexical.");
+            }
+
+            if (efSearchValues is { Count: > 0 })
+            {
+                throw new ArgumentException(
+                    "--backend-ef sets pgvector's hnsw.ef_search, and PostgresSparseSearchEngine has no "
+                    + "option that reaches it: the sparse row is measured at pgvector's default 40. Set "
+                    + "it on the server (a database-level setting applies, because the engine never "
+                    + "overrides it) and say so in the row beside the number, or drop the flag.");
+            }
+        }
 
         if (parsed == BackendKind.Lexical && bm25 is not null)
         {
@@ -171,13 +220,15 @@ internal sealed record BackendLane(
         {
             throw new ArgumentException(
                 "--backend-field-weights configures setweight on the tsv column, which only the lexical "
-                + "backend ranks with: the vector, ParadeDB and fuzzy rows are ranked by an embedding, "
-                + "by pdb.score or by trigram similarity. Drop the flag, or use --backend lexical.");
+                + "backend ranks with: the vector, sparse, ParadeDB and fuzzy rows are ranked by an "
+                + "embedding, by a sparse dot product, by pdb.score or by trigram similarity. Drop the "
+                + "flag, or use --backend lexical.");
         }
 
         return new BackendLane(
             parsed, connectionString, textSearchConfig, bm25, efSearchValues, fieldWeights,
-            similarityThresholds);
+            similarityThresholds,
+            sparseVectorsDirectory is null ? null : Path.GetFullPath(sparseVectorsDirectory));
     }
 
     /// <summary>
@@ -210,6 +261,9 @@ internal sealed record BackendLane(
             "pg_trgm similarity (content % query, ranked by similarity) at similarity threshold "
             + string.Join(", ", Thresholds.Select(FormatThreshold))
             + " — index over content only, title concatenated into it",
+        BackendKind.Sparse =>
+            "pgvector sparsevec (inner product) + HNSW (m = 16, ef_construction = 64), pgvector's "
+            + "default hnsw.ef_search 40, and the same table after DROP INDEX",
         _ => $"PostgreSQL lexical (ts_rank_cd, text search config '{TextSearchConfig}' + unaccent"
             + FieldWeightsText + ")",
     };
@@ -279,6 +333,23 @@ internal sealed record BackendLane(
             + "scores on this corpus, not a tuned configuration, and not comparable with a tuned row.",
             "The index covers content alone and the BEIR title is concatenated into it; the analysis "
             + "is character trigrams, with no stemming, no stop list and no term weighting.",
+        ],
+        BackendKind.Sparse =>
+        [
+            "The vectors are the ones bench/LexiSharp.Eval/sparse/encode_splade.py wrote, read through "
+            + "the same loader and the same directory as the in-memory sparse row: this row and that "
+            + "one rank the same vectors, so the difference between them is where the dot product "
+            + "runs, not the model. The metrics contain no encode cost.",
+            "The vocabulary (term → coordinate) is the sorted union of the terms in this run's "
+            + "document and query vectors, so no term in the set is dropped. It is this run's layout, "
+            + "not a fixed vocabulary an application would keep across corpora.",
+            "Documents are encoded as title + newline + body, exactly as the producer hashed them: "
+            + "the sparse engine has no field concept, so no title weight exists in this row.",
+            "Query text reaches the encoder verbatim: the engine declares no query-syntax features, "
+            + "and this harness runs with query syntax off, so a quote or a `*` is a character in the "
+            + "text rather than an operator. Every judged test query is scored — including the ones "
+            + "the lexical and vector rows refuse — which is the query set the in-memory sparse row "
+            + "is scored on.",
         ],
         _ =>
         [
@@ -366,6 +437,12 @@ internal static class PostgresBackendBenchmark
 
         if (lane.Kind == BackendKind.Fuzzy)
             return MeasureFuzzy(lane, corpus, documents, table, topK, limit, ndcgGain, excludeQueryDocument, jobs);
+
+        if (lane.Kind == BackendKind.Sparse)
+        {
+            return MeasureSparse(
+                lane, corpus, dataset, documents, table, topK, limit, ndcgGain, excludeQueryDocument, jobs);
+        }
 
         if (lane.Kind == BackendKind.ParadeDb)
         {
@@ -595,6 +672,232 @@ internal static class PostgresBackendBenchmark
     }
 
     /// <summary>
+    /// The sparse rows: the engine's own query with its HNSW index in place, then the same table with
+    /// the index dropped.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two rows, because the engine has both a <c>sparsevec</c> column and an HNSW index over it, and
+    /// which one answers a search is the planner's decision rather than the engine's: the SQL is
+    /// <c>ORDER BY sparse &lt;#&gt; @query LIMIT k</c>, which pgvector can serve from the graph or from
+    /// an exact scan. The plan PostgreSQL chose is read with <c>EXPLAIN</c> and printed with the rows,
+    /// and the first row's label follows it — so a table cannot say "hnsw" about a sequential scan.
+    /// </para>
+    /// <para>
+    /// The second row is the same table after <c>DROP INDEX</c>, so the distance between the two is
+    /// what the index costs in metric points at pgvector's default <c>hnsw.ef_search</c> of 40 — the
+    /// value the engine never overrides and exposes no option for. Without that row, a gap against the
+    /// in-memory sparse row could not be attributed between the index and the float conversion.
+    /// </para>
+    /// <para>
+    /// No syntax refusal runs here, unlike the lexical and vector lanes. The engine declares no query
+    /// features, but this harness calls it with <c>ParseQuerySyntax: false</c> and the text reaches the
+    /// encoder verbatim, exactly as it does for the in-memory sparse row — refusing would score a
+    /// different query set from the row this one is put beside.
+    /// </para>
+    /// </remarks>
+    private static BackendMeasurement MeasureSparse(
+        BackendLane lane,
+        BeirCorpus corpus,
+        string dataset,
+        IReadOnlyList<SearchDocument> documents,
+        string table,
+        int topK,
+        int? limit,
+        NdcgGain ndcgGain,
+        bool excludeQueryDocument,
+        int jobs)
+    {
+        string directory = lane.SparseVectorsDirectory
+            ?? throw new InvalidOperationException(
+                "A sparse lane has no vectors directory. BackendLane.Parse refuses that combination, so "
+                + "this is a lane built by hand rather than from --backend/--sparse.");
+
+        SparseVectorSet vectors = SparseVectorSet.Load(directory, dataset);
+
+        vectors.EnsureCoversDocuments(documents, dataset);
+
+        List<EvaluatedQuery> queries = Evaluation.BuildQueries(corpus, limit, excludeQueryDocument);
+
+        vectors.EnsureCoversQueries(queries, dataset);
+
+        IReadOnlyDictionary<string, int> vocabulary = Vocabulary(vectors);
+
+        var provider = new SparseVectorProvider(vectors);
+
+        var options = new PostgresSparseOptions
+        {
+            Table = table,
+            Vocabulary = vocabulary,
+            Dimension = vocabulary.Count,
+            Distance = SparseDistance.InnerProduct,
+            // Spelled out rather than inherited: the row's name states these values, and a changed
+            // default would otherwise move the measurement without the label moving with it.
+            HnswM = 16,
+            HnswEfConstruction = 64,
+        };
+
+        try
+        {
+            // The engine truncates before indexing, so a re-run cannot score a corpus plus whatever a
+            // failed run left in the table. The HNSW index is built by the constructor and accepts
+            // inserts, which is why the load can happen after it exists.
+            using (var indexer = new PostgresSparseSearchEngine(lane.ConnectionString, provider, options))
+                indexer.Index(documents);
+
+            if (!SparseIndexExists(lane.ConnectionString, table))
+            {
+                throw new InvalidOperationException(
+                    $"PostgresSparseSearchEngine did not create '{SparseIndexName(table)}', so both rows "
+                    + "would be exact scans and the measurement would not contain the index it names.");
+            }
+
+            (string node, bool usesIndex) =
+                SparsePlan(lane.ConnectionString, table, vocabulary.Count, topK + 1);
+
+            var rows = new List<BackendRow>(2);
+
+            using (var engine = new PostgresSparseSearchEngine(
+                       lane.ConnectionString, provider, options with { AutoCreateSchema = false }))
+            {
+                rows.Add(new BackendRow(
+                    usesIndex ? "hnsw" : "sequential",
+                    Evaluation.RunEngine(
+                        corpus, engine, lane.Description, topK, limit, ndcgGain,
+                        excludeQueryDocument, jobs)));
+            }
+
+            DropSparseIndex(lane.ConnectionString, table);
+
+            using (var engine = new PostgresSparseSearchEngine(
+                       lane.ConnectionString, provider, options with { AutoCreateSchema = false }))
+            {
+                rows.Add(new BackendRow(
+                    "exact",
+                    Evaluation.RunEngine(
+                        corpus, engine, lane.Description, topK, limit, ndcgGain,
+                        excludeQueryDocument, jobs)));
+            }
+
+            var caveats = new List<string>(lane.Caveats)
+            {
+                $"The column is sparsevec({vocabulary.Count.ToString("N0", CultureInfo.InvariantCulture)}) "
+                + "— one coordinate per term the vector set carries — and the producer counted "
+                + $"{vectors.Manifest.TermsPerDocument:0.0} non-zero terms per document on average.",
+                $"The plan PostgreSQL chose for the search shape on this table: {node}. The first row "
+                + "was measured with the engine's HNSW index in place and the second after DROP INDEX, "
+                + "so the difference between them is what the index costs in metric points at pgvector's "
+                + "default hnsw.ef_search of 40.",
+            };
+
+            if (!usesIndex)
+            {
+                caveats.Add(
+                    "The plan above does not name the index, so the first row is an exact scan too and "
+                    + "the two rows differ only in the table's index state.");
+            }
+
+            return new BackendMeasurement(
+                lane.Description, table, documents.Count, rows, caveats, "scan");
+        }
+        finally
+        {
+            using var dropper = new PostgresSparseSearchEngine(
+                lane.ConnectionString, provider, options with { AutoCreateSchema = false });
+            dropper.DropSchema();
+        }
+    }
+
+    /// <summary>
+    /// The term → coordinate layout the <c>sparsevec</c> column is written with: every term any vector
+    /// in the set carries, sorted so the mapping does not depend on dictionary iteration order.
+    /// </summary>
+    /// <remarks>
+    /// A term absent from this mapping is dropped by the engine, so the union of the document and query
+    /// vectors is what makes the SQL dot product the same sum the in-memory engine computes. It is this
+    /// run's layout: an application fixes one vocabulary and keeps it across writes.
+    /// </remarks>
+    private static IReadOnlyDictionary<string, int> Vocabulary(SparseVectorSet vectors)
+    {
+        var terms = new SortedSet<string>(StringComparer.Ordinal);
+
+        foreach (IReadOnlyDictionary<string, float> vector in vectors.Documents.Values)
+            terms.UnionWith(vector.Keys);
+
+        foreach (IReadOnlyDictionary<string, float> vector in vectors.Queries.Values)
+            terms.UnionWith(vector.Keys);
+
+        var vocabulary = new Dictionary<string, int>(terms.Count, StringComparer.Ordinal);
+        int coordinate = 0;
+
+        foreach (string term in terms)
+            vocabulary[term] = coordinate++;
+
+        return vocabulary;
+    }
+
+    /// <summary>The name the engine gives its index: <c>&lt;table&gt;_sparse_hnsw</c>.</summary>
+    private static string SparseIndexName(string table) => table + "_sparse_hnsw";
+
+    /// <summary>A quoted identifier; callers pass names validated as <c>[A-Za-z0-9_]</c>.</summary>
+    private static string Quote(string identifier) => "\"" + identifier + "\"";
+
+    private static bool SparseIndexExists(string connectionString, string table)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        connection.Open();
+
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT to_regclass(@name) IS NOT NULL";
+        command.Parameters.AddWithValue("name", "public." + Quote(SparseIndexName(table)));
+
+        return (bool)command.ExecuteScalar()!;
+    }
+
+    private static void DropSparseIndex(string connectionString, string table)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        connection.Open();
+
+        using var command = connection.CreateCommand();
+        command.CommandText = "DROP INDEX IF EXISTS public." + Quote(SparseIndexName(table));
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// The plan node PostgreSQL picks for the engine's search shape, and whether it names the HNSW
+    /// index. The literal is a one-coordinate vector of the column's dimension: a plan depends on the
+    /// operator, the type and the LIMIT, not on the weights, and one shape serves every query.
+    /// </summary>
+    private static (string Node, bool UsesIndex) SparsePlan(
+        string connectionString, string table, int dimension, int fetchLimit)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        connection.Open();
+
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            "EXPLAIN (COSTS OFF) SELECT id FROM public." + Quote(table)
+            + " WHERE sparse IS NOT NULL ORDER BY sparse <#> '{1:1}/"
+            + dimension.ToString(CultureInfo.InvariantCulture) + "'::sparsevec LIMIT "
+            + fetchLimit.ToString(CultureInfo.InvariantCulture);
+
+        var lines = new List<string>();
+
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read())
+                lines.Add(reader.GetString(0).Trim());
+        }
+
+        string node = lines.FirstOrDefault(line => line.Contains("Scan", StringComparison.Ordinal))
+            ?? lines.FirstOrDefault()
+            ?? "no plan";
+
+        return (node.TrimStart('-', '>', ' '), node.Contains(SparseIndexName(table), StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// Refuses, before any indexing, a query whose syntax the engine declares it cannot read.
     /// </summary>
     /// <remarks>
@@ -703,13 +1006,15 @@ internal static class PostgresBackendBenchmark
     /// <c>text_fields</c> would be stored and never searched — the same corpus indexed with fewer
     /// terms on one side of a comparison, which is a difference nobody would see in the output. It is
     /// concatenated instead, which is exactly the flat view the in-memory BM25 rows score. The fuzzy
-    /// engine reads <c>content</c> alone too, so it gets the same shape.
+    /// engine reads <c>content</c> alone too, so it gets the same shape. The sparse engine has no
+    /// field concept and its vectors were computed from <c>title + "\n" + text</c> by the producer, so
+    /// the same concatenation is the only text whose SHA-256 is in the vector file.
     /// </remarks>
     public static IReadOnlyList<SearchDocument> Shape(BackendKind kind, IReadOnlyList<SearchDocument> documents)
     {
         ArgumentNullException.ThrowIfNull(documents);
 
-        if (kind is not (BackendKind.ParadeDb or BackendKind.Fuzzy))
+        if (kind is not (BackendKind.ParadeDb or BackendKind.Fuzzy or BackendKind.Sparse))
             return documents;
 
         return documents
