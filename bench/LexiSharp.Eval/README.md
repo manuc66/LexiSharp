@@ -387,11 +387,13 @@ The three things that differ from a Lucene/Anserini run, and the flags that alig
 The gain conventions coincide on binary relevance (`2¹ − 1 = 1`), so that row only matters on
 NFCorpus, the one graded corpus here: 0.3080 exponential against 0.3071 linear for the same run.
 
-**`--query-term-frequency` is what closed the ArguAna gap, and it is worth nothing elsewhere.**
+**`--query-term-frequency` is what closed the ArguAna gap, and it is worth almost nothing elsewhere.**
 A published BM25 measurement scores one clause per query-token occurrence, so a term repeated in the
 query multiplies its weight; this library deduplicates by default, which is the natural reading of a
-bag of words. Where queries are short the two are identical to four decimals (NFCorpus 0.3215 either
-way, SciFact 0.6788 either way). Where a query *is* a document they are not: ArguAna's every test
+bag of words. Where queries are short the two nearly coincide: at k1=0.9/b=0.4, NFCorpus reads
+0.3215 without the flag and 0.3208 with it, and SciFact reads 0.6788 against 0.6759 — with R@10
+falling 0.806 → 0.800, so the flag is not free there either. Where a query *is* a document they are
+not: ArguAna's every test
 query is a whole ~200-word argument whose content words repeat, and counting them takes nDCG@10
 from **0.240 to 0.301** at k1=0.9/b=0.4, a **+0.061** effect. Reproduce it with
 `--analyzer english --reference-bm25 0.9,0.4 --query-term-frequency`, and the default on the same

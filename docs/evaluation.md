@@ -474,9 +474,9 @@ same runs:
   corpus often produces for a learned-sparse model, so the row is worth reading carefully rather
   than as a headline: it is one model, one truncation and one pruning budget, and the two corpora
   differ in length and in judgement density.
-- **Aligned SciFact reads 0.679 without `--query-term-frequency` and 0.676 with it** (R@10 0.806 →
-  0.800). The flag scores a repeated query term once per occurrence, which is the published BM25
-  convention, and on this corpus it moves the row by 0.003 rather than leaving it where it was. The
+- **Aligned SciFact reads 0.6788 without `--query-term-frequency` and 0.6759 with it** (R@10 0.806 →
+  0.800), and NFCorpus 0.3215 against 0.3208. The flag scores a repeated query term once per
+  occurrence, which is the published BM25 convention, and on SciFact it moves the row by 0.003. The
   sparse row is unaffected either way: the flag reaches BM25's scorer only.
 - **What the row is not.** The metrics contain no encode cost — the model ran offline, before the
   harness started, and its time is the producer's (48.1 min for NFCorpus's 3 633 documents and 3 237
