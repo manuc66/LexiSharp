@@ -263,11 +263,19 @@ What it does **not** say:
 - the dense and cross-encoder rows are the only ones that use a real model, and both belong
   to the harness, not to the library. The **dense and fused rows exist on all three corpora**
   (SciFact: 0.655 alone, 0.681/0.686 fused; ArguAna: 0.313 alone, 0.349/0.350 fused), so the
-  hybrid payoff is measured three times rather than once. The **cross-encoder** is now measured on
-  all three, and it pays on one: NFCorpus improves every first stage, SciFact helps query likelihood
+  hybrid payoff is measured three times rather than once. The **cross-encoder** is measured on all
+  three, and it pays on one: NFCorpus improves every first stage, SciFact helps query likelihood
   (0.622 → 0.649) and costs BM25 and the best fusion, and on ArguAna it **loses to all three**
   (0.302, 0.301, 0.339 against 0.320, 0.302, 0.350). Short queries with a few judged documents are
-  where it pays; 196-word argument queries are where it does not;
+  where it pays; 196-word argument queries are where it does not. Each reranked row re-scores the
+  **top 100** candidates of its first stage with one fixed pretrained model, not a model fitted on
+  these queries, so unlike a tuned row it is **not an in-sample oracle**. Reproduce the three with
+  `--dataset arguana --no-tuned --dense --rerank --rerank-top 100 --jobs 4`; the pair cache under
+  `data/rerank-cache/` (14 MB for ArguAna) lets the second and third rows reuse the first's
+  candidate passes. Re-running from that cache computes only the pairs the cached run had not
+  flushed, and the BM25 row reads nDCG@10 **0.303** and R@10 **0.616** against the 0.302 of the
+  sentence above (R@10 0.615 in the harness table), because one query crosses the rank-10
+  boundary; the ordering is unchanged;
 - stemming is not settled either: `--stem porter` takes NFCorpus 0.308 → 0.322 and SciFact
   0.662 → 0.687, and is mixed on ArguAna 0.320 → 0.308 (BM25) / 0.302 → 0.312 (QL). That is why it stays opt-in — see
   [Tokenizer customization](indexing.md#tokenizer-customization). What that comparison leaves out is
