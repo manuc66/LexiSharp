@@ -829,7 +829,7 @@ public static class Program
                 referenceBm25 ?? new Bm25Parameters(0.9, 0.4), parseQuerySyntax);
         }
 
-        PrintTable(results, topK);
+        PrintTable(results, topK, jobs);
         PrintReference(dataset, analysisDescription, gain);
 
         Console.WriteLine(heldOut is null
@@ -1211,9 +1211,9 @@ public static class Program
             $"--expand-ranking expects 'count', 'pmi' or 'both', got '{value}'."),
     };
 
-    private static void PrintTable(IReadOnlyList<ConfigResult> results, int topK)
+    private static void PrintTable(IReadOnlyList<ConfigResult> results, int topK, int jobs)
     {
-        var header = new[] { "Config", $"nDCG@{topK}", $"MAP@{topK}", $"MRR@{topK}", $"R@{topK}", "Queries", "Time" };
+        var header = new[] { "Config", $"nDCG@{topK}", $"MAP@{topK}", $"MRR@{topK}", $"R@{topK}", "Queries", "Wall" };
         var widths = new[] { 30, 9, 9, 9, 9, 8, 8 };
 
         Console.WriteLine();
@@ -1236,6 +1236,13 @@ public static class Program
 
             Console.WriteLine(string.Join(" | ", cells));
         }
+
+        // The column is a whole-configuration clock at the requested parallelism, and reading it as a
+        // per-query latency is how a harness README came to attribute 83 ms/query to BM25 when BM25
+        // copies the query over in well under 1 ms. Say which it is.
+        Console.WriteLine(
+            $"Wall is the whole configuration's clock at --jobs {jobs}, not a per-query latency: "
+            + "divide by Queries for throughput, and run --jobs 1 for latency.");
     }
 
     /// <summary>
