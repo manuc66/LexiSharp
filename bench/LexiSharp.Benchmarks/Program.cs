@@ -28,6 +28,13 @@ public static class Program
             return;
         }
 
+        // Tail-query p50/p99 and allocation per corpus size, for the cursor pass's A/B. See CursorLane.
+        if (args.Length > 0 && args[0] == "cursor")
+        {
+            CursorLane.Run(args[1..]);
+            return;
+        }
+
         // One shared index under 1/2/4/8 callers, raw and synchronized. See ConcurrencyLane.
         if (args.Length > 0 && args[0] == "concurrency")
         {
