@@ -63,7 +63,7 @@ public class SparseVectorsTests
     [Fact]
     public async System.Threading.Tasks.Task TheVectorsLoadAndTheProviderServesBothRoles()
     {
-        using var directory = new VectorDirectory();
+        using var directory = new SparseVectorDirectory();
         directory.Write(documents: [("bile salts emulsify fat", "bile:2.5\tfat:1.25")],
                         queries: [("bile salts", "bile:2\t##salts:0.5")]);
 
@@ -92,7 +92,7 @@ public class SparseVectorsTests
         // WordPiece tokens carry no whitespace but they do carry punctuation, and the vocabulary
         // holds ':' and '##：'. Splitting on the first colon would make the weight '1.5' and drop
         // the token, silently turning "no weight" into a term called ":".
-        using var directory = new VectorDirectory();
+        using var directory = new SparseVectorDirectory();
         directory.Write(documents: [("a: b", ":1.5\t##::2")], queries: [("a", ":0.5")]);
 
         SparseVectorSet set = SparseVectorSet.Load(directory.Path, "test");
@@ -107,7 +107,7 @@ public class SparseVectorsTests
     [Fact]
     public async System.Threading.Tasks.Task AMissingVectorForAQueryIsRefusedByNameRatherThanReadAsNoMatch()
     {
-        using var directory = new VectorDirectory();
+        using var directory = new SparseVectorDirectory();
         directory.Write(documents: [("bile", "bile:1")], queries: [("bile salts", "bile:1")]);
 
         SparseVectorSet set = SparseVectorSet.Load(directory.Path, "test");
@@ -137,7 +137,7 @@ public class SparseVectorsTests
     [Fact]
     public void AVectorFileWithoutItsManifestIsRefused()
     {
-        using var directory = new VectorDirectory();
+        using var directory = new SparseVectorDirectory();
         directory.Write(documents: [("bile", "bile:1")], queries: [("bile", "bile:1")], writeManifest: false);
 
         SparseVectorsException error = Assert.Throws<SparseVectorsException>(() =>
@@ -149,7 +149,7 @@ public class SparseVectorsTests
     [Fact]
     public void AMalformedLineIsRefusedWithItsLineNumber()
     {
-        using var directory = new VectorDirectory();
+        using var directory = new SparseVectorDirectory();
         directory.Write(documents: [("bile", "bile:1")], queries: [("bile", "bile:1")]);
 
         File.WriteAllText(
@@ -166,7 +166,7 @@ public class SparseVectorsTests
     [Fact]
     public void ANonPositiveWeightIsRefusedRatherThanTreatedAsAbsent()
     {
-        using var directory = new VectorDirectory();
+        using var directory = new SparseVectorDirectory();
         directory.Write(documents: [("bile", "bile:0")], queries: [("bile", "bile:1")]);
 
         SparseVectorsException error = Assert.Throws<SparseVectorsException>(() =>
@@ -178,7 +178,7 @@ public class SparseVectorsTests
     [Fact]
     public void ADuplicateTermIsRefused()
     {
-        using var directory = new VectorDirectory();
+        using var directory = new SparseVectorDirectory();
         directory.Write(documents: [("bile", "bile:1\tbile:2")], queries: [("bile", "bile:1")]);
 
         SparseVectorsException error = Assert.Throws<SparseVectorsException>(() =>
@@ -192,7 +192,7 @@ public class SparseVectorsTests
     {
         // Two BEIR documents can share a title and a body — NFCorpus holds 40 such pairs — and a vector
         // is a function of the text. The second line is not a producer bug, so it is not refused.
-        using var directory = new VectorDirectory();
+        using var directory = new SparseVectorDirectory();
         directory.Write(documents: [("bile", "bile:1"), ("bile", "bile:1")], queries: [("bile", "bile:1")]);
 
         SparseVectorSet set = SparseVectorSet.Load(directory.Path, "test");
@@ -203,7 +203,7 @@ public class SparseVectorsTests
     [Fact]
     public void RepeatedTextWithADifferentVectorIsRefused()
     {
-        using var directory = new VectorDirectory();
+        using var directory = new SparseVectorDirectory();
         directory.Write(documents: [("bile", "bile:1"), ("bile", "bile:2")], queries: [("bile", "bile:1")]);
 
         SparseVectorsException error = Assert.Throws<SparseVectorsException>(() =>
@@ -218,7 +218,7 @@ public class SparseVectorsTests
     {
         BeirCorpus corpus = Corpus();
 
-        using var directory = new VectorDirectory();
+        using var directory = new SparseVectorDirectory();
         directory.Write(
             documents:
             [
@@ -246,7 +246,7 @@ public class SparseVectorsTests
     {
         BeirCorpus corpus = Corpus();
 
-        using var directory = new VectorDirectory();
+        using var directory = new SparseVectorDirectory();
         directory.Write(
             documents: [("Bile salts\nbile salts emulsify dietary fat", "bile:1")],
             queries:
@@ -268,7 +268,7 @@ public class SparseVectorsTests
     {
         BeirCorpus corpus = Corpus();
 
-        using var directory = new VectorDirectory();
+        using var directory = new SparseVectorDirectory();
         directory.Write(
             documents:
             [
@@ -330,68 +330,4 @@ public class SparseVectorsTests
         },
     };
 
-    /// <summary>
-    /// A vector directory written the way the encoder writes one, so the loader is exercised on the
-    /// real shape: a manifest beside two tab-separated files keyed by digest.
-    /// </summary>
-    private sealed class VectorDirectory : IDisposable
-    {
-        public VectorDirectory()
-        {
-            Path = System.IO.Path.Combine(
-                System.IO.Path.GetTempPath(), "lexisharp-sparse-" + Guid.NewGuid().ToString("n"));
-            Directory.CreateDirectory(Path);
-        }
-
-        public string Path { get; }
-
-        public void Write(
-            IReadOnlyList<(string Text, string Terms)> documents,
-            IReadOnlyList<(string Text, string Terms)> queries,
-            bool writeManifest = true)
-        {
-            File.WriteAllText(System.IO.Path.Combine(Path, "test.docs.tsv"), Lines(documents), new UTF8Encoding(false));
-            File.WriteAllText(System.IO.Path.Combine(Path, "test.queries.tsv"), Lines(queries), new UTF8Encoding(false));
-
-            if (!writeManifest)
-                return;
-
-            File.WriteAllText(
-                System.IO.Path.Combine(Path, "test.meta.json"),
-                """
-                {
-                  "model": "SPLADE-v3",
-                  "base_model": "naver/splade-v3",
-                  "license": "CC BY-NC-SA 4.0",
-                  "model_file": "splade-v3.onnx",
-                  "model_sha256": "9e472022f478fec8c4afaa397e68f9c90bb5ff98f0f5c0c6bb195cf2b388ab30",
-                  "quantised": false,
-                  "truncate": 128,
-                  "top_k": 64,
-                  "document_text": "title + \\n + text when the record has a title, else text",
-                  "tokenizer": "test",
-                  "runtime": "test",
-                  "seconds": 1.5,
-                  "documents": { "texts": 1, "terms_min": 1, "terms_mean": 2.0, "terms_max": 2, "seconds": 1.0 },
-                  "queries": { "texts": 1, "terms_min": 1, "terms_mean": 1.0, "terms_max": 1, "seconds": 0.5 }
-                }
-                """,
-                new UTF8Encoding(false));
-        }
-
-        private static string Lines(IReadOnlyList<(string Text, string Terms)> texts) =>
-            string.Concat(texts.Select(text => $"{SparseVectorSet.HashText(text.Text)}\t{text.Terms}\n"));
-
-        public void Dispose()
-        {
-            try
-            {
-                Directory.Delete(Path, recursive: true);
-            }
-            catch (IOException)
-            {
-                // A temp directory left behind is not a test failure.
-            }
-        }
-    }
 }
