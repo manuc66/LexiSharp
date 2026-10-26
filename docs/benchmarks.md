@@ -780,8 +780,9 @@ not a property of the query.
 
 **The two latency columns price the term-at-a-time accumulation pass.** A sparse query takes the
 document-at-a-time cursor pass, which removes the corpus-sized buffer and its clear; the same queries
-on the current build read 1.00 / 2.20 µs at 100,000 and 4.30 / 7.60 µs at 500,000 in the
-[cursor lane](#cursor-lane-cursor-a-tail-querys-p50-p99-and-allocation) below.
+on the current build read 1.00 / 2.20 µs at 100,000 and 4.4–4.5 / 7.9–8.8 µs at 500,000 in the
+[cursor lane](#cursor-lane-cursor-a-tail-querys-p50-p99-and-allocation) below and the scale lane's own
+run of that build.
 
 The build readings span 638–665 ms at 10,000 documents and 4.82–5.04 s at 100,000. Read the column
 as a range on this host, not as a scaling factor: the machine was shared, and the lane times one
@@ -1001,36 +1002,50 @@ each document frequency in `10, 25, 50, 250, 500, 1,000, 2,500, 5,000, 20,000`, 
 forced on every query so the losing side of the crossing is visible too.
 
 **Measured on 2026-10-26**, Manjaro Linux, Intel Core i7-8850H (12 logical processors), .NET 10.0.13,
-`ServerGC=True`, 15 GiB of RAM, one index per size in its own process. The host carried another
-session's work (load 1.7–6.1 at the builds), so the builds were run **alternating**: baseline, cursor,
-cursor, baseline. The latency columns are the mean of the two runs on each side; `p50` is the lane's
-own, no BenchmarkDotNet outlier removal. The before column is the library at `3eedf42` — the tree the
-lane commit sits on, before the cursor pass existed; the after column is the tree this page describes.
+`ServerGC=True`, 15 GiB of RAM, one index per size in its own process, **on a quiet host**: the
+one-minute load was 0.5–1.5 before every run and no process other than the lane held a core. The
+builds were run **alternating** — baseline, after, after, baseline — so each side is two runs and the
+latency columns are their mean; `p50` is the lane's own, no BenchmarkDotNet outlier removal. The lane
+prints, per row, which pass the engine's own decision selects (`per-document`, `accumulator` or
+`cursor`) and asserts it against the allocation that pass adds: the same query is run through an
+engine forced to each accumulating pass, and the default engine's bytes per search must equal the one
+the label names. A cursor row's clear share prints a dash, because it rents no accumulator to clear.
+The before column is the library at `3eedf42` — the tree the lane commit sits on, before the cursor
+pass existed; the after column is the tree this page describes.
 
-| Documents | Query | df sum | Before p50 | After p50 | Before p99 | After p99 | Before alloc | After alloc |
-|---:|---|---:|---:|---:|---:|---:|---:|---:|
-| 10,000 | one tail term | 1 | 0.40 µs | 0.40 µs | 1.30 µs | 0.90 µs | 840 B | 840 B |
-| 10,000 | three tail terms | 2 | 1.00 µs | 1.00 µs | 1.45 µs | 2.00 µs | 1,160 B | 1,160 B |
-| 10,000 | one head term | 9,525 | 133.1 µs | 135.1 µs | 165.5 µs | 169.8 µs | 672 B | 672 B |
-| 100,000 | one tail term | 9 | 3.33 µs | **1.00 µs** | 4.38 µs | 1.60 µs | 648 B | 832 B |
-| 100,000 | three tail terms | 29 | 4.15 µs | **2.23 µs** | 5.50 µs | 2.93 µs | 688 B | 1,008 B |
-| 100,000 | one head term | 95,402 | 1.23 ms | 1.28 ms | 1.46 ms | 1.40 ms | 672 B | 672 B |
-| 500,000 | one tail term | 90 | 13.05 µs | **4.30 µs** | 32.55 µs | 5.20 µs | 672 B | 856 B |
-| 500,000 | three tail terms | 220 | 19.50 µs | **7.60 µs** | 30.90 µs | 8.50 µs | 688 B | 1,008 B |
-| 500,000 | one head term | 477,361 | 5.17 ms | 5.35 ms | 5.40 ms | 6.10 ms | 672 B | 672 B |
+| Documents | Query | df sum | Pass | Before p50 | After p50 | Before p99 | After p99 | Before alloc | After alloc |
+|---:|---|---:|---|---:|---:|---:|---:|---:|---:|
+| 10,000 | one tail term | 1 | per-document | 0.40 µs | 0.40 µs | — | — | 840 B | 840 B |
+| 10,000 | three tail terms | 2 | per-document | 1.00 µs | 1.00 µs | — | — | 1,160 B | 1,160 B |
+| 10,000 | one head term | 9,525 | accumulator | 131.5 µs | 134.5 µs | — | — | 672 B | 672 B |
+| 100,000 | one tail term | 9 | cursor | 3.35 µs | **1.00 µs** | 4.40 µs | 2.30 µs | 648 B | 832 B |
+| 100,000 | three tail terms | 29 | cursor | 4.10 µs | **2.20 µs** | 4.95 µs | 2.85 µs | 688 B | 1,008 B |
+| 100,000 | one head term | 95,402 | accumulator | 1.24 ms | 1.28 ms | 1.42 ms | 1.38 ms | 672 B | 672 B |
+| 500,000 | one tail term | 90 | cursor | 13.15 µs | **4.40 µs** | 15.15 µs | 5.05 µs | 672 B | 856 B |
+| 500,000 | three tail terms | 220 | cursor | 19.85 µs | **7.85 µs** | 29.85 µs | 14.00 µs | 688 B | 1,008 B |
+| 500,000 | one head term | 477,361 | accumulator | 5.19 ms | 5.24 ms | 5.75 ms | 5.49 ms | 672 B | 672 B |
 
 The two 10,000-document tail rows are below the accumulation floor (8 posting entries), so both
 builds take the per-document loop and the cursor pass was never in play; the head row is dense and
-stays on the accumulator at every size. **The head rows are therefore the same code path in both
-builds**, and the 3 % difference at 500,000 (5.17 against 5.35 ms, both pairs) is not attributed: the
-allocation is identical at 672 B, and no mechanism for it was established.
+stays on the accumulator at every size. The 10,000-document p99s are not tabled: the head's moved
+between 181.6 and 323.0 µs across runs whose `p50` stayed at 131–135 µs, which is the host rather
+than the pass. **The head rows are therefore the same code path in both builds**, and the differences
+there (1.24 → 1.28 ms at 100,000, 5.19 → 5.24 ms at 500,000) are not attributed: the allocation is
+identical and no mechanism for them was established.
 
 The isolated clear the cursor pass removes is **2.2–2.4 µs at 100,000 and 9.0–9.4 µs at 500,000** —
-69–72 % of the one-term `p50` and 45–56 % of the three-term one before the change. After it, the tail
+69–71 % of the one-term `p50` and 47–56 % of the three-term one before the change. After it, the tail
 `p50` is below the isolated clear at both sizes, which is what a search that does not clear a
 corpus-sized buffer looks like. The allocation rises by **184 B** on a one-term query and **320 B** on
 a three-term one: a weight per term, a `PostingArrays` per term, a cursor array and the sink object —
 O(query) bytes, against a corpus-sized buffer that is rented (and was cleared) before.
+
+**The host is part of the measurement.** A run of the same after build while another session's SPLADE
+encoder held about 590 % CPU (load 7.6) read **1.80 / 6.10 µs** at 100,000 with the cursor pass's
+allocation (832 / 1,008 B) against 1.00 / 2.20 µs on the quiet host. The pass did not change — the
+corpus and the reach decide it, not the load — the latency did, by 1.8× and 2.8×. That is why the
+table records the load it was taken at and why the lane asserts and prints the pass: a contended run
+and a different traversal look the same in a `p50` column and not in an allocation column.
 
 **The density crossing, measured with `--sweep`** (baseline against the cursor pass forced on every
 query; the shipped build takes the cursor pass only at or below the cap, so the losing rows are the
