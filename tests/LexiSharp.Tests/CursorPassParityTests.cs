@@ -62,7 +62,7 @@ public class CursorPassParityTests
         index.Index(Corpus());
 
         var accumulated = new RankedTextSearchEngine(index, Build(scorerKind));
-        var cursor = new RankedTextSearchEngine(index, Build(scorerKind)) { ForceCursorPass = true };
+        var cursor = new RankedTextSearchEngine(index, Build(scorerKind)) { ForcedPass = RankedTextSearchEngine.ScoringPass.Cursor };
 
         foreach (string query in new[] { "term", "term statistics", "filler", "term ranking", "term term term", "ranking filler statistics" })
         {
@@ -89,7 +89,7 @@ public class CursorPassParityTests
         index.Index(Corpus());
 
         var accumulated = new RankedTextSearchEngine(index, Build(scorerKind));
-        var cursor = new RankedTextSearchEngine(index, Build(scorerKind)) { ForceCursorPass = true };
+        var cursor = new RankedTextSearchEngine(index, Build(scorerKind)) { ForcedPass = RankedTextSearchEngine.ScoringPass.Cursor };
 
         var excluded = new HashSet<string>(StringComparer.Ordinal) { "doc-0000", "doc-0007", "doc-0100" };
 
@@ -118,7 +118,7 @@ public class CursorPassParityTests
         index.Index(Corpus());
 
         var accumulated = new RankedTextSearchEngine(index, Build(scorerKind));
-        var cursor = new RankedTextSearchEngine(index, Build(scorerKind)) { ForceCursorPass = true };
+        var cursor = new RankedTextSearchEngine(index, Build(scorerKind)) { ForcedPass = RankedTextSearchEngine.ScoringPass.Cursor };
 
         foreach (string query in new[] { "term", "ranking filler statistics" })
         {
@@ -146,7 +146,7 @@ public class CursorPassParityTests
 
         var tokenizer = new StringOnlyTokenizer(Tokenizer.Default);
         var accumulated = new RankedTextSearchEngine(index, new Bm25Scorer(), tokenizer);
-        var cursor = new RankedTextSearchEngine(index, new Bm25Scorer(), tokenizer) { ForceCursorPass = true };
+        var cursor = new RankedTextSearchEngine(index, new Bm25Scorer(), tokenizer) { ForcedPass = RankedTextSearchEngine.ScoringPass.Cursor };
 
         foreach (string query in new[] { "term", "term statistics", "ranking filler statistics" })
         {
@@ -185,7 +185,7 @@ public class CursorPassParityTests
             memory.Index(documents);
 
             var expected = new RankedTextSearchEngine(memory, new Bm25Scorer());
-            var cursor = new RankedTextSearchEngine(reopened, new Bm25Scorer()) { ForceCursorPass = true };
+            var cursor = new RankedTextSearchEngine(reopened, new Bm25Scorer()) { ForcedPass = RankedTextSearchEngine.ScoringPass.Cursor };
 
             foreach (string query in new[] { "term", "term statistics", "ranking filler statistics" })
             {
@@ -219,7 +219,7 @@ public class CursorPassParityTests
             var memory = new InMemoryTextIndex();
             memory.Index(documents);
             var expected = new RankedTextSearchEngine(memory, new Bm25Scorer());
-            var forced = new RankedTextSearchEngine(reopened, new Bm25Scorer()) { ForceCursorPass = true };
+            var forced = new RankedTextSearchEngine(reopened, new Bm25Scorer()) { ForcedPass = RankedTextSearchEngine.ScoringPass.Cursor };
 
             AssertSamePage(
                 expected.Search("term statistics", new SearchOptions(Limit: 25)),
