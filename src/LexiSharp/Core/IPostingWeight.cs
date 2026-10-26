@@ -23,18 +23,12 @@ namespace LexiSharp.Core;
 /// </para>
 /// <para>
 /// Implemented by a <c>struct</c> so the accumulation loop can be generic over it: the JIT
-/// specializes the call and inlines <see cref="Weight"/>, which is the difference between a few
-/// nanoseconds per posting entry and a virtual call.
+/// specializes the call and inlines <see cref="IWeightFunction.Weight"/>, which is the difference
+/// between a few nanoseconds per posting entry and a virtual call.
 /// </para>
 /// </remarks>
-internal interface IPostingWeight
+internal interface IPostingWeight : IWeightFunction
 {
     /// <summary>The query term this weight applies to.</summary>
     string Term { get; }
-
-    /// <summary>
-    /// The term's contribution to a document that contains it, from that document's term
-    /// frequency and token count.
-    /// </summary>
-    double Weight(int termFrequency, int documentLength);
 }

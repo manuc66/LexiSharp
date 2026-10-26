@@ -14,7 +14,7 @@ namespace LexiSharp.Indexing;
 /// single thread (or synchronize externally). Read-only queries hold no shared mutable state and
 /// may run concurrently with one another.
 /// </remarks>
-public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IVocabularyIndex, IAccumulatingIndex, ISpanAccumulatingIndex, IFieldStatisticsIndex
+public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IVocabularyIndex, IAccumulatingIndex, ISpanAccumulatingIndex, IFieldStatisticsIndex, ISpanPostingArrayIndex
 {
     private readonly ITokenizer _tokenizer;
 
@@ -1065,6 +1065,39 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// <summary>The length array the accumulation loops read: the exact one, or the quantized copy.</summary>
     private int[] AccumulationLengths() =>
         _documentLengthQuantization == DocumentLengthQuantization.Exact ? _lengthsByOrdinal : QuantizedLengths();
+
+    /// <inheritdoc />
+    int[]? IPostingArrayIndex.LengthsByOrdinal => AccumulationLengths();
+
+    /// <inheritdoc />
+    bool IPostingArrayIndex.TryResolvePostingArrays(string term, out PostingArrays postings)
+    {
+        if (_postings.TryGetValue(term, out var posting))
+        {
+            var flat = FlatFor(posting);
+            postings = new PostingArrays(flat.Ordinals, flat.Frequencies);
+
+            return true;
+        }
+
+        postings = default;
+        return false;
+    }
+
+    /// <inheritdoc />
+    bool ISpanPostingArrayIndex.TryResolvePostingArrays(ReadOnlySpan<char> term, out PostingArrays postings)
+    {
+        if (_spanPostings.TryGetValue(term, out var posting))
+        {
+            var flat = FlatFor(posting);
+            postings = new PostingArrays(flat.Ordinals, flat.Frequencies);
+
+            return true;
+        }
+
+        postings = default;
+        return false;
+    }
 
     /// <inheritdoc />
     int ISpanAccumulatingIndex.SpanDocumentFrequency(ReadOnlySpan<char> term) =>

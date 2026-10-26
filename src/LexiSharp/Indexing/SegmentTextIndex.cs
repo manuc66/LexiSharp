@@ -636,38 +636,18 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
         int[] lengths)
         where TWeight : struct, IPostingWeight
     {
-        if (!_reader.TryFindTerm(weight.Term.AsSpan(), out int df, out var postings))
+        if (!_reader.TryFindTerm(weight.Term.AsSpan(), out _, out var postings))
             return;
 
         // A decoded cache turns a repeat look-up of a hot term into exactly the in-memory index's
         // walk: the same flat arrays, the same ascending entry order, so the sums are bit-identical
         // to a fresh decode. The fill decodes once and reuses; the budget decides what stays.
         // The cache holds segment-local ordinals, so the offset is applied on the way in.
-        if (_decoded is { } decoded)
+        if (_decoded is not null)
         {
-            if (decoded.TryGet(weight.Term, out var ordinalsCache, out var frequenciesCache))
-            {
+            if (TryGetPostingArrays(weight.Term, out var ordinalsCache, out var frequenciesCache))
                 Fold(ordinalsCache, frequenciesCache, weight, accumulator, offset, lengths);
-                return;
-            }
 
-            int[] ordinals = new int[df];
-            var frequencies = new int[df];
-
-            int index = 0;
-
-            while (postings.MoveNext())
-            {
-                while (postings.TryReadEntry(out int ordinal, out int frequency))
-                {
-                    ordinals[index] = ordinal;
-                    frequencies[index] = frequency;
-                    index++;
-                }
-            }
-
-            decoded.Store(weight.Term, ordinals, frequencies);
-            Fold(ordinals, frequencies, weight, accumulator, offset, lengths);
             return;
         }
 
@@ -681,6 +661,57 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
         }
     }
 
+    /// <summary>
+    /// Whether this segment can hand its postings out as arrays: it needs the decoded-postings cache,
+    /// because the arrays must outlive the query without the caller owning their lifetime.
+    /// </summary>
+    internal bool CanDecodePostings => _decoded is not null;
+
+    /// <summary>
+    /// The term's decoded posting arrays — from the cache when it holds them, decoded and cached
+    /// otherwise — or <c>false</c> when this segment has no cache or does not hold the term.
+    /// </summary>
+    /// <remarks>
+    /// This is the same decode <see cref="Accumulate{TWeight}(TWeight, ScoreAccumulator, int, int[])"/>
+    /// performs on a cache miss, exposed because a document-at-a-time traversal needs every term's
+    /// arrays at once and a <c>ref struct</c> cursor cannot be held across terms. Without a cache there
+    /// are no arrays that outlive the walk, so the answer is <c>false</c> and the engine keeps the
+    /// accumulator rather than materializing postings per query.
+    /// </remarks>
+    internal bool TryGetPostingArrays(string term, out int[] ordinals, out int[] frequencies)
+    {
+        ordinals = [];
+        frequencies = [];
+
+        if (_decoded is not { } decoded)
+            return false;
+
+        if (decoded.TryGet(term, out ordinals, out frequencies))
+            return true;
+
+        if (!_reader.TryFindTerm(term.AsSpan(), out int df, out var postings))
+            return false;
+
+        ordinals = new int[df];
+        frequencies = new int[df];
+
+        int index = 0;
+
+        while (postings.MoveNext())
+        {
+            while (postings.TryReadEntry(out int ordinal, out int frequency))
+            {
+                ordinals[index] = ordinal;
+                frequencies[index] = frequency;
+                index++;
+            }
+        }
+
+        decoded.Store(term, ordinals, frequencies);
+
+        return true;
+    }
+
     private void Fold<TWeight>(
         int[] ordinals,
         int[] frequencies,
@@ -689,8 +720,7 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
         int offset = 0,
         int[]? lengths = null)
         where TWeight : struct, IPostingWeight
-    {
-        var effectiveLengths = lengths ?? _lengths;
+    {        var effectiveLengths = lengths ?? _lengths;
 
         for (int i = 0; i < ordinals.Length; i++)
         {

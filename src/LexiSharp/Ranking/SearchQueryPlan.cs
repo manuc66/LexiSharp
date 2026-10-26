@@ -75,6 +75,17 @@ internal interface IQueryPlannableScorer : ITextScorer
 internal interface IAccumulatingQueryPlan : ISearchQueryPlan, IAccumulatedScoreFinisher
 {
     /// <summary>
+    /// Scores the query document-at-a-time over the index's posting arrays, for an index that can
+    /// lend them. Returns <c>false</c> — having written nothing — when this plan or that index cannot
+    /// serve the pass, and the caller keeps the term-at-a-time accumulation.
+    /// </summary>
+    /// <remarks>
+    /// A default that declines, so a plan written before this capability keeps the accumulator and
+    /// nothing changes for it.
+    /// </remarks>
+    bool TryScoreDocuments(IPostingArrayIndex index, IDocumentScoreSink sink) => false;
+
+    /// <summary>
     /// Folds every query term into <paramref name="accumulator"/>, in query order, so each
     /// document's score is summed in the same order the per-document loop would have summed it.
     /// </summary>
@@ -135,4 +146,18 @@ internal interface ISpanAccumulatingQueryPlan : IAccumulatedScoreFinisher
         ReadOnlySpan<NormalizedTerm> terms,
         ReadOnlySpan<char> source,
         ScoreAccumulator accumulator);
+
+    /// <summary>
+    /// Scores the query document-at-a-time over the index's posting arrays, for an index that can
+    /// lend them, resolving each term from the query text rather than from a string.
+    /// </summary>
+    /// <returns>
+    /// <c>false</c> — having written nothing — when this plan or that index cannot serve the pass;
+    /// the caller then keeps the term-at-a-time accumulation.
+    /// </returns>
+    bool TryScoreSpanDocuments(
+        ISpanPostingArrayIndex index,
+        ReadOnlySpan<NormalizedTerm> terms,
+        ReadOnlySpan<char> source,
+        IDocumentScoreSink sink) => false;
 }
