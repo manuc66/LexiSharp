@@ -119,8 +119,8 @@ harness's `--sparse` flag scores its output:
   tokenizer files are behind a gated repository. It is checked against a public copy of that
   tokenizer on every text of both corpora; [the producer's
   README](../bench/LexiSharp.Eval/sparse/README.md#tokenizer) states the check and its limit.
-- **Text and budget:** documents as `title + "\n" + text`, queries verbatim; 256 tokens per text;
-  the 256 highest-weighted terms per text.
+- **Text and budget:** documents as `title + "\n" + text`, queries verbatim; 256 or 512 tokens per
+  text (the evaluation page compares both); the 256 highest-weighted terms per text.
 - **Output:** one line per text, `sha256(text) \t token:weight …`, keyed on the exact UTF-8 bytes so
   a text the vectors do not cover is refused rather than scored as a non-match.
 

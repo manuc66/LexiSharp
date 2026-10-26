@@ -561,8 +561,9 @@ conventions:
   reference is **0.3970** at the published English analysis and k1=0.9/b=0.4, so the sparse row is
   **0.1246 above it** — a comparison of one task convention, one query list and one qrels set, not a
   like-for-like comparison of rankings: the analysis and the retrieval model both differ. The row is
-  one model, one truncation and one pruning budget: it does not say whether another budget would move
-  the margin, and it is not a statement about learned-sparse retrieval in general.
+  one model and one pruning budget: the truncation comparison below covers the token budget, any
+  top-k other than 256 is not measured, and it is not a statement about learned-sparse retrieval in
+  general.
 - **Aligned SciFact reads 0.6788 without `--query-term-frequency` and 0.6759 with it** (R@10 0.806 →
   0.800), and NFCorpus 0.3215 against 0.3208. The flag scores a repeated query term once per
   occurrence, which is the published BM25 convention, and on SciFact it moves the row by 0.003. The
@@ -602,8 +603,51 @@ conventions:
   with `k1=0.9, b=0.4`. The 0.5216 and the 0.3970 are two retrieval systems on one corpus, one query
   list and one qrels set, not two analyses of one index, and no task convention makes them the same
   thing.
-- **Not measured:** truncation at 512 tokens and any top-k other than 256. The 8-bit export has no
-  row either; at the vector level
+
+**Doubling the truncation moves the row by about a hundredth, in both directions.** The checkpoint
+accepts 512 tokens per text; the rows above encode 256. The same three corpora encoded at
+`--truncate 512` — same model file (sha256 `9e472022…`), same top-256 pruning, same host, 6 ONNX
+Runtime threads per encoder, two encoders side by side for NFCorpus and SciFact — and scored with the
+command above at the harness-default gains give:
+
+| Corpus | truncation | nDCG@10 | MAP@10 | MRR@10 | R@10 | document terms (mean) | encode wall clock |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| NFCorpus | 256 | 0.3596 | 0.2646 | 0.5714 | 0.1709 | 232.3 | 48.1 min |
+| NFCorpus | 512 | **0.3665** | 0.2686 | 0.5756 | 0.1741 | 242.4 | 48.6 min |
+| SciFact | 256 | 0.7083 | 0.6678 | 0.6814 | 0.8157 | 241.2 | 57.2 min |
+| SciFact | 512 | **0.7174** | 0.6757 | 0.6914 | 0.8256 | 246.7 | 54.4 min |
+| ArguAna, `--exclude-query-doc` | 256 | 0.5216 | 0.4300 | 0.4300 | 0.8179 | 247.2 | 28.7 min |
+| ArguAna, `--exclude-query-doc` | 512 | 0.5074 | 0.4164 | 0.4164 | 0.8023 | 247.4 | 31.1 min |
+| ArguAna, query document kept | 256 | 0.3836 | 0.2530 | 0.2530 | 0.7980 | 247.2 | 28.7 min |
+| ArguAna, query document kept | 512 | 0.3737 | 0.2459 | 0.2459 | 0.7795 | 247.4 | 31.1 min |
+
+The 256 rows are the rows tabulated above, from vectors encoded at 256 tokens with the same model
+and the same pruning; the only encoder argument that differs is `--truncate`, and both sets are
+scored with the same command, the same queries, the same qrels and the same gains. Doubling the
+truncation raises nDCG@10 by **0.0069** on NFCorpus and **0.0091** on SciFact, and lowers it by
+**0.0142** on ArguAna under the exclusion convention (**0.0099** with the query document kept) — a
+hundredth or less either way, and not a direction the three corpora agree on. A ranking over a fixed
+vector set is deterministic (a repeat of each run reads the same four decimals), so none of that
+difference is rerun noise: it is a different vector set entering the same scorer. For scale, a
+refitted BM25 is worth −0.001 to +0.004 nDCG@10 on NFCorpus and SciFact in the held-out table below,
+where these moves are 0.007 to 0.014.
+
+What the direction depends on is not established. It is consistent with where the truncation
+actually bites: every NFCorpus and SciFact query is shorter than 256 tokens (longest 38 and 79), so
+those two rows change on the document side only, while 513 of ArguAna's 1,406 queries exceed 256
+tokens (longest 1,087), so its query vectors change too — and ArguAna is the one corpus of the three
+where the row falls. That is a correlation across three corpora, not a mechanism measured here.
+
+The top-256 budget still binds at 512: documents average 242.4, 246.7 and 247.4 terms against 232.3,
+241.2 and 247.2 at 256, so a 512-token vector is a different selection of 256 terms, not the
+256-token vector with more terms on the end. **The encode clocks are two sets of timings, not a
+speedup ratio.** The 512 encodes ran while another measurement shared the host (load average 12-22
+on 12 cores for the side-by-side pair, around 8 for ArguAna alone), and the host load behind the 256
+clocks above was not recorded. What the 512 numbers establish is that an encode at 512 is about an
+hour per corpus at 6 threads — 48.6, 54.4 and 31.1 minutes — while the encoder fed 1.44×, 1.36× and
+1.12× more tokens per document than at 256.
+
+- **Not measured:** any top-k other than 256. The 8-bit export has no row either; at the vector level
   it is not a near-copy of the full-precision one — on the 300 SciFact queries the two exports'
   sparse vectors have a mean cosine of 0.904 (minimum 0.762), a mean maximum per-query weight
   difference of 1.03, and the quantised export activates 13.5 more
