@@ -28,6 +28,13 @@ public static class Program
             return;
         }
 
+        // int8 versus float32 on the same vectors: memory, recall@10 and scan latency. See QuantizationLane.
+        if (args.Length > 0 && args[0] == "quantize")
+        {
+            QuantizationLane.Run(args[1..]);
+            return;
+        }
+
         // One shared index under 1/2/4/8 callers, raw and synchronized. See ConcurrencyLane.
         if (args.Length > 0 && args[0] == "concurrency")
         {
