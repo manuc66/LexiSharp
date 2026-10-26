@@ -442,6 +442,11 @@ the same test queries, the same qrels and through the same `RetrievalMetrics` as
 ```bash
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
   --sparse bench/LexiSharp.Eval/data/sparse-vectors
+
+# The ArguAna row, whose vectors were produced in this session; no --exclude-query-doc, which the
+# page's aligned rows there pass: see the last bullet.
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset arguana --no-tuned \
+  --sparse bench/LexiSharp.Eval/data/sparse-vectors
 ```
 
 The vectors are SPLADE-v3 through the full-precision ONNX export (`splade-v3.onnx`, 532 138 951
@@ -455,15 +460,17 @@ Measured on 2026-10-26, one host (12 cores, `--jobs` default 8), nDCG@10 at **ex
 the harness default, and the convention every other row on this page uses**. The aligned column is
 `--analyzer english --reference-bm25 0.9,0.4 --query-term-frequency`, the published BM25 convention;
 without that flag the page's aligned rows read 0.3215 / 0.6788, as the note below records. All three
-columns come from runs in this session:
+columns come from runs in this session on NFCorpus and SciFact; ArguAna has no aligned cell, for the
+reason the last bullet gives:
 
 | Corpus | BM25 defaults (1.5 / 0.75) | BM25 aligned (English analysis, 0.9 / 0.4) | SPLADE-v3 (256 tokens, top 256) |
 |---|---:|---:|---:|
 | NFCorpus | 0.308 | 0.322 | **0.3596** |
 | SciFact | 0.662 | 0.676 | **0.7083** |
+| ArguAna | 0.320 | — | **0.3836** |
 
-The three other metrics for the sparse rows, against BM25 at the aligned operating point, with the
-same runs:
+The three other metrics for the sparse rows, against BM25 at the aligned operating point where the
+run has one (NFCorpus, SciFact), and at the harness-default parameters on ArguAna, which has none:
 
 | Corpus, engine | MAP@10 | MRR@10 | R@10 |
 |---|---:|---:|---:|
@@ -471,22 +478,26 @@ same runs:
 | NFCorpus, SPLADE-v3 | **0.2646** | **0.5714** | **0.1709** |
 | SciFact, BM25 aligned | 0.631 | 0.642 | 0.800 |
 | SciFact, SPLADE-v3 | **0.6678** | **0.6814** | **0.8157** |
+| ArguAna, BM25 defaults | 0.207 | 0.207 | 0.679 |
+| ArguAna, SPLADE-v3 | **0.2530** | **0.2530** | **0.7980** |
 
-- **SPLADE is above BM25 on both corpora at this configuration** — by **0.052** nDCG@10 against the
-  harness-default BM25 row on NFCorpus and **0.046** on SciFact, or **0.038** and **0.032** against
-  the aligned operating point, and by every other metric on both. The row is one model, one truncation and one
-  pruning budget: it does not say whether another budget would move the margin, and it is not a
-  statement about learned-sparse retrieval in general.
+- **SPLADE is above BM25 on all three corpora at this configuration** — by **0.052** nDCG@10 against
+  the harness-default BM25 row on NFCorpus, **0.046** on SciFact and **0.064** on ArguAna, or
+  **0.038** and **0.032** against the aligned operating point on the first two, and by every other
+  metric on all three. The row is one model, one truncation and one pruning budget: it does not say
+  whether another budget would move the margin, and it is not a statement about learned-sparse
+  retrieval in general.
 - **Aligned SciFact reads 0.6788 without `--query-term-frequency` and 0.6759 with it** (R@10 0.806 →
   0.800), and NFCorpus 0.3215 against 0.3208. The flag scores a repeated query term once per
   occurrence, which is the published BM25 convention, and on SciFact it moves the row by 0.003. The
   sparse row is unaffected either way: the flag reaches BM25's scorer only.
 - **What the row is not.** The metrics contain no encode cost — the model ran offline, before the
   harness started, and its time is the producer's (48.1 min for NFCorpus's 3 633 documents and 3 237
-  queries, 57.2 min for SciFact's 5 183 and 1 109, two encoders side by side at 6 threads each). The
-  row is not pinned: `pinned.json` keys on analyzer and BM25 parameters, and the pinned job has no
-  vectors, so a pin could only ever skip. The model is not part of the library and no `LexiSharp`
-  API runs it.
+  queries, 57.2 min for SciFact's 5 183 and 1 109, two encoders side by side at 6 threads each; 23.2
+  min for ArguAna's 8 674 documents and 1 406 queries, one encoder at 6 threads, of which 20.0 min
+  were documents and 3.2 min queries). The score run itself took 5 m 04 s at `--jobs 8`. The row is
+  not pinned: `pinned.json` keys on analyzer and BM25 parameters, and the pinned job has no vectors,
+  so a pin could only ever skip. The model is not part of the library and no `LexiSharp` API runs it.
 - **The title is in the document text, not weighted.** `SparseTextSearchEngine` has no field
   concept, so `title + "\n" + text` is one string on both sides. Unlike the BM25F rows, no title
   weight exists here, and the producer applies this rule for every corpus — otherwise two rows
@@ -497,13 +508,19 @@ same runs:
   the full ones.
 - **The tokenizer is assembled, not loaded.** The checkpoint's tokenizer files are behind a gated
   repository, so the encoder builds a WordPiece tokenizer from the published vocabulary; it agrees
-  token-for-token with a public copy of the checkpoint's `tokenizer.json` on all 13 162 texts of the
-  two corpora. That check and its limitation are in the producer's README.
-- **Not measured:** ArguAna (not encoded in this session), truncation at 512 tokens, any top-k other
-  than 256, and the `pgvector sparsevec` backend, which has no harness lane at all. The 8-bit export
-  has no row either; at the vector level it is not a near-copy of the full-precision one — on the
-  300 SciFact queries the two exports' sparse vectors have a mean cosine of 0.904 (minimum 0.762), a
-  mean maximum per-query weight difference of 1.03, and the quantised export activates 13.5 more
+  token-for-token with a public copy of the checkpoint's `tokenizer.json` on all 13 162 texts of
+  NFCorpus and SciFact. That check and its limitation are in the producer's README, and it does not
+  cover ArguAna, which was encoded in this session.
+- **ArguAna has no aligned cell, and the reason is a convention.** On ArguAna 1 298 of the 1 406 test
+  queries name a document, so the page's aligned and tuned rows there pass `--exclude-query-doc`. The
+  sparse lane was run without it, which is the default and the same convention as the 0.320 BM25 row
+  in that row's first column; the two are therefore comparable with each other and not with the
+  page's aligned ArguAna figures. A sparse row under `--exclude-query-doc` is not measured.
+- **Not measured:** truncation at 512 tokens, any top-k other than 256, and the `pgvector sparsevec`
+  backend, which has no harness lane at all. The 8-bit export has no row either; at the vector level
+  it is not a near-copy of the full-precision one — on the 300 SciFact queries the two exports'
+  sparse vectors have a mean cosine of 0.904 (minimum 0.762), a mean maximum per-query weight
+  difference of 1.03, and the quantised export activates 13.5 more
   terms per query on average. A row measured on it would be a different retrieval model, which is
   why the encoder records `quantised` in the manifest and the row prints it.
 
@@ -691,20 +708,26 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset scifact --held
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset arguana --heldout 0.5 --jobs 8
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset arguana --heldout 0.5 --jobs 8 --tune-bm25f
 
+# The ArguAna fraction sweep: single-field tuners only, no BM25F.
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset arguana --heldout 0.25 --jobs 8
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset arguana --heldout 0.75 --jobs 8
+
 # The same corpora without the flag, for the published in-sample rows.
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --jobs 4
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset scifact --jobs 4
 ```
 
 **Measured on 2026-10-25 (the three single-field tuner rows on NFCorpus and SciFact) and 2026-10-26
-(the BM25F rows and every ArguAna row), 50 % held out, default analysis.** The first group ran at
-`--jobs 4` and the second at `--jobs 8`; the flag changes wall clock, not a metric, and the later
-re-runs reproduced the three single-field rows on both corpora to the printed precision. nDCG@10 is
-the metric the tuners maximize; Δ fit→held is held-out minus fit-set; Δ vs untuned is held-out minus
-the fixed `BM25 (k1=1.5, b=0.75)` row on the same withheld queries. Wall clock, which is the cost of
-the run and not a benchmark: 23 s NFCorpus, 106 s SciFact, 14 m 20 s ArguAna, and 69 m 46 s ArguAna
-with `--tune-bm25f`. The three shorter runs overlapped the 70-minute one on this host, so their times
-are upper bounds on a solo run.
+(the BM25F rows, the ArguAna rows at 0.5 and the ArguAna fraction sweep), default analysis.** The
+NFCorpus and SciFact single-field rows ran at `--jobs 4` and the rest at `--jobs 8`; the flag changes
+wall clock, not a metric, and the later re-runs reproduced the three single-field rows on both
+corpora to the printed precision. nDCG@10 is the metric the tuners maximize; Δ fit→held is held-out
+minus fit-set; Δ vs untuned is held-out minus the fixed `BM25 (k1=1.5, b=0.75)` row on the same
+withheld queries. Wall clock, which is the cost of the run and not a benchmark: 23 s NFCorpus, 106 s
+SciFact, 14 m 20 s ArguAna at 0.5, 69 m 46 s ArguAna at 0.5 with `--tune-bm25f`, 21 m 35 s ArguAna at
+0.25 and 8 m 47 s ArguAna at 0.75. The three shorter NFCorpus/SciFact runs overlapped the 70-minute
+one on this host, so their times are upper bounds on a solo run; the two fraction-sweep runs did not
+overlap another evaluation.
 
 | Corpus | Split (fit / score) | Row | Fit nDCG@10 | Held-out nDCG@10 | Δ fit→held | Held-out MAP@10 | Held-out R@10 | Δ vs untuned |
 |---|---|---|---|---:|---:|---:|---:|---:|---:|
@@ -718,11 +741,19 @@ are upper bounds on a solo run.
 | | | BM25L tuned (k1=2, b=1, δ=0.25) | 0.652 | 0.684 | +0.032 | 0.635 | 0.822 | +0.004 |
 | | | BM25F tuned (k1=1.2, b=0.5, title=1.5) | 0.655 | 0.679 | +0.024 | 0.631 | 0.814 | −0.001 |
 | | | BM25 (k1=1.5, b=0.75), untuned reference | — | 0.680 | — | 0.632 | 0.814 | — |
+| ArguAna | 1076 / 330 (0.25) | BM25 tuned (k1=2, b=1) | 0.366 | 0.352 | −0.015 | 0.231 | 0.733 | +0.043 |
+| | | BM25+ tuned (k1=2, b=1, δ=0) | 0.366 | 0.352 | −0.015 | 0.231 | 0.733 | +0.043 |
+| | | BM25L tuned (k1=2, b=1, δ=0) | 0.366 | 0.352 | −0.015 | 0.231 | 0.733 | +0.043 |
+| | | BM25 (k1=1.5, b=0.75), untuned reference | — | 0.309 | — | 0.201 | 0.658 | — |
 | ArguAna | 718 / 688 | BM25 tuned (k1=2, b=1) | 0.354 | 0.372 | +0.019 | 0.248 | 0.765 | +0.044 |
 | | | BM25+ tuned (k1=2, b=1, δ=0) | 0.354 | 0.372 | +0.019 | 0.248 | 0.765 | +0.044 |
 | | | BM25L tuned (k1=2, b=1, δ=0) | 0.354 | 0.372 | +0.019 | 0.248 | 0.765 | +0.044 |
 | | | BM25F tuned (k1=2, b=1, title=3) | 0.395 | 0.405 | +0.010 | 0.277 | 0.807 | +0.077 |
 | | | BM25 (k1=1.5, b=0.75), untuned reference | — | 0.328 | — | 0.214 | 0.688 | — |
+| ArguAna | 344 / 1062 (0.75) | BM25 tuned (k1=2, b=1) | 0.358 | 0.365 | +0.007 | 0.241 | 0.756 | +0.044 |
+| | | BM25+ tuned (k1=2, b=1, δ=0) | 0.358 | 0.365 | +0.007 | 0.241 | 0.756 | +0.044 |
+| | | BM25L tuned (k1=2, b=1, δ=0) | 0.358 | 0.365 | +0.007 | 0.241 | 0.756 | +0.044 |
+| | | BM25 (k1=1.5, b=0.75), untuned reference | — | 0.321 | — | 0.208 | 0.684 | — |
 
 The two halves differ in difficulty, so the fit/held-out gap is not an overfitting measure on its
 own. The untuned default row reads 0.308 on all 323 NFCorpus queries and 0.291 on the withheld 167;
@@ -757,6 +788,15 @@ full-set fits; see below.
   which is why the tuner's own score for the winning BM25F configuration (0.358) is below the fit
   column (0.395), and its unfloored BM25 baseline (0.32) below that fit column's 0.354. The held-out
   and untuned columns are both syntax off, so their difference compares like with like.
+- **ArguAna at other fractions.** The three single-field tuners run at 0.25 and 0.75 as well, and the
+  transfer is the same size at all three. At 0.25 (1076 fit / 330 score) the fitted `k1=2, b=1` reads
+  **0.352** held out against the untuned 0.309: **+0.043**; its fit figure is 0.366, so the fit→held
+  gap is −0.015. At 0.75 (344 fit / 1062 score) it reads **0.365** against 0.321: **+0.044**, with a
+  fit figure of 0.358 and a +0.007 gap. Both variants pick `δ=0` and collapse onto BM25 at both
+  fractions, so the margin is the `(k1, b)` fit, not a variant's delta. The held-out margin holds at
+  three fractions on this corpus — 1076/330, 718/688 and 344/1062 — and no fraction in the sweep
+  breaks it. It is a shape on one corpus, not a law: NFCorpus and SciFact are measured at 0.5 only,
+  and the sweep has no BM25F row, because a BM25F run costs about an hour per split.
 
 **What the halves say about BM25F's field weight.** On the full set every fitted title weight is 1.0
 and `WeightingHelped` is false. On the fit halves the tuner chooses 1.5 (NFCorpus, SciFact) and 3.0
@@ -768,13 +808,15 @@ against untuned BM25, which also contains the `(k1, b)` fit and BM25F's single-f
 The held-out runs score the fitted configuration only, so none of the three isolates the weight on
 the withheld half; what is measured there is the whole fitted configuration.
 
-**What remains an upper bound.** Every tuned row not in the table: every fraction other than 0.5;
-every run under another analysis (`--analyzer english`, `--stem porter`, another `--ndcg-gain`);
-every depth other than 10; every lane with no tuned row (the SQL backends and the dense, sparse and
-rerank lanes have no held-out measurement); and the non-BEIR reference-corpus rows, which are
-outside this matrix. BM25F is measured with `title` as the only weighted field; another field set is
-unmeasured. The published full-set rows are intact and still in-sample figures over all queries; the
-pairs above cover three corpora, one fraction and the one analysis the commands name.
+**What remains an upper bound.** Every tuned row not in the table: every fraction other than 0.5 on
+NFCorpus and SciFact, and every fraction other than 0.25, 0.5 and 0.75 on ArguAna; BM25F at any
+fraction other than 0.5; every run under another analysis (`--analyzer english`, `--stem porter`,
+another `--ndcg-gain`); every depth other than 10; every lane with no tuned row (the SQL backends and
+the dense, sparse and rerank lanes have no held-out measurement); and the non-BEIR reference-corpus
+rows, which are outside this matrix. BM25F is measured with `title` as the only weighted field;
+another field set is unmeasured. The published full-set rows are intact and still in-sample figures
+over all queries; the pairs above cover three corpora, three fractions on ArguAna and one on the
+other two, and the one analysis the commands name.
 
 `--heldout` is refused with `--analyze`, `--verify-reference` and `--fingerprint`, whose output
 shapes assume every configuration scores every query or stop before scoring starts. With
