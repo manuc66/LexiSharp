@@ -34,7 +34,10 @@ The contract, in plain terms:
 This guide describes how to write such a provider around a SPLADE ONNX model. It is an
 **outline, not a shipped or tested reference implementation** — the exact tensor names,
 export quirks and package APIs vary per checkpoint and per package version. Verify against
-your model.
+your model. The harness's own encoder, which runs the export outside .NET and feeds the
+evaluation row, is [`bench/LexiSharp.Eval/sparse/`](../bench/LexiSharp.Eval/sparse/README.md):
+it is the one SPLADE provider in this repository that produced measured numbers, and it is
+deliberately a script rather than a library type.
 
 ## What you need
 
@@ -101,6 +104,32 @@ For `PostgresSparseSearchEngine`, the vocabulary mapping is an **index-layout de
 it must be fixed once and shared between the index-time and query-time providers. A term
 missing from it is silently ignored. Prune document vectors to the same top-k budget on
 both sides, and stay under the 1,000 non-zero `sparsevec` cap.
+
+## The one SPLADE path that produced measured numbers
+
+`bench/LexiSharp.Eval/sparse/encode_splade.py` is a working instance of the pipeline above, and the
+harness's `--sparse` flag scores its output:
+
+- **Model:** `castorini/splade-v3-onnx`, the full-precision export of `naver/splade-v3`
+  (`splade-v3.onnx`, 532 MB, licence CC BY-NC-SA 4.0). The graph already contains the SPLADE head —
+  it returns `output_idx`/`output_weights`, the non-zero terms of
+  `max over tokens of log1p(relu(logits))` masked by the attention mask — so the script applies no
+  pooling of its own, only truncation and pruning.
+- **Tokenizer:** assembled from the export's `splade-v3-vocab.txt`, because the checkpoint's own
+  tokenizer files are behind a gated repository. It is checked against a public copy of that
+  tokenizer on every text of both corpora; [the producer's
+  README](../bench/LexiSharp.Eval/sparse/README.md#tokenizer) states the check and its limit.
+- **Text and budget:** documents as `title + "\n" + text`, queries verbatim; 256 tokens per text;
+  the 256 highest-weighted terms per text.
+- **Output:** one line per text, `sha256(text) \t token:weight …`, keyed on the exact UTF-8 bytes so
+  a text the vectors do not cover is refused rather than scored as a non-match.
+
+The measured rows — SPLADE-v3 against this library's BM25 on NFCorpus and SciFact, with the command
+that produces them — are on [the evaluation page](evaluation.md#learned-sparse-splade-through-onnx).
+
+Using this outside the harness means running the same script (or your own provider) to produce the
+vectors; the library still runs no model, and nothing in `LexiSharp.dll` references Python, ONNX or
+the encoder.
 
 ## Failure modes to test on your side
 
