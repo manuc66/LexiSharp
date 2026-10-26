@@ -778,6 +778,11 @@ for the same query; the lane does not decompose it, and no cause is claimed here
 `p50` at 100,000 spans 4.40–8.20 µs across the three runs, which is this host's run-to-run spread,
 not a property of the query.
 
+**The two latency columns price the term-at-a-time accumulation pass.** A sparse query takes the
+document-at-a-time cursor pass, which removes the corpus-sized buffer and its clear; the same queries
+on the current build read 1.00 / 2.20 µs at 100,000 and 4.30 / 7.60 µs at 500,000 in the
+[cursor lane](#cursor-lane-cursor-a-tail-querys-p50-p99-and-allocation) below.
+
 The build readings span 638–665 ms at 10,000 documents and 4.82–5.04 s at 100,000. Read the column
 as a range on this host, not as a scaling factor: the machine was shared, and the lane times one
 build per size rather than a mean.
@@ -957,6 +962,108 @@ lengths gives a looser bound and a lower skipped share, so the 96.5 % head figur
 for another corpus. The one-term tail's 0.0 % holds for the queries this lane runs, whose rare term
 occurs at most once per document; a tail term with repeated occurrences in some documents does have a
 threshold above its common contribution and can be pruned.
+
+## Cursor lane (`cursor`): a tail query's p50, p99 and allocation
+
+The accumulating pass walks the posting lists term at a time and folds them into a buffer as long as
+the ordinal space. That buffer is rented from `ArrayPool` and its recorded-flags array is cleared
+before every search, so the search pays a cost proportional to the **corpus** before it reads a
+posting. The alternative is a document-at-a-time traversal: one cursor per query term, the smallest
+current ordinal is scored, and the score goes straight into the top-`k` window — no corpus-sized
+buffer, and nothing to clear.
+
+```bash
+# 10,000 and 100,000 documents, the scale lane's default sizes
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- cursor
+# one size at a time; 500,000 needs about 3.2 GB of managed heap
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- cursor 500000
+# add one query per document-frequency target, which is how the density threshold was fitted
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- cursor 100000 --sweep
+```
+
+**What it measures.** The same corpus, the same three queries and the same five-second warm-up as
+the scale lane: one tail term (`w20000x`), three tail terms (`w20000x w25000x w29000x`) and one head
+term (`w1x`), at `Limit: 10`. Each query reports `min`, `p50`, `p99` and `mean` over 1,000 / 300 /
+100 individual searches at 10,000 / 100,000 / 500,000 documents, the allocation per search from
+`GC.GetAllocatedBytesForCurrentThread` over a separate loop of the same length, and the isolated
+`Array.Clear` of an ordinal-space-sized `byte[]` beside it. It is a `Stopwatch` in a plain process,
+not a BenchmarkDotNet report.
+
+**How the cursor pass decides.** It is not a threshold guess: the pass removes a fixed cost that
+grows with the corpus and adds a per-document cost that grows with the query's reach, so it wins on
+sparse queries and loses on dense ones. The engine takes it when the query's summed document
+frequency is at most `ordinalSpace / 200` **and** the index can lend its posting arrays as arrays
+(`IPostingArrayIndex`; `InMemoryTextIndex` always can, and a committed store can when it was opened
+with `decodedCacheEntries`). An index that cannot — a store without the decoded-postings cache, an
+expanding or context-enriching decorator, a multi-segment chain with an overlay — keeps the
+accumulator; the pass declines and nothing changes. `--sweep` measures the crossing: one term near
+each document frequency in `10, 25, 50, 250, 500, 1,000, 2,500, 5,000, 20,000`, the cursor pass
+forced on every query so the losing side of the crossing is visible too.
+
+**Measured on 2026-10-26**, Manjaro Linux, Intel Core i7-8850H (12 logical processors), .NET 10.0.13,
+`ServerGC=True`, 15 GiB of RAM, one index per size in its own process. The host carried another
+session's work (load 1.7–6.1 at the builds), so the builds were run **alternating**: baseline, cursor,
+cursor, baseline. The latency columns are the mean of the two runs on each side; `p50` is the lane's
+own, no BenchmarkDotNet outlier removal. The before column is the library at `3eedf42` — the tree the
+lane commit sits on, before the cursor pass existed; the after column is the tree this page describes.
+
+| Documents | Query | df sum | Before p50 | After p50 | Before p99 | After p99 | Before alloc | After alloc |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|
+| 10,000 | one tail term | 1 | 0.40 µs | 0.40 µs | 1.30 µs | 0.90 µs | 840 B | 840 B |
+| 10,000 | three tail terms | 2 | 1.00 µs | 1.00 µs | 1.45 µs | 2.00 µs | 1,160 B | 1,160 B |
+| 10,000 | one head term | 9,525 | 133.1 µs | 135.1 µs | 165.5 µs | 169.8 µs | 672 B | 672 B |
+| 100,000 | one tail term | 9 | 3.33 µs | **1.00 µs** | 4.38 µs | 1.60 µs | 648 B | 832 B |
+| 100,000 | three tail terms | 29 | 4.15 µs | **2.23 µs** | 5.50 µs | 2.93 µs | 688 B | 1,008 B |
+| 100,000 | one head term | 95,402 | 1.23 ms | 1.28 ms | 1.46 ms | 1.40 ms | 672 B | 672 B |
+| 500,000 | one tail term | 90 | 13.05 µs | **4.30 µs** | 32.55 µs | 5.20 µs | 672 B | 856 B |
+| 500,000 | three tail terms | 220 | 19.50 µs | **7.60 µs** | 30.90 µs | 8.50 µs | 688 B | 1,008 B |
+| 500,000 | one head term | 477,361 | 5.17 ms | 5.35 ms | 5.40 ms | 6.10 ms | 672 B | 672 B |
+
+The two 10,000-document tail rows are below the accumulation floor (8 posting entries), so both
+builds take the per-document loop and the cursor pass was never in play; the head row is dense and
+stays on the accumulator at every size. **The head rows are therefore the same code path in both
+builds**, and the 3 % difference at 500,000 (5.17 against 5.35 ms, both pairs) is not attributed: the
+allocation is identical at 672 B, and no mechanism for it was established.
+
+The isolated clear the cursor pass removes is **2.2–2.4 µs at 100,000 and 9.0–9.4 µs at 500,000** —
+69–72 % of the one-term `p50` and 45–56 % of the three-term one before the change. After it, the tail
+`p50` is below the isolated clear at both sizes, which is what a search that does not clear a
+corpus-sized buffer looks like. The allocation rises by **184 B** on a one-term query and **320 B** on
+a three-term one: a weight per term, a `PostingArrays` per term, a cursor array and the sink object —
+O(query) bytes, against a corpus-sized buffer that is rented (and was cleared) before.
+
+**The density crossing, measured with `--sweep`** (baseline against the cursor pass forced on every
+query; the shipped build takes the cursor pass only at or below the cap, so the losing rows are the
+reason the cap exists):
+
+| Documents | Last reach that won | Before → After | First reach that lost | Before → After | Cap (`df <= N/200`) |
+|---:|---:|---|---:|---|---:|
+| 10,000 | 50 | 2.80 → 2.50 µs | 250 | 9.90 → 10.20 µs | 50 |
+| 25,000 | 250 | 12.10 → 11.60 µs | 1,005 | 36.50 → 38.70 µs | 125 |
+| 50,000 | 250 | 11.30 → 9.90 µs | 5,014 | 144.60 → 107.30 µs | 250 |
+| 100,000 | 250 | 11.00 → 10.00 µs | 1,002 | 45.00 → 48.80 µs | 500 |
+| 500,000 | 1,000 | 57.90 → 50.60 µs | 5,006 | 143.80 → 155.00 µs | 2,500 |
+
+The 50,000 row's losing point is the doubtful one: the baseline's `p50` there was 144.6 µs against a
+minimum of 82.0, while the cursor pass read 107.3 against 105.5, so the relative order of the medians
+rests on a noisy baseline. **Not measured:** the exact crossing between each pair of points, and any
+corpus size other than those five; the cap is set inside the interval at every measured size, not on
+a fitted curve.
+
+**Not the same answer as pruning.** Block-max WAND skips posting entries; this pass reads the ones the
+crossing allows it to and changes the traversal instead. On the tail queries the pruning lane measures
+0.0 % and 0.5 % skipped, so there is nothing for a bound to win there, and the head term's 96.5 %
+skipped share is a different question. The two are complementary and neither subsumes the other.
+
+**What is not measured.** Phrases, required/prohibited operators, field scopes and expansions: those
+queries decline the accumulating pass entirely and keep the per-document loop, so they are untouched
+here. *This* section measures the plain tail query and the head term at `Limit: 10`, with the default
+BM25, `k1 = 1.5`, `b = 0.75`, the default tokenizer and the in-memory index. Filters and facets were
+checked for parity and are not timed. The segment-backed store path was checked for parity (a
+committed store opened with `decodedCacheEntries` lends its arrays; one without the cache falls back to
+the accumulator and serves the same page) and is **not** timed. P99 under concurrency, query mixing,
+other analyzers, other scorers, other `Limit` values and corpora above 500,000 documents are not
+measured; nor is the 1,000,000-document size, for the memory reason the scale lane gives.
 
 ## Concurrency lane (`concurrency`): one index at 1, 2, 4 and 8 callers
 
@@ -1165,6 +1272,8 @@ dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*Scoring
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*QueryAllocationBreakdown*'
 # index build and tail-query cost per corpus size (see the scale lane above):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- scale
+# tail-query p50/p99, allocation and the cursor pass's density crossing (see the cursor lane above):
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- cursor 100000 --sweep
 # posting entries a block bound can skip, per query and corpus size (see the pruning lane above):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- wand 100000
 # one shared index at 1/2/4/8 callers, raw and synchronized (see the concurrency lane above):
