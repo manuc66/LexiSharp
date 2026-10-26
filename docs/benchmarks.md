@@ -759,13 +759,20 @@ values in all three runs.
 | 10,000 | 665 / 638 / 655 ms | 76.9 MB | 8,063 | 76.9 MB | df 1, 1 hit | 0.40 µs (0.40) | 840 B | df sum 2, 2 hits | 0.90 µs (0.90–1.50) | 1,160 B |
 | 100,000 | 5.04 / 4.86 / 4.82 s | 661.5 MB | 6,936 | 663.1 MB | df 9, 9 hits | 3.70 µs (3.60–3.80) | 648 B | df sum 29, 10 hits | 7.10 µs (4.40–8.20) | 688 B |
 | 500,000 | 25.05 s (one run) | 3,224.0 MB | 6,761 | 3,224.0 MB | df 90, 10 hits | 13.20 µs | 672 B | df sum 220, 10 hits | 19.80 µs | 688 B |
+| 1,000,000 | 53.93 s (one run) | 6,483.0 MB | 6,798 | 6,483.0 MB | df 152, 10 hits | 6.20 µs | 856 B | df sum 389, 10 hits | 12.50 µs | 1,008 B |
 
-The 500,000-document row is a **single run**, made after the three above, on the same host with the
-same binary; its build column is one reading rather than three, so it carries no spread. It was added
-because 1,000,000 documents does not fit: at 6,761 B of managed heap per document the million-document
-index would need about 6.5 GB, and the corpus's own documents are live beside it, against 7.4 GB
-available on this machine when the run was attempted. That is the whole reason no 1,000,000-document
-figure appears, and it is a memory limit rather than a finding about the engine.
+The 500,000- and 1,000,000-document rows are each a **single run**, made after the three above, on
+the same host; their build columns are one reading rather than three, so they carry no spread. The
+million-document run was previously impossible on this machine — at ~6.8 KB of managed heap per
+document the index needs about 6.5 GB beside the corpus's own documents, and the host had 7.4 GB
+available the first time it was tried. Clearing the build output of twenty worktrees freed enough for
+it to fit: **6,483.0 MB retained, 53.93 s to build, 8.9 GB available at the start**.
+
+**The 1,000,000 row is not the same pass as the three smaller ones.** It was measured after the
+cursor pass landed, so its latency columns read the document-at-a-time traversal (6.20 / 12.50 µs);
+the 10,000 / 100,000 / 500,000 rows predate it and price the accumulation pass. The cursor paragraph
+below gives the current build's figures for those sizes; comparing the million-document row with
+them directly would compare two traversals.
 
 `hits` is the number of results the search returned at `Limit: 10`; the three-term query at
 100,000 documents has 29 posting entries and returns a full page. The per-document retention reading
@@ -810,13 +817,10 @@ the last 100 ms of that warm-up is printed with the row so that a run whose code
 visible rather than silent. The warm-up adds 20 s to the default two-size run; it is the difference
 between measuring the search and measuring the JIT.
 
-**Not measured in this session: 1,000,000 documents.** `scale 1000000` and `--include-1m` reach the
-same block — the header and the warm-up line print, which is how the mode was checked — but the run
-was stopped before the 1,000,000-document build, because this host had about 6.5 GB of available
-memory while the only figure in this repository for a 1,000,000-document Zipf index is 7.1 GB
-resident (the ad-hoc table above). No 1,000,000-document figure is extrapolated from the two rows
-here, and the 10,000 / 100,000 / 1,000,000 crossover table elsewhere on this page is still the
-ad-hoc stopwatch harness's measurement, not this lane's.
+**The lane reaches 1,000,000 documents**, at about 6.5 GB of managed heap, and the row is in the
+table above; it was taken once, on a host with 8.9 GB available. The 10,000 / 100,000 / 1,000,000
+crossover figures elsewhere on this page are still the ad-hoc stopwatch harness's measurement, not
+this lane's.
 
 **What else this section does not establish.** Only the default tokenizer, BM25 and `Limit: 10` were
 measured; head terms, other analyzers, filtered queries, concurrency, and a distribution beyond
