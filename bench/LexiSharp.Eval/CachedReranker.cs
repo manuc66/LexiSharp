@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -24,6 +25,14 @@ namespace LexiSharp.Eval;
 /// valid. Nothing is ever rewritten, so an interrupted flush cannot lose entries already on disk.
 /// </para>
 /// <para>
+/// The harness reranks from a <see cref="System.Threading.Tasks.Parallel"/> loop when <c>--jobs</c>
+/// is above one, so <see cref="Rerank"/> is called from several threads at once. The score store is a
+/// <see cref="ConcurrentDictionary{TKey,TValue}"/>: a lookup takes no lock, and a reranked
+/// configuration makes one lookup per candidate, so the read path is the one worth keeping
+/// uncontended. The log's integrity is a lock around one whole line, and the model call is outside
+/// every lock — that is the work the workers are there to overlap.
+/// </para>
+/// <para>
 /// The query is keyed by a hash of its text rather than by its id, because that is what the reranker
 /// is given: two queries with the same text score the same by construction, and the interface has no
 /// id to key on.
@@ -35,11 +44,24 @@ internal sealed class CachedReranker : IReranker, IDisposable
     private const int FlushEvery = 1_000;
 
     private readonly IReranker _inner;
-    private readonly Dictionary<(string Query, string Document), float> _scores = [];
+    private readonly ConcurrentDictionary<(string Query, string Document), float> _scores = new();
     private readonly StreamWriter _log;
     private readonly bool _readOnly;
 
+    // The log and the flush counter share one lock, and that is the whole boundary. A line is
+    // written inside one critical section, which is what stops several workers' Writes from
+    // splicing into a line with four fields; the flush is in that same section, so it cannot run
+    // beside a half-written line; and _sinceFlush is read, reset and incremented only there, so no
+    // increment can land between the threshold check and the reset and be lost. Holding the lock
+    // for the flush blocks the other appenders for its duration — acceptable against a model pass,
+    // and the alternative is a second lock whose interaction with the counter is the defect again.
+    private readonly object _logLock = new();
+
     private int _sinceFlush;
+    private int _reused;
+    private int _computed;
+    private int _appended;
+    private bool _disposed;
 
     /// <param name="inner">The reranker that actually runs the model.</param>
     /// <param name="path">Cache file; created when absent, appended to when present.</param>
@@ -66,17 +88,30 @@ internal sealed class CachedReranker : IReranker, IDisposable
     /// <summary>The file this cache reads and appends to.</summary>
     public string CachePath { get; }
 
-    /// <summary>Pairs read from the cache file at start-up.</summary>
+    /// <summary>Pairs read from the cache file at start-up: one per distinct pair, not one per line.</summary>
     public int Loaded { get; private set; }
 
     /// <summary>Lines in the cache file that could not be read, typically one truncated tail.</summary>
     public int Unreadable { get; private set; }
 
+    /// <summary>
+    /// Repeated lines in the cache file, kept once. This writer does not produce them; the loader
+    /// counts them so that a file which carries two scores for one pair is visible rather than
+    /// silent.
+    /// </summary>
+    public int Duplicates { get; private set; }
+
     /// <summary>Pairs served from the cache instead of the model, this run.</summary>
-    public int Reused { get; private set; }
+    public int Reused => Volatile.Read(ref _reused);
 
     /// <summary>Pairs the model scored, this run.</summary>
-    public int Computed { get; private set; }
+    public int Computed => Volatile.Read(ref _computed);
+
+    /// <summary>
+    /// Distinct pairs this run added to the file. Lower than <see cref="Computed"/> only when two
+    /// workers missed the same pair at the same moment: the model ran twice, the file gained one line.
+    /// </summary>
+    public int Appended => Volatile.Read(ref _appended);
 
     public IReadOnlyList<(string DocumentId, float Score)> Rerank(
         string query, IReadOnlyList<SearchDocument> candidates)
@@ -87,19 +122,25 @@ internal sealed class CachedReranker : IReranker, IDisposable
         string queryKey = Hash(query);
         var scores = new float[candidates.Count];
         var missing = new List<int>();
+        int reused = 0;
 
         for (int i = 0; i < candidates.Count; i++)
         {
             if (_scores.TryGetValue((queryKey, candidates[i].Id), out float score))
             {
                 scores[i] = score;
-                Reused++;
+                reused++;
             }
             else
             {
                 missing.Add(i);
             }
         }
+
+        // One Interlocked.Add per query rather than one per candidate: the count is local until the
+        // loop ends, and the store is what the workers contend on, not this line.
+        if (reused > 0)
+            Interlocked.Add(ref _reused, reused);
 
         if (missing.Count > 0)
         {
@@ -119,12 +160,10 @@ internal sealed class CachedReranker : IReranker, IDisposable
                         + "result cannot be cached without changing the ranking.");
                 }
 
-                scores[index] = score;
-                Compute(queryKey, candidates[index].Id, score);
+                scores[index] = Remember(queryKey, candidates[index].Id, score);
             }
 
-            Computed += missing.Count;
-            FlushIfDue();
+            Interlocked.Add(ref _computed, missing.Count);
         }
 
         // The same ordering the uncached reranker produces: score descending, candidate order kept on
@@ -136,32 +175,79 @@ internal sealed class CachedReranker : IReranker, IDisposable
             .ToArray();
     }
 
-    /// <summary>Writes whatever is buffered. Safe to call more than once.</summary>
+    /// <summary>
+    /// Flushes whatever is buffered and closes the file. Safe to call more than once, and safe to
+    /// call while another thread is appending a line: it waits for that line under the log lock
+    /// rather than flushing underneath it.
+    /// </summary>
+    /// <remarks>
+    /// It is not safe to call while another thread is between its model call and its append — that
+    /// append throws <see cref="ObjectDisposedException"/> rather than writing to a closed file. The
+    /// contract the harness relies on is the stronger, simpler one: the cache is disposed after the
+    /// query loop returns, which joins every worker, and never from inside it.
+    /// </remarks>
     public void Dispose()
     {
-        _log.Flush();
-        _log.Dispose();
+        lock (_logLock)
+        {
+            if (_disposed)
+                return;
+
+            _log.Flush();
+            _log.Dispose();
+            _disposed = true;
+        }
     }
 
-    private void Compute(string queryKey, string documentId, float score)
+    /// <summary>
+    /// Records a score and returns the one the cache now holds: the caller's, unless another worker
+    /// stored the same pair first, in which case that worker's value is what every later run reads
+    /// and what this query ranks with. Only the worker that stores the pair appends a line, so the
+    /// file carries one line per pair even when two workers scored it at the same moment.
+    /// </summary>
+    private float Remember(string queryKey, string documentId, float score)
     {
-        _scores[(queryKey, documentId)] = score;
-        _sinceFlush++;
+        if (_scores.TryAdd((queryKey, documentId), score))
+        {
+            Append(queryKey, documentId, score);
+            return score;
+        }
 
+        // The pair lost a race with another worker's identical computation. The model is the same and
+        // the text is the same, so the two scores agree; reading the stored one is what makes them
+        // agree even if a future model is not bit-reproducible.
+        return _scores.TryGetValue((queryKey, documentId), out float stored) ? stored : score;
+    }
+
+    private void Append(string queryKey, string documentId, float score)
+    {
         if (_readOnly)
             return;
 
-        _log.Write(queryKey);
-        _log.Write('\t');
-        _log.Write(documentId);
-        _log.Write('\t');
-        _log.Write(score.ToString("R", CultureInfo.InvariantCulture));
-        _log.Write('\n');
+        string line = string.Concat(
+            queryKey,
+            "\t",
+            documentId,
+            "\t",
+            score.ToString("R", CultureInfo.InvariantCulture),
+            "\n");
+
+        lock (_logLock)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+
+            _log.Write(line);
+            _appended++;
+            _sinceFlush++;
+
+            FlushIfDueLocked();
+        }
     }
 
-    private void FlushIfDue()
+    /// <summary>Flushes when the buffer has grown by <see cref="FlushEvery"/> pairs. Requires the lock.</summary>
+    private void FlushIfDueLocked()
     {
-        if (_readOnly || _sinceFlush < FlushEvery)
+        if (_sinceFlush < FlushEvery)
             return;
 
         // Flush(true) pushes through to the device, so a crash loses at most the pairs after the
@@ -194,8 +280,12 @@ internal sealed class CachedReranker : IReranker, IDisposable
                 continue;
             }
 
-            _scores[(parts[0], parts[1])] = score;
-            Loaded++;
+            // First line wins, and a repeat is counted: two lines for one pair are two scores for it,
+            // and the first is the one the run that wrote it ranked with.
+            if (_scores.TryAdd((parts[0], parts[1]), score))
+                Loaded++;
+            else
+                Duplicates++;
         }
     }
 
