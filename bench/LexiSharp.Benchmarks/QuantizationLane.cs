@@ -23,10 +23,10 @@ namespace LexiSharp.Benchmarks;
 /// The corpus at 10,000 documents is the cached <c>multilingual-e5-small</c> embeddings the
 /// evaluation harness writes (<c>e5-small.docs.bin</c> under
 /// <c>bench/LexiSharp.Eval/data/&lt;corpus&gt;</c>), pooled from ArguAna, NFCorpus and SciFact:
-/// 17,490 real document vectors and 5,752 real query vectors. A size above the pool — 100,000 and
-/// 500,000 here — cannot be real on this host, because the largest cached corpus is ArguAna's
-/// 8,674 documents, so those rows are drawn from a 64-cluster Gaussian fitted to the real pool and
-/// say so. The queries stay the real ones at every size.
+/// 17,490 real document vectors and 5,752 real query vectors. A size above the pool — 100,000,
+/// 500,000 and 1,000,000 here — cannot be real on this host, because the largest cached corpus is
+/// ArguAna's 8,674 documents, so those rows are drawn from a 64-cluster Gaussian fitted to the real
+/// pool and say so. The queries stay the real ones at every size.
 /// </para>
 /// <para>
 /// Recall@10 is the overlap between the int8 page and the float32 page for the same query, so it
