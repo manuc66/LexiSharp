@@ -26,6 +26,11 @@ The model's licence is non-commercial and share-alike: **do not commit the weigh
 They live under `bench/LexiSharp.Eval/data/`, which is gitignored, and this README is how to
 regenerate them.
 
+**Write them to the main checkout's `bench/LexiSharp.Eval/data/`, not to a worktree's.** A worktree
+is disposable and its `data/` is invisible to `git status`, so a cleanup deletes the vectors without
+a warning — an ArguAna encode is 23 minutes and 50 MB. The same goes for the model file: point
+`--model` at a path outside any worktree, or expect to fetch 532 MB again.
+
 ## Install
 
 A virtualenv on disk, not `/tmp` (the export alone is 532 MB and a tmpfs would hold it in RAM):
