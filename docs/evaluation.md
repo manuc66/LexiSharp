@@ -429,9 +429,84 @@ together:
   only, which is the mode the engine's default threshold gates. ArguAna has no row: the lane is
   measured on NFCorpus and SciFact only.
 
-What the lane does **not** cover is the **sparse** engine: no sparse model is wired into this
-harness, so there is no query representation to index or score. The integration suite is what covers
-it, not a public benchmark.
+What the lane does **not** cover is the PostgreSQL **sparse** engine: the harness has no `sparsevec`
+lane. The in-memory sparse engine has a row, and it is the next section.
+
+## Learned sparse (SPLADE, through ONNX)
+
+The sparse engine ranks by the dot product of two learned sparse vectors, and LexiSharp computes
+neither: a model runs outside the library, once, and the harness scores what it wrote. The
+`--sparse <dir>` flag loads precomputed vectors into `SparseTextSearchEngine` and measures them on
+the same test queries, the same qrels and through the same `RetrievalMetrics` as every row above:
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
+  --sparse bench/LexiSharp.Eval/data/sparse-vectors
+```
+
+The vectors are SPLADE-v3 through the full-precision ONNX export (`splade-v3.onnx`, 532 138 951
+bytes, sha256 `9e472022f478fec8…`), truncated to 256 tokens and pruned to the 256 highest-weighted
+terms per text. Documents are encoded as `title + "\n" + text`; queries as their text verbatim.
+[The producer's README](../bench/LexiSharp.Eval/sparse/README.md) carries the install, the model
+download, the tokenizer route and the file format. The vectors are **not** committed: they are
+tens of megabytes derived from a CC BY-NC-SA model, and the README is how to regenerate them.
+
+Measured on 2026-10-26, one host (12 cores, `--jobs` default 8), nDCG@10 at **exponential gains —
+the harness default, and the convention every other row on this page uses**. The aligned column is
+`--analyzer english --reference-bm25 0.9,0.4 --query-term-frequency`, the published BM25 convention;
+without that flag the page's aligned rows read 0.3215 / 0.6788, as the note below records. All three
+columns come from runs in this session:
+
+| Corpus | BM25 defaults (1.5 / 0.75) | BM25 aligned (English analysis, 0.9 / 0.4) | SPLADE-v3 (256 tokens, top 256) |
+|---|---:|---:|---:|
+| NFCorpus | 0.308 | 0.322 | **0.3596** |
+| SciFact | 0.662 | 0.676 | **0.7083** |
+
+The three other metrics for the sparse rows, against BM25 at the aligned operating point, with the
+same runs:
+
+| Corpus, engine | MAP@10 | MRR@10 | R@10 |
+|---|---:|---:|---:|
+| NFCorpus, BM25 aligned | 0.234 | 0.523 | 0.152 |
+| NFCorpus, SPLADE-v3 | **0.2646** | **0.5714** | **0.1709** |
+| SciFact, BM25 aligned | 0.631 | 0.642 | 0.800 |
+| SciFact, SPLADE-v3 | **0.6678** | **0.6814** | **0.8157** |
+
+- **SPLADE is above BM25 on both corpora at this configuration** — by **0.052** nDCG@10 against the
+  harness-default BM25 row on NFCorpus and **0.046** on SciFact, or **0.038** and **0.032** against
+  the aligned operating point, and by every other metric on both. The row is one model, one truncation and one
+  pruning budget: it does not say whether another budget would move the margin, and it is not a
+  statement about learned-sparse retrieval in general.
+- **Aligned SciFact reads 0.6788 without `--query-term-frequency` and 0.6759 with it** (R@10 0.806 →
+  0.800), and NFCorpus 0.3215 against 0.3208. The flag scores a repeated query term once per
+  occurrence, which is the published BM25 convention, and on SciFact it moves the row by 0.003. The
+  sparse row is unaffected either way: the flag reaches BM25's scorer only.
+- **What the row is not.** The metrics contain no encode cost — the model ran offline, before the
+  harness started, and its time is the producer's (48.1 min for NFCorpus's 3 633 documents and 3 237
+  queries, 57.2 min for SciFact's 5 183 and 1 109, two encoders side by side at 6 threads each). The
+  row is not pinned: `pinned.json` keys on analyzer and BM25 parameters, and the pinned job has no
+  vectors, so a pin could only ever skip. The model is not part of the library and no `LexiSharp`
+  API runs it.
+- **The title is in the document text, not weighted.** `SparseTextSearchEngine` has no field
+  concept, so `title + "\n" + text` is one string on both sides. Unlike the BM25F rows, no title
+  weight exists here, and the producer applies this rule for every corpus — otherwise two rows
+  would differ in what they indexed without either of them saying so.
+- **Top-256 is a pruning budget, and it binds.** The export emits every non-zero term; on a
+  30-document NFCorpus sample it emitted a median of 254 and a maximum of 339, and 13 of the 30 were
+  cut. The dropped terms are the lowest-weighted ones, and the row measures the pruned vectors, not
+  the full ones.
+- **The tokenizer is assembled, not loaded.** The checkpoint's tokenizer files are behind a gated
+  repository, so the encoder builds a WordPiece tokenizer from the published vocabulary; it agrees
+  token-for-token with a public copy of the checkpoint's `tokenizer.json` on all 13 162 texts of the
+  two corpora. That check and its limitation are in the producer's README.
+- **Not measured:** ArguAna (not encoded in this session), truncation at 512 tokens, any top-k other
+  than 256, and the `pgvector sparsevec` backend, which has no harness lane at all. The 8-bit export
+  has no row either; at the vector level it is not a near-copy of the full-precision one — on the
+  300 SciFact queries the two exports' sparse vectors have a mean cosine of 0.904 (minimum 0.762), a
+  mean maximum per-query weight difference of 1.03, and the quantised export activates 13.5 more
+  terms per query on average. A row measured on it would be a different retrieval model, which is
+  why the encoder records `quantised` in the manifest and the row prints it.
+
 
 ## Metrics
 

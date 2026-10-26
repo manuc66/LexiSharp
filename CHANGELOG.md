@@ -20,6 +20,23 @@ workflow.
 
 ### Added
 
+- **The evaluation harness measures the sparse engine over precomputed SPLADE vectors.**
+
+  `--sparse <dir>` adds a retrieval-quality row for `SparseTextSearchEngine` on the same BEIR queries
+  and qrels as every other row, reading vectors produced outside the harness:
+  `<dir>/<dataset>.docs.tsv`, `<dir>/<dataset>.queries.tsv`, one line per text keyed by the SHA-256
+  of its exact UTF-8 bytes, beside `<dir>/<dataset>.meta.json`. The library still runs no model —
+  `bench/LexiSharp.Eval/sparse/encode_splade.py` runs the ONNX export once, and the harness loads the
+  result — so the row's name takes the model, the truncation and the top-k from the producer's
+  manifest rather than from a flag, and its metrics contain no encode cost. A directory that is
+  absent, a manifest that is missing, a malformed line, or a corpus the vectors do not cover is
+  refused with the count and an example, because a metric over the covered subset would be a
+  different corpus from the row beside it. `--backend sparse` keeps its refusal, now for the right
+  reason: `--backend` measures a SQL backend and the `pgvector sparsevec` engine is not wired in.
+
+  The measured rows, the vectors' provenance and what they do not establish are on
+  [the evaluation page](docs/evaluation.md#learned-sparse-splade-through-onnx).
+
 - **The evaluation harness measures the `pg_trgm` fuzzy backend.**
 
   `--backend fuzzy` adds a retrieval-quality row for `PostgresFuzzySearchEngine` on the same BEIR
@@ -27,8 +44,7 @@ workflow.
   (`--backend-threshold`, comma-separated, default 0.3 — the engine's own). The threshold is the `%`
   operator's match rule, so the rows are a sweep of that rule over one index rather than a tuning
   result, and the printed row says so. The row's name carries the mode, the index shape and the
-  thresholds it ran at. `--backend sparse` keeps its refusal, with the reason: no sparse model is
-  wired into the harness.
+  thresholds it ran at.
 
   The measured rows and what they do and do not establish are on
   [the evaluation page](docs/evaluation.md#the-sql-backends-on-the-same-corpora).

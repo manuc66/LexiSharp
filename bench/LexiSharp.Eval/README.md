@@ -92,6 +92,10 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset all --fingerpr
 # A SQL backend on the same corpus, queries and qrels — see "SQL backends":
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
   --backend paradedb --backend-connection "Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp"
+
+# Learned sparse over vectors produced outside the harness — see "Learned sparse":
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
+  --ndcg-gain linear --sparse bench/LexiSharp.Eval/data/sparse-vectors
 ```
 
 - Datasets live under `bench/LexiSharp.Eval/data/<name>/` (gitignored).
@@ -240,14 +244,44 @@ ratio translated into metric points. The residual at 160 is not attributed: the 
 by pgvector in single precision and in process, and on NFCorpus the planner may already answer with
 an exact scan at that value (see the plan note on the backends page).
 
-The **sparse** engine is not in this lane: no sparse model is wired into the harness, so there is no
-query representation to index or score, and the integration suite is what covers it. The **fuzzy**
-engine is measured with `--backend fuzzy --backend-threshold`, one row per `pg_trgm` similarity
-threshold. On the same two corpora it scores 0.0981 (NFCorpus) and 0.2186 (SciFact) at the low end of
-an in-sample threshold sweep, and 0.0000 / 0.0033 at the engine's default 0.3 — a threshold on
-trigrams is not a relevance ranking, and [the evaluation page](../../docs/evaluation.md#the-sql-backends-on-the-same-corpora)
-carries the grid and the caveats. The ANN *recall* curve (`--ann-ef`) is a separate measurement,
-kept because a recall ratio and an nDCG are different questions.
+The **sparse** engine has its own lane (`--sparse`, below) rather than a `--backend` value: it takes
+precomputed vectors and needs no server. The **fuzzy** engine is measured with `--backend fuzzy
+--backend-threshold`, one row per `pg_trgm` similarity threshold. On the same two corpora it scores
+0.0981 (NFCorpus) and 0.2186 (SciFact) at the low end of an in-sample threshold sweep, and 0.0000 /
+0.0033 at the engine's default 0.3 — a threshold on trigrams is not a relevance ranking, and [the
+evaluation page](../../docs/evaluation.md#the-sql-backends-on-the-same-corpora) carries the grid and
+the caveats. The ANN *recall* curve (`--ann-ef`) is a separate measurement, kept because a recall
+ratio and an nDCG are different questions.
+
+## Learned sparse (optional, ONNX Runtime outside .NET)
+
+`--sparse <dir>` scores `SparseTextSearchEngine` on vectors the harness did not compute. The library
+runs no model, so a sparse row cannot encode anything: `sparse/encode_splade.py` runs a SPLADE ONNX
+export once, on a machine that has the model, and writes one line per text keyed by the SHA-256 of
+that text's exact UTF-8 bytes. [Its README](sparse/README.md) carries the install, the model, the
+tokenizer route, the format and the encode command; nothing under `sparse/` is referenced by the
+library.
+
+The row's name — model, truncation, top-k — is read from `<dir>/<dataset>.meta.json`, written in the
+same pass as the vectors, so the printed configuration cannot disagree with the file that was read.
+A directory that is absent, a manifest that is missing, a malformed line, or a corpus the vectors do
+not cover is refused by name (with the count and an example) instead of producing a metric over the
+subset that happened to be encodable.
+
+Measured on 2026-10-26 with SPLADE-v3 (`splade-v3.onnx`, 532 MB, sha256 `9e472022…`), 256-token
+truncation, top 256 terms, documents as `title + "\n" + text`, linear gains:
+
+| corpus | BM25 (same run, k1=1.5/b=0.75) | BM25 aligned (English, 0.9/0.4) | SPLADE-v3 | queries |
+|---|---:|---:|---:|---:|
+| NFCorpus | 0.307 | 0.321 | **0.3576** | 323 |
+| SciFact | 0.662 | 0.679 | **0.7083** | 300 |
+
+The sparse row's MAP@10 / MRR@10 / R@10 read 0.2646 / 0.5714 / 0.1709 on NFCorpus and 0.6678 /
+0.6814 / 0.8157 on SciFact, against BM25's 0.234 / 0.523 / 0.152 and 0.633 / 0.644 / 0.806 at the
+aligned operating point. What the row does and does not establish — the encode cost it excludes, the
+missing ArguAna row, the pruning budget, the 8-bit export's distance from the full-precision one —
+is on [the evaluation page](../../docs/evaluation.md#learned-sparse-splade-through-onnx), which is
+where this repository keeps measured numbers.
 
 ## Per-query analysis
 
@@ -353,11 +387,13 @@ The three things that differ from a Lucene/Anserini run, and the flags that alig
 The gain conventions coincide on binary relevance (`2¹ − 1 = 1`), so that row only matters on
 NFCorpus, the one graded corpus here: 0.3080 exponential against 0.3071 linear for the same run.
 
-**`--query-term-frequency` is what closed the ArguAna gap, and it is worth nothing elsewhere.**
+**`--query-term-frequency` is what closed the ArguAna gap, and it is worth almost nothing elsewhere.**
 A published BM25 measurement scores one clause per query-token occurrence, so a term repeated in the
 query multiplies its weight; this library deduplicates by default, which is the natural reading of a
-bag of words. Where queries are short the two are identical to four decimals (NFCorpus 0.3215 either
-way, SciFact 0.6788 either way). Where a query *is* a document they are not: ArguAna's every test
+bag of words. Where queries are short the two nearly coincide: at k1=0.9/b=0.4, NFCorpus reads
+0.3215 without the flag and 0.3208 with it, and SciFact reads 0.6788 against 0.6759 — with R@10
+falling 0.806 → 0.800, so the flag is not free there either. Where a query *is* a document they are
+not: ArguAna's every test
 query is a whole ~200-word argument whose content words repeat, and counting them takes nDCG@10
 from **0.240 to 0.301** at k1=0.9/b=0.4, a **+0.061** effect. Reproduce it with
 `--analyzer english --reference-bm25 0.9,0.4 --query-term-frequency`, and the default on the same

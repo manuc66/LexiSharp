@@ -87,7 +87,7 @@ public class PostgresBackendBenchmarkTests
             () => BackendLane.Parse("sparse", "Host=db;Database=search", "simple"));
 
         Assert.Contains("lexical", error.Message, StringComparison.Ordinal);
-        Assert.Contains("no sparse model", error.Message, StringComparison.Ordinal);
+        Assert.Contains("--sparse", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

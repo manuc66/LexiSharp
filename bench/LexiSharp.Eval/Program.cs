@@ -75,6 +75,12 @@ public static class Program
         var backendEfValues = new List<int>();
         var backendThresholds = new List<double>();
 
+        // The sparse row consumes vectors that were produced outside this harness — the library never
+        // runs a model — so the lane takes a directory and nothing else: the model, the truncation
+        // and the top-k are read from the producer's manifest, because a flag here could disagree
+        // with the file the run actually read.
+        string? sparseVectorsDir = null;
+
         // The lexical row's tsv weighting, as "title=A[,summary=B]" — parsed after the pair check
         // below, so a malformed spec fails on a message rather than an unhandled exception.
         string? backendFieldWeights = null;
@@ -245,6 +251,9 @@ public static class Program
                 case "--backend-field-weights" when i + 1 < args.Length:
                     backendFieldWeights = args[++i];
                     break;
+                case "--sparse" when i + 1 < args.Length:
+                    sparseVectorsDir = args[++i];
+                    break;
                 case "--rerank-cache" when i + 1 < args.Length:
                     rerankCacheDir = args[++i];
                     break;
@@ -387,6 +396,45 @@ public static class Program
 
         dataBaseDir = Path.GetFullPath(dataBaseDir);
 
+        // The sparse lane is a directory of precomputed vectors, and a path that is not there is a
+        // misspelled argument rather than a corpus that cannot be measured: refused before the
+        // corpora are read, so a run does not spend minutes to then produce no row.
+        SparseLane? sparseLane = null;
+
+        if (sparseVectorsDir is not null)
+        {
+            sparseLane = SparseLane.Parse(sparseVectorsDir);
+
+            if (!Directory.Exists(sparseLane.VectorsDirectory))
+            {
+                Console.Error.WriteLine(
+                    $"--sparse '{sparseLane.VectorsDirectory}' does not exist. The lane reads vectors "
+                    + "produced outside this harness (the library never runs a model); generate them "
+                    + "with bench/LexiSharp.Eval/sparse/encode_splade.py — see its README for the "
+                    + "command — or drop --sparse.");
+                return 2;
+            }
+
+            if (verifyAgainst is not null)
+            {
+                Console.Error.WriteLine(
+                    "--sparse cannot run with --verify-reference: pinned.json keys on the analyzer and "
+                    + "the BM25 parameters and holds no sparse row, and the pinned job has no vectors, "
+                    + "so a pin there could only ever skip. Measure the row with --sparse on its own "
+                    + "and record what it read in prose.");
+                return 2;
+            }
+
+            if (fingerprintOnly)
+            {
+                Console.Error.WriteLine(
+                    "--sparse cannot run with --fingerprint: a fingerprint run stops before any query "
+                    + "is scored, so there would be no sparse row and the flag would be silently "
+                    + "ignored.");
+                return 2;
+            }
+        }
+
         if (verifyAgainst is not null && backendLane is not null)
         {
             Console.Error.WriteLine(
@@ -500,7 +548,7 @@ public static class Program
                 analyzePath, analyzeBaseline, analyzeCandidate,
                 disagreementLeft, disagreementRight,
                 expandDensities, expandRankings, annEfValues, annConnection, backendLane, rerankCacheDir,
-                heldOutFraction);
+                heldOutFraction, sparseLane);
             Console.WriteLine();
         }
 
@@ -628,7 +676,7 @@ public static class Program
         string? disagreementLeft, string? disagreementRight,
         IReadOnlyList<double> expandDensities, IReadOnlyList<ExpansionRanking> expandRankings,
         IReadOnlyList<int> annEfValues, string? annConnection, BackendLane? backendLane,
-        string? rerankCacheDir, double? heldOutFraction)
+        string? rerankCacheDir, double? heldOutFraction, SparseLane? sparseLane)
     {
         Console.WriteLine($"== {dataset.Name} ==");
 
@@ -804,6 +852,11 @@ public static class Program
             RunBackendRow(backendLane, corpus, dataset, topK, limit, gain, excludeQueryDocument, jobs, denseVectors);
         }
 
+        if (sparseLane is not null)
+        {
+            RunSparseRow(sparseLane, corpus, dataset, topK, limit, gain, excludeQueryDocument, jobs);
+        }
+
         if (rerankCache is not null)
         {
             rerankCache.Dispose();
@@ -841,6 +894,37 @@ public static class Program
         catch (NotSupportedException refusal)
         {
             Console.WriteLine($"== {dataset.Name}, backend ==");
+            Console.WriteLine($"Not measured: {refusal.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Measures the sparse row, or reports why there is none. A vector set that does not cover the
+    /// corpus is a refusal: the alternative is a metric over the documents that happened to have a
+    /// vector, which reads like a ranking result and is a different corpus.
+    /// </summary>
+    private static void RunSparseRow(
+        SparseLane lane, BeirCorpus corpus, BeirDataset dataset, int topK, int? limit,
+        NdcgGain gain, bool excludeQueryDocument, int jobs)
+    {
+        Console.WriteLine();
+
+        try
+        {
+            // Measured outside Evaluation.Run for the same reason the backend rows are: the engine
+            // owns its index and its ranking function, so what it shares with the table above is the
+            // query list, the qrels and the metric code.
+            SparseMeasurement measurement = SparseBenchmark.Measure(
+                lane, corpus, dataset.Name, topK, limit, gain, excludeQueryDocument, jobs);
+
+            Console.Write(SparseBenchmark.Format(measurement, dataset.Name));
+
+            foreach (string caveat in measurement.Caveats)
+                Console.WriteLine($"Note: {caveat}");
+        }
+        catch (SparseVectorsException refusal)
+        {
+            Console.WriteLine($"== {dataset.Name}, sparse ==");
             Console.WriteLine($"Not measured: {refusal.Message}");
         }
     }
@@ -1437,6 +1521,7 @@ public static class Program
                      [--backend <lexical|paradedb|vector|fuzzy> --backend-connection <s>]
                      [--backend-bm25 <k1,b>] [--backend-ef <list>] [--backend-threshold <list>]
                      [--backend-config <name>]
+                     [--sparse <vectors-dir>]
 
               --data <dir>      Base directory for datasets (default: <project>/data).
                                 Downloaded and checksum-verified on first run.
@@ -1629,6 +1714,14 @@ public static class Program
                                 unweighted vector. The row's name carries the weighting, so a
                                 weighted and an unweighted run are distinguishable in the output.
                                 Refused with the other backends.
+              --sparse <dir>    Add a row for SparseTextSearchEngine over vectors produced outside
+                                this harness: '<dir>/<dataset>.docs.tsv' and '<dir>/<dataset>.queries.tsv'
+                                keyed by the SHA-256 of each text, beside '<dir>/<dataset>.meta.json'.
+                                The model, truncation and top-k in the row's name are read from that
+                                manifest, not from a flag, and the row's metrics contain no encoding
+                                cost. Generate the vectors with bench/LexiSharp.Eval/sparse/
+                                encode_splade.py; the run refuses a directory that is absent and a
+                                corpus the vectors do not cover rather than scoring a subset.
               --analyze <file>  Write one row per query per configuration: the query's lexical coverage
                                 of its own judged documents, the metrics, and the per-query deltas
                                 against --analyze-baseline. Off by default — capturing a ranking per
