@@ -593,6 +593,9 @@ public static class Program
                 // Before the stop word list, not after: `it's` escapes a list tested on `it's` and only
                 // then becomes `it`, which is how this index came to hold an `it` the reference does not.
                 StripPossessives = true,
+                // Symbol tokens: Lucene 10's EnglishAnalyzer emits these as terms where Lucene 4.8
+                // dropped them, and that difference is 519 terms on NFCorpus and 44 on SciFact.
+                SymbolTerms = "©®™↔",
                 // The one code point .NET's invariant casing and the reference's disagree on, out of 505
                 // positions whose lowercase differs. Their mapping is the Unicode *simple* one — U+0130 to
                 // U+0069, one character — which is what their index holds: a five-character `celil`.

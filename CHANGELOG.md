@@ -43,6 +43,14 @@ workflow.
 
 ### Added
 
+- **`TokenizerOptions.SymbolTerms`, and the middle dot as a letter-to-letter joiner.** Two rules that
+  the reference's analyzer applies and this one did not: Lucene 10 emits `©`, `®`, `™` and `↔` as
+  terms where Lucene 4.8 dropped them, and joins `mg·dl` into one token where the tokenizer split it.
+  Measured over the BEIR corpora the difference was 503 terms on NFCorpus and 43 on SciFact — the
+  whole remaining gap between this library's index and the published term counts, which now match
+  exactly (637 485, 838 128, 969 528) at zero tolerance. `SymbolTerms` is empty by default, so the
+  default analysis is unchanged; the `uax29` analyzer sets both rules.
+
 - **`InMemoryVectorSearchEngine` can store and scan int8 vectors.**
 
   `InMemoryVectorSearchOptions.Quantization = VectorQuantization.Int8` stores each row as signed
