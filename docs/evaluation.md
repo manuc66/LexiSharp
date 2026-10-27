@@ -34,14 +34,17 @@ comparison. nDCG@10:
 | NFCorpus | defaults: `Tokenizer.Default`, k1=1.5, b=0.75 | 0.308 | 0.325 | −5.2 % |
 | SciFact | defaults | 0.662 | 0.665 | −0.5 % |
 | ArguAna | defaults | 0.320 | 0.315 | +1.6 % |
-| NFCorpus | aligned: English analysis, k1=0.9, b=0.4 | 0.3215 | 0.3218 | −0.0003 |
-| SciFact | aligned | 0.6788 | 0.6789 | −0.0001 |
+| NFCorpus | aligned: English analysis, k1=0.9, b=0.4, linear gains, query-term frequency | 0.3208 | 0.3218 | −0.0010 |
+| SciFact | aligned: same conventions | 0.6759 | 0.6789 | −0.0030 |
 | ArguAna | aligned | 0.3970 | 0.3970 at k1=0.9, b=0.4 | 0.0000 |
 
 The **defaults** rows answer *what the library does out of the box*: no stemming, stop words
 kept. The **aligned** rows answer *is this comparable to the published figure* — and with the
 analysis, the parameters, the gain convention and the repeated-term rule matched, the two agree
-to the fourth decimal on NFCorpus and SciFact and are identical on ArguAna. The gap between the
+to within 0.001 on NFCorpus and 0.003 on SciFact, and are identical on ArguAna. Only ArguAna
+carries bit-level evidence — 15,466 of 15,466 compared scores match — so the other two are
+configuration comparisons whose residual is the tokenizer, the index statistics and tie order.
+The gap between the
 two row groups is configuration, not ranking.
 
 **ArguAna: the metric is reproduced, and so are the raw scores.** The two are verified by different
@@ -521,7 +524,8 @@ tens of megabytes derived from a CC BY-NC-SA model, and the README is how to reg
 Measured on 2026-10-26, one host (12 cores, `--jobs` default 8), nDCG@10 at **exponential gains —
 the harness default, and the convention every other row on this page uses**. The aligned column is
 `--analyzer english --reference-bm25 0.9,0.4 --query-term-frequency`, the published BM25 convention;
-without that flag the page's aligned rows read 0.3215 / 0.6788, as the note below records. All three
+without that flag the aligned rows read 0.3215 / 0.679, which is the distinct-term reading and
+was the figure this page used to quote for them. All three
 columns come from runs in this session on NFCorpus and SciFact, and the two ArguAna rows come from
 this session's two runs over the same vectors. ArguAna has no aligned cell — the aligned column is a
 BM25 analysis the sparse model does not use — and its rows carry the two task conventions, because
@@ -564,9 +568,10 @@ conventions:
   one model and one pruning budget: the truncation comparison below covers the token budget, any
   top-k other than 256 is not measured, and it is not a statement about learned-sparse retrieval in
   general.
-- **Aligned SciFact reads 0.6788 without `--query-term-frequency` and 0.6759 with it** (R@10 0.806 →
-  0.800), and NFCorpus 0.3215 against 0.3208. The flag scores a repeated query term once per
-  occurrence, which is the published BM25 convention, and on SciFact it moves the row by 0.003. The
+- **The aligned rows now carry the repeated-term rule**, which is the reference's: SciFact reads
+  0.6759 with `--query-term-frequency` against 0.679 without it (32 % of its test queries repeat a
+  word), NFCorpus 0.3208 against 0.3215 (3 %). The 0.6788 / 0.3215 this page used to quote for
+  the aligned rows were the distinct-term readings, and made the gap look a third of its size. The
   sparse row is unaffected either way: the flag reaches BM25's scorer only.
 - **What the row is not.** The metrics contain no encode cost — the model ran offline, before the
   harness started, and its time is the producer's (48.1 min for NFCorpus's 3 633 documents and 3 237

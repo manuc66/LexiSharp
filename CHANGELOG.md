@@ -18,6 +18,20 @@ workflow.
 
 ## [Unreleased]
 
+### Withdrawn
+
+- **The aligned BM25 figures for NFCorpus and SciFact, 0.3215 and 0.6788.** They were published
+  beside the reference's 0.3218 and 0.6789 as equal to the fourth decimal, and they were measured at
+  exponential gains with a repeated query term counted once instead of once per occurrence. The
+  reference's figures use linear gains — `trec_eval`'s default — and count repetitions, which is what
+  the ArguAna parity established when 15,466 of 15,466 compared scores matched on the raw bits.
+  Re-measured under those conventions the rows read **0.3208** and **0.6759**, gaps of **−0.0010**
+  and **−0.0030**. SciFact moves three times as far as NFCorpus because 32 % of its test queries
+  repeat a word against 3 % of NFCorpus's. Both rows are now pinned as
+  `nfcorpus/english-aligned` and `scifact/english-aligned`, so `--verify-reference` replays them, and
+  the pages no longer claim fourth-decimal agreement on either corpus — that evidence exists on
+  ArguAna and nowhere else.
+
 ### Added
 
 - **`InMemoryVectorSearchEngine` can store and scan int8 vectors.**
