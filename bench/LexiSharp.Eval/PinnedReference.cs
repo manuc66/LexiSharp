@@ -49,6 +49,10 @@ internal sealed record PinnedReference
                 // False unless the file says true: the table's convention, and the value every pin
                 // predating this field was in fact measured under once the table ran that way.
                 QuerySyntax = pin.TryGetProperty("querySyntax", out var syntax) && syntax.GetBoolean(),
+                ReferenceIndexStatistics = pin.TryGetProperty("referenceIndexStatistics", out var stats) && stats.GetBoolean(),
+                ScoreRounding = pin.TryGetProperty("scoreRounding", out var rounding) && rounding.GetBoolean(),
+                OmitSaturationConstant = pin.TryGetProperty("omitSaturationConstant", out var omit) && omit.GetBoolean(),
+                SinglePrecision = pin.TryGetProperty("singlePrecision", out var precision) && precision.GetBoolean(),
             }),
             IndexFingerprints = ReadArray(root, "indexFingerprints", pin => new IndexPin(
                 pin.GetProperty("corpus").GetString()!,
@@ -130,6 +134,22 @@ internal sealed record PinnedReference
         public bool QueryTermFrequency { get; init; }
 
         /// <summary>
+        /// Whether the index is built with the reference's conventions: its average length over the
+        /// non-empty documents and its one-byte length quantisation. False by default, which is the
+        /// library's own index.
+        /// </summary>
+        public bool ReferenceIndexStatistics { get; init; }
+
+        /// <summary>Whether scores are rounded to four decimals before ranking, as the reference does.</summary>
+        public bool ScoreRounding { get; init; }
+
+        /// <summary>Whether the <c>k1 + 1</c> saturation constant is omitted, as the reference's scorer does.</summary>
+        public bool OmitSaturationConstant { get; init; }
+
+        /// <summary>Whether BM25 accumulates in single precision, as the reference does.</summary>
+        public bool SinglePrecision { get; init; }
+
+        /// <summary>
         /// Whether queries are read as query syntax (<c>"a phrase"</c>, <c>term*</c>, <c>term~</c>)
         /// rather than as literal text. Optional and false by default, matching the table's
         /// convention: every BEIR query here is natural language and a double quote in prose is
@@ -156,7 +176,11 @@ internal sealed record PinnedReference
             + $"--reference-bm25 {Bm25.K1.ToString("0.##", CultureInfo.InvariantCulture)},"
             + $"{Bm25.B.ToString("0.##", CultureInfo.InvariantCulture)}"
             + (ExcludeQueryDocument ? " --exclude-query-doc" : string.Empty)
-            + (QueryTermFrequency ? " --query-term-frequency" : string.Empty);
+            + (QueryTermFrequency ? " --query-term-frequency" : string.Empty)
+            + (ReferenceIndexStatistics ? " --reference-index-statistics" : string.Empty)
+            + (ScoreRounding ? " --reference-score-rounding" : string.Empty)
+            + (OmitSaturationConstant ? " --omit-saturation-constant" : string.Empty)
+            + (SinglePrecision ? " --single-precision-bm25" : string.Empty);
     }
 
     /// <summary>One index fingerprint, and the reference it is compared against.</summary>

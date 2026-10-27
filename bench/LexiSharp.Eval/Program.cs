@@ -573,7 +573,7 @@ public static class Program
     /// stemming, a 33-word function-word list, and single-character terms kept — and it is the
     /// only setting under which a LexiSharp number is comparable with those published figures.
     /// </summary>
-    private static (ITokenizer Tokenizer, string Description, TokenizerOptions Options) BuildAnalysis(string analyzer, bool stem)
+    internal static (ITokenizer Tokenizer, string Description, TokenizerOptions Options) BuildAnalysis(string analyzer, bool stem)
     {
         // The published baselines' word segmentation: the Unicode text-segmentation boundaries, which join
         // across eight characters the library's own tokenizer treats as separators, and no diacritic
