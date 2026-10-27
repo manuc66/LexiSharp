@@ -681,6 +681,15 @@ also emits fewer non-zero terms per document (164 against 232 and 241), so the t
 not bind there either. The vector-level comparison that was already on this page (mean cosine 0.904
 on SciFact queries) said the same thing before any metric existed; the row is the metric.
 
+The manifest records `quantised: true` for these vectors and the row's model line reads `SPLADE-v3
+(ONNX, int8 weights, 256-token truncation, top-256 terms, vectors precomputed offline)`, so a reader
+can see which export produced a row. **What differs between the two rows is the retrieval model, not
+the index**: the same `SparseTextSearchEngine` scores the same documents, queries and qrels, and a
+repeat of each run reads the same four decimals, so none of the 0.0106 or the 0.0153 is rerun noise.
+Set against the truncation move above (+0.0069 / +0.0091), quantisation is **1.5× and 1.7× larger and
+points the other way on SciFact** — a difference of about a hundredth in whichever direction the
+corpus takes it, which is what separates a second model from a lossy build of the first.
+
 - **Not measured:** the truncation × pruning interaction, any top-k but 128 / 256 / 512 on
   NFCorpus, any other corpus at another budget, and the encode as a performance claim — the clocks
   above were taken with four encoders sharing the host. The PostgreSQL `sparsevec` engine's row is
