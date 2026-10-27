@@ -171,8 +171,10 @@ is [Scope and limits](https://github.com/manuc66/LexiSharp/blob/main/docs/refere
   and SciFact, with the analysis, the BM25 parameters and the metric convention aligned to those the
   reference figures were produced with — its analyzer, index statistics, gain convention, repeated-term
   rule, score rounding and arithmetic — the plain BM25 scorer reaches nDCG@10 **0.3218** and
-  **0.6789** against **0.3218** and **0.6789**, equal to the fourth decimal, and its index agrees
-  with the reference's term count to 0.1 % and 0.005 %. On ArguAna, at the
+  **0.6789** against **0.3218** and **0.6789** — equal at the four decimals the reference is
+  published to, with its index within 0.1 % and 0.005 % of the reference's term count. That is
+  agreement at published precision, not a bit-level identity; the only bit-level parity here is on
+  ArguAna. On ArguAna, at the
   reference's own k1=0.9/b=0.4, it reaches **0.3970** against the **0.3970** that implementation
   publishes, and recall@100 **0.9324** against **0.9324**. That last one is not measured only by this
   harness: `trec_eval` — the standard evaluator, not this repository's code — reads both figures off

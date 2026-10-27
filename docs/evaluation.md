@@ -53,9 +53,15 @@ the reference's document frequencies. The `uax29` analyzer — the published sep
 apostrophe kept inside a word, possessives stripped before the stop list — brings the index to
 **0.1 %** of the reference's term count on NFCorpus and **0.005 %** on SciFact. Adding the four
 arithmetic options (reference index statistics, four-decimal score rounding, omitted saturation
-constant, single precision) then lands the rows exactly on 0.3218 and 0.6789. Both fingerprints and
-both scores are pinned (`nfcorpus/uax29`, `scifact/uax29`, `nfcorpus/uax29-aligned`,
-`scifact/uax29-aligned`), so `--verify-reference` replays them.
+constant, single precision) brings both figures to the published ones at four decimals: this library
+reads **0.32175501** and **0.67890943** unrounded, against a reference published as 0.3218 and
+0.6789. **That is agreement at the precision the reference was published to, not an identity.** The
+published figures are rounded to four decimals, so nothing beyond that is knowable from them, and the
+indexes still differ by 503 terms on NFCorpus and 43 on SciFact. Bit-level score parity — the only
+claim that would settle it — exists on ArguAna, where 15,466 of 15,466 compared scores match, and is
+not established on these two. Both fingerprints and both scores are pinned (`nfcorpus/uax29`,
+`scifact/uax29`, `nfcorpus/uax29-aligned`, `scifact/uax29-aligned`), so `--verify-reference` replays
+them.
 
 **ArguAna: the metric is reproduced, and so are the raw scores.** The two are verified by different
 means and the distinction is the point.
