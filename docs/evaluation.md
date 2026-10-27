@@ -51,27 +51,27 @@ was not: `english` splits a contraction into a stem and a fragment (`don't` beco
 the reference keeps one, so its index held 2.8 % / 1.5 % more terms and its scores were not built on
 the reference's document frequencies. The `uax29` analyzer — the published separator rules, an
 apostrophe kept inside a word, possessives stripped before the stop list — brings the index to
-**0.1 %** of the reference's term count on NFCorpus and **0.005 %** on SciFact. Adding the four
-arithmetic options (reference index statistics, four-decimal score rounding, omitted saturation
-constant, single precision) brings both figures to the published ones at four decimals: this library
-reads **0.32175501** and **0.67890943** unrounded, against a reference published as 0.3218 and
-0.6789. **That is agreement at the precision the reference was published to, not an identity.** The
-published figures are rounded to four decimals, so nothing beyond that is knowable from them, and the
-indexes still differ by 503 terms on NFCorpus and 43 on SciFact. Bit-level score parity — the only
-claim that would settle it — exists on ArguAna, where 15,466 of 15,466 compared scores match, and is
-not established on these two. Both fingerprints and both scores are pinned (`nfcorpus/uax29`,
-`scifact/uax29`, `nfcorpus/uax29-aligned`, `scifact/uax29-aligned`), so `--verify-reference` replays
-them.
+the reference's published term count on NFCorpus and SciFact. Adding the four arithmetic options
+(reference index statistics, four-decimal score rounding, omitted saturation constant, single
+precision) brings both figures to the published ones at four decimals: this library reads
+**0.32175501** and **0.67890943** unrounded, against a reference published as 0.3218 and 0.6789.
+The published figures are rounded to four decimals, so the score comparison cannot see beyond that;
+what can be seen, and is exact, is the index — see below. Bit-level score parity — the only claim
+that would settle the ranking — exists on ArguAna, where 15,466 of 15,466 compared scores match, and
+is not established on these two. Both fingerprints and both scores are pinned
+(`nfcorpus/uax29`, `scifact/uax29`, `nfcorpus/uax29-aligned`, `scifact/uax29-aligned`), so
+`--verify-reference` replays them.
 
-**Where the remaining term difference is.** Running a Lucene 4.8 `EnglishAnalyzer` over the same
-corpus files, outside this repository, gives **636 966**, **838 084** and **969 528** terms for
-NFCorpus, SciFact and ArguAna — within 16, 1 and 0 of this library's `uax29` index, which reads
-636 982, 838 085 and 969 528. The published counts are 637 485, 838 128 and 969 528: **519 and 44
-above what a Lucene analyzer produces from these files, and exact on ArguAna.** So the residual sits
-in the reference's own index construction for those two corpora — what it feeds its analyzer — and
-not in this library's tokenizer; naming the 519 and 44 terms would take the reference's index or term
-list, which this repository does not have. The comparison in this section is a measurement of the
-analyzer against a Lucene one, not an inference from the total alone.
+**The last term gap was two tokenizer rules, and it is closed.** Running Lucene 10.5.2's
+`EnglishAnalyzer` over the same corpus files reproduces the published counts exactly — 637 485,
+838 128 and 969 528 — which identifies the reference's analyzer version and proves the target was
+reachable. Comparing that run with this library's index term by term gave the whole difference:
+Lucene 10 emits `©`, `®`, `™` and `↔` as terms where Lucene 4.8 dropped them, and joins across the
+middle dot (`mg·dl` is one token) where this library split it. On NFCorpus that was 519 symbol
+tokens minus 16 middle-dot splits (503); on SciFact 44 minus 1 (43); on ArguAna nothing. The `uax29`
+analyzer now carries both rules — `TokenizerOptions.SymbolTerms` and `U+00B7` as a letter-to-letter
+joiner — and its index holds **exactly** the published term count on all three corpora, pinned at
+zero tolerance.
 
 **ArguAna: the metric is reproduced, and so are the raw scores.** The two are verified by different
 means and the distinction is the point.

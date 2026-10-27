@@ -238,20 +238,20 @@
       "analyzer": "uax29",
       "documents": 3633,
       "nonEmptyDocuments": 3633,
-      "totalTerms": 636982,
+      "totalTerms": 637485,
       "referenceTotalTerms": 637485,
-      "tolerance": 0.002,
-      "note": "The reference's tokenizer (UAX#29 word boundaries, apostrophes inside a word, possessives stripped before the stop list) against its published term count: 0.1% on NFCorpus and 0.005% on SciFact. The english analyzer leaves 2.8% and 1.5% because it splits contractions, and that is the difference the alignment rows used to carry."
+      "tolerance": 0.0,
+      "note": "The reference's tokenizer, including the two rules that closed the last gap: symbol tokens (© ® ™ ↔, which Lucene 10 emits and 4.8 dropped) and the middle dot joining two letters (mg·dl as one term). The count is the published one exactly, so the tolerance is zero - any drift here is a tokenizer change, not corpus noise."
     },
     {
       "corpus": "scifact",
       "analyzer": "uax29",
       "documents": 5183,
       "nonEmptyDocuments": 5183,
-      "totalTerms": 838085,
+      "totalTerms": 838128,
       "referenceTotalTerms": 838128,
-      "tolerance": 0.002,
-      "note": "The reference's tokenizer (UAX#29 word boundaries, apostrophes inside a word, possessives stripped before the stop list) against its published term count: 0.1% on NFCorpus and 0.005% on SciFact. The english analyzer leaves 2.8% and 1.5% because it splits contractions, and that is the difference the alignment rows used to carry."
+      "tolerance": 0.0,
+      "note": "The reference's tokenizer, including the two rules that closed the last gap: symbol tokens (© ® ™ ↔, which Lucene 10 emits and 4.8 dropped) and the middle dot joining two letters (mg·dl as one term). The count is the published one exactly, so the tolerance is zero - any drift here is a tokenizer change, not corpus noise."
     }
   ],
   "parity": [
