@@ -40,8 +40,8 @@ convention aligned to those the published figures were produced with:
 
 | Corpus | LexiSharp | Published | Δ |
 |---|---:|---:|---:|
-| NFCorpus | 0.3215 | 0.3218 | −0.0003 |
-| SciFact | 0.6788 | 0.6789 | −0.0001 |
+| NFCorpus | 0.3208 | 0.3218 | −0.0010 |
+| SciFact | 0.6759 | 0.6789 | −0.0030 |
 | ArguAna | 0.3970 | 0.3970 | 0.0000 |
 
 Under this library's own default analysis and parameters the same scorer reads 0.308 / 0.662 /
@@ -169,8 +169,11 @@ is [Scope and limits](https://github.com/manuc66/LexiSharp/blob/main/docs/refere
 
 - **It matches the published BM25 baseline on all three corpora it can be compared on.** On NFCorpus
   and SciFact, with the analysis, the BM25 parameters and the metric convention aligned to those the
-  reference figures were produced with, the plain BM25 scorer reaches nDCG@10 **0.3215** and
-  **0.6788** against **0.3218** and **0.6789** — equal to the fourth decimal. On ArguAna, at the
+  reference figures were produced with, the plain BM25 scorer reaches nDCG@10 **0.3208** and
+  **0.6759** against **0.3218** and **0.6789** — within 0.001 and 0.003, at the reference's own
+  linear gains and with its repeated-term rule applied. Only ArguAna carries bit-level evidence:
+  15,466 of 15,466 compared scores match on the raw bits, where the other two are configuration
+  comparisons. On ArguAna, at the
   reference's own k1=0.9/b=0.4, it reaches **0.3970** against the **0.3970** that implementation
   publishes, and recall@100 **0.9324** against **0.9324**. That last one is not measured only by this
   harness: `trec_eval` — the standard evaluator, not this repository's code — reads both figures off

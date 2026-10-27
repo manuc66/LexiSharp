@@ -117,7 +117,7 @@
       "excludeQueryDocument": false,
       "queryTermFrequency": true,
       "queries": 1406,
-      "expectedNdcg": 0.3010,
+      "expectedNdcg": 0.301,
       "tolerance": 0.002,
       "querySyntax": false,
       "note": "The same configuration as arguana/english, counting a repeated query term once per occurrence. Together the two pins bracket what the setting is worth at this k1: 0.240 distinct, 0.301 query-frequency, so +0.061 at k1=0.9, b=0.4. Re-recorded with the other ArguAna pins when the gate began to replay the table's literal-text queries: inherited library query syntax (a double quote is a phrase) had silently measured 0.271 against a table that runs 0.301 on the same configuration. The same config also publishes recall, which this harness measures but the pin does not yet assert: reference R@100 0.9324, R@1000 0.9872, at k1=0.9, b=0.4. Not asserted here because the pinned metric is nDCG@10 and the recall figures are recorded in the configuration's own results block for a reader who wants them.",
@@ -154,12 +154,44 @@
       },
       "excludeQueryDocument": true,
       "queries": 1406,
-      "expectedNdcg": 0.4180,
+      "expectedNdcg": 0.418,
       "tolerance": 0.002,
       "querySyntax": false,
       "note": "RE-RECORDED after a fix, and the value it replaces recorded a defect rather than a behaviour. SearchOptions.ExcludedDocumentIds was never applied on the term-at-a-time path, which is the one this query takes on a corpus of 8,674 documents and 645-word queries, so the document being excluded stayed at rank 1 - and for this corpus it is the lexically closest document to the query, because the query text is a document's own text. 0.2864 is what the option produced while doing nothing. Measured after the fix: 0.3806, now 0.4180 — re-recorded together with the other ArguAna pins when the gate began to replay the table's literal-text queries: the fix measurement above inherited library query syntax (a double quote is a phrase), while the table this row is compared against treats quotes as prose, so the fix now reads higher. The other nDCG pins and all three index fingerprints are unchanged and the golden master is byte-identical, which is the evidence that the fix reached the path it was aimed at and no other. The same config also publishes recall, which this harness measures but the pin does not yet assert: reference R@100 0.9324, R@1000 0.9872, at k1=0.9, b=0.4. Not asserted here because the pinned metric is nDCG@10 and the recall figures are recorded in the configuration's own results block for a reader who wants them.",
       "referenceRecallAt100": 0.9324,
       "referenceRecallAt1000": 0.9872
+    },
+    {
+      "config": "nfcorpus/english-aligned",
+      "corpus": "nfcorpus",
+      "analyzer": "english",
+      "ndcgGain": "linear",
+      "bm25": {
+        "k1": 0.9,
+        "b": 0.4
+      },
+      "queryTermFrequency": true,
+      "excludeQueryDocument": false,
+      "queries": 323,
+      "expectedNdcg": 0.3208,
+      "tolerance": 0.002,
+      "note": "The row the published figure is compared against, under the reference's own conventions: English analysis, k1=0.9/b=0.4, linear gains (what the published figures use) and the repeated query term counted once per occurrence (QueryTermFrequency). Added because the alignment table used to quote the exponential-gain, distinct-term reading, which is not the convention the reference used and made the gap look 3x smaller on scifact."
+    },
+    {
+      "config": "scifact/english-aligned",
+      "corpus": "scifact",
+      "analyzer": "english",
+      "ndcgGain": "linear",
+      "bm25": {
+        "k1": 0.9,
+        "b": 0.4
+      },
+      "queryTermFrequency": true,
+      "excludeQueryDocument": false,
+      "queries": 300,
+      "expectedNdcg": 0.6759,
+      "tolerance": 0.002,
+      "note": "The row the published figure is compared against, under the reference's own conventions: English analysis, k1=0.9/b=0.4, linear gains (what the published figures use) and the repeated query term counted once per occurrence (QueryTermFrequency). Added because the alignment table used to quote the exponential-gain, distinct-term reading, which is not the convention the reference used and made the gap look 3x smaller on scifact."
     }
   ],
   "indexFingerprints": [
@@ -195,27 +227,27 @@
   "parity": [
     {
       "corpus": "nfcorpus",
-      "lexisharpConfig": "nfcorpus/english at k1=0.9, b=0.4",
-      "lexisharpNdcg": 0.3215,
+      "lexisharpConfig": "nfcorpus/english-aligned at k1=0.9, b=0.4 (linear gains, query-term frequency)",
+      "lexisharpNdcg": 0.3208,
       "referenceNdcg": 0.3218,
       "referenceParameters": {
         "k1": 0.9,
         "b": 0.4
       },
       "alignedParameters": true,
-      "note": "Like for like: 0.3215 measured at the reference's own k1=0.9, b=0.4 under the reference analysis, against 0.3218 published - a difference of -0.0003. 0.327 at this library's default k1/b under the reference analysis. The aligned figure is what belongs in this field, so that one column means one thing across all three rows: the first time this field was written it held the default-parameter figure for this row and the aligned one for ArguAna, which made a difference column computed from it meaningless."
+      "note": "Like for like: 0.3208 at the reference's own k1=0.9, b=0.4, under the reference analysis, with the gain convention its figures use (linear) and a repeated query term counted once per occurrence - the convention the ArguAna parity proves the reference follows. Against 0.3218 published, a difference of -0.0010. The 0.3215 this field carried before was the exponential-gain, distinct-term reading: neither the gain convention nor the repetition rule the reference uses, and it made the gap look a third of its size. Congruence to the fourth decimal is not claimed here; the bit-level parity on ArguAna is the evidence that the ranking is the reference's, and this row is a configuration comparison. 0.327 at this library's default k1/b under the reference analysis."
     },
     {
       "corpus": "scifact",
-      "lexisharpConfig": "scifact/english at k1=0.9, b=0.4",
-      "lexisharpNdcg": 0.6788,
+      "lexisharpConfig": "scifact/english-aligned at k1=0.9, b=0.4 (linear gains, query-term frequency)",
+      "lexisharpNdcg": 0.6759,
       "referenceNdcg": 0.6789,
       "referenceParameters": {
         "k1": 0.9,
         "b": 0.4
       },
       "alignedParameters": true,
-      "note": "Like for like: 0.6788 measured at the reference's own k1=0.9, b=0.4 under the reference analysis, against 0.6789 published - a difference of -0.0001. 0.692 at this library's default k1/b under the reference analysis. The aligned figure is what belongs in this field, so that one column means one thing across all three rows: the first time this field was written it held the default-parameter figure for this row and the aligned one for ArguAna, which made a difference column computed from it meaningless."
+      "note": "Like for like: 0.6759 at the reference's own k1=0.9, b=0.4, under the reference analysis, with a repeated query term counted once per occurrence. Against 0.6789 published, a difference of -0.0030. The 0.6788 this field carried before was the distinct-term reading, which is not the rule the reference follows: 32 % of SciFact's test queries repeat a word, so the rule moves this corpus by 0.003 while it moves NFCorpus by 0.001. The fourth-decimal agreement the page used to claim was the distinct-term reading landing by coincidence; the bit-level parity on ArguAna is the evidence for the ranking, and this row is a configuration comparison."
     },
     {
       "corpus": "arguana",
