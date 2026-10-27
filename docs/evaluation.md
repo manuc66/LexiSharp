@@ -71,7 +71,9 @@ middle dot (`mg·dl` is one token) where this library split it. On NFCorpus that
 tokens minus 16 middle-dot splits (503); on SciFact 44 minus 1 (43); on ArguAna nothing. The `uax29`
 analyzer now carries both rules — `TokenizerOptions.SymbolTerms` and `U+00B7` as a letter-to-letter
 joiner — and its index holds **exactly** the published term count on all three corpora, pinned at
-zero tolerance.
+zero tolerance. Term for term, not only in total: diffing this library's token multiset against
+Lucene 10.5.2's over these files leaves **zero** tokens on either side for NFCorpus and SciFact, and
+ArguAna contains none of the characters the two rules touch. The indexes are the same index.
 
 **ArguAna: the metric is reproduced, and so are the raw scores.** The two are verified by different
 means and the distinction is the point.
