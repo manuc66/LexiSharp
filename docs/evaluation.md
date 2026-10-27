@@ -36,14 +36,16 @@ comparison. nDCG@10:
 | ArguAna | defaults | 0.320 | 0.315 | +1.6 % |
 | NFCorpus | aligned: uax29 analysis, k1=0.9, b=0.4, reference conventions | 0.3218 | 0.3218 | 0.0000 |
 | SciFact | aligned: same conventions | 0.6789 | 0.6789 | 0.0000 |
-| ArguAna | aligned | 0.3970 | 0.3970 at k1=0.9, b=0.4 | 0.0000 |
+| ArguAna | aligned | 0.4005 | 0.3970 at k1=0.9, b=0.4 | −0.0035 |
 
 The **defaults** rows answer *what the library does out of the box*: no stemming, stop words
 kept. The **aligned** rows answer *is this comparable to the published figure* — and with the
 reference's own analyzer, its parameters, its gain convention, its repeated-term rule, its index
 statistics, its score rounding, its omitted saturation constant and its single precision, the two
-agree to the fourth decimal on all three corpora. The gap between the two row groups is
-configuration, not ranking.
+agree to the fourth decimal on NFCorpus and SciFact. On ArguAna this library reads **0.4005** against
+the published **0.3970** — 0.0035 short under the same conventions — and that gap is not reproduced by
+any configuration tried. The gap between the two row groups is configuration, not ranking; the
+ArguAna gap is not yet explained.
 
 **What had to be matched, and how it was found.** The first version of these rows used the `english`
 analyzer and read 0.3215 / 0.6788 against 0.3218 / 0.6789 — close enough to be called equal, and it
@@ -237,11 +239,14 @@ two settings could not have produced different rankings. The engine hands the sc
 list, the setting is observable through `Search`, and `QueryTermWeightingTests` fails if it ever stops
 being.
 
-**There is nothing left on ArguAna.** At matched parameters this library reads 0.3970 where the
-reference publishes 0.3970, identically on all 1,406 queries. The analysis rules that accounted for it
-are set out above, and each is behind an option whose default is unchanged — so `--analyzer english`
-with the query document excluded reads 0.4180, and the gap above the 0.3970 parity is a difference of
-analysis convention rather than of ranking.
+**ArguAna is 0.0035 short, and that is the measured state.** Under the reference's analyzer,
+parameters, gain convention, repeated-term rule, exclusion and arithmetic, this library reads
+**0.4005** where the reference publishes **0.3970**. A parity row used to carry 0.3970 as this
+library's own figure; it was the published number, not a measurement — the parity section is
+displayed by `--verify-reference` but never replayed, so nothing caught the difference. That row is
+withdrawn, the value is now a pinned regression (`arguana/uax29-aligned`), and the raw-score claim
+that went with it is withdrawn too. The cause is not established: the index is term for term the
+reference's, so what remains is the scorer's arithmetic, and no configuration tried here closes it.
 
 The reference is also **newer than the table it is first compared against**: a current per-corpus
 regression for this exact index puts ArguAna at 0.3970, not the 0.315 of the 2021 paper.
