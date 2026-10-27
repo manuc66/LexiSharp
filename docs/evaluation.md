@@ -44,6 +44,14 @@ analysis, the parameters, the gain convention and the repeated-term rule matched
 to within 0.001 on NFCorpus and 0.003 on SciFact, and are identical on ArguAna. Only ArguAna
 carries bit-level evidence — 15,466 of 15,466 compared scores match — so the other two are
 configuration comparisons whose residual is the tokenizer, the index statistics and tie order.
+With the reference's own index statistics, score rounding, omitted saturation constant and single
+precision switched on — the options that made ArguAna's scores match on the raw bits — these two read
+**0.3211** and **0.6780**, so the remaining 0.0007 and 0.0009 are what the tokenizer costs: this
+library's index holds **2.77 %** (NFCorpus) and **1.50 %** (SciFact) more terms, because an apostrophe
+splits a word (`don't` becomes two tokens) where the reference keeps one, and that changes the
+document frequencies every score is built on. Closing it means changing the tokenizer, which would
+invalidate every recorded baseline; the ArguAna index holds 1.12 % more terms yet its compared scores
+match exactly, because the extra tokens there are single-character fragments no query asks for.
 The gap between the
 two row groups is configuration, not ranking.
 
