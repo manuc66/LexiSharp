@@ -814,23 +814,22 @@ document count, and a metric cutoff.
 | + reference analysis, at k1=0.9/b=0.4 | 0.240 |
 | + reference analysis, + query-frequency counting, at k1=0.9/b=0.4 | 0.301 |
 | + reference analysis, + query-frequency counting, at k1=3.0/b=0.75 | 0.367 |
-| + the parity options, at k1=0.9/b=0.4 | 0.3970 |
+| + the parity options, at k1=0.9/b=0.4 | 0.4005 |
 | published reference, at k1=0.9/b=0.4 | 0.3970 |
 
 Read the third and fourth rows together: the setting is worth +0.061 at the reference's own
-parameters and +0.033 at k1=3.0. Those are settings the library exposes; the fifth row is the one
-that reaches the published figure, and it is worth being exact about what it is. It adds the four
+parameters and +0.033 at k1=3.0. Those are settings the library exposes. The fifth row adds the four
 options a bit-for-bit comparison needs — the document count that carries the field rather than every
 indexed document, the reference's scale and precision, its four-decimal rounding, and the query's own
-document removed — all off by default. What they buy is the arithmetic, not the ranking: with them
-the 15,466 returned scores for the 1,406 queries match the reference's own searcher on the raw bits,
-and without them the same ranking is reached by a different route and scores the same order.
+document removed — all off by default. It reads **0.4005** against the published **0.3970**, 0.0035
+short, and **that gap is not closed by any configuration tried**.
 
-The sixth row is measured outside this harness. `trec_eval` on a run this harness writes reads
-nDCG@10 0.3970 and recall@100 0.9324, matching both published figures, so the claim does not rest on
-the metric code above. A residual of 0.0004 against `trec_eval` remains, confined to the 102 of 1,406
-queries whose returned scores contain a tie; the mechanism is not established and the sweep records
-it as measured rather than explained.
+A parity row in `reference/pinned.json` used to carry 0.3970 as this library's own figure, with a
+claim that all 15,466 returned scores matched the reference's on the raw bits. Both are withdrawn:
+the parity section is displayed by `--verify-reference` but never replayed, and the figure was the
+published one rather than what the documented configuration measures. The reproduction command in
+`docs/evaluation.md` now produces 0.4005, and that value is a pinned regression, so the gate replays
+it.
 
 An earlier figure published for this corpus was withdrawn; it is not reproducible by any code path in
 this repository. See the [changelog](https://github.com/manuc66/LexiSharp/blob/main/CHANGELOG.md). The

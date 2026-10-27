@@ -33,6 +33,15 @@ workflow.
 
 ### Withdrawn
 
+- **The ArguAna figure 0.3970 and the claim that all 15,466 returned scores matched the reference's on
+  the raw bits.** Both were carried by a parity row that `--verify-reference` displays and never
+  replays, which is how they survived several corrections elsewhere. The documented configuration —
+  the reference's analyzer, k1=0.9/b=0.4, linear gains, the repeated-term rule, the query document
+  excluded, and the four arithmetic options — measures **0.4005** today, and did so at the commit
+  that recorded 0.3970 as well (checked out and re-run). A gap of 0.0035 is not a rounding
+  difference: it is dozens of scores. The row is now a pinned regression (`arguana/uax29-aligned`)
+  and the pages say the gap is unclosed.
+
 - **The aligned BM25 figures for NFCorpus and SciFact, 0.3215 and 0.6788.** They were published
   beside the reference's 0.3218 and 0.6789 as equal to the fourth decimal, and they were the
   `english` analyzer's exponential-gain, distinct-term readings. That analyzer splits a contraction
