@@ -647,14 +647,45 @@ clocks above was not recorded. What the 512 numbers establish is that an encode 
 hour per corpus at 6 threads — 48.6, 54.4 and 31.1 minutes — while the encoder fed 1.44×, 1.36× and
 1.12× more tokens per document than at 256.
 
-- **Not measured:** any top-k other than 256. The 8-bit export has no row either; at the vector level
-  it is not a near-copy of the full-precision one — on the 300 SciFact queries the two exports'
-  sparse vectors have a mean cosine of 0.904 (minimum 0.762), a mean maximum per-query weight
-  difference of 1.03, and the quantised export activates 13.5 more
-  terms per query on average. A row measured on it would be a different retrieval model, which is
-  why the encoder records `quantised` in the manifest and the row prints it. The PostgreSQL
-  `sparsevec` engine's row is in [the SQL backend section](#the-sql-backends-on-the-same-corpora):
-  two rows over the same ArguAna vectors, and what separates them is the index.
+**The pruning budget is nearly flat above 256.** The encoder keeps the `--top-k` highest-weighted
+terms per text; every row above uses 256. NFCorpus re-encoded at 128 and at 512, same model file,
+same 256-token truncation, scored with the command above:
+
+| top-k | nDCG@10 | MAP@10 | MRR@10 | R@10 | document terms (mean) | encode (documents + queries) |
+|---:|---:|---:|---:|---:|---:|---:|
+| 128 | 0.3567 | 0.2615 | 0.5717 | 0.1679 | 128.0 | 62.3 + 3.6 min |
+| 256 (published) | 0.3596 | 0.2646 | 0.5714 | 0.1709 | 232.3 | 48.1 min |
+| 512 | 0.3598 | 0.2648 | 0.5711 | 0.1710 | 246.4 | 62.0 + 3.7 min |
+
+Halving the budget costs **0.0029** nDCG@10; doubling it buys **0.0002**, which is inside this
+corpus's own run-to-run spread. At 512 the budget stops binding altogether — documents average 246.4
+non-zero terms, so nothing is cut — and the only difference from 256 is which terms the smaller
+budget had dropped. Pruning is not additive: a larger budget keeps a different set, it does not keep
+the smaller set plus more. The two 65-minute clocks were taken with four encoders sharing the host,
+so they are the cost of an encode under contention, not a speed ratio against the 256 row's 48.1
+minutes.
+
+**The 8-bit export is a different model, not a cheaper copy.** `splade-v3-8bit.onnx` (133 941 688
+bytes, dynamically quantised weights) re-encodes both corpora at the published settings:
+
+| Corpus | export | nDCG@10 | MAP@10 | MRR@10 | R@10 | document terms (mean) | encode (documents + queries) |
+|---|---|---:|---:|---:|---:|---:|---:|
+| NFCorpus | full precision | 0.3596 | 0.2646 | 0.5714 | 0.1709 | 232.3 | — |
+| NFCorpus | int8 weights | 0.3490 | 0.2525 | 0.5616 | 0.1645 | 164.1 | 52.2 + 3.1 min |
+| SciFact | full precision | 0.7083 | 0.6678 | 0.6814 | 0.8157 | 241.2 | — |
+| SciFact | int8 weights | **0.7236** | 0.6845 | 0.6996 | 0.8252 | 164.2 | 66.8 + 0.3 min |
+
+It loses **0.0106** on NFCorpus and gains **0.0153** on SciFact — no direction, which is what a
+different model looks like rather than a cheaper approximation of the same one. The quantised export
+also emits fewer non-zero terms per document (164 against 232 and 241), so the top-256 budget does
+not bind there either. The vector-level comparison that was already on this page (mean cosine 0.904
+on SciFact queries) said the same thing before any metric existed; the row is the metric.
+
+- **Not measured:** the truncation × pruning interaction, any top-k but 128 / 256 / 512 on
+  NFCorpus, any other corpus at another budget, and the encode as a performance claim — the clocks
+  above were taken with four encoders sharing the host. The PostgreSQL `sparsevec` engine's row is
+  in [the SQL backend section](#the-sql-backends-on-the-same-corpora): two rows over the same
+  ArguAna vectors, and what separates them is the index.
 
 
 ## Metrics
