@@ -111,6 +111,24 @@ done
 documents: 401 ms at 6 threads, 545 ms at 12). Two encoders run side by side, one per corpus, at 6
 threads each.
 
+**What an encode costs.** The first 500 NFCorpus documents and 50 queries, `--truncate 256
+--top-k 256`, one run per thread count, on the same 12-core host with nothing else of ours running
+(1-minute load average about 4):
+
+| threads | documents/s | seconds for 500 | × one thread |
+|---:|---:|---:|---:|
+| 1 | 1.66 | 302 | 1.00 |
+| 2 | 2.43 | 206 | 1.46 |
+| 4 | 4.28 | 117 | 2.59 |
+| 6 | 5.00 | 100 | 3.02 |
+
+Scaling is well under linear, and it is why `--threads 6` is the setting in the command above rather
+than 12: two more threads buy about 17 % over four, and the encoder is not what the row is measuring.
+At 5 documents a second, the corpora this harness uses cost 12 minutes (NFCorpus, 3 633 documents),
+17 minutes (SciFact, 5 183) and 29 minutes (ArguAna, 8 674), before the query pass. One run per
+point, a 500-document slice, and a host at load 4 — take these as an order of magnitude, not a
+benchmark.
+
 ## Output
 
 One line per text, tab-separated, the digest of the **exact UTF-8 bytes** first:
