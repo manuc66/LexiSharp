@@ -166,3 +166,48 @@ public class WordSegmentationTests
         Assert.Equal(["1", "2", "3"], tokenizer.Tokenize("1,2,3"));
     }
 }
+/// <summary>
+/// The two rules that closed the last term gap against the reference index: the middle dot joins two
+/// letters, and a configured symbol is a token of its own.
+/// </summary>
+/// <remarks>
+/// Both were measured, not read from a specification. Lucene 10's <c>EnglishAnalyzer</c> joins
+/// <c>mg·dl</c> and emits <c>©</c>, <c>®</c>, <c>™</c> and <c>↔</c> as terms; Lucene 4.8 — and this
+/// library before these tests — splits the first and drops the rest. The difference over the BEIR
+/// corpora was 503 + 43 terms, which is what the fingerprints now assert as zero.
+/// </remarks>
+public class SymbolAndMiddleDotTests
+{
+    private static Tokenizer Segmenter(string? symbolTerms = null) => new(new TokenizerOptions
+    {
+        KeepSingleCharTerms = true,
+        WordSegmentation = WordSegmentation.UnicodeWordBoundaries,
+        // As the uax29 analyzer configures it: folding would decompose ™ into "TM" before the
+        // symbol rule could emit it, which is a different term and not what the reference indexes.
+        FoldDiacritics = false,
+        SymbolTerms = symbolTerms,
+    });
+
+    [Fact]
+    public void TheMiddleDotJoinsTwoLettersAndSplitsTwoDigits()
+    {
+        Assert.Equal(["mg·dl"], Segmenter().Tokenize("mg·dl"));
+        Assert.Equal(["12", "34"], Segmenter().Tokenize("12·34"));
+    }
+
+    [Fact]
+    public void AConfiguredSymbolIsItsOwnTokenAndDoesNotExtendTheWord()
+    {
+        Tokenizer tokenizer = Segmenter("©®™↔");
+
+        Assert.Equal(["aspirin", "®"], tokenizer.Tokenize("Aspirin®"));
+        Assert.Equal(["©", "2024"], tokenizer.Tokenize("©2024"));
+        Assert.Equal(["a", "™", "b"], tokenizer.Tokenize("a ™ b"));
+    }
+
+    [Fact]
+    public void WithoutTheOptionASymbolIsStillDropped()
+    {
+        Assert.Equal(["aspirin"], Segmenter().Tokenize("Aspirin®"));
+    }
+}

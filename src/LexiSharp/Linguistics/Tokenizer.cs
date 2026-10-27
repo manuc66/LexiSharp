@@ -58,6 +58,9 @@ public sealed class Tokenizer : ISpanTokenizer
     /// </summary>
     private readonly bool _conditionalJoins;
 
+    /// <summary>Characters that are terms on their own, from <see cref="TokenizerOptions.SymbolTerms"/>.</summary>
+    private readonly HashSet<char>? _symbolTerms;
+
     /// <summary>A shared tokenizer with default options.</summary>
     public static Tokenizer Default { get; } = new();
 
@@ -99,6 +102,9 @@ public sealed class Tokenizer : ISpanTokenizer
         }
 
         _conditionalJoins = _options.WordSegmentation == WordSegmentation.UnicodeWordBoundaries;
+
+        if (_options.SymbolTerms is { Length: > 0 } symbols)
+            _symbolTerms = [.. symbols];
     }
 
     /// <inheritdoc />
@@ -337,6 +343,29 @@ public sealed class Tokenizer : ISpanTokenizer
 
         while (position < text.Length)
         {
+            // A configured symbol is a term of its own and does not extend the word beside it:
+            // `Aspirin®` is `aspirin` and `®`, not `aspirin®`. Checked before the word logic
+            // because a symbol is neither a word character nor a joiner.
+            if (_symbolTerms is not null && text[position] >= 128 && _symbolTerms.Contains(text[position]))
+            {
+                if (_options.KeepSingleCharTerms)
+                {
+                    string symbol = NormalizeToken(text.Slice(position, 1));
+
+                    if (_stopWords is null || !_stopWords.Contains(symbol))
+                    {
+                        if (_options.Stemmer is not null)
+                            symbol = _options.Stemmer.Stem(symbol);
+
+                        terms?.Add(symbol);
+                        spans?.Add(new TokenSpan(symbol, position, 1));
+                    }
+                }
+
+                position++;
+                continue;
+            }
+
             bool beginsWord = StartsWordAt(text, position);
 
             // An unconditional joiner can open a token when a word character follows it: measured
@@ -596,6 +625,10 @@ public sealed class Tokenizer : ISpanTokenizer
         ',' or ';' => JoinRule.BetweenDigits,
         ':' => JoinRule.BetweenLetters,
         '.' or '\'' or '’' or '‘' => JoinRule.WithinOneClass,
+        // The middle dot is a MidLetter in UAX#29 and a unit separator in practice: `mg·dl` is one
+        // token in the reference, and this library split it, which was 16 of the 503 terms it was
+        // short of NFCorpus's published count.
+        '\u00B7' => JoinRule.BetweenLetters,
         '_' or '­' => JoinRule.Always,
         _ => JoinRule.Never,
     };

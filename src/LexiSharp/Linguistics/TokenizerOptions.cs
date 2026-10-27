@@ -52,6 +52,24 @@ public sealed record TokenizerOptions
     public string? WordJoiners { get; init; }
 
     /// <summary>
+    /// Characters that are terms on their own — a symbol between two words is a token, not a
+    /// separator — rather than joining or ending a word. Default: none.
+    /// </summary>
+    /// <remarks>
+    /// Exists to reproduce the tokenizers that emit symbol tokens: Lucene 10's
+    /// <c>EnglishAnalyzer</c> indexes <c>©</c>, <c>®</c>, <c>™</c> and <c>↔</c> as terms, where
+    /// Lucene 4.8 dropped them, and the difference is 519 terms on NFCorpus and 44 on SciFact — the
+    /// whole gap between this library's index and the published one. Each configured character is
+    /// emitted once when it appears, and it does not extend the word beside it: <c>Aspirin®</c>
+    /// is <c>aspirin</c> and <c>®</c>, which is what the reference produces.
+    /// <para>
+    /// Only characters that appear in the set are affected, and only tokenizers that set it; the
+    /// default emits nothing.
+    /// </para>
+    /// </remarks>
+    public string? SymbolTerms { get; init; }
+
+    /// <summary>
     /// Which characters join a word under which condition, when the flat <see cref="WordJoiners"/> set
     /// is not enough. Default: <see cref="WordSegmentation.Flat"/>, which joins nothing.
     /// </summary>
