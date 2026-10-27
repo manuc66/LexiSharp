@@ -56,15 +56,18 @@ for file in config.json splade-v3.onnx splade-v3-vocab.txt; do
 done
 ```
 
-`splade-v3-8bit.onnx` is also published (133 941 688 bytes, dynamically quantised int8 weights).
-The rows this harness measured use the full-precision file; the encoder takes `--model-file` if you
-want the quantised one, and the manifest records which was used, so a row cannot claim the wrong
-one. **The two exports do not produce the same weights**: dynamic int8 quantisation changes the
-arithmetic of every linear layer. Measured on the 300 SciFact queries, the two exports' sparse
-vectors have a mean cosine of 0.9038 (minimum 0.7620), a mean maximum per-query weight difference of
-1.03, and the quantised export activates 13.5 more terms per query on average. No metric was
-measured on an 8-bit row; a row on that file would be a different retrieval model, and it prints
-`quantised: true` so a reader can see which one it is.
+`splade-v3-8bit.onnx` is also published (133 941 688 bytes, sha256 `16e3665b963b5468…`,
+dynamically quantised int8 weights). The rows this harness measured use the full-precision file; the
+encoder takes `--model-file` if you want the quantised one, and the manifest records which was used,
+so a row cannot claim the wrong one. **The two exports do not produce the same weights**: dynamic
+int8 quantisation changes the arithmetic of every linear layer. Measured on the 300 SciFact test
+queries, the two exports' sparse vectors have a mean cosine of 0.9038 (minimum 0.7620) and a mean
+maximum per-query weight difference of 1.03. The quantised export emits **fewer** non-zero terms, not
+more: 77.4 per query against 128.2, and 164.2 per document against 241.2 on SciFact (164.1 against
+232.3 on NFCorpus), all at `--truncate 256 --top-k 256`. A row on that file is a different retrieval
+model, and it prints `quantised: true`;
+[the evaluation page](../../../docs/evaluation.md#learned-sparse-splade-through-onnx) carries the
+measured rows.
 
 ## Tokenizer
 
@@ -171,5 +174,5 @@ Query vectors average 25.8 terms (NFCorpus), 132.6 (SciFact) and 249.6 (ArguAna)
 query is a whole argument.
 
 The measured rows, and what they do and do not establish, are on
-[the evaluation page](../../docs/evaluation.md#learned-sparse-splade-through-onnx) — the only place
+[the evaluation page](../../../docs/evaluation.md#learned-sparse-splade-through-onnx) — the only place
 this repository keeps measured numbers, because that page states their limits beside them.
