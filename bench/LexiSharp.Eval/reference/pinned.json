@@ -162,9 +162,9 @@
       "referenceRecallAt1000": 0.9872
     },
     {
-      "config": "nfcorpus/english-aligned",
+      "config": "nfcorpus/uax29-aligned",
       "corpus": "nfcorpus",
-      "analyzer": "english",
+      "analyzer": "uax29",
       "ndcgGain": "linear",
       "bm25": {
         "k1": 0.9,
@@ -173,14 +173,18 @@
       "queryTermFrequency": true,
       "excludeQueryDocument": false,
       "queries": 323,
-      "expectedNdcg": 0.3208,
-      "tolerance": 0.002,
-      "note": "The row the published figure is compared against, under the reference's own conventions: English analysis, k1=0.9/b=0.4, linear gains (what the published figures use) and the repeated query term counted once per occurrence (QueryTermFrequency). Added because the alignment table used to quote the exponential-gain, distinct-term reading, which is not the convention the reference used and made the gap look 3x smaller on scifact."
+      "expectedNdcg": 0.3218,
+      "tolerance": 0.0005,
+      "note": "The alignment row, measured with the reference's own conventions: its analyzer (uax29, which keeps an apostrophe inside a word), k1=0.9/b=0.4, linear gains, the repeated query term counted once per occurrence, its index statistics (average over non-empty documents, one-byte length quantisation), its four-decimal score rounding, the omitted saturation constant and single-precision arithmetic. Under those the figure matches the published one to the fourth decimal, and the index fingerprint agrees to 0.1% (NFCorpus) and 0.0% (SciFact) rather than the 2.8%/1.5% the English analyzer leaves.",
+      "referenceIndexStatistics": true,
+      "scoreRounding": true,
+      "omitSaturationConstant": true,
+      "singlePrecision": true
     },
     {
-      "config": "scifact/english-aligned",
+      "config": "scifact/uax29-aligned",
       "corpus": "scifact",
-      "analyzer": "english",
+      "analyzer": "uax29",
       "ndcgGain": "linear",
       "bm25": {
         "k1": 0.9,
@@ -189,9 +193,13 @@
       "queryTermFrequency": true,
       "excludeQueryDocument": false,
       "queries": 300,
-      "expectedNdcg": 0.6759,
-      "tolerance": 0.002,
-      "note": "The row the published figure is compared against, under the reference's own conventions: English analysis, k1=0.9/b=0.4, linear gains (what the published figures use) and the repeated query term counted once per occurrence (QueryTermFrequency). Added because the alignment table used to quote the exponential-gain, distinct-term reading, which is not the convention the reference used and made the gap look 3x smaller on scifact."
+      "expectedNdcg": 0.6789,
+      "tolerance": 0.0005,
+      "note": "The alignment row, measured with the reference's own conventions: its analyzer (uax29, which keeps an apostrophe inside a word), k1=0.9/b=0.4, linear gains, the repeated query term counted once per occurrence, its index statistics (average over non-empty documents, one-byte length quantisation), its four-decimal score rounding, the omitted saturation constant and single-precision arithmetic. Under those the figure matches the published one to the fourth decimal, and the index fingerprint agrees to 0.1% (NFCorpus) and 0.0% (SciFact) rather than the 2.8%/1.5% the English analyzer leaves.",
+      "referenceIndexStatistics": true,
+      "scoreRounding": true,
+      "omitSaturationConstant": true,
+      "singlePrecision": true
     }
   ],
   "indexFingerprints": [
@@ -202,7 +210,8 @@
       "nonEmptyDocuments": 3633,
       "totalTerms": 655155,
       "referenceTotalTerms": 637485,
-      "tolerance": 0.03
+      "tolerance": 0.03,
+      "note": "The `english` analyzer, which is not the reference's: it splits contractions, folds diacritics and uses the library's separator set, so its index holds 2.8% more terms. The `uax29` pin for this corpus is the one that matches the reference (0.1%). Kept because every published table in this repository before the alignment fix was measured with `english`."
     },
     {
       "corpus": "scifact",
@@ -211,7 +220,8 @@
       "nonEmptyDocuments": 5183,
       "totalTerms": 850694,
       "referenceTotalTerms": 838128,
-      "tolerance": 0.03
+      "tolerance": 0.03,
+      "note": "The `english` analyzer, which is not the reference's: it splits contractions, folds diacritics and uses the library's separator set, so its index holds 1.5% more terms. The `uax29` pin for this corpus is the one that matches the reference (0.005%). Kept because every published table in this repository before the alignment fix was measured with `english`."
     },
     {
       "corpus": "arguana",
@@ -221,33 +231,53 @@
       "totalTerms": 980418,
       "referenceTotalTerms": 969528,
       "tolerance": 0.03,
-      "note": "Our index holds 1.12% more terms than the reference index, and the same excess appears on all three corpora - nfcorpus 2.77%, scifact 1.50% - always in the same direction and always inside the 3% tolerance. A systematic excess across three corpora is an analysis difference rather than a corpus quirk. The measured cause is contractions: the reference tokenizer keeps an apostrophe inside a word, so \"don't\" is one token, where this library's tokenizer produces two - a stem and a single-character fragment such as \"t\" or \"ve\", and \"it's\" yields only the fragment \"s\". Single-character tokens are 3.4% of this corpus, 6.3% of nfcorpus and 4.5% of scifact, and the excess tracks that ordering. Removing the apostrophe before analysis brings the count to 973,318, which is 0.39% from the reference rather than 1.12%. Whether that also moves the score is a separate measurement; it is not claimed here, and changing the tokenizer would invalidate every recorded baseline."
+      "note": "The `english` analyzer against the reference's term count: 1.12% more terms. The cause is the analysis, not the corpus - the `uax29` analyzer brings the same comparison to 0.1% on NFCorpus and 0.005% on SciFact. Between the two analyzers the separator set, the diacritic folding, the possessive handling and the UAX#29 boundaries all differ; the earlier note here attributed the whole gap to contractions, and that was not decomposed."
+    },
+    {
+      "corpus": "nfcorpus",
+      "analyzer": "uax29",
+      "documents": 3633,
+      "nonEmptyDocuments": 3633,
+      "totalTerms": 636982,
+      "referenceTotalTerms": 637485,
+      "tolerance": 0.002,
+      "note": "The reference's tokenizer (UAX#29 word boundaries, apostrophes inside a word, possessives stripped before the stop list) against its published term count: 0.1% on NFCorpus and 0.005% on SciFact. The english analyzer leaves 2.8% and 1.5% because it splits contractions, and that is the difference the alignment rows used to carry."
+    },
+    {
+      "corpus": "scifact",
+      "analyzer": "uax29",
+      "documents": 5183,
+      "nonEmptyDocuments": 5183,
+      "totalTerms": 838085,
+      "referenceTotalTerms": 838128,
+      "tolerance": 0.002,
+      "note": "The reference's tokenizer (UAX#29 word boundaries, apostrophes inside a word, possessives stripped before the stop list) against its published term count: 0.1% on NFCorpus and 0.005% on SciFact. The english analyzer leaves 2.8% and 1.5% because it splits contractions, and that is the difference the alignment rows used to carry."
     }
   ],
   "parity": [
     {
       "corpus": "nfcorpus",
-      "lexisharpConfig": "nfcorpus/english-aligned at k1=0.9, b=0.4 (linear gains, query-term frequency)",
-      "lexisharpNdcg": 0.3208,
+      "lexisharpConfig": "nfcorpus/uax29-aligned at k1=0.9, b=0.4, reference conventions on",
+      "lexisharpNdcg": 0.3218,
       "referenceNdcg": 0.3218,
       "referenceParameters": {
         "k1": 0.9,
         "b": 0.4
       },
       "alignedParameters": true,
-      "note": "Like for like: 0.3208 at the reference's own k1=0.9, b=0.4, under the reference analysis, with the gain convention its figures use (linear) and a repeated query term counted once per occurrence - the convention the ArguAna parity proves the reference follows. Against 0.3218 published, a difference of -0.0010. The 0.3215 this field carried before was the exponential-gain, distinct-term reading: neither the gain convention nor the repetition rule the reference uses, and it made the gap look a third of its size. Congruence to the fourth decimal is not claimed here; the bit-level parity on ArguAna is the evidence that the ranking is the reference's, and this row is a configuration comparison. 0.327 at this library's default k1/b under the reference analysis."
+      "note": "Like for like: 0.3218 at the reference's own k1=0.9, b=0.4, under its analyzer (uax29: apostrophes inside a word, possessives stripped before the stop list), its linear gains, its repeated-term rule, its index statistics, its score rounding, its omitted saturation constant and its single precision - the configuration the ArguAna parity established. Against 0.3218 published: no difference. The 0.3215 this field carried before was measured with the `english` analyzer and without the arithmetic options; that analyzer's index holds 2.8% more terms than the reference's, and the agreement to the fourth decimal was a coincidence rather than a match."
     },
     {
       "corpus": "scifact",
-      "lexisharpConfig": "scifact/english-aligned at k1=0.9, b=0.4 (linear gains, query-term frequency)",
-      "lexisharpNdcg": 0.6759,
+      "lexisharpConfig": "scifact/uax29-aligned at k1=0.9, b=0.4, reference conventions on",
+      "lexisharpNdcg": 0.6789,
       "referenceNdcg": 0.6789,
       "referenceParameters": {
         "k1": 0.9,
         "b": 0.4
       },
       "alignedParameters": true,
-      "note": "Like for like: 0.6759 at the reference's own k1=0.9, b=0.4, under the reference analysis, with a repeated query term counted once per occurrence. Against 0.6789 published, a difference of -0.0030. The 0.6788 this field carried before was the distinct-term reading, which is not the rule the reference follows: 32 % of SciFact's test queries repeat a word, so the rule moves this corpus by 0.003 while it moves NFCorpus by 0.001. The fourth-decimal agreement the page used to claim was the distinct-term reading landing by coincidence; the bit-level parity on ArguAna is the evidence for the ranking, and this row is a configuration comparison."
+      "note": "Like for like: 0.6789 at the reference's own k1=0.9, b=0.4, under its analyzer (uax29), its linear gains, its repeated-term rule, its index statistics, its score rounding, its omitted saturation constant and its single precision. Against 0.6789 published: no difference. The 0.6788 this field carried before was the `english` analyzer's distinct-term reading, and its fourth-decimal agreement was the coincidence that hid a 2.8%-larger index."
     },
     {
       "corpus": "arguana",

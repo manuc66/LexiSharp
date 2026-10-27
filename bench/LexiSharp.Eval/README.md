@@ -405,9 +405,12 @@ NFCorpus, the one graded corpus here: 0.3080 exponential against 0.3071 linear f
 **`--query-term-frequency` is what closed the ArguAna gap, and it is worth almost nothing elsewhere.**
 A published BM25 measurement scores one clause per query-token occurrence, so a term repeated in the
 query multiplies its weight; this library deduplicates by default, which is the natural reading of a
-bag of words. Where queries are short the two nearly coincide: at k1=0.9/b=0.4, NFCorpus reads
-0.3215 without the flag and 0.3208 with it, and SciFact reads 0.6788 against 0.6759 — with R@10
-falling 0.806 → 0.800, so the flag is not free there either. Where a query *is* a document they are
+bag of words. Where queries are short the two nearly coincide: under the `english` analyzer at
+k1=0.9/b=0.4, NFCorpus reads 0.3215 without the flag and 0.3208 with it, and SciFact reads 0.6788
+against 0.6759 — with R@10 falling 0.806 → 0.800, so the flag is not free there either. Under the
+reference's own `uax29` analyzer, which is what the alignment rows at the top of `docs/evaluation.md`
+use, the same pair with the flag and the four arithmetic options reads 0.3218 and 0.6789. Where a
+query *is* a document they are
 not: ArguAna's every test
 query is a whole ~200-word argument whose content words repeat, and counting them takes nDCG@10
 from **0.240 to 0.301** at k1=0.9/b=0.4, a **+0.061** effect. Reproduce it with

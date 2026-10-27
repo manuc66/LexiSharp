@@ -34,26 +34,28 @@ comparison. nDCG@10:
 | NFCorpus | defaults: `Tokenizer.Default`, k1=1.5, b=0.75 | 0.308 | 0.325 | −5.2 % |
 | SciFact | defaults | 0.662 | 0.665 | −0.5 % |
 | ArguAna | defaults | 0.320 | 0.315 | +1.6 % |
-| NFCorpus | aligned: English analysis, k1=0.9, b=0.4, linear gains, query-term frequency | 0.3208 | 0.3218 | −0.0010 |
-| SciFact | aligned: same conventions | 0.6759 | 0.6789 | −0.0030 |
+| NFCorpus | aligned: uax29 analysis, k1=0.9, b=0.4, reference conventions | 0.3218 | 0.3218 | 0.0000 |
+| SciFact | aligned: same conventions | 0.6789 | 0.6789 | 0.0000 |
 | ArguAna | aligned | 0.3970 | 0.3970 at k1=0.9, b=0.4 | 0.0000 |
 
 The **defaults** rows answer *what the library does out of the box*: no stemming, stop words
 kept. The **aligned** rows answer *is this comparable to the published figure* — and with the
-analysis, the parameters, the gain convention and the repeated-term rule matched, the two agree
-to within 0.001 on NFCorpus and 0.003 on SciFact, and are identical on ArguAna. Only ArguAna
-carries bit-level evidence — 15,466 of 15,466 compared scores match — so the other two are
-configuration comparisons whose residual is the tokenizer, the index statistics and tie order.
-With the reference's own index statistics, score rounding, omitted saturation constant and single
-precision switched on — the options that made ArguAna's scores match on the raw bits — these two read
-**0.3211** and **0.6780**, so the remaining 0.0007 and 0.0009 are what the tokenizer costs: this
-library's index holds **2.77 %** (NFCorpus) and **1.50 %** (SciFact) more terms, because an apostrophe
-splits a word (`don't` becomes two tokens) where the reference keeps one, and that changes the
-document frequencies every score is built on. Closing it means changing the tokenizer, which would
-invalidate every recorded baseline; the ArguAna index holds 1.12 % more terms yet its compared scores
-match exactly, because the extra tokens there are single-character fragments no query asks for.
-The gap between the
-two row groups is configuration, not ranking.
+reference's own analyzer, its parameters, its gain convention, its repeated-term rule, its index
+statistics, its score rounding, its omitted saturation constant and its single precision, the two
+agree to the fourth decimal on all three corpora. The gap between the two row groups is
+configuration, not ranking.
+
+**What had to be matched, and how it was found.** The first version of these rows used the `english`
+analyzer and read 0.3215 / 0.6788 against 0.3218 / 0.6789 — close enough to be called equal, and it
+was not: `english` splits a contraction into a stem and a fragment (`don't` becomes two tokens) where
+the reference keeps one, so its index held 2.8 % / 1.5 % more terms and its scores were not built on
+the reference's document frequencies. The `uax29` analyzer — the published separator rules, an
+apostrophe kept inside a word, possessives stripped before the stop list — brings the index to
+**0.1 %** of the reference's term count on NFCorpus and **0.005 %** on SciFact. Adding the four
+arithmetic options (reference index statistics, four-decimal score rounding, omitted saturation
+constant, single precision) then lands the rows exactly on 0.3218 and 0.6789. Both fingerprints and
+both scores are pinned (`nfcorpus/uax29`, `scifact/uax29`, `nfcorpus/uax29-aligned`,
+`scifact/uax29-aligned`), so `--verify-reference` replays them.
 
 **ArguAna: the metric is reproduced, and so are the raw scores.** The two are verified by different
 means and the distinction is the point.
@@ -230,7 +232,9 @@ Reproduce the alignment, and check it against pinned values:
 
 ```bash
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
-  --analyzer english --ndcg-gain linear --reference-bm25 0.9,0.4 --query-term-frequency
+  --analyzer uax29 --ndcg-gain linear --reference-bm25 0.9,0.4 --query-term-frequency \
+  --reference-index-statistics --reference-score-rounding --omit-saturation-constant \
+  --single-precision-bm25
 dotnet run --project bench/LexiSharp.Eval -c Release -- --verify-reference
 ```
 
@@ -531,15 +535,17 @@ tens of megabytes derived from a CC BY-NC-SA model, and the README is how to reg
 
 Measured on 2026-10-26, one host (12 cores, `--jobs` default 8), nDCG@10 at **exponential gains —
 the harness default, and the convention every other row on this page uses**. The aligned column is
-`--analyzer english --reference-bm25 0.9,0.4 --query-term-frequency`, the published BM25 convention;
-without that flag the aligned rows read 0.3215 / 0.679, which is the distinct-term reading and
-was the figure this page used to quote for them. All three
+`--analyzer english --reference-bm25 0.9,0.4 --query-term-frequency` at these exponential gains, which
+is **not** the alignment row of the table at the top of this page: that one uses the reference's
+`uax29` analyzer and its arithmetic, and reads 0.3218 / 0.6789 under linear gains. The column here is
+the same parameters and analysis this sparse lane was compared with when it was written, and the two
+must not be mixed. All three
 columns come from runs in this session on NFCorpus and SciFact, and the two ArguAna rows come from
 this session's two runs over the same vectors. ArguAna has no aligned cell — the aligned column is a
 BM25 analysis the sparse model does not use — and its rows carry the two task conventions, because
 1 298 of its 1 406 test queries name a document and the published reference figure drops it:
 
-| Corpus | BM25 defaults (1.5 / 0.75) | BM25 aligned (English analysis, 0.9 / 0.4) | SPLADE-v3 (256 tokens, top 256) |
+| Corpus | BM25 defaults (1.5 / 0.75) | BM25 at 0.9 / 0.4, English analysis | SPLADE-v3 (256 tokens, top 256) |
 |---|---:|---:|---:|
 | NFCorpus | 0.308 | 0.322 | **0.3596** |
 | SciFact | 0.662 | 0.676 | **0.7083** |
@@ -576,11 +582,12 @@ conventions:
   one model and one pruning budget: the truncation comparison below covers the token budget, any
   top-k other than 256 is not measured, and it is not a statement about learned-sparse retrieval in
   general.
-- **The aligned rows now carry the repeated-term rule**, which is the reference's: SciFact reads
-  0.6759 with `--query-term-frequency` against 0.679 without it (32 % of its test queries repeat a
-  word), NFCorpus 0.3208 against 0.3215 (3 %). The 0.6788 / 0.3215 this page used to quote for
-  the aligned rows were the distinct-term readings, and made the gap look a third of its size. The
-  sparse row is unaffected either way: the flag reaches BM25's scorer only.
+- **The column above carries the repeated-term rule**, which is the reference's: SciFact reads
+  0.676 with `--query-term-frequency` against 0.679 without it (32 % of its test queries repeat a
+  word), NFCorpus 0.322 against 0.3225 (3 %, one query's worth). The alignment rows at the top of the
+  page now use the reference's `uax29` analyzer and read 0.3218 / 0.6789; the numbers in this
+  section were measured with `english` and must not be read as that row. The sparse row is unaffected
+  either way: the flag reaches BM25's scorer only.
 - **What the row is not.** The metrics contain no encode cost — the model ran offline, before the
   harness started, and its time is the producer's (48.1 min for NFCorpus's 3 633 documents and 3 237
   queries, 57.2 min for SciFact's 5 183 and 1 109, two encoders side by side at 6 threads each; 28.7

@@ -18,19 +18,28 @@ workflow.
 
 ## [Unreleased]
 
+### Changed
+
+- **The aligned BM25 rows use the reference's own analyzer.** They read **0.3218** and **0.6789**
+  against the published **0.3218** and **0.6789** — equal to the fourth decimal — where the figures
+  this file withdraws below were the `english` analyzer's 0.3215 and 0.6788. `--analyzer uax29`
+  implements the reference's word segmentation: an apostrophe is kept inside a word, possessives are
+  stripped before the stop list, and its index lands within 0.1 % (NFCorpus) and 0.005 % (SciFact) of
+  the reference's term count, against 2.8 % and 1.5 % for `english`. The four arithmetic options are
+  what close the rest. Both the fingerprints and the scores are pinned, and `--verify-reference`
+  replays them; the regression-pin format gained `referenceIndexStatistics`, `scoreRounding`,
+  `omitSaturationConstant` and `singlePrecision` so a pin can name the configuration it was measured
+  under instead of replaying a different one.
+
 ### Withdrawn
 
 - **The aligned BM25 figures for NFCorpus and SciFact, 0.3215 and 0.6788.** They were published
-  beside the reference's 0.3218 and 0.6789 as equal to the fourth decimal, and they were measured at
-  exponential gains with a repeated query term counted once instead of once per occurrence. The
-  reference's figures use linear gains — `trec_eval`'s default — and count repetitions, which is what
-  the ArguAna parity established when 15,466 of 15,466 compared scores matched on the raw bits.
-  Re-measured under those conventions the rows read **0.3208** and **0.6759**, gaps of **−0.0010**
-  and **−0.0030**. SciFact moves three times as far as NFCorpus because 32 % of its test queries
-  repeat a word against 3 % of NFCorpus's. Both rows are now pinned as
-  `nfcorpus/english-aligned` and `scifact/english-aligned`, so `--verify-reference` replays them, and
-  the pages no longer claim fourth-decimal agreement on either corpus — that evidence exists on
-  ArguAna and nowhere else.
+  beside the reference's 0.3218 and 0.6789 as equal to the fourth decimal, and they were the
+  `english` analyzer's exponential-gain, distinct-term readings. That analyzer splits a contraction
+  into a stem and a fragment, so its index held 2.8 % and 1.5 % more terms and its scores were not
+  built on the reference's document frequencies; the fourth-decimal agreement was a coincidence.
+  Re-measured with the reference's analyzer and conventions the rows read **0.3218** and **0.6789**,
+  as recorded above.
 
 ### Added
 

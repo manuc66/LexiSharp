@@ -34,7 +34,16 @@ internal static class ReferenceVerifier
         {
             var dataset = BeirDataset.Resolve(pin.Corpus);
             var corpus = await BeirLoader.LoadOrDownloadAsync(dataBaseDir, dataset);
-            var index = new InMemoryTextIndex(BuildTokenizer(pin.Analyzer));
+            // The reference's own index conventions, when the pin names them: its average length is
+            // over the non-empty documents and its lengths are quantised to one byte, and both move
+            // every score. A pin that named only the analyzer would replay a different index and
+            // call the difference a ranking gap.
+            var index = pin.ReferenceIndexStatistics
+                ? new InMemoryTextIndex(
+                    BuildTokenizer(pin.Analyzer),
+                    AverageLengthDivisor.NonEmptyDocuments,
+                    DocumentLengthQuantization.OneByte)
+                : new InMemoryTextIndex(BuildTokenizer(pin.Analyzer));
             index.Index(Evaluation.BuildDocuments(corpus));
 
             var measured = Measure(corpus, index, pin, cancellationToken);
@@ -145,7 +154,9 @@ internal static class ReferenceVerifier
             index,
             new Bm25Scorer(
                 pin.Bm25.K1, pin.Bm25.B,
-                pin.QueryTermFrequency ? QueryTermWeighting.QueryFrequency : QueryTermWeighting.Distinct),
+                pin.QueryTermFrequency ? QueryTermWeighting.QueryFrequency : QueryTermWeighting.Distinct,
+                saturationConstant: !pin.OmitSaturationConstant,
+                arithmetic: pin.SinglePrecision ? Bm25Arithmetic.SinglePrecision : Bm25Arithmetic.Double),
             BuildTokenizer(pin.Analyzer));
 
         var gain = pin.NdcgGain == "linear" ? NdcgGain.Linear : NdcgGain.Exponential;
@@ -177,7 +188,8 @@ internal static class ReferenceVerifier
                 .Search(query.Text, new SearchOptions(
                     10,
                     ExcludedDocumentIds: excluded,
-                    ParseQuerySyntax: pin.QuerySyntax))
+                    ParseQuerySyntax: pin.QuerySyntax)
+                    .WithScoreRounding(pin.ScoreRounding ? ScoreRounding.FourDecimals : ScoreRounding.None))
                 .Select(result => result.DocumentId)
                 .ToArray();
 
@@ -187,21 +199,18 @@ internal static class ReferenceVerifier
         return queries.Count == 0 ? 0 : total / queries.Count;
     }
 
-    private static ITokenizer BuildTokenizer(string analyzer) => analyzer switch
+    private static ITokenizer BuildTokenizer(string analyzer)
     {
-        "default" => Tokenizer.Default,
-        "porter" => new Tokenizer(new TokenizerOptions
+        // One builder, in Program, for both the run and the pin replay: a second copy of the
+        // analyzer table is how a pin ends up replaying a different analysis than the command it
+        // prints as its reproduction.
+        try
         {
-            Stemmer = new PorterStemmer(),
-            RemoveStopWords = true,
-        }),
-        "english" => new Tokenizer(new TokenizerOptions
+            return Program.BuildAnalysis(analyzer, stem: false).Tokenizer;
+        }
+        catch (ArgumentException)
         {
-            Stemmer = new PorterStemmer(),
-            RemoveStopWords = true,
-            StopWords = StopWords.EnglishFunction,
-            KeepSingleCharTerms = true,
-        }),
-        _ => throw new ArgumentException($"Unknown analyzer '{analyzer}' in the pinned reference file."),
-    };
+            throw new ArgumentException($"Unknown analyzer '{analyzer}' in the pinned reference file.");
+        }
+    }
 }
