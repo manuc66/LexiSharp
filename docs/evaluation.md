@@ -63,6 +63,16 @@ not established on these two. Both fingerprints and both scores are pinned (`nfc
 `scifact/uax29`, `nfcorpus/uax29-aligned`, `scifact/uax29-aligned`), so `--verify-reference` replays
 them.
 
+**Where the remaining term difference is.** Running a Lucene 4.8 `EnglishAnalyzer` over the same
+corpus files, outside this repository, gives **636 966**, **838 084** and **969 528** terms for
+NFCorpus, SciFact and ArguAna — within 16, 1 and 0 of this library's `uax29` index, which reads
+636 982, 838 085 and 969 528. The published counts are 637 485, 838 128 and 969 528: **519 and 44
+above what a Lucene analyzer produces from these files, and exact on ArguAna.** So the residual sits
+in the reference's own index construction for those two corpora — what it feeds its analyzer — and
+not in this library's tokenizer; naming the 519 and 44 terms would take the reference's index or term
+list, which this repository does not have. The comparison in this section is a measurement of the
+analyzer against a Lucene one, not an inference from the total alone.
+
 **ArguAna: the metric is reproduced, and so are the raw scores.** The two are verified by different
 means and the distinction is the point.
 
