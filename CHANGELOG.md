@@ -20,6 +20,18 @@ workflow.
 
 ### Changed
 
+- **The cursor lane times both accumulating passes, and its sweep runs over a real corpus.** A
+  sweep row used to time only the pass the engine chose, so at a document frequency where the rule
+  says "cursor" the row measured the cursor pass and found it fast — the decision testing itself.
+  `--both` times the accumulator and the cursor pass on one build, one of each per iteration, and
+  prints which pass the rule should have chosen; `--corpus <arguana|nfcorpus|scifact>` runs the same
+  sweep over a BEIR corpus instead of the generated one, so the density axis can be read on
+  documents whose lengths are not all 50 tokens. Measured three runs each: the crossing is an
+  interval, **25 < df < 250**, on the synthetic corpus and on ArguAna's 8,674 real documents alike,
+  with a tie at df 50 and the accumulator ahead from df 250 (1.09-1.11× synthetic, 1.13-1.18×
+  ArguAna). `RankedTextSearchEngine.CursorDensityDivisor` stays at 200, whose cap of 43-50 sits
+  inside that interval, so the constant is not a frequency of the generated corpus.
+
 - **The ASP.NET Core endpoint bounds the page it will build, and answers a refused request with
   `400`.** `limit` is at most 100 and `offset` at most 10 000 (`LexiSharpSearchEndpoint.MaxLimit`,
   `MaxOffset`); a query the engine will not run — more than 32 distinct `term*`/`term~` atoms, or

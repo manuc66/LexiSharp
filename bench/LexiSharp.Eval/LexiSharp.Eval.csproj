@@ -24,6 +24,9 @@
     <!-- The per-query analysis is internal to this harness and the test project is the only caller
          that should see it. Widening it to public would make it API this repository then has to keep. -->
     <InternalsVisibleTo Include="LexiSharp.Tests" />
+    <!-- The cursor lane runs its sweep over a BEIR corpus as well as a synthetic one, and borrows the
+         loader rather than owning a second jsonl reader. Both are bench tools; neither is API. -->
+    <InternalsVisibleTo Include="LexiSharp.Benchmarks" />
   </ItemGroup>
 
   <ItemGroup>
