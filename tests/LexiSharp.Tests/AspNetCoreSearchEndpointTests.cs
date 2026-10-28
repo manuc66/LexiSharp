@@ -58,6 +58,56 @@ public class AspNetCoreSearchEndpointTests
         Assert.Equal("d1", hit.DocumentId);
     }
 
+    [Theory]
+    [InlineData(LexiSharpSearchEndpoint.MaxLimit + 1)]
+    [InlineData(int.MaxValue)]
+    public void Handle_RefusesALimitAboveTheBound(int limit)
+    {
+        // The page size is the working window the ranking is cut from, so an unbounded Limit is a
+        // request to build the whole corpus' window — which is quadratic in the corpus, not in the
+        // page the caller receives. Refused rather than truncated: a truncated page is a different
+        // answer, and the caller can ask for 100.
+        var badRequest = Assert.IsType<BadRequest<LexiSharpSearchError>>(
+            LexiSharpSearchEndpoint.Handle(
+                CreateIndex(),
+                new LexiSharpSearchParameters { Query = "distributed", Limit = limit }));
+
+        Assert.Equal("limit", badRequest.Value!.Field);
+        Assert.Contains(LexiSharpSearchEndpoint.MaxLimit.ToString(), badRequest.Value.Message);
+    }
+
+    [Theory]
+    [InlineData(LexiSharpSearchEndpoint.MaxOffset + 1)]
+    [InlineData(int.MaxValue)]
+    public void Handle_RefusesAnOffsetAboveTheBound(int offset)
+    {
+        // Offset enlarges the window the same way Limit does, so the bound is the same one:
+        // [Offset, Offset + Limit) is only cheap while the window it names is bounded.
+        var badRequest = Assert.IsType<BadRequest<LexiSharpSearchError>>(
+            LexiSharpSearchEndpoint.Handle(
+                CreateIndex(),
+                new LexiSharpSearchParameters { Query = "distributed", Offset = offset }));
+
+        Assert.Equal("offset", badRequest.Value!.Field);
+        Assert.Contains(LexiSharpSearchEndpoint.MaxOffset.ToString(), badRequest.Value.Message);
+    }
+
+    [Fact]
+    public void Handle_AcceptsTheBoundsThemselves()
+    {
+        var ok = Assert.IsType<Ok<LexiSharpSearchResponse<SearchDocument>>>(
+            LexiSharpSearchEndpoint.Handle(
+                CreateIndex(),
+                new LexiSharpSearchParameters
+                {
+                    Query = "distributed",
+                    Limit = LexiSharpSearchEndpoint.MaxLimit,
+                    Offset = LexiSharpSearchEndpoint.MaxOffset,
+                }));
+
+        Assert.Empty(ok.Value!.Hits);
+    }
+
     [Fact]
     public void Handle_HonorsMinimumScore()
     {
