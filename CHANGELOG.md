@@ -20,6 +20,30 @@ workflow.
 
 ### Changed
 
+- **The ASP.NET Core endpoint bounds the page it will build, and answers a refused request with
+  `400`.** `limit` is at most 100 and `offset` at most 10 000 (`LexiSharpSearchEndpoint.MaxLimit`,
+  `MaxOffset`); a query the engine will not run — more than 32 distinct `term*`/`term~` atoms, or
+  syntax the index cannot honor — is a `400` with the reason in `{ "field": "q", "message": ... }`
+  rather than a `500`. Both bounds exist because a page is cut from a working window of
+  `Offset + Limit` entries, so an unbounded request asked the engine to build the whole corpus'
+  window for a page of ten.
+
+- **A query resolves each distinct prefix/fuzzy atom once, and may carry at most
+  `RankedTextSearchEngine.MaxExpansionAtoms` (32) of them.** `catt~` written ten times is one
+  vocabulary walk instead of ten, and `+catt~`/`-catt~` share it; past 32 distinct atoms the query
+  is refused with `ArgumentException` instead of paying one vocabulary walk per atom. `EnableFuzzy`
+  rewrites plain terms into atoms, so a long query on a fuzzy index is bounded by the same number.
+
+- **A saved index is read as untrusted input.** Both MessagePack persistence classes use
+  `MessagePackSecurity.UntrustedData`: SipHash over the keys materialized from the payload (it
+  carries `Dictionary<string, string>` fields read from the file) and a 64 MB ceiling on decompressed
+  output, where the framework's "trusted" defaults cap at `int.MaxValue`. The wire format is
+  unchanged and payloads saved by earlier builds still load.
+
+- **The PostgreSQL engines fetch at most 100 000 rows per query.** The window is `Offset + Limit`
+  from the request, so an offset in the billions used to reach the database as a `LIMIT` of the same
+  size; past the ceiling the page comes back short rather than the table coming back whole.
+
 - **The aligned BM25 rows use the reference's own analyzer.** They read **0.3218** and **0.6789**
   against the published **0.3218** and **0.6789** — equal to the fourth decimal — where the figures
   this file withdraws below were the `english` analyzer's 0.3215 and 0.6788. `--analyzer uax29`
@@ -51,6 +75,18 @@ workflow.
   as recorded above.
 
 ### Added
+
+- **`LexiSharpIndex<T>.Search(query, options, CancellationToken)` and
+  `LexiSharpSearchEndpoint.Handle(index, parameters, CancellationToken)`**, plus the route passing
+  `HttpContext.RequestAborted` through. The engine already honored a token; nothing could supply one.
+  `SearchWithFacets`/`SearchWithNumericFacets` still take none, because `IFacetedSearchEngine` does
+  not and adding a parameter to an interface member breaks every engine that implements it.
+
+- **`HighlightOptions.EscapeHtml`** encodes the document's own characters around the highlight tags,
+  for a result that can be inserted into a web page; off by default so the existing output is
+  unchanged. **`LexiSharpQueryOptions.HighlightOptions`** is how the facade reaches it —
+  `LexiSharpHit<T>.HighlightedText` is markup, and a page that renders it must encode the text the
+  document contributed.
 
 - **`TokenizerOptions.SymbolTerms`, and the middle dot as a letter-to-letter joiner.** Two rules that
   the reference's analyzer applies and this one did not: Lucene 10 emits `©`, `®`, `™` and `↔` as
