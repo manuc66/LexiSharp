@@ -17,6 +17,13 @@ lexisharp search ./docs --query "rank fusion"   # one you name
 The directory is scanned and indexed in memory, then searched; nothing is written. Text files and
 Markdown are read, and `--analyzer default|english` picks the tokenizer.
 
+Hits are printed for a terminal, and a corpus is not trusted to be the terminal's author: control
+and format characters in a document's text, in its id, and in the query are removed before the line
+is written. A file carrying `ESC[2J` — or a right-to-left override — no longer reaches the screen as
+a command or as text that shows something other than what it says. The words stay; the characters
+with no visible glyph do not. `segment search --json` is unchanged: that file is for a machine, and
+the serializer escapes it.
+
 When the directory holds a store, the store is searched instead of the files: the directory
 itself if it is a store, else its `.lexisharp` subdirectory. The store records the analyzer it was
 built with, so `--analyzer` is refused against one rather than silently reading a different index.

@@ -289,16 +289,15 @@ public static class Program
 
         foreach (var delta in deltas)
         {
-            Console.WriteLine($"  {delta.QueryId,-24} {delta.BaselineNdcg:0.000} -> {delta.CandidateNdcg:0.000} "
+            Console.WriteLine($"  {ConsoleText.Line(delta.QueryId, 24),-24} {delta.BaselineNdcg:0.000} -> {delta.CandidateNdcg:0.000} "
                 + $"({delta.Delta:+0.000;-0.000;+0.000})  {delta.Reading}");
-            Console.WriteLine($"    \"{Truncate(delta.QueryText, 70)}\"");
+
+            // The query comes from a queries file, which is corpus data like any other.
+            Console.WriteLine($"    \"{ConsoleText.Line(delta.QueryText, 70)}\"");
         }
 
         Console.WriteLine();
     }
-
-    private static string Truncate(string text, int max) =>
-        text.Length <= max ? text : text[..max].TrimEnd() + "…";
 
     private static int RunBaseline(
         string corpusDir,
@@ -531,16 +530,18 @@ public static class Program
             var results = engine.Search(query, new SearchOptions(topK));
 
             Console.WriteLine($"Corpus: {corpusDir} ({documents.Count} documents, analyzer {analyzerName})");
-            Console.WriteLine($"Query:  {query}");
+            Console.WriteLine($"Query:  {ConsoleText.Line(query, 200)}");
             Console.WriteLine();
 
             for (int i = 0; i < results.Count; i++)
             {
                 var result = results[i];
-                string text = result.Document.Text.ReplaceLineEndings(" ");
-                if (text.Length > 96) text = string.Concat(text.AsSpan(0, 96), "…");
-                Console.WriteLine($"{(i + 1),3}. {result.Score,10:0.0000}  {result.DocumentId}");
-                Console.WriteLine($"     {text}");
+
+                // The id and the text come from the corpus, so neither reaches the terminal with a
+                // control or format character intact: a terminal is an interpreter, and a document is
+                // not its author. See ConsoleText.
+                Console.WriteLine($"{(i + 1),3}. {result.Score,10:0.0000}  {ConsoleText.Line(result.DocumentId, 200)}");
+                Console.WriteLine($"     {ConsoleText.Line(result.Document.Text, 96)}");
             }
 
             if (results.Count == 0) Console.WriteLine("(no matches)");
