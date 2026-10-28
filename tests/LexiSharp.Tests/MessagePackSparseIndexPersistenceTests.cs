@@ -148,6 +148,17 @@ public class MessagePackSparseIndexPersistenceTests
     }
 
     [Fact]
+    public void Load_TreatsThePayloadAsUntrusted()
+    {
+        // Same contract as the text index' payload: keys come from the file and the stream is
+        // LZ4-compressed, so the bounded, collision-resistant configuration is the one to read with.
+        var security = MessagePackSparseIndexPersistence.SerializerOptions.Security;
+
+        Assert.True(security.HashCollisionResistant);
+        Assert.Equal(64 * 1024 * 1024, security.MaximumDecompressedSize);
+    }
+
+    [Fact]
     public void Validation_Throws()
     {
         var engine = CreateEngine();

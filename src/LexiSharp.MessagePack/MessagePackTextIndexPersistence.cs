@@ -39,9 +39,34 @@ public static class MessagePackTextIndexPersistence
     /// </summary>
     private const int OldestReadableVersion = 1;
 
-    private static readonly MessagePackSerializerOptions SerializerOptions =
+    /// <summary>
+    /// The serializer configuration both directions use, reading the payload as <b>untrusted
+    /// input</b>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>MessagePackSerializerOptions.Standard</c> carries MessagePack's <c>TrustedData</c>
+    /// settings: hash collision resistance off, and a decompression ceiling of
+    /// <see cref="int.MaxValue"/> for an LZ4 payload. Both are wrong for this type. The payload
+    /// holds <c>Dictionary&lt;string, string&gt;</c> fields whose keys are read straight out of the
+    /// file, so colliding keys are a denial of service the reader performs on itself, and the
+    /// compressed length is a number the file chooses — a small payload may declare two gigabytes
+    /// of output.
+    /// </para>
+    /// <para>
+    /// Nothing in the API says where a file came from, so the reading side pays for the safer
+    /// configuration: SipHash over the keys it materializes, and a 64 MB ceiling on decompressed
+    /// output. Writing is unaffected — the wire format does not change, and an index saved by an
+    /// earlier build still loads.
+    /// </para>
+    /// <para>
+    /// Internal so the tests can pin the settings rather than assert them through a side effect.
+    /// </para>
+    /// </remarks>
+    internal static readonly MessagePackSerializerOptions SerializerOptions =
         MessagePackSerializerOptions.Standard
-            .WithCompression(MessagePackCompression.Lz4BlockArray);
+            .WithCompression(MessagePackCompression.Lz4BlockArray)
+            .WithSecurity(MessagePackSecurity.UntrustedData);
 
     /// <summary>Serializes the index to the stream.</summary>
     public static void Save(InMemoryTextIndex index, Stream stream)
