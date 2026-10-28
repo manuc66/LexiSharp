@@ -1092,10 +1092,12 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// <para>
     /// <b>Measured 2026-10-26</b> with <c>cursor &lt;size&gt; --sweep</c>, alternating the build
     /// before and after the cursor pass, on the Zipf corpus the scale lane builds. Interval in which
-    /// the crossing lies, at each size, as (last reached term that won, first that lost):
+    /// the crossing lies, at each size, as (last reached term that won, first that lost). The
+    /// 10,000-document size is measured in the paragraph after this one instead, with both passes
+    /// timed on one build, because alternating two builds cannot separate a pass from drift when both
+    /// of them take the same one:
     /// </para>
     /// <list type="bullet">
-    /// <item><description>10,000 — wins at df 50 (2.50 against 2.80 µs), loses at df 250 (10.20 against 9.90 µs)</description></item>
     /// <item><description>25,000 — wins at df 250 (11.60 against 12.10 µs), loses at df 1,005 (38.70 against 36.50 µs)</description></item>
     /// <item><description>50,000 — wins at df 250 (9.90 against 11.30 µs), loses at df 5,014 (107.30 against 144.60 µs)</description></item>
     /// <item><description>100,000 — wins at df 250 (10.00 against 11.00 µs), loses at df 1,002 (48.80 against 45.00 µs)</description></item>
@@ -1105,9 +1107,23 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// The 50,000 row's losing figure is the one doubtful reading: the baseline's p50 there was
     /// 144.6 µs against a minimum of 82.0, while the cursor pass read 107.3 against 105.5, so the
     /// relative order of the medians rests on a noisy baseline. The divisor of 200 gives a cap of
-    /// 50 / 125 / 250 / 500 / 2,500 at those sizes, which is inside every interval above.
-    /// <b>Not measured:</b> the exact crossing between each pair, and any corpus size other than
-    /// those five.
+    /// 50 / 125 / 250 / 500 / 2,500 at those sizes, which is inside every interval here and inside
+    /// the 10,000-document interval below.
+    /// </para>
+    /// <para>
+    /// <b>Checked two ways, on 2026-10-28.</b> The list above alternates two builds, so at a row
+    /// where both builds take the same pass its difference is drift and not a pass. <c>--both</c>
+    /// times both passes on one build, one of each per iteration, and reads the 10,000-document
+    /// crossing as a tie at df 50 (cursor 2.70-2.80 against accumulator 2.70-2.90 µs, three runs)
+    /// with the accumulator ahead at df 250 (1.09-1.11×) — the interval the list above records at the
+    /// other four sizes — and the df 50 point withdrawn as a margin. The same sweep over ArguAna's
+    /// 8,674 real documents, whose lengths run from 0 to 1,014 tokens against the synthetic corpus's
+    /// constant 50, puts the crossing in the same interval: cursor 1.08-1.40× at df 10-25, a tie at
+    /// df 50, accumulator 1.13-1.18× at df 250 and 1.20-1.28× at df 8,604. The cap of 43 at that size
+    /// sits inside it, so 200 is not a frequency of the generated corpus.
+    /// <b>Not measured:</b> the exact crossing between each pair, any corpus size other than those
+    /// four and 10,000, and the crossing on real text above 10,000 documents, where the clear this pass avoids
+    /// is worth 9-18 µs and would move the crossing up rather than down.
     /// </para>
     /// </remarks>
     private const int CursorDensityDivisor = 200;
