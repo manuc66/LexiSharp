@@ -1121,9 +1121,20 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// constant 50, puts the crossing in the same interval: cursor 1.08-1.40× at df 10-25, a tie at
     /// df 50, accumulator 1.13-1.18× at df 250 and 1.20-1.28× at df 8,604. The cap of 43 at that size
     /// sits inside it, so 200 is not a frequency of the generated corpus.
-    /// <b>Not measured:</b> the exact crossing between each pair, any corpus size other than those
-    /// four and 10,000, and the crossing on real text above 10,000 documents, where the clear this pass avoids
-    /// is worth 9-18 µs and would move the crossing up rather than down.
+    /// </para>
+    /// <para>
+    /// <b>The scaling is measured at a size where the clear matters.</b> TREC-COVID, 171,332 real
+    /// abstracts over 211,708 terms, puts the crossing at <b>df 1,000-2,500</b> instead of 25-250: the
+    /// cursor pass wins 8.67-10.20× at df 10, 3.39-3.65× at df 50 and 1.23× at df 500, the two tie at
+    /// df 1,000, and the accumulator wins 1.13× at df 4,993 and 1.14-1.18× at df 19,901. The cap
+    /// there is 856, which lands on the tie, so the most the rule forgoes is the 1.09× the
+    /// accumulator gains at df 2,500. The clear at that size is 4.6 µs, 21 % of a df 1,000 query, and
+    /// being a fixed cost it is what makes the tail eight to ten times cheaper under the cursor pass.
+    /// Two runs, every row within 5 % of its twin.
+    /// <b>Not measured:</b> the exact crossing between each pair; any size other than those five,
+    /// ArguAna's 8,674 and TREC-COVID's 171,332; and the crossing at 500,000 or 1,000,000 documents of
+    /// real text, where the clear is three to four times larger and the interval would sit higher
+    /// again.
     /// </para>
     /// </remarks>
     private const int CursorDensityDivisor = 200;
