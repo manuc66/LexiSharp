@@ -20,14 +20,16 @@ workflow.
 
 ### Changed
 
-- **The cursor pass's density crossing is measured on real text at 171,332 documents, and it scales.**
-  TREC-COVID — fetched once, md5-pinned in the lane, and not a corpus the quality table scores — puts
-  the crossing at **df 1,000-2,500** instead of the 25-250 that 8,674 to 10,000 documents give: the
-  cursor pass wins 8.67-10.20× at df 10, 3.39-3.65× at df 50 and 1.23× at df 500, the two tie at
-  df 1,000, and the accumulator wins 1.13× at df 4,993 and 1.14-1.18× at df 19,901. The cap there is
-  `171,332 / 200 = 856`, which lands on the tie, so `CursorDensityDivisor` stays at 200 and the
-  rule's scaling holds where the corpus-sized clear is 4.6 µs rather than 0.1. Two runs, every row
-  within 5 % of its twin; the lengths are hardly typical (p50 21 tokens, maximum 18,964).
+- **The cursor pass's density crossing scales with the corpus, measured on three real ones.** TREC-COVID
+  (171,332 real abstracts) puts the crossing at **df 1,000-2,500** and Quora (522,931 real questions) at
+  **df 2,500-4,984**, against 25-250 at 8,674 to 10,000 documents: the interval rises with the ordinal
+  space, which is what `CursorDensityDivisor` claims. At Quora's size the cursor pass wins 5.68-5.95× at
+  df 50, 2.00-2.04× at df 250, 1.53-1.55× at df 500 and 1.16-1.19× at df 1,002, the two tie at df 2,493,
+  and the accumulator wins 1.08-1.15× at df 4,984. The caps of 856 and 2,614 land on and just past those
+  ties, so the engine gives up the pass where it stops helping; `CursorDensityDivisor` stays at 200. The
+  clear is 9.3-9.6 µs at Quora against 0.10 µs at ArguAna, which is what widens the tail. Two runs each,
+  every row within 5 % of its twin. Both real corpora have degenerate lengths — p50 21 and 9 tokens — so
+  this is not a claim about typical web text.
 
 - **The cursor lane times both accumulating passes, and its sweep runs over a real corpus.** A
   sweep row used to time only the pass the engine chose, so at a document frequency where the rule

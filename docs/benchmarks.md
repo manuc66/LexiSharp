@@ -1109,6 +1109,7 @@ their margin is larger than these.
 | Zipf, 10,000 documents | 1.12× at df 10 | df 25 (1.05-1.10×) and df 50 (1.00-1.04×) | 1.09-1.11× at df 250, 1.18-1.32× from df 1,000 |
 | ArguAna, 8,674 real documents | 1.40× at df 10, 1.08-1.17× at df 25 | df 50 (1.00-1.05×) | 1.13-1.18× at df 250, 1.17-1.28× from df 1,003 |
 | TREC-COVID, 171,332 real documents | 8.67-10.20× at df 10, 3.39-3.65× at df 50, 1.23× at df 500 | df 1,000 (1.00-1.01×), df 2,500 (1.09×) | 1.13× at df 4,993, 1.14-1.18× at df 19,901 |
+| Quora, 522,931 real documents | 5.68-5.95× at df 50, 2.00-2.04× at df 250, 1.53-1.55× at df 500, 1.16-1.19× at df 1,002 | df 2,493 (1.02-1.05×) | 1.08-1.15× at df 4,984, 1.17-1.21× at df 18,802 |
 
 The crossing is an **interval, 25 < df < 250, and it is the same interval on both small corpora**, with
 the tie at df 50. The rule caps at `ordinalSpace / 200` — 50 at 10,000 documents and 43 on ArguAna — so
@@ -1119,27 +1120,44 @@ carry read 2.80 → 2.50 µs at df 50, a 1.12× win for the cursor pass; the two
 that point as a tie (cursor 2.70-2.80 µs against accumulator 2.70-2.90 µs over three runs), so the
 row is withdrawn and replaced by the interval above.
 
-**It moves up with the corpus, and the divisor moves with it.** TREC-COVID is 171,332 real biomedical
-abstracts — lengths 0 to 18,964 tokens, p50 21, mean 105.5, p95 311 — over 211,708 terms, which is 20
-times ArguAna's document count and 6 times its vocabulary. Its crossing is at df 1,000-2,500 rather
-than 25-250: the interval rose by the same order as the corpus. The cap there is
-`171,332 / 200 = 856`, which lands **on the tie**, so the engine gives up the cursor pass exactly where
-the two cost the same and the most it forgoes is the 1.09× the accumulator gains at df 2,500. The
-clear at this size is 4.6 µs — 21 % of a df 1,000 query's 21.8 µs — and because it is a fixed cost the
-cursor pass reads **8.7-10.2× faster** on a ten-document query that costs 0.5 µs. Two runs at load
-1.49-1.60, every row within 5 % of its twin.
+**It moves up with the corpus, at the rate the divisor encodes.** Four sizes, two of them real
+corpora the quality table does not score:
 
-What that does not say: it is one corpus at one size. TREC-COVID's lengths are hardly typical, a p50
-of 21 tokens beside a maximum of 18,964; and the clear is one byte an ordinal, so at 500,000 and
-1,000,000 documents the fixed cost is 3 to 4 times larger and the crossing would sit higher again.
-The four build-alternating rows above are not re-measured, and the interval is wide everywhere: the
-measurement says the cap is inside it, not that 200 is the best divisor in it.
+| corpus | documents | the clear | the crossing | the cap (`N/200`) |
+|---|---:|---:|---|---:|
+| Zipf 1.07 | 10,000 | 0.10 µs | 25 < df < 250 | 50 |
+| ArguAna, real | 8,674 | 0.10 µs | 25 < df < 250 | 43 |
+| TREC-COVID, real | 171,332 | 4.6 µs | df 1,000-2,500 | 856 |
+| Quora, real | 522,931 | 9.3-9.6 µs | df 2,500-4,984 | 2,614 |
+
+The crossing grows with the ordinal space and the cap follows it, which is the whole claim the divisor
+makes. At Quora's 522,931 documents the cursor pass wins 5.68-5.95× at df 50, 2.00-2.04× at df 250,
+1.53-1.55× at df 500 and 1.16-1.19× at df 1,002; the two **tie at df 2,493** and the accumulator wins
+1.08-1.15× at df 4,984 and 1.17-1.21× at df 18,802. The cap of 2,614 lands between that tie and the
+row where the accumulator is ahead, so the engine gives up the pass within one row of the point where
+it stops helping — and the most it forgoes is a few percent. The clear is **9.3-9.6 µs** there, the
+same as the synthetic 500,000 row's 9.0-9.4, and the tail is where it shows: a fifty-document query
+costs 1.8-1.9 µs under the cursor pass against 10.8-11.3 µs under the accumulator.
+
+TREC-COVID, at 171,332 real biomedical abstracts over 211,708 terms — lengths 0 to 18,964 tokens, p50
+21, mean 105.5 — puts the crossing at df 1,000-2,500 with a clear of 4.6 µs, 21 % of a df 1,000
+query's 21.8 µs, and the cursor pass 8.7-10.2× ahead on a ten-document query. Two runs each, at load
+1.22-1.60, every row within 5 % of its twin.
+
+What that does not say: **both real corpora have degenerate lengths** — TREC-COVID's p50 is 21 tokens
+beside a maximum of 18,964, and Quora is a corpus of questions, p50 9, mean 10.9, maximum 215. Neither
+is typical web text, and the length half of BM25's contribution is what a different distribution would
+move. The clear is one byte an ordinal, so at 1,000,000 real documents the fixed cost would be twice
+Quora's and the crossing would sit higher again; that size is not measured on real text. The four
+build-alternating rows above are not re-measured, and the interval is wide everywhere: the measurement
+says the cap is inside it, not that 200 is the best divisor in it.
 
 ```bash
-# the real corpus, sweep only: a real vocabulary has no w1x, so the fixed shapes are skipped
+# the real corpora, sweep only: a real vocabulary has no w1x, so the fixed shapes are skipped
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- cursor --corpus arguana --sweep --both
-# the same at a size where the clear is material: fetched once, 74 MB, md5-pinned in the lane
+# fetched once and md5-pinned in the lane; 74 MB and 16 MB
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- cursor --corpus trec-covid --sweep --both
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- cursor --corpus quora --sweep --both
 ```
 
 
