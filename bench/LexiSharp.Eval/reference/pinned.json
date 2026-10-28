@@ -220,6 +220,81 @@
       "singlePrecision": true,
       "note": "The alignment row for ArguAna, under the reference's conventions: uax29, k1=0.9/b=0.4, linear gains, the repeated-term rule, the query document excluded, and the four arithmetic options. It reads 0.4005 against the published 0.3970 - a gap of 0.0035 that is not reproduced by the configuration the parity row named. The 0.3970 that row carried was not what this configuration measures; it is withdrawn, and this pin is what the documented command produces.",
       "queryTermFrequency": true
+    },
+    {
+      "config": "nfcorpus/closest-2021",
+      "corpus": "nfcorpus",
+      "analyzer": "uax29",
+      "ndcgGain": "exponential",
+      "bm25": {
+        "k1": 1.2,
+        "b": 0.75
+      },
+      "excludeQueryDocument": false,
+      "queries": 323,
+      "expectedNdcg": 0.324,
+      "tolerance": 0.001,
+      "note": "The configuration of this library that lands closest to the 2021 paper's 0.325 on NFCorpus: uax29, k1=1.2/b=0.75, distinct terms, no exclusion, exponential gains. 0.324 - a difference of 0.001, and it is a different configuration from the one that lands on SciFact or ArguAna."
+    },
+    {
+      "config": "nfcorpus/best-observed",
+      "corpus": "nfcorpus",
+      "analyzer": "uax29",
+      "ndcgGain": "exponential",
+      "bm25": {
+        "k1": 2.0,
+        "b": 0.75
+      },
+      "excludeQueryDocument": false,
+      "queries": 323,
+      "expectedNdcg": 0.329,
+      "tolerance": 0.001,
+      "note": "The highest nDCG@10 observed on NFCorpus among the configurations tried (uax29; k1 0.9-3.0; b 0.3-1.0; distinct terms; no exclusion; exponential gains). In-sample: the grid was chosen on the same 323 queries it is scored on, so this is an upper bound, not a result."
+    },
+    {
+      "config": "scifact/best-observed",
+      "corpus": "scifact",
+      "analyzer": "uax29",
+      "ndcgGain": "exponential",
+      "bm25": {
+        "k1": 1.5,
+        "b": 0.75
+      },
+      "excludeQueryDocument": false,
+      "queries": 300,
+      "expectedNdcg": 0.693,
+      "tolerance": 0.001,
+      "note": "The highest nDCG@10 observed on SciFact among the configurations tried. In-sample upper bound, same grid as nfcorpus/best-observed. The closest to the paper's 0.665 is the scifact/default pin at 0.662."
+    },
+    {
+      "config": "arguana/closest-2021",
+      "corpus": "arguana",
+      "analyzer": "uax29",
+      "ndcgGain": "exponential",
+      "bm25": {
+        "k1": 1.5,
+        "b": 0.75
+      },
+      "excludeQueryDocument": false,
+      "queries": 1406,
+      "expectedNdcg": 0.315,
+      "tolerance": 0.001,
+      "note": "The configuration of this library that lands on the 2021 paper's 0.315 for ArguAna: uax29, k1=1.5/b=0.75, distinct terms, no exclusion, exponential gains. It reads 0.315 - the paper's figure exactly - with a configuration that is not the reference's (that one is at 0.9/0.4 and reads 0.4005 under exclusion)."
+    },
+    {
+      "config": "arguana/best-observed",
+      "corpus": "arguana",
+      "analyzer": "uax29",
+      "ndcgGain": "exponential",
+      "bm25": {
+        "k1": 3.0,
+        "b": 1.0
+      },
+      "excludeQueryDocument": false,
+      "queries": 1406,
+      "expectedNdcg": 0.374,
+      "tolerance": 0.001,
+      "note": "The highest nDCG@10 observed on ArguAna among the configurations tried. In-sample upper bound. The reading rises with k1 across the grid and 3.0 is its edge, so the true maximum on a wider grid is not known and is not claimed."
     }
   ],
   "indexFingerprints": [
