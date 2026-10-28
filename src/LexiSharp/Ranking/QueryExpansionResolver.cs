@@ -57,6 +57,45 @@ internal sealed class QueryExpansionResolver
     }
 
     /// <summary>
+    /// The terms every atom resolves to, one array per atom in the order given, refusing the query
+    /// before the first vocabulary walk when it asks for more distinct atoms than the cap allows.
+    /// </summary>
+    /// <remarks>
+    /// The budget is checked here rather than only in <see cref="Resolve"/> because a refused query
+    /// should cost nothing: checking as each atom is resolved would pay the first thirty-two walks
+    /// and then throw, which is the same price as a legal query at the cap. Counting the distinct
+    /// keys first is one pass over the atom list.
+    /// </remarks>
+    /// <exception cref="ArgumentException">
+    /// The query asks for more distinct atoms than <see cref="RankedTextSearchEngine.MaxExpansionAtoms"/>.
+    /// </exception>
+    public string[][] ResolveAll(IReadOnlyList<QueryExpansion> atoms)
+    {
+        ArgumentNullException.ThrowIfNull(atoms);
+
+        if (_vocabulary is not null)
+        {
+            var distinct = new HashSet<QueryExpansion>();
+
+            for (int i = 0; i < atoms.Count; i++)
+            {
+                if (distinct.Add(atoms[i] with { Operator = QueryTermOperator.None })
+                    && distinct.Count > RankedTextSearchEngine.MaxExpansionAtoms)
+                {
+                    throw TooManyAtoms();
+                }
+            }
+        }
+
+        var resolved = new string[atoms.Count][];
+
+        for (int i = 0; i < atoms.Count; i++)
+            resolved[i] = Resolve(atoms[i]);
+
+        return resolved;
+    }
+
+    /// <summary>
     /// The terms <paramref name="expansion"/> resolves to, in resolution order: for a prefix atom,
     /// highest document frequency first then ordinal; for a fuzzy atom, closest first, then highest
     /// document frequency, then ordinal.
@@ -77,12 +116,7 @@ internal sealed class QueryExpansionResolver
             return cached;
 
         if (_distinctAtoms >= RankedTextSearchEngine.MaxExpansionAtoms)
-        {
-            throw new ArgumentException(
-                $"A query may carry at most {RankedTextSearchEngine.MaxExpansionAtoms} distinct prefix/fuzzy " +
-                "atoms (prefix and fuzzy terms are resolved one vocabulary walk each). Split the query, or " +
-                "drop the repeated operators.");
-        }
+            throw TooManyAtoms();
 
         _distinctAtoms++;
 
@@ -100,6 +134,11 @@ internal sealed class QueryExpansionResolver
 
         return resolved;
     }
+
+    private static ArgumentException TooManyAtoms() =>
+        new($"A query may carry at most {RankedTextSearchEngine.MaxExpansionAtoms} distinct prefix/fuzzy " +
+            "atoms (prefix and fuzzy terms are resolved one vocabulary walk each). Split the query, or " +
+            "drop the repeated operators.");
 
     /// <summary>
     /// Every vocabulary term starting with the base (ordinal), highest document frequency first

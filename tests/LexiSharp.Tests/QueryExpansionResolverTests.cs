@@ -75,6 +75,44 @@ public class QueryExpansionResolverTests
     }
 
     [Fact]
+    public void ResolveAll_OverTheCap_RefusesBeforeAnyWalk()
+    {
+        // A refused query should cost nothing. Checking the budget atom by atom would pay the first
+        // thirty-two walks and then throw, which is the full price of a legal query at the cap —
+        // the attacker's cheapest request would cost as much as the most expensive one allowed.
+        var index = new CountingVocabularyIndex("term");
+        var resolver = new QueryExpansionResolver(index, fuzzyOnlyOutOfVocabulary: false);
+        var atoms = Enumerable.Range(0, RankedTextSearchEngine.MaxExpansionAtoms + 1)
+            .Select(i => new QueryExpansion($"atom{i}", QueryExpansionKind.Fuzzy))
+            .ToArray();
+
+        Assert.Throws<ArgumentException>(() => resolver.ResolveAll(atoms));
+        Assert.Equal(0, index.VocabularyEnumerations);
+    }
+
+    [Fact]
+    public void ResolveAll_RepeatedAtoms_ShareOneWalkAndKeepTheirPlaces()
+    {
+        var index = new CountingVocabularyIndex("catt", "cat");
+        var resolver = new QueryExpansionResolver(index, fuzzyOnlyOutOfVocabulary: false);
+
+        var atoms = new[]
+        {
+            new QueryExpansion("catt", QueryExpansionKind.Fuzzy),
+            new QueryExpansion("catt", QueryExpansionKind.Fuzzy) { Operator = QueryTermOperator.Required },
+            new QueryExpansion("cat", QueryExpansionKind.Prefix),
+        };
+
+        string[][] resolved = resolver.ResolveAll(atoms);
+
+        Assert.Equal(3, resolved.Length);
+        Assert.Equal(new[] { "catt", "cat" }, resolved[0]);
+        Assert.Equal(resolved[0], resolved[1]);
+        Assert.Equal(new[] { "cat", "catt" }, resolved[2]);
+        Assert.Equal(2, index.VocabularyEnumerations);
+    }
+
+    [Fact]
     public void Resolve_IndexWithoutAVocabulary_ReturnsTheLiteralBase()
     {
         // The fallback a plain query takes on an index that cannot enumerate: no walk, no atom
