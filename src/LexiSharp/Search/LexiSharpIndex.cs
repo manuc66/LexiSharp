@@ -389,7 +389,7 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
         if (options?.Highlight == true && _spanTokenizer is not null)
             queryTerms = QueryParser.Parse(effectiveQuery, _tokenizer).AllTerms;
 
-        return MapHits(_engine.Search(effectiveQuery, coreOptions, cancellationToken), queryTerms);
+        return MapHits(_engine.Search(effectiveQuery, coreOptions, cancellationToken), queryTerms, options?.HighlightOptions);
     }
 
     /// <summary>
@@ -418,7 +418,7 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
             return new LexiSharpFacetedResult<TDocument>(Array.Empty<LexiSharpHit<TDocument>>(), Array.Empty<FacetBucket>());
 
         var buckets = _baseEngine.SearchWithFacets(effectiveQuery, coreOptions, facetFields).Buckets;
-        var results = MapHits(_engine.Search(effectiveQuery, coreOptions), null);
+        var results = MapHits(_engine.Search(effectiveQuery, coreOptions), null, options?.HighlightOptions);
 
         return new LexiSharpFacetedResult<TDocument>(results, buckets);
     }
@@ -449,7 +449,7 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
             return new LexiSharpFacetedResult<TDocument>(Array.Empty<LexiSharpHit<TDocument>>(), Array.Empty<FacetBucket>());
 
         var faceted = _baseEngine.SearchWithNumericFacets(effectiveQuery, coreOptions, facetFields, numericFacets);
-        var results = MapHits(_engine.Search(effectiveQuery, coreOptions), null);
+        var results = MapHits(_engine.Search(effectiveQuery, coreOptions), null, options?.HighlightOptions);
 
         return new LexiSharpFacetedResult<TDocument>(results, faceted.Buckets)
         {
@@ -514,7 +514,8 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
     /// <summary>Wraps engine results into typed hits, optionally highlighting each hit's text.</summary>
     private IReadOnlyList<LexiSharpHit<TDocument>> MapHits(
         IReadOnlyList<SearchResult> results,
-        IReadOnlyList<string>? queryTerms)
+        IReadOnlyList<string>? queryTerms,
+        LexiSharp.Highlighting.HighlightOptions? highlightOptions)
     {
         var hits = new LexiSharpHit<TDocument>[results.Count];
 
@@ -523,7 +524,8 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
             var result = results[i];
             string? highlighted = queryTerms is null || _spanTokenizer is null
                 ? null
-                : TextHighlighter.HighlightFull(result.Document.Text, queryTerms, _spanTokenizer);
+                : TextHighlighter.HighlightFull(
+                    result.Document.Text, queryTerms, _spanTokenizer, highlightOptions);
 
             hits[i] = new LexiSharpHit<TDocument>(
                 result.DocumentId,

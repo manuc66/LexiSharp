@@ -288,6 +288,21 @@ public class LexiSharpIndexTests
     }
 
     [Fact]
+    public void Highlight_HonorsTheConfiguredOptions()
+    {
+        // The facade's highlight is markup like any other; `HighlightOptions` is the only way to
+        // ask it to encode the document's own characters, and it has to reach the highlighter.
+        var index = CreateIndex(null, With("1", "the quick <b>brown</b> fox", "docs"));
+
+        var hit = RequireSingle(index.Search("quick", new LexiSharpQueryOptions(Highlight: true)
+        {
+            HighlightOptions = new LexiSharp.Highlighting.HighlightOptions { EscapeHtml = true },
+        }));
+
+        Assert.Equal("the <em>quick</em> &lt;b&gt;brown&lt;/b&gt; fox", hit.HighlightedText);
+    }
+
+    [Fact]
     public void Search_WithACancelledToken_StopsInsteadOfSearching()
     {
         // A search that keeps running after the caller has gone is work nobody is waiting for:
