@@ -62,7 +62,25 @@ public class PostgresDocumentExclusionTests
         // negative limit, which the driver would reject with an error that names neither cause.
         var huge = new SearchOptions(int.MaxValue, ExcludedDocumentIds: new HashSet<string>(StringComparer.Ordinal) { "a", "b" });
 
-        Assert.Equal(int.MaxValue, PostgresDocumentExclusion.FetchLimit(huge));
+        Assert.Equal(PostgresDocumentExclusion.MaxRowsPerQuery, PostgresDocumentExclusion.FetchLimit(huge));
+    }
+
+    [Fact]
+    public void FetchLimitIsCappedAtTheRowCeiling()
+    {
+        // Offset and Limit are request fields, so the window is the caller's number to choose:
+        // `offset=2147483647&limit=10` reached the database as `LIMIT 2147483647`, which orders and
+        // transfers every row of the table so the C# side can cut an empty page out of it. The
+        // ceiling bounds that, at the price of a page past it coming back short — stated, and well
+        // past any page a caller reads.
+        var atTheCeiling = new SearchOptions(10, Offset: PostgresDocumentExclusion.MaxRowsPerQuery - 10);
+        Assert.Equal(PostgresDocumentExclusion.MaxRowsPerQuery, PostgresDocumentExclusion.FetchLimit(atTheCeiling));
+
+        var pastIt = new SearchOptions(10, Offset: PostgresDocumentExclusion.MaxRowsPerQuery);
+        Assert.Equal(PostgresDocumentExclusion.MaxRowsPerQuery, PostgresDocumentExclusion.FetchLimit(pastIt));
+
+        var absurd = new SearchOptions(10, Offset: int.MaxValue);
+        Assert.Equal(PostgresDocumentExclusion.MaxRowsPerQuery, PostgresDocumentExclusion.FetchLimit(absurd));
     }
 
     [Fact]

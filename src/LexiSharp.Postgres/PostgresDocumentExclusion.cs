@@ -31,6 +31,26 @@ namespace LexiSharp.Postgres;
 internal static class PostgresDocumentExclusion
 {
     /// <summary>
+    /// Ceiling on the rows one query may ask the database for. A window beyond it comes back short
+    /// or empty rather than as the whole table.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The window is <c>Offset + Limit</c> and both are request fields, so without a ceiling the
+    /// number is the caller's to choose: <c>offset=2147483647&amp;limit=10</c> reached the database
+    /// as <c>LIMIT 2147483647</c>, which orders and transfers every row of the table so that the
+    /// C# side can cut an empty page out of it. The in-memory engines answer the same request from a
+    /// window capped at the corpus (<c>SearchOptions.WindowFor</c>); this is the SQL counterpart.
+    /// </para>
+    /// <para>
+    /// A hundred thousand rows is well past a page any caller reads and still bounds what one query
+    /// can materialize. Past it the page comes back short rather than the table coming back whole —
+    /// a stated limit, not a silent one: the ranking is unchanged inside the ceiling.
+    /// </para>
+    /// </remarks>
+    internal const int MaxRowsPerQuery = 100_000;
+
+    /// <summary>
     /// How many rows the query must fetch for the page to come back full once excluded documents are
     /// dropped from it.
     /// </summary>
@@ -39,7 +59,8 @@ internal static class PostgresDocumentExclusion
     /// <c>[Offset, Offset + Limit)</c>. An excluded document inside that window therefore leaves a
     /// hole where a result should be, and the page comes back one short — the same hole the in-memory
     /// engines' own test <c>ExcludingOneDocumentStillFillsThePage</c> exists to prevent. Fetching one
-    /// row per excluded id closes it, and saturates rather than overflowing on a pathological set.
+    /// row per excluded id closes it, and the sum saturates at <see cref="MaxRowsPerQuery"/> rather
+    /// than overflowing.
     /// </remarks>
     /// <param name="options">The options for this search.</param>
     public static int FetchLimit(SearchOptions options)
@@ -49,7 +70,11 @@ internal static class PostgresDocumentExclusion
         int window = options.Window;
         int excluded = options.ExcludedDocumentIds?.Count ?? 0;
 
-        return window > int.MaxValue - excluded ? int.MaxValue : window + excluded;
+        // Widened before the sum: `window` can already be int.MaxValue, and adding the exclusion
+        // count to it in 32 bits wraps to a negative LIMIT.
+        long fetch = (long)window + excluded;
+
+        return (int)Math.Min(fetch, MaxRowsPerQuery);
     }
 
     /// <summary>
