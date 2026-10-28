@@ -239,6 +239,21 @@ public class MessagePackPersistenceTests
     }
 
     [Fact]
+    public void Load_TreatsThePayloadAsUntrusted()
+    {
+        // A saved index carries dictionary keys read straight out of the file (`Fields`,
+        // `TextFields`) and arrives LZ4-compressed. MessagePack's own "trusted" configuration caps
+        // decompression at int.MaxValue and hashes with the framework comparer, which an attacker
+        // can collide on purpose; the "untrusted" one caps at 64 MB and hashes with SipHash. A file
+        // this library wrote deserves the same treatment as one it did not, because nothing in the
+        // API says where it came from.
+        var security = MessagePackTextIndexPersistence.SerializerOptions.Security;
+
+        Assert.True(security.HashCollisionResistant);
+        Assert.Equal(64 * 1024 * 1024, security.MaximumDecompressedSize);
+    }
+
+    [Fact]
     public void Roundtrip_PreservesTextFieldsAndTheirStatistics()
     {
         var original = new InMemoryTextIndex();
