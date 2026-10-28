@@ -109,6 +109,23 @@ public class AspNetCoreSearchEndpointTests
     }
 
     [Fact]
+    public void Handle_RefusesAQueryTheEngineWillNotRun_AsABadRequest()
+    {
+        // A query that asks for more expansion atoms than the engine resolves is bad input, not a
+        // server fault: the same 400 the blank query gets, with the reason in the payload.
+        string atoms = string.Join(' ', Enumerable.Range(0, LexiSharp.Ranking.RankedTextSearchEngine.MaxExpansionAtoms + 1)
+            .Select(i => $"atom{i}~"));
+
+        var badRequest = Assert.IsType<BadRequest<LexiSharpSearchError>>(
+            LexiSharpSearchEndpoint.Handle(CreateIndex(), new LexiSharpSearchParameters { Query = atoms }));
+
+        Assert.Equal("q", badRequest.Value!.Field);
+        Assert.Contains(
+            LexiSharp.Ranking.RankedTextSearchEngine.MaxExpansionAtoms.ToString(),
+            badRequest.Value.Message);
+    }
+
+    [Fact]
     public void Handle_HonorsMinimumScore()
     {
         var ok = Assert.IsType<Ok<LexiSharpSearchResponse<SearchDocument>>>(

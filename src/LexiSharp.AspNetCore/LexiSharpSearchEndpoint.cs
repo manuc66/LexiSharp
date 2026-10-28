@@ -107,7 +107,20 @@ public static class LexiSharpSearchEndpoint
             Offset: parameters.Offset,
             Highlight: parameters.Highlight);
 
-        var hits = index.Search(parameters.Query, queryOptions);
+        IReadOnlyList<LexiSharpHit<TDocument>> hits;
+
+        try
+        {
+            hits = index.Search(parameters.Query, queryOptions);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException)
+        {
+            // The engine refuses a query it will not run — too many expansion atoms, syntax this
+            // index cannot honor — and each refusal is about the request, not about this server.
+            // Mapping it to 400 keeps the endpoint's contract: a 5xx says retry, and retrying the
+            // same query cannot work.
+            return Results.BadRequest(new LexiSharpSearchError("q", exception.Message));
+        }
 
         var response = new LexiSharpSearchResponse<TDocument>(
             parameters.Query,
