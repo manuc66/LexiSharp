@@ -1051,23 +1051,62 @@ corpus and the reach decide it, not the load — the latency did, by 1.8× and 2
 table records the load it was taken at and why the lane asserts and prints the pass: a contended run
 and a different traversal look the same in a `p50` column and not in an allocation column.
 
-**The density crossing, measured with `--sweep`** (baseline against the cursor pass forced on every
-query; the shipped build takes the cursor pass only at or below the cap, so the losing rows are the
-reason the cap exists):
+**The density crossing, measured with `--sweep`** (the baseline build against the build that carries
+the cursor pass, alternating them; the shipped build takes the cursor pass only at or below the cap,
+so the losing rows are the reason the cap exists):
 
 | Documents | Last reach that won | Before → After | First reach that lost | Before → After | Cap (`df <= N/200`) |
 |---:|---:|---|---:|---|---:|
-| 10,000 | 50 | 2.80 → 2.50 µs | 250 | 9.90 → 10.20 µs | 50 |
 | 25,000 | 250 | 12.10 → 11.60 µs | 1,005 | 36.50 → 38.70 µs | 125 |
 | 50,000 | 250 | 11.30 → 9.90 µs | 5,014 | 144.60 → 107.30 µs | 250 |
 | 100,000 | 250 | 11.00 → 10.00 µs | 1,002 | 45.00 → 48.80 µs | 500 |
 | 500,000 | 1,000 | 57.90 → 50.60 µs | 5,006 | 143.80 → 155.00 µs | 2,500 |
 
+The 10,000-document row is not in this table: it was measured again with both passes timed on one
+build, and its df 50 point is a tie rather than a win, so it belongs to the interval below. The four
+rows here have not been re-measured that way.
+
 The 50,000 row's losing point is the doubtful one: the baseline's `p50` there was 144.6 µs against a
 minimum of 82.0, while the cursor pass read 107.3 against 105.5, so the relative order of the medians
 rests on a noisy baseline. **Not measured:** the exact crossing between each pair of points, and any
-corpus size other than those five; the cap is set inside the interval at every measured size, not on
+corpus size other than those four; the cap is set inside the interval at every measured size, not on
 a fitted curve.
+
+**Both passes on one build, alternated (`--both`).** The table above alternates two *builds*, so at a
+row where both of them take the same pass, the difference between its two numbers is drift and not a
+pass — which is what the 50,000-document row's note says in other words. `--both` times the
+accumulator and the cursor pass on the same index, the same query and the same session, one of each
+per iteration, so a scheduler hiccup or a collection moves all the readings together instead of
+charging itself to one of them. Every reading below is three runs on 2026-10-28, on the host named
+above at a one-minute load of 2.5-2.9; the rows above were taken at 0.5-1.5, which is part of why
+their margin is larger than these.
+
+| corpus | the cursor pass wins by | tie | the accumulator wins by |
+|---|---|---|---|
+| Zipf, 10,000 documents | 1.12× at df 10 | df 25 (1.05-1.10×) and df 50 (1.00-1.04×) | 1.09-1.11× at df 250, 1.18-1.32× from df 1,000 |
+| ArguAna, 8,674 real documents | 1.40× at df 10, 1.08-1.17× at df 25 | df 50 (1.00-1.05×) | 1.13-1.18× at df 250, 1.17-1.28× from df 1,003 |
+
+The crossing is an **interval, 25 < df < 250, and it is the same interval on both corpora**, with the
+tie at df 50. The rule caps at `ordinalSpace / 200` — 50 at 10,000 documents and 43 on ArguAna — so
+it sits inside that interval on a corpus whose document lengths run from 0 to 1,014 tokens (p50 64,
+mean 85.9, p95 268) where the synthetic one holds every document at exactly 50. **The divisor
+therefore transfers, and nothing in the rule changed.** The 10,000-document row this table used to
+carry read 2.80 → 2.50 µs at df 50, a 1.12× win for the cursor pass; the two-pass instrument reads
+that point as a tie (cursor 2.70-2.80 µs against accumulator 2.70-2.90 µs over three runs), so the
+row is withdrawn and replaced by the interval below.
+
+Two limits, and they bound the conclusion rather than qualify it. This is one size — 8,674 real
+documents against 10,000 synthetic ones — and the crossing above 100,000 documents on real text is
+unmeasured; it is there that the corpus-sized clear this pass avoids is worth 9-18 µs, so the
+crossing would move **up**, not down, which cannot invalidate a cap that already sits inside the
+interval at 10,000. And the interval is wide: the measurement says the cap is inside it, not that 200
+is the best divisor in it.
+
+```bash
+# the real corpus, sweep only: a real vocabulary has no w1x, so the fixed shapes are skipped
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- cursor --corpus arguana --sweep --both
+```
+
 
 **Not the same answer as pruning.** Block-max WAND skips posting entries; this pass reads the ones the
 crossing allows it to and changes the traversal instead. On the tail queries the pruning lane measures

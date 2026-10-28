@@ -76,6 +76,14 @@ workflow.
 
 ### Withdrawn
 
+- **The 10,000-document reading that the cursor pass won the df 50 point of the density crossing by
+  1.12× (2.80 → 2.50 µs).** It came from alternating two builds, and at that document frequency the
+  two passes were within this host's drift of each other; timing both on one build, one of each per
+  iteration over three runs, reads the point as a tie (cursor 2.70-2.80 µs against accumulator
+  2.70-2.90 µs). The crossing is an interval rather than a pair of points, and the benchmarks page
+  now carries it that way. The same instrument reproduces the accumulator's advantage at df 250
+  (1.09-1.11×), so the interval is unchanged in shape — only that one margin is gone.
+
 - **The ArguAna figure 0.3970 and the claim that all 15,466 returned scores matched the reference's on
   the raw bits.** Both were carried by a parity row that `--verify-reference` displays and never
   replays, which is how they survived several corrections elsewhere. The documented configuration —
