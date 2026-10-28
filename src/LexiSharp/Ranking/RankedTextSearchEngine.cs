@@ -1811,11 +1811,12 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         if (parsed.HasExpansions)
         {
             var expansions = new QueryExpansionResolver(_index as IVocabularyIndex, fuzzyOnlyOutOfVocabulary);
+            string[][] resolvedTerms = expansions.ResolveAll(parsed.Expansions);
 
             for (int i = 0; i < parsed.Expansions.Count; i++)
             {
                 var expansion = parsed.Expansions[i];
-                string[] resolved = expansions.Resolve(expansion);
+                string[] resolved = resolvedTerms[i];
 
                 if (expansion.Field is { } field)
                 {
