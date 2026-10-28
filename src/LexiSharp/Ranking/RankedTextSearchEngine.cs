@@ -84,6 +84,31 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     public const int MaxExpansionsPerAtom = 64;
 
     /// <summary>
+    /// Upper bound on how many <i>distinct</i> prefix/fuzzy atoms one query may carry. A query
+    /// asking for more is refused with <see cref="ArgumentException"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Each distinct atom costs one walk of the index vocabulary — a fuzzy atom compares the
+    /// base term against every term the index knows — so without a bound the query string is a
+    /// multiplier on that walk. Measured here on a 200 000-term vocabulary: one fuzzy atom 71 ms,
+    /// fifty 1.1 s, two hundred (2 199 characters, inside a URL) 4.3 s, all of them matching nothing.
+    /// </para>
+    /// <para>
+    /// Repeats are free: atoms are resolved through <see cref="QueryExpansionResolver"/>, which walks
+    /// the vocabulary once per distinct atom and hands the same terms to every occurrence, so only
+    /// distinct atoms count toward this budget. Thirty-two is well past what a query a person writes
+    /// needs, and it bounds a single request to thirty-two walks instead of an arbitrary number.
+    /// </para>
+    /// <para>
+    /// The bound is on the multiplier, not on the walk: one atom is still a full vocabulary scan, and
+    /// an index of a million terms pays it once per atom. Making that scan sub-linear is a term index
+    /// ordered for edit-distance search, not a smaller number here.
+    /// </para>
+    /// </remarks>
+    public const int MaxExpansionAtoms = 32;
+
+    /// <summary>
     /// Name this engine reports to <see cref="RetrievalTelemetry"/> and its metrics sinks, so a
     /// dashboard can attribute a measurement to a specific engine.
     /// </summary>
@@ -1785,17 +1810,16 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
         if (parsed.HasExpansions)
         {
-            var vocabulary = _index as IVocabularyIndex;
+            var expansions = new QueryExpansionResolver(_index as IVocabularyIndex, fuzzyOnlyOutOfVocabulary);
 
             for (int i = 0; i < parsed.Expansions.Count; i++)
             {
                 var expansion = parsed.Expansions[i];
+                string[] resolved = expansions.Resolve(expansion);
 
                 if (expansion.Field is { } field)
                 {
-                    var resolved = new List<string>();
-                    ResolveExpansion(resolved, vocabulary, expansion, fuzzyOnlyOutOfVocabulary);
-                    var gate = new ScopedExpansion(field, resolved.ToArray());
+                    var gate = new ScopedExpansion(field, resolved);
 
                     if (expansion.Operator == QueryTermOperator.Prohibited)
                     {
@@ -1803,7 +1827,7 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
                         continue;
                     }
 
-                    for (int t = 0; t < resolved.Count; t++)
+                    for (int t = 0; t < resolved.Length; t++)
                         scoped.Add(new FieldScopedTerm(field, resolved[t]));
 
                     if (expansion.Operator == QueryTermOperator.Required)
@@ -1814,24 +1838,15 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
                 if (expansion.Operator == QueryTermOperator.Prohibited)
                 {
-                    var excluded = new List<string>();
-                    ResolveExpansion(excluded, vocabulary, expansion, fuzzyOnlyOutOfVocabulary);
-                    (prohibited ??= new List<string[]>()).Add(excluded.ToArray());
+                    (prohibited ??= new List<string[]>()).Add(resolved);
                     continue;
                 }
 
-                int first = terms.Count;
-                ResolveExpansion(terms, vocabulary, expansion, fuzzyOnlyOutOfVocabulary);
+                for (int t = 0; t < resolved.Length; t++)
+                    terms.Add(resolved[t]);
 
                 if (expansion.Operator == QueryTermOperator.Required)
-                {
-                    var present = new List<string>(terms.Count - first);
-
-                    for (int t = first; t < terms.Count; t++)
-                        present.Add(terms[t]);
-
-                    (required ??= new List<string[]>()).Add(present.ToArray());
-                }
+                    (required ??= new List<string[]>()).Add(resolved);
             }
         }
 
@@ -1842,31 +1857,6 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             (IReadOnlyList<ScopedExpansion>?)prohibitedScoped ?? Array.Empty<ScopedExpansion>(),
             (IReadOnlyList<string[]>?)required ?? Array.Empty<string[]>(),
             (IReadOnlyList<string[]>?)prohibited ?? Array.Empty<string[]>());
-    }
-
-    /// <summary>
-    /// Appends one expansion atom's resolved terms to <paramref name="target"/>: the vocabulary
-    /// matches for a prefix/fuzzy atom, or the literal base term when the index has no vocabulary
-    /// to expand against.
-    /// </summary>
-    private void ResolveExpansion(
-        List<string> target,
-        IVocabularyIndex? vocabulary,
-        QueryExpansion expansion,
-        bool fuzzyOnlyOutOfVocabulary)
-    {
-        if (vocabulary is null)
-        {
-            target.Add(expansion.BaseTerm);
-            return;
-        }
-
-        if (expansion.Kind == QueryExpansionKind.Prefix)
-            ExpandPrefix(target, vocabulary, expansion);
-        else if (fuzzyOnlyOutOfVocabulary && _index.DocumentFrequency(expansion.BaseTerm) > 0)
-            target.Add(expansion.BaseTerm);
-        else
-            ExpandFuzzy(target, vocabulary, expansion);
     }
 
     /// <summary>Appends the free term's direct synonyms, when the map defines any.</summary>
@@ -1946,86 +1936,6 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         }
 
         return terms[0];
-    }
-
-    /// <summary>
-    /// Appends every vocabulary term starting with the base (ordinal), highest document
-    /// frequency first then ordinal order, capped at <see cref="MaxExpansionsPerAtom"/>.
-    /// </summary>
-    private static void ExpandPrefix(List<string> terms, IVocabularyIndex index, QueryExpansion expansion)
-    {
-        // Frequency rides with the term instead of being re-fetched by the sort's comparer: the
-        // comparer would otherwise call DocumentFrequency twice per comparison, and each call is a
-        // dictionary probe over the whole term — O(n log n) probes for a value that is
-        // constant for a term. The order is the same either way; only the cost changes.
-        var matches = new List<(string Term, int Frequency)>();
-
-        // An index that keeps its dictionary sorted can answer the prefix as a range and decode only
-        // the terms inside it; walking the whole vocabulary is the fallback.
-        foreach (var term in index is IVocabularyPrefixIndex ranged
-            ? ranged.TermsWithPrefix(expansion.BaseTerm)
-            : EveryPrefixMatch(index.Vocabulary, expansion.BaseTerm))
-        {
-            matches.Add((term, index.DocumentFrequency(term)));
-        }
-
-        matches.Sort((a, b) =>
-        {
-            int byFrequency = b.Frequency.CompareTo(a.Frequency);
-            return byFrequency != 0 ? byFrequency : string.CompareOrdinal(a.Term, b.Term);
-        });
-
-        int count = Math.Min(matches.Count, MaxExpansionsPerAtom);
-
-        for (int i = 0; i < count; i++)
-            terms.Add(matches[i].Term);
-    }
-
-    /// <summary>The vocabulary's terms starting with <paramref name="prefix"/>, for an unsorted index.</summary>
-    private static IEnumerable<string> EveryPrefixMatch(IEnumerable<string> vocabulary, string prefix)
-    {
-        foreach (string term in vocabulary)
-        {
-            if (term.StartsWith(prefix, StringComparison.Ordinal))
-                yield return term;
-        }
-    }
-
-    /// <summary>
-    /// Appends every vocabulary term within <see cref="QueryExpansion.MaxEdits"/> Levenshtein
-    /// edits of the base — closest first, then highest document frequency, then ordinal —
-    /// capped at <see cref="MaxExpansionsPerAtom"/>.
-    /// </summary>
-    private static void ExpandFuzzy(List<string> terms, IVocabularyIndex index, QueryExpansion expansion)
-    {
-        var candidates = new List<(string Term, int Distance)>();
-
-        foreach (var term in index.Vocabulary)
-        {
-            // Cheap length gate before the O(m·n) distance: |len difference| ≤ budget.
-            if (Math.Abs(term.Length - expansion.BaseTerm.Length) > expansion.MaxEdits)
-                continue;
-
-            int distance = LevenshteinDistance.Distance(expansion.BaseTerm, term);
-
-            if (distance <= expansion.MaxEdits)
-                candidates.Add((term, distance));
-        }
-
-        candidates.Sort((a, b) =>
-        {
-            int byDistance = a.Distance.CompareTo(b.Distance);
-            if (byDistance != 0)
-                return byDistance;
-
-            int byFrequency = index.DocumentFrequency(b.Term).CompareTo(index.DocumentFrequency(a.Term));
-            return byFrequency != 0 ? byFrequency : string.CompareOrdinal(a.Term, b.Term);
-        });
-
-        int count = Math.Min(candidates.Count, MaxExpansionsPerAtom);
-
-        for (int i = 0; i < count; i++)
-            terms.Add(candidates[i].Term);
     }
 
     /// <summary>

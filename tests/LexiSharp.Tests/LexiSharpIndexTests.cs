@@ -288,6 +288,44 @@ public class LexiSharpIndexTests
     }
 
     [Fact]
+    public void Search_MoreDistinctExpansionAtomsThanTheCap_IsRefused()
+    {
+        // Each atom costs one walk of the index vocabulary, so the number of them a single query
+        // may carry is what bounds the work one request can ask for. Refused, not truncated: an
+        // atom dropped silently is a query that searched for something else.
+        var index = CreateIndex(null, With("1", "alpha beta", "docs"));
+        string atoms = string.Join(' ', Enumerable.Range(0, LexiSharp.Ranking.RankedTextSearchEngine.MaxExpansionAtoms + 1)
+            .Select(i => $"atom{i}~"));
+
+        var exception = Assert.Throws<ArgumentException>(() => index.Search(atoms));
+
+        Assert.Contains(LexiSharp.Ranking.RankedTextSearchEngine.MaxExpansionAtoms.ToString(), exception.Message);
+    }
+
+    [Fact]
+    public void Search_AtTheExpansionCap_IsHonored()
+    {
+        var index = CreateIndex(null, With("1", "alpha beta", "docs"));
+        string atoms = string.Join(' ', Enumerable.Range(0, LexiSharp.Ranking.RankedTextSearchEngine.MaxExpansionAtoms)
+            .Select(i => $"atom{i}~"));
+
+        Assert.Empty(index.Search(atoms));
+    }
+
+    [Fact]
+    public void EnableFuzzy_LongQueryIsBoundedByTheSameCap()
+    {
+        // EnableFuzzy rewrites every plain term into an atom, so the cap applies to that path too:
+        // a forty-word query on a fuzzy index is forty vocabulary walks, which is the cost the cap
+        // exists to refuse.
+        var index = CreateIndex(o => o.EnableFuzzy = true, With("1", "alpha beta", "docs"));
+        string longQuery = string.Join(' ', Enumerable.Range(0, LexiSharp.Ranking.RankedTextSearchEngine.MaxExpansionAtoms + 1)
+            .Select(i => $"word{i}"));
+
+        Assert.Throws<ArgumentException>(() => index.Search(longQuery));
+    }
+
+    [Fact]
     public void Highlight_ProducesWrappedText()
     {
         var index = CreateIndex(null, With("1", "the quick brown fox", "docs"));
