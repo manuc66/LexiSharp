@@ -287,14 +287,14 @@
       "analyzer": "uax29",
       "ndcgGain": "exponential",
       "bm25": {
-        "k1": 3.0,
+        "k1": 5.0,
         "b": 1.0
       },
       "excludeQueryDocument": false,
       "queries": 1406,
-      "expectedNdcg": 0.374,
+      "expectedNdcg": 0.379,
       "tolerance": 0.001,
-      "note": "The highest nDCG@10 observed on ArguAna among the configurations tried. In-sample upper bound. The reading rises with k1 across the grid and 3.0 is its edge, so the true maximum on a wider grid is not known and is not claimed."
+      "note": "The highest nDCG@10 observed on ArguAna among the configurations tried: uax29, k1=5/b=1.0, distinct terms, no exclusion, exponential gains. In-sample upper bound - the parameters were chosen on the same 1,406 queries they are scored on. The reading rises from 0.315 at k1=1.5 to 0.379 at k1=5 and falls back to 0.377 at 10 and 0.365 at 30, so the peak is real within this grid and not an edge artefact; a finer grid might find slightly more and is not claimed."
     }
   ],
   "indexFingerprints": [
