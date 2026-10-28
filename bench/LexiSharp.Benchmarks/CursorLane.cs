@@ -154,6 +154,54 @@ internal static class CursorLane
     }
 
     /// <summary>
+    /// The corpus this run measures, from the quality table or from the bench-only list.
+    /// </summary>
+    private static BeirCorpus LoadCorpus(LaneOptions options)
+    {
+        BenchCorpus? bench = BenchCorpora.FirstOrDefault(
+            candidate => string.Equals(candidate.Name, options.Corpus, StringComparison.OrdinalIgnoreCase));
+
+        if (bench is not null)
+        {
+            return BeirLoader
+                .LoadOrDownloadAsync(options.DataDirectory, bench.Name, bench.Url, bench.Md5)
+                .GetAwaiter().GetResult();
+        }
+
+        BeirDataset dataset = BeirDataset.All.FirstOrDefault(
+                candidate => string.Equals(candidate.Name, options.Corpus, StringComparison.OrdinalIgnoreCase))
+            ?? throw new ArgumentException(
+                $"Unknown corpus '{options.Corpus}'. Known: " +
+                $"{string.Join(", ", BeirDataset.All.Select(d => d.Name).Concat(BenchCorpora.Select(c => c.Name)))}.");
+
+        return BeirLoader.LoadOrDownloadAsync(options.DataDirectory, dataset).GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// A corpus for a latency question, which has no published quality figure for that reason.
+    /// </summary>
+    private sealed record BenchCorpus(string Name, string Url, string Md5);
+
+    /// <summary>
+    /// Real corpora the quality table does not carry, for a size that table does not reach.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="BeirDataset.All"/> holds the corpora the quality matrix scores, each with the nDCG
+    /// it is expected to reach. These load through the same downloader and the same jsonl parser and
+    /// carry no expected score, because nothing scores them: TREC-COVID is here for its 171,332 real
+    /// documents, which is the only size at which the crossing above 10,000 documents can be read at
+    /// all without generating the corpus. The checksum is the one the archive had on 2026-10-29, when
+    /// this lane first fetched it.
+    /// </remarks>
+    private static readonly BenchCorpus[] BenchCorpora =
+    [
+        new(
+            "trec-covid",
+            "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/trec-covid.zip",
+            "ce62140cb23feb9becf6270d0d1fe6d1"),
+    ];
+
+    /// <summary>
     /// The same sweep over a BEIR corpus — real documents, real query text, and the variable document
     /// lengths the synthetic corpus holds constant at 50 tokens.
     /// </summary>
@@ -166,12 +214,7 @@ internal static class CursorLane
     /// </remarks>
     private static void MeasureCorpus(LaneOptions options)
     {
-        BeirDataset dataset = BeirDataset.All.FirstOrDefault(
-                candidate => string.Equals(candidate.Name, options.Corpus, StringComparison.OrdinalIgnoreCase))
-            ?? throw new ArgumentException(
-                $"Unknown corpus '{options.Corpus}'. Known: {string.Join(", ", BeirDataset.All.Select(d => d.Name))}.");
-
-        BeirCorpus corpus = BeirLoader.LoadOrDownloadAsync(options.DataDirectory, dataset).GetAwaiter().GetResult();
+        BeirCorpus corpus = LoadCorpus(options);
         IReadOnlyList<SearchDocument> documents = Evaluation.BuildDocuments(corpus);
 
         var index = new InMemoryTextIndex();
@@ -194,7 +237,7 @@ internal static class CursorLane
         int[]? lengths = ((IPostingArrayIndex)index).LengthsByOrdinal;
 
         Console.WriteLine();
-        Console.WriteLine($"--- {dataset.Name} (real documents) ---");
+        Console.WriteLine($"--- {corpus.Name} (real documents) ---");
         Console.WriteLine($"host load at build       {LoadAverage()}");
         Console.WriteLine($"index build             {Time(build.Elapsed.TotalMicroseconds)}  (one build, Stopwatch)");
         Console.WriteLine($"index                   {Number(index.Count)} documents, {Number(index.VocabularySize)} terms, " +
