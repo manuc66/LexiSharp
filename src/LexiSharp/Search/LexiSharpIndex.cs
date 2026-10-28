@@ -32,14 +32,14 @@ namespace LexiSharp;
 /// The same single-writer contract as <see cref="ITextSearchEngine"/> applies:
 /// <see cref="Add"/>, <see cref="AddRange"/>, <see cref="Index"/>, <see cref="Remove"/>,
 /// <see cref="Clear"/>, <see cref="Commit"/> and <see cref="Merge"/> must not run concurrently with
-/// each other or with a <see cref="Search"/>; concurrent searches are safe.
+/// each other or with a <see cref="Search(string, LexiSharpQueryOptions?)"/>; concurrent searches are safe.
 /// </para>
 /// <para>
 /// With <see cref="LexiSharpIndexOptions{TDocument}.Directory"/> set the index is a
 /// <see cref="SegmentedTextIndex"/>: <see cref="Commit"/> writes the pending writes as one segment and
 /// <see cref="Merge"/> reclaims the deleted ones, each returning a new store that this facade then
 /// wraps. <see cref="Engine"/> and <see cref="TextIndex"/> report the current ones, so a caller that
-/// captured either before a commit must read it again — <see cref="Search"/> reads the current pipeline
+/// captured either before a commit must read it again — <see cref="Search(string, LexiSharpQueryOptions?)"/> reads the current pipeline
 /// itself and needs nothing. A <see cref="SegmentSourceMode.Mapped"/> index holds views over its
 /// segment files and must be <see cref="Dispose"/>d.
 /// </para>
@@ -211,7 +211,7 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
     /// <b>Re-read this after <see cref="Commit"/> or <see cref="Merge"/>.</b> Both replace the store
     /// with a new one, and this facade rebuilds the pipeline around it; an engine captured before the
     /// call still points at the store that was replaced and would serve the page that store held.
-    /// <see cref="Search"/> always reads the current one, so a caller that searches through the facade
+    /// <see cref="Search(string, LexiSharpQueryOptions?)"/> always reads the current one, so a caller that searches through the facade
     /// needs nothing here.
     /// </remarks>
     public ITextSearchEngine Engine => _engine;
@@ -348,7 +348,32 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
     /// <see cref="LexiSharpIndexOptions{TDocument}.EnableFuzzy"/> is active, plain terms behave
     /// like fuzzy matches (<c>term~</c>).</param>
     /// <param name="options">Optional per-search options.</param>
-    public IReadOnlyList<LexiSharpHit<TDocument>> Search(string query, LexiSharpQueryOptions? options = null)
+    public IReadOnlyList<LexiSharpHit<TDocument>> Search(string query, LexiSharpQueryOptions? options = null) =>
+        Search(query, options, CancellationToken.None);
+
+    /// <summary>
+    /// Searches the index and returns the top-ranked documents as typed hits, stopping when
+    /// <paramref name="cancellationToken"/> is cancelled.
+    /// </summary>
+    /// <remarks>
+    /// An overload rather than a defaulted parameter on <see cref="Search(string, LexiSharpQueryOptions?)"/>, so a caller compiled
+    /// against the two-argument member keeps resolving to a member that exists: changing a
+    /// signature is a binary break, and this is the kind of change that should not be one.
+    /// <para>
+    /// The engine already checked the token in its per-candidate loops. What was missing is the way
+    /// to supply one from the outside, which matters wherever a search outlives the caller's
+    /// patience — an HTTP request whose client has disconnected is the canonical case, and the
+    /// mapped endpoint now passes <c>RequestAborted</c> through this member.
+    /// </para>
+    /// </remarks>
+    /// <param name="query">Raw query text; it is tokenized internally.</param>
+    /// <param name="options">Optional per-search options.</param>
+    /// <param name="cancellationToken">Token observed between and during the ranking passes.</param>
+    /// <exception cref="OperationCanceledException">The token was cancelled.</exception>
+    public IReadOnlyList<LexiSharpHit<TDocument>> Search(
+        string query,
+        LexiSharpQueryOptions? options,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
 
@@ -364,11 +389,11 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
         if (options?.Highlight == true && _spanTokenizer is not null)
             queryTerms = QueryParser.Parse(effectiveQuery, _tokenizer).AllTerms;
 
-        return MapHits(_engine.Search(effectiveQuery, coreOptions), queryTerms);
+        return MapHits(_engine.Search(effectiveQuery, coreOptions, cancellationToken), queryTerms);
     }
 
     /// <summary>
-    /// Same search as <see cref="Search"/>, plus one facet bucket per requested field over the
+    /// Same search as <see cref="Search(string, LexiSharpQueryOptions?)"/>, plus one facet bucket per requested field over the
     /// whole match set. Buckets reflect the underlying match gate and every document that
     /// matched — independently of the page window.
     /// </summary>
@@ -399,7 +424,7 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
     }
 
     /// <summary>
-    /// Same search as <see cref="Search"/>, plus string-facet buckets and numeric ranges or
+    /// Same search as <see cref="Search(string, LexiSharpQueryOptions?)"/>, plus string-facet buckets and numeric ranges or
     /// histograms over the whole match set.
     /// </summary>
     /// <param name="query">Raw query text.</param>
@@ -438,7 +463,7 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
     /// scorer cannot explain itself or the document is unknown.
     /// </summary>
     /// <param name="documentId">Id of the document to explain.</param>
-    /// <param name="query">The raw query, parsed and resolved like <see cref="Search"/>.</param>
+    /// <param name="query">The raw query, parsed and resolved like <see cref="Search(string, LexiSharpQueryOptions?)"/>.</param>
     public ScoreExplanation? Explain(string documentId, string query)
     {
         ArgumentNullException.ThrowIfNull(documentId);

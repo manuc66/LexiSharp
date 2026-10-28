@@ -288,6 +288,21 @@ public class LexiSharpIndexTests
     }
 
     [Fact]
+    public void Search_WithACancelledToken_StopsInsteadOfSearching()
+    {
+        // A search that keeps running after the caller has gone is work nobody is waiting for:
+        // the window and the vocabulary walks are the expensive parts, and on an HTTP request the
+        // caller can leave at any moment. The engine already checked the token; this is the
+        // overload that lets a caller supply one.
+        var index = CreateIndex(null, With("1", "alpha beta", "docs"));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.Throws<OperationCanceledException>(
+            () => index.Search("alpha", options: null, cancellation.Token));
+    }
+
+    [Fact]
     public void Search_MoreDistinctExpansionAtomsThanTheCap_IsRefused()
     {
         // Each atom costs one walk of the index vocabulary, so the number of them a single query
