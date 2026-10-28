@@ -34,6 +34,7 @@ public static class LexiSharpSearchEndpointBuilder
             pattern,
             (
                 LexiSharpIndex<TDocument> index,
+                CancellationToken cancellationToken,
                 [FromQuery(Name = "q")] string q,
                 [FromQuery] int limit = 10,
                 [FromQuery] int offset = 0,
@@ -48,6 +49,7 @@ public static class LexiSharpSearchEndpointBuilder
                         Offset = offset,
                         MinimumScore = minimumScore,
                         Highlight = highlight,
-                    }));
+                    },
+                    cancellationToken));
     }
 }

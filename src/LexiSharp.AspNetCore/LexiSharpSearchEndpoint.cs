@@ -79,6 +79,32 @@ public static class LexiSharpSearchEndpoint
     public static IResult Handle<TDocument>(
         LexiSharpIndex<TDocument> index,
         LexiSharpSearchParameters parameters)
+        where TDocument : class =>
+        Handle(index, parameters, CancellationToken.None);
+
+    /// <summary>
+    /// Runs a search on the index and builds the HTTP response, stopping when
+    /// <paramref name="cancellationToken"/> is cancelled.
+    /// </summary>
+    /// <remarks>
+    /// The mapped route passes <c>HttpContext.RequestAborted</c> here: a client that disconnects
+    /// should not leave the ranking running, and the ranking is the expensive part of a request —
+    /// the page is cut from a working window and every candidate may pay a vocabulary walk.
+    /// <para>
+    /// An overload rather than a defaulted parameter, for the same reason as
+    /// <see cref="LexiSharpIndex{TDocument}.Search(string, LexiSharpQueryOptions?, CancellationToken)"/>:
+    /// a defaulted parameter changes the signature and breaks callers compiled against it.
+    /// </para>
+    /// </remarks>
+    /// <param name="index">The index to search.</param>
+    /// <param name="parameters">The request parameters, already bound from the query string.</param>
+    /// <param name="cancellationToken">Token observed by the search.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="index"/> or <paramref name="parameters"/> is null.</exception>
+    /// <exception cref="OperationCanceledException">The token was cancelled.</exception>
+    public static IResult Handle<TDocument>(
+        LexiSharpIndex<TDocument> index,
+        LexiSharpSearchParameters parameters,
+        CancellationToken cancellationToken)
         where TDocument : class
     {
         ArgumentNullException.ThrowIfNull(index);
@@ -111,7 +137,7 @@ public static class LexiSharpSearchEndpoint
 
         try
         {
-            hits = index.Search(parameters.Query, queryOptions);
+            hits = index.Search(parameters.Query, queryOptions, cancellationToken);
         }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException)
         {

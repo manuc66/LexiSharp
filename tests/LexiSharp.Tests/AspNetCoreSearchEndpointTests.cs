@@ -126,6 +126,21 @@ public class AspNetCoreSearchEndpointTests
     }
 
     [Fact]
+    public void Handle_StopsWhenTheRequestIsAborted()
+    {
+        // `RequestAborted` is what the mapped route passes: a client that disconnects should not
+        // leave the ranking running. Same contract as the facade overload it forwards to.
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.Throws<OperationCanceledException>(
+            () => LexiSharpSearchEndpoint.Handle(
+                CreateIndex(),
+                new LexiSharpSearchParameters { Query = "distributed" },
+                cancellation.Token));
+    }
+
+    [Fact]
     public void Handle_HonorsMinimumScore()
     {
         var ok = Assert.IsType<Ok<LexiSharpSearchResponse<SearchDocument>>>(

@@ -3,7 +3,7 @@ using LexiSharp.Core;
 namespace LexiSharp;
 
 /// <summary>
-/// Per-search options for <see cref="LexiSharpIndex{TDocument}.Search"/> and friends.
+/// Per-search options for <see cref="LexiSharpIndex{TDocument}.Search(string, LexiSharpQueryOptions?)"/> and friends.
 /// </summary>
 /// <param name="Limit">Maximum number of results to return (default: 10).</param>
 /// <param name="MinimumScore">Results with a score below this value are discarded.</param>
