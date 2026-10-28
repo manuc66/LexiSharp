@@ -756,8 +756,24 @@ the smaller set plus more. The two 65-minute clocks were taken with four encoder
 so they are the cost of an encode under contention, not a speed ratio against the 256 row's 48.1
 minutes.
 
-**The 8-bit export is a different model, not a cheaper copy.** `splade-v3-8bit.onnx` (133 941 688
-bytes, dynamically quantised weights) re-encodes both corpora at the published settings:
+**The two margins add up; they do not interact.** The 2×2 of truncation against budget leaves one cell
+out, and it is encoded: NFCorpus at 512 tokens with the 128-term budget reads nDCG@10 **0.3627**
+(MAP 0.2646, MRR 0.5851, R@10 0.1716, 323 queries, 3633 documents at 128.0 terms mean).
+
+| truncation | budget 128 | budget 256 |
+|---|---:|---:|
+| 256 tokens | 0.3567 | 0.3596 |
+| 512 tokens | **0.3627** | 0.3665 |
+
+Doubling the truncation is worth **+0.0060** at the 128 budget and **+0.0069** at 256; halving the
+budget costs **0.0038** at 512 tokens and **0.0029** at 256. Each margin holds across the other
+setting, so on this corpus the two choices can be priced independently — and the truncation is worth
+about twice the budget in both directions. That is a statement about NFCorpus: the truncation's sign
+is corpus-dependent (it falls on ArguAna) and nothing here says the additivity transfers.
+
+**The 8-bit export is a different model, and on two corpora of three it is a worse one.**
+`splade-v3-8bit.onnx` (133 941 688 bytes, dynamically quantised weights) re-encodes all three at the
+published settings:
 
 | Corpus | export | nDCG@10 | MAP@10 | MRR@10 | R@10 | document terms (mean) | encode (documents + queries) |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -765,27 +781,37 @@ bytes, dynamically quantised weights) re-encodes both corpora at the published s
 | NFCorpus | int8 weights | 0.3490 | 0.2525 | 0.5616 | 0.1645 | 164.1 | 52.2 + 3.1 min |
 | SciFact | full precision | 0.7083 | 0.6678 | 0.6814 | 0.8157 | 241.2 | — |
 | SciFact | int8 weights | **0.7236** | 0.6845 | 0.6996 | 0.8252 | 164.2 | 66.8 + 0.3 min |
+| ArguAna, `--exclude-query-doc` | full precision | 0.5216 | 0.4300 | 0.4300 | 0.8179 | 247.2 | — |
+| ArguAna, `--exclude-query-doc` | int8 weights | **0.4805** | 0.3934 | 0.3934 | 0.7617 | 154.4 | 28.3 min |
 
-It loses **0.0106** on NFCorpus and gains **0.0153** on SciFact — no direction, which is what a
-different model looks like rather than a cheaper approximation of the same one. The quantised export
-also emits fewer non-zero terms per document (164 against 232 and 241), so the top-256 budget does
-not bind there either. The vector-level comparison that was already on this page (mean cosine 0.904
-on SciFact queries) said the same thing before any metric existed; the row is the metric.
+It loses **0.0106** on NFCorpus, gains **0.0153** on SciFact and loses **0.0411** on ArguAna under the
+exclusion convention (**0.0311** with the query document kept: 0.3525 against 0.3836). Two rows made
+this look like a lateral move with no direction; the third makes it a loss on two corpora of three,
+and the ArguAna loss is **four times** the NFCorpus one and **six times** the NFCorpus truncation move
+above. So the export is not a cheaper copy of the same ranking — a lossy build would lose a little
+everywhere, and this gains where it gains — but it is also not a free trade: **shipping it needs a
+check per corpus, and the two checks made here would have said yes.** The quantised export also emits
+fewer non-zero terms per document (154-164 against 232-247), so the top-256 budget does not bind
+there either. The vector-level comparison that was already on this page (mean cosine 0.904 on SciFact
+queries) said the same thing before any metric existed; the row is the metric.
 
 The manifest records `quantised: true` for these vectors and the row's model line reads `SPLADE-v3
 (ONNX, int8 weights, 256-token truncation, top-256 terms, vectors precomputed offline)`, so a reader
 can see which export produced a row. **What differs between the two rows is the retrieval model, not
 the index**: the same `SparseTextSearchEngine` scores the same documents, queries and qrels, and a
-repeat of each run reads the same four decimals, so none of the 0.0106 or the 0.0153 is rerun noise.
-Set against the truncation move above (+0.0069 / +0.0091), quantisation is **1.5× and 1.7× larger and
-points the other way on SciFact** — a difference of about a hundredth in whichever direction the
-corpus takes it, which is what separates a second model from a lossy build of the first.
+repeat of each run reads the same four decimals, so none of the 0.0106, the 0.0153 or the 0.0411 is
+rerun noise. Set against the truncation move above (+0.0069 on NFCorpus, +0.0091 on SciFact, −0.0142
+on ArguAna), quantisation is **1.5× and 1.7× larger where the truncation gains, and 2.9× larger where
+it loses** — a move the corpus decides, in either direction, which is what separates a second model
+from a lossy build of the first. It is also the reason this row is a decision rather than a default:
+an operator comparing on NFCorpus and SciFact, the two corpora this harness could score when the
+export arrived, would have shipped it.
 
-- **Not measured:** the truncation × pruning interaction, any top-k but 128 / 256 / 512 on
-  NFCorpus, any other corpus at another budget, and the encode as a performance claim — the clocks
-  above were taken with four encoders sharing the host. The PostgreSQL `sparsevec` engine's row is
-  in [the SQL backend section](#the-sql-backends-on-the-same-corpora): two rows over the same
-  ArguAna vectors, and what separates them is the index.
+- **Not measured:** any top-k but 128 / 256 / 512 on NFCorpus, any corpus other than NFCorpus at
+  another budget or truncation, the truncation × budget interaction on ArguAna or SciFact, and the
+  encode as a performance claim — the clocks above were taken with encoders sharing the host. The
+  PostgreSQL `sparsevec` engine's row is in [the SQL backend section](#the-sql-backends-on-the-same-corpora):
+  two rows over the same ArguAna vectors, and what separates them is the index.
 
 
 ## Metrics

@@ -20,6 +20,18 @@ workflow.
 
 ### Changed
 
+- **The sparse knobs are settled: the truncation and budget margins add up, and the 8-bit export loses
+  on two corpora of three.** NFCorpus encoded at 512 tokens with a 128-term budget reads nDCG@10
+  **0.3627**, against 0.3567 at (256, 128), 0.3596 at (256, 256) and 0.3665 at (512, 256): doubling
+  the truncation is worth +0.0060 / +0.0069 whichever budget is set, and halving the budget costs
+  0.0038 / 0.0029 whichever truncation, so on NFCorpus the two choices are priced independently. On
+  ArguAna the quantised export loses **0.0411** nDCG@10 under `--exclude-query-doc` (0.4805 against
+  0.5216) and **0.0311** with the query document kept — four to six times the truncation move, and
+  against the 0.0106 loss on NFCorpus and the 0.0153 gain on SciFact that two corpora alone made look
+  like "no direction". The export is not a cheaper copy of the same ranking, and it is not a free
+  trade either: choosing it needs a check per corpus, and the two corpora this harness could score
+  when the export arrived would both have said yes.
+
 - **The cursor pass's density crossing scales with the corpus, measured on three real ones.** TREC-COVID
   (171,332 real abstracts) puts the crossing at **df 1,000-2,500** and Quora (522,931 real questions) at
   **df 2,500-4,984**, against 25-250 at 8,674 to 10,000 documents: the interval rises with the ordinal
