@@ -1123,18 +1123,20 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// sits inside it, so 200 is not a frequency of the generated corpus.
     /// </para>
     /// <para>
-    /// <b>The scaling is measured at a size where the clear matters.</b> TREC-COVID, 171,332 real
-    /// abstracts over 211,708 terms, puts the crossing at <b>df 1,000-2,500</b> instead of 25-250: the
-    /// cursor pass wins 8.67-10.20× at df 10, 3.39-3.65× at df 50 and 1.23× at df 500, the two tie at
-    /// df 1,000, and the accumulator wins 1.13× at df 4,993 and 1.14-1.18× at df 19,901. The cap
-    /// there is 856, which lands on the tie, so the most the rule forgoes is the 1.09× the
-    /// accumulator gains at df 2,500. The clear at that size is 4.6 µs, 21 % of a df 1,000 query, and
-    /// being a fixed cost it is what makes the tail eight to ten times cheaper under the cursor pass.
-    /// Two runs, every row within 5 % of its twin.
-    /// <b>Not measured:</b> the exact crossing between each pair; any size other than those five,
-    /// ArguAna's 8,674 and TREC-COVID's 171,332; and the crossing at 500,000 or 1,000,000 documents of
-    /// real text, where the clear is three to four times larger and the interval would sit higher
-    /// again.
+    /// <b>It scales, measured where the clear is material.</b> TREC-COVID, 171,332 real abstracts over
+    /// 211,708 terms, puts the crossing at <b>df 1,000-2,500</b>: the cursor pass wins 8.67-10.20× at
+    /// df 10, 3.39-3.65× at df 50 and 1.23× at df 500, the two tie at df 1,000, and the accumulator
+    /// wins 1.13× at df 4,993. Quora, 522,931 real questions, puts it at <b>df 2,500-4,984</b>:
+    /// 5.68-5.95× at df 50 down to 1.16-1.19× at df 1,002, a tie at df 2,493, and 1.08-1.15× for the
+    /// accumulator at df 4,984. The caps there are 856 and 2,614 — the first on the tie, the second
+    /// between the tie and the row where the accumulator is ahead — so the rule gives up the pass
+    /// where it stops helping and the most it forgoes is a few percent. The clear is 4.6 µs at the
+    /// first size and 9.3-9.6 µs at the second against 0.10 µs at ArguAna, which is why the tail
+    /// widens from 1.4× to 5.7-10.2×.
+    /// <b>Not measured:</b> the exact crossing between each pair; any size other than those five and
+    /// the three real corpora at 8,674 / 171,332 / 522,931 documents; the crossing at 1,000,000
+    /// documents of real text; and any real corpus with typical lengths, since these two have a p50 of
+    /// 21 and 9 tokens.
     /// </para>
     /// </remarks>
     private const int CursorDensityDivisor = 200;

@@ -199,6 +199,10 @@ internal static class CursorLane
             "trec-covid",
             "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/trec-covid.zip",
             "ce62140cb23feb9becf6270d0d1fe6d1"),
+        new(
+            "quora",
+            "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/quora.zip",
+            "18fb154900ba42a600f84b839c173167"),
     ];
 
     /// <summary>
