@@ -103,6 +103,16 @@ workflow.
 
 ### Added
 
+- **The cursor lane's table reaches 1,000,000 documents.** Two runs on 2026-10-29, both passes forced
+  and alternated inside one loop, each cell the mean of the two: a one-term tail query reads a `p50`
+  of **6.35 µs** and a three-term one **12.50 µs**, against an isolated clear of **18.9-19.9 µs**,
+  where the same queries through the accumulator cost **24.60 µs** and **36.15 µs** (3.9× and 2.9×).
+  The head term reads **10.78 ms** for 954,943 posting entries, 11.3 ns a entry against the 500,000
+  row's 11.0. The before column at that size is the accumulator forced on the same build and not a
+  checkout of the tree before the pass existed — the shipped build takes the cursor pass there now —
+  and the page says which rows are which. A same-day control at 100,000 documents reproduced the
+  published after column exactly on the three-term query and left the head row uninflated.
+
 - **`LexiSharpIndex<T>.Search(query, options, CancellationToken)` and
   `LexiSharpSearchEndpoint.Handle(index, parameters, CancellationToken)`**, plus the route passing
   `HttpContext.RequestAborted` through. The engine already honored a token; nothing could supply one.
