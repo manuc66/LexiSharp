@@ -147,6 +147,52 @@ public class TextHighlighterTests
     }
 
     [Fact]
+    public void HighlightFull_WithEscapeHtml_EncodesTheTextAndKeepsTheTags()
+    {
+        // The output is markup: the tags are the highlighter's, and everything between them is the
+        // document's. Inserted into a page, a document carrying HTML would run — so the option
+        // encodes the text and leaves the tags alone, which is the only split that can be safe and
+        // still mark a match.
+        const string text = "<img src=x onerror=alert(1)> The quick & brown fox";
+
+        var result = TextHighlighter.HighlightFull(
+            text, new[] { "quick" }, Tokenizer.Default, new HighlightOptions { EscapeHtml = true });
+
+        Assert.DoesNotContain("<img", result);
+        Assert.Contains("&lt;img src=x onerror=alert(1)&gt;", result);
+        Assert.Contains("<em>quick</em> &amp; brown", result);
+        Assert.Contains("<em>quick</em>", result);
+    }
+
+    [Fact]
+    public void Highlight_WithEscapeHtml_EncodesTheSnippetText()
+    {
+        var snippets = TextHighlighter.Highlight(
+            "<b>one</b> two three <script>alert(1)</script>",
+            new[] { "three" },
+            Tokenizer.Default,
+            new HighlightOptions { Padding = 4, EscapeHtml = true });
+
+        var single = Assert.Single(snippets);
+        Assert.DoesNotContain("<script>", single.Text);
+        Assert.DoesNotContain("<b>", single.Text);
+        Assert.Contains("&lt;script&gt;", single.Text);
+        Assert.Contains("<em>three</em>", single.Text);
+    }
+
+    [Fact]
+    public void HighlightFull_ByDefault_LeavesHtmlAlone()
+    {
+        // Off by default because the default output is pinned by consumers that already render it
+        // somewhere trusted, and because encoding is a choice about a context the highlighter cannot
+        // see. The contract is stated on the option, not implied.
+        var result = TextHighlighter.HighlightFull(
+            "<b>bold</b> word", new[] { "word" }, Tokenizer.Default);
+
+        Assert.Equal("<b>bold</b> <em>word</em>", result);
+    }
+
+    [Fact]
     public void Highlight_NullArguments_Throw()
     {
         Assert.Throws<ArgumentNullException>(() =>

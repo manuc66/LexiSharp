@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Text;
+using System.Text.Encodings.Web;
 using LexiSharp.Linguistics;
 
 namespace LexiSharp.Highlighting;
@@ -253,14 +255,33 @@ public static class TextHighlighter
             if (tagStart < position)
                 tagStart = position;
 
-            builder.Append(text, position, tagStart - position);
+            AppendText(builder, text, position, tagStart - position, options.EscapeHtml);
             builder.Append(options.PreTag);
-            builder.Append(text, tagStart, tagEnd - tagStart);
+            AppendText(builder, text, tagStart, tagEnd - tagStart, options.EscapeHtml);
             builder.Append(options.PostTag);
             position = tagEnd;
         }
 
-        builder.Append(text, position, to - position);
+        AppendText(builder, text, position, to - position, options.EscapeHtml);
         return builder.ToString();
+    }
+
+    /// <summary>
+    /// Appends <c>text[start..start+length)</c>, HTML-encoded when asked. One helper so the three
+    /// append sites cannot disagree about whether the document's characters are escaped.
+    /// </summary>
+    private static void AppendText(StringBuilder builder, string text, int start, int length, bool escapeHtml)
+    {
+        if (!escapeHtml)
+        {
+            builder.Append(text, start, length);
+            return;
+        }
+
+        // Through the encoder's writer overload rather than `Encode(text.Substring(...))`: a
+        // full-string highlight on a long document would otherwise allocate a copy of every run
+        // between matches just to encode it.
+        using var writer = new StringWriter(builder, CultureInfo.InvariantCulture);
+        HtmlEncoder.Default.Encode(writer, text, start, length);
     }
 }

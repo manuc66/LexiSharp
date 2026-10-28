@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Encodings.Web;
 using LexiSharp;
 using LexiSharp.Core;
 using LexiSharp.Embeddings;
@@ -386,7 +387,10 @@ public sealed class DemoSearchService
 
     private IReadOnlyList<HitResult> LexicalHits(string query, int limit)
     {
-        var hits = _lexical.Search(query, new LexiSharpQueryOptions(Limit: limit, Highlight: true));
+        var hits = _lexical.Search(query, new LexiSharpQueryOptions(Limit: limit, Highlight: true)
+        {
+            HighlightOptions = DemoHighlight,
+        });
         var results = new HitResult[hits.Count];
 
         for (int i = 0; i < hits.Count; i++)
@@ -426,7 +430,10 @@ public sealed class DemoSearchService
 
     private IReadOnlyList<HitResult> SemanticHits(string query, int limit)
     {
-        var hits = _semantic.Search(query, new LexiSharpQueryOptions(Limit: limit, Highlight: true));
+        var hits = _semantic.Search(query, new LexiSharpQueryOptions(Limit: limit, Highlight: true)
+        {
+            HighlightOptions = DemoHighlight,
+        });
         var results = new HitResult[hits.Count];
 
         for (int i = 0; i < hits.Count; i++)
@@ -508,6 +515,18 @@ public sealed class DemoSearchService
     private const int FullHighlightLimit = 400;
 
     /// <summary>
+    /// The tags the page renders, with the document's own characters encoded around them.
+    /// </summary>
+    /// <remarks>
+    /// `index.html` inserts this text as HTML - it is the only field it does not pass through
+    /// `esc()` - because the highlighter's tags have to survive. That makes the encoding the
+    /// library's job, not the page's: a corpus document carrying `&lt;img onerror=...&gt;` is a
+    /// document, not a fragment of the page. A BEIR corpus read from disk is data this page did not
+    /// write, so it is exactly the case that has to be encoded.
+    /// </remarks>
+    private static readonly HighlightOptions DemoHighlight = new() { MaxSnippets = 1, EscapeHtml = true };
+
+    /// <summary>
     /// The text a hit card shows, with the matched terms marked. A document short enough to read at
     /// a glance is returned whole, so every match is visible; a longer one is cut to the first
     /// window around a match, because a BEIR abstract or argument rendered in full makes a page of
@@ -524,13 +543,9 @@ public sealed class DemoSearchService
             return text;
 
         if (text.Length <= FullHighlightLimit)
-            return TextHighlighter.HighlightFull(text, terms, _spanTokenizer);
+            return TextHighlighter.HighlightFull(text, terms, _spanTokenizer, DemoHighlight);
 
-        var snippets = TextHighlighter.Highlight(
-            text,
-            terms,
-            _spanTokenizer,
-            new HighlightOptions { MaxSnippets = 1 });
+        var snippets = TextHighlighter.Highlight(text, terms, _spanTokenizer, DemoHighlight);
 
         return snippets.Count != 0 ? snippets[0].Text : Snippet(text);
     }
@@ -592,8 +607,13 @@ public sealed class DemoSearchService
             : document.Id;
     }
 
+    /// <summary>
+    /// The first 220 characters of a document, encoded: `ToHit` puts this in the same HTML
+    /// position as a highlighted snippet, so it leaves the service ready to render rather than
+    /// relying on every caller to escape it.
+    /// </summary>
     private static string Snippet(string text) =>
-        text.Length <= 220 ? text : text[..220].TrimEnd() + "…";
+        HtmlEncoder.Default.Encode(text.Length <= 220 ? text : text[..220].TrimEnd() + "…");
 
     /// <summary>
     /// Runs one query through every lane before serving. The first timing a user sees is otherwise
