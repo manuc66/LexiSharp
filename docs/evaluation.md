@@ -69,6 +69,30 @@ context — what this library does out of the box, beside a number produced by s
 configuration — and not a comparison this repository can claim to reproduce. The aligned rows are
 the ones that are pinned and replayed; these are not, and the difference is the point.
 
+**The closest and the best observed, with their settings and a pin for each.** Two readings per
+corpus are now published and replayed: the configuration that lands nearest the 2021 figure, and the
+highest reading observed among the configurations tried. Both are distinct-term, no-exclusion,
+exponential-gain runs, and both name their analyzer and `k1`/`b`:
+
+| Corpus | Closest to the 2021 figure | settings | Best observed (in-sample) | settings |
+|---|---:|---|---:|---|
+| NFCorpus | **0.3241** *(paper 0.325)* | `uax29`, k1=1.2, b=0.75 | **0.3295** | `uax29`, k1=2.0, b=0.75 |
+| SciFact | **0.662** *(paper 0.665)* | `default`, k1=1.5, b=0.75 | **0.6929** | `uax29`, k1=1.5, b=0.75 |
+| ArguAna | **0.3149** *(paper 0.315)* | `uax29`, k1=1.5, b=0.75 | **0.3738** | `uax29`, k1=3.0, b=1.0 |
+
+The left column is what "lands on the figure" means in this repository: within 0.001 on NFCorpus and
+SciFact, and exactly on ArguAna, each with a *different* configuration — which is the same finding as
+the table above, from the other direction. The right column is an **argmax over a coarse grid**
+(`uax29`; k1 0.9–3.0; b 0.3–1.0; [`default`, `english`] tried at the smaller grid), fitted and scored
+on the same queries, so it is an **in-sample upper bound and not a result**. On ArguAna the reading
+rises with k1 and 3.0 is the edge of the grid, so the true maximum is not known and is not claimed.
+
+Both readings are regression pins — `nfcorpus/closest-2021`, `nfcorpus/best-observed`,
+`scifact/best-observed`, `arguana/closest-2021`, `arguana/best-observed` — in
+[`pinned.json`](../bench/LexiSharp.Eval/reference/pinned.json), and `--verify-reference` replays
+each one with the settings above, so a change in the tokenizer or the scorer moves them and the gate
+says so.
+
 **What had to be matched, and how it was found.** The first version of these rows used the `english`
 analyzer and read 0.3215 / 0.6788 against 0.3218 / 0.6789 — close enough to be called equal, and it
 was not: `english` splits a contraction into a stem and a fragment (`don't` becomes two tokens) where
