@@ -262,19 +262,17 @@ public static class SegmentCommands
         var results = engine.Search(query, new SearchOptions(topK));
 
         Console.WriteLine($"Store:   {Path.GetFullPath(storeDir)} ({store.Count.ToString("N0", CultureInfo.InvariantCulture)} documents, analyzer {analyzer})");
-        Console.WriteLine($"Query:   {query}");
+        Console.WriteLine($"Query:   {ConsoleText.Line(query, 200)}");
         Console.WriteLine();
 
         for (int i = 0; i < results.Count; i++)
         {
             var result = results[i];
-            string text = result.Document.Text.ReplaceLineEndings(" ");
 
-            if (text.Length > 96)
-                text = string.Concat(text.AsSpan(0, 96), "…");
-
-            Console.WriteLine($"{(i + 1).ToString(CultureInfo.InvariantCulture),3}. {result.Score.ToString("0.0000", CultureInfo.InvariantCulture),10}  {result.DocumentId}");
-            Console.WriteLine($"     {text}");
+            // The id and the text come from the corpus: neither reaches the terminal with a control
+            // or format character intact. See ConsoleText.
+            Console.WriteLine($"{(i + 1).ToString(CultureInfo.InvariantCulture),3}. {result.Score.ToString("0.0000", CultureInfo.InvariantCulture),10}  {ConsoleText.Line(result.DocumentId, 200)}");
+            Console.WriteLine($"     {ConsoleText.Line(result.Document.Text, 96)}");
         }
 
         if (results.Count == 0)

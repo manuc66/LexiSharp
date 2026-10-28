@@ -40,6 +40,13 @@ workflow.
   output, where the framework's "trusted" defaults cap at `int.MaxValue`. The wire format is
   unchanged and payloads saved by earlier builds still load.
 
+- **The CLI prints corpus text for a terminal rather than as a byte stream.** Document text,
+  document ids and the query lose their control and format characters before the line is written:
+  `ESC` and the C1 introducers, the bidi overrides and the zero-width characters. A corpus is
+  input — a transcript, a scraped page — and a terminal is an interpreter, so `ESC[2J` in a
+  document reached the screen as a command (clear, retitle, write the clipboard). `segment search
+  --json` is unchanged; that file is machine output and the serializer escapes it.
+
 - **The PostgreSQL engines fetch at most 100 000 rows per query.** The window is `Offset + Limit`
   from the request, so an offset in the billions used to reach the database as a `LIMIT` of the same
   size; past the ceiling the page comes back short rather than the table coming back whole.
