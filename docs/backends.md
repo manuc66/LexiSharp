@@ -325,6 +325,16 @@ new ParadeDBTextSearchEngine(
     new ParadeDBOptions { ContentTokenizer = "pdb.simple('ascii_folding=true')" });
 ```
 
+`ContentTokenizer` is the one option in this package that reaches DDL **verbatim**: it is
+interpolated into `CREATE INDEX ... USING paradedb`, because a Tantivy tokenizer is an
+expression (`pdb.simple('ascii_folding=true', 'alias=content')`) and not a name that could be
+allow-listed like `Schema` or `Table`. Treat it, and `IndexName`, as trusted configuration —
+the same class of value as a connection string. A deployment that builds these from user input
+has put SQL in the user's hands.
+
+`FetchLimit` caps at 100 000 rows per query in every SQL engine, so an offset past it returns a
+short page rather than moving the whole table across the wire.
+
 BM25 scores are PostgreSQL-native, so they are **not** numerically comparable to
 `Bm25Scorer`/`TfIdfScorer` — use the hybrid engine's `ReciprocalRankFusionMerger` (or
 re-rank) for a single cross-engine ordering. Note the extension is **AGPL-3 licensed**: fine

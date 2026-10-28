@@ -144,12 +144,35 @@ app.MapLexiSharpSearch<SearchDocument>(); // GET /search?q=...&limit=10&offset=0
 app.Run();
 ```
 
-- Query parameters: `q` (required), `limit` (default 10), `offset` (default 0),
-  `minimumScore` (default −∞), `highlight` (default false).
-- A blank `q` returns `400` with a `{ "field": "q", "message": ... }` error payload.
+- Query parameters: `q` (required), `limit` (default 10, at most 100), `offset`
+  (default 0, at most 10 000), `minimumScore` (default −∞), `highlight` (default false).
+- A blank `q` returns `400` with a `{ "field": "q", "message": ... }` error payload. So does a
+  request the search refuses — a page past the bounds above, or a query the engine will not run
+  (more than 32 distinct `term*`/`term~` atoms, syntax this index cannot honor) — because each of
+  those is about the request and retrying it cannot work.
 - With `highlight=true` each hit carries `highlightedText`, the document text with matched
   terms wrapped in `<em>`; the page honors `Limit`/`MinimumScore`/`Offset` exactly like the
   in-process `LexiSharpIndex<T>.Search`.
+
+### Exposing the route
+
+The endpoint is a *convenience* surface, and the bounds above are what make one request cost a
+bounded amount of work. Three things stay the application's:
+
+- **Authorization.** The route carries none. `app.MapLexiSharpSearch<T>()` returns an
+  `IEndpointConventionBuilder`, so `RequireAuthorization()` and the rest of the endpoint
+  conventions apply: `app.MapLexiSharpSearch<SearchDocument>().RequireAuthorization();`
+- **Rate limiting.** Nothing throttles repeated requests; use ASP.NET Core's rate limiter on
+  the route when the corpus is not public.
+- **What a hit carries.** `LexiSharpSearchHit<TDocument>.Document` is the caller's own object,
+  serialized whole. A corpus whose documents hold fields a caller should not read needs a
+  projection type (index a document type that carries only what may be published) or a
+  hand-written endpoint; the shipped one does not select fields.
+
+The route passes `HttpContext.RequestAborted` into the search, so a client that disconnects
+stops the ranking it started. `LexiSharpSearchEndpoint.Handle` has the same overload for a
+host that maps the route itself.
+
 
 Change the ranking algorithm without rebuilding the index:
 

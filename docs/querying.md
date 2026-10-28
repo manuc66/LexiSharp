@@ -68,6 +68,26 @@ parameterized predicate over the `fields jsonb` column. ParadeDB's custom planne
 predicate shapes next to its BM25 operator, so it filters in C# over the whole match set instead
 (same semantics, no pushdown).
 
+## Pagination
+
+`SearchOptions.Offset` cuts the page `[Offset, Offset + Limit)` out of a working window of
+`Offset + Limit` entries, and the window is capped at the corpus size (`WindowFor`), so a page
+past the end comes back empty instead of asking an engine for more than it holds. The cost of a
+request follows the **window**, not the page: measured on a 16 000-document corpus, `limit=10`
+takes 1–3 ms and `offset=15990&limit=10` takes 1.9 s for the same ten rows, because the window
+an engine fills is the size of the corpus. Deep paging is what that buys.
+
+Two consequences worth knowing before wiring `Offset` to a request field:
+
+- The ASP.NET Core endpoint bounds it — `limit` at most 100, `offset` at most 10 000
+  (`LexiSharpSearchEndpoint.MaxLimit`/`MaxOffset`), a larger request refused with `400`.
+- An in-process caller offering user-chosen offsets is choosing the same trade. Filling the
+  window costs time proportional to its size per candidate that enters it, so the bound on what
+  a request may ask for is the only thing between a query string and that cost.
+
+`LexiSharpIndex<T>.Search(query, options, cancellationToken)` stops the ranking when the token
+is cancelled; the mapped endpoint passes `RequestAborted` through it.
+
 ## Phrase queries
 
 Quote a segment of the query to require its terms at consecutive document positions:
@@ -274,6 +294,29 @@ so the query must be tokenized with the same tokenizer. Nearby matches cluster i
 snippet, windows snap outward to word boundaries, and overlapping ranges (n-gram tokenizers)
 merge before tagging.
 
+### The output is markup
+
+Both methods return the `<em>`/`</em>` tags around the document's **own characters, copied
+exactly**. That is fine wherever the text is not interpreted — a console, a log, a desktop
+control — and it is not fine in a web page: a document containing `<img src=x onerror=...>`
+reaches the page as an element, and `&` is read as the start of an entity. The document is
+data the service holds, which a corpus loader does not get to assume the page wrote.
+
+```csharp
+new HighlightOptions { EscapeHtml = true }
+```
+
+encodes the document's characters and leaves the tags as written, so the result can be inserted
+into an element's content as-is. It is off by default, because the default output is pinned by
+consumers that render it somewhere trusted, and because encoding is a decision about a context
+the highlighter cannot see. It encodes element content only: a tag the caller supplies, and a
+document used inside an attribute value or a URL, remain the caller's to escape.
+
+`LexiSharpIndex<T>.Search(..., new LexiSharpQueryOptions { Highlight = true, HighlightOptions = ... })`
+reaches the same option through the facade; `LexiSharpHit<T>.HighlightedText` is markup for the
+same reason.
+
+
 ## Prefix and fuzzy queries
 
 Suffix a free-text atom to expand it against the index vocabulary at search time:
@@ -295,6 +338,28 @@ the operator as plain text — `IQuerySyntaxSupport.SupportedQueryFeatures` expo
 supported matrix (`RankedTextSearchEngine`: phrases, expansions, required and prohibited terms;
 PostgreSQL lexical and ParadeDB: phrases; fuzzy/vector/sparse: plain queries only). See
 [Which engines honor the operators](#which-engines-honor-the-operators).
+
+### What an atom costs
+
+A fuzzy atom is resolved by comparing its base against every term the index knows, so the atom
+count is what makes an expansion query expensive: measured on a 200 000-term vocabulary, one
+fuzzy atom costs 71 ms and two hundred cost 4.3 s, whether or not anything matches. Two rules
+bound that:
+
+- **One walk per distinct atom.** `catt~` written ten times resolves once and hands the same
+  terms to every occurrence; `+catt~`, `-catt~` and `catt~` share that walk too, because the
+  operator decides what the atom gates on, not what it resolves to.
+- **At most `RankedTextSearchEngine.MaxExpansionAtoms` (32) distinct atoms per query.** A query
+  asking for more is refused with `ArgumentException` rather than truncated — an atom dropped
+  silently is a query that searched for something else. `LexiSharpIndex`'s `EnableFuzzy` option
+  rewrites every plain term into an atom, so a long query on a fuzzy index is bounded by the same
+  number.
+
+Prefix atoms are cheap on an index that implements `IVocabularyPrefixIndex` (the in-memory one
+keeps a sorted dictionary and answers a prefix as a range); the cost above is the fuzzy case.
+The bound is on the multiplier, not on the walk: making one atom sub-linear is a term index
+ordered for edit distance, which this library does not have.
+
 
 ## Synonyms
 

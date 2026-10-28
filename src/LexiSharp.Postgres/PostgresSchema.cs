@@ -133,6 +133,13 @@ public static class PostgresSchema
         $"setweight({vector}, '{Letter(weight)}')";
 
     /// <summary>A field name as a quoted SQL literal; names are free-form, so quotes are doubled.</summary>
+    /// <remarks>
+    /// Doubling the quote is complete under <c>standard_conforming_strings = on</c>, which is
+    /// PostgreSQL's default since 9.1 and the only value this library's SQL assumes anywhere else:
+    /// with it off, a backslash escapes the closing quote and a field name could end its own literal.
+    /// A server configured otherwise is out of contract, and the names arriving here are the
+    /// caller's configuration rather than a document's data.
+    /// </remarks>
     private static string Literal(string value)
     {
         var literal = new StringBuilder(value.Length + 2).Append('\'');
