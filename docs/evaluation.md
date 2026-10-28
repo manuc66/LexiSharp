@@ -78,14 +78,16 @@ exponential-gain runs, and both name their analyzer and `k1`/`b`:
 |---|---:|---|---:|---|
 | NFCorpus | **0.3241** *(paper 0.325)* | `uax29`, k1=1.2, b=0.75 | **0.3295** | `uax29`, k1=2.0, b=0.75 |
 | SciFact | **0.662** *(paper 0.665)* | `default`, k1=1.5, b=0.75 | **0.6929** | `uax29`, k1=1.5, b=0.75 |
-| ArguAna | **0.3149** *(paper 0.315)* | `uax29`, k1=1.5, b=0.75 | **0.3738** | `uax29`, k1=3.0, b=1.0 |
+| ArguAna | **0.3149** *(paper 0.315)* | `uax29`, k1=1.5, b=0.75 | **0.3791** | `uax29`, k1=5.0, b=1.0 |
 
 The left column is what "lands on the figure" means in this repository: within 0.001 on NFCorpus and
 SciFact, and exactly on ArguAna, each with a *different* configuration — which is the same finding as
 the table above, from the other direction. The right column is an **argmax over a coarse grid**
 (`uax29`; k1 0.9–3.0; b 0.3–1.0; [`default`, `english`] tried at the smaller grid), fitted and scored
 on the same queries, so it is an **in-sample upper bound and not a result**. On ArguAna the reading
-rises with k1 and 3.0 is the edge of the grid, so the true maximum is not known and is not claimed.
+rises with k1 — 0.315 at 1.5, 0.374 at 3, **0.379 at 5** — and then falls: 0.377 at k1=10, 0.365 at
+30. The peak is inside the grid rather than at its edge, and a finer grid might find a little more;
+that is not claimed.
 
 Both readings are regression pins — `nfcorpus/closest-2021`, `nfcorpus/best-observed`,
 `scifact/best-observed`, `arguana/closest-2021`, `arguana/best-observed` — in
