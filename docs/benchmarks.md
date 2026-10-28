@@ -1427,7 +1427,7 @@ dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*QueryAl
 # index build and tail-query cost per corpus size (see the scale lane above):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- scale
 # tail-query p50/p99, allocation and the cursor pass's density crossing (see the cursor lane above):
-dotnet run --project bench/LexiSharp.Benchmarks -c Release -- cursor 100000 --sweep
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- cursor 100000 --sweep --both
 # posting entries a block bound can skip, per query and corpus size (see the pruning lane above):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- wand 100000
 # one shared index at 1/2/4/8 callers, raw and synchronized (see the concurrency lane above):
