@@ -1002,8 +1002,9 @@ frequency is at most `ordinalSpace / 200` **and** the index can lend its posting
 with `decodedCacheEntries`). An index that cannot — a store without the decoded-postings cache, an
 expanding or context-enriching decorator, a multi-segment chain with an overlay — keeps the
 accumulator; the pass declines and nothing changes. `--sweep` measures the crossing: one term near
-each document frequency in `10, 25, 50, 250, 500, 1,000, 2,500, 5,000, 20,000`, the cursor pass
-forced on every query so the losing side of the crossing is visible too.
+each document frequency in `10, 25, 50, 250, 500, 1,000, 2,500, 5,000, 20,000`, timed through the
+pass the engine chooses — `--both` adds the other pass on the same query so the losing side of the
+crossing is visible too.
 
 **Measured on 2026-10-26**, Manjaro Linux, Intel Core i7-8850H (12 logical processors), .NET 10.0.13,
 `ServerGC=True`, 15 GiB of RAM, one index per size in its own process, **on a quiet host**: the
