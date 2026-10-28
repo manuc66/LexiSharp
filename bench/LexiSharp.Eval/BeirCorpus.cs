@@ -151,9 +151,23 @@ public sealed record IndexFingerprint(int Documents, int NonEmptyDocuments, long
 
 internal static class BeirLoader
 {
-    public static async Task<BeirCorpus> LoadOrDownloadAsync(string dataBaseDir, BeirDataset dataset)
+    public static Task<BeirCorpus> LoadOrDownloadAsync(string dataBaseDir, BeirDataset dataset) =>
+        LoadOrDownloadAsync(dataBaseDir, dataset.Name, dataset.DownloadUrl, dataset.ExpectedMd5);
+
+    /// <summary>
+    /// The same load for a corpus that has no published quality figure.
+    /// </summary>
+    /// <remarks>
+    /// A corpus in <see cref="BeirDataset.All"/> carries an expected nDCG because it is a row in the
+    /// quality table. A benchmark lane's real documents are not: measuring the cursor pass's density
+    /// crossing asks what 171,332 real documents cost to search, not what BM25 scores on them, and
+    /// giving that corpus a quality figure to satisfy a constructor would put a number in the tree
+    /// that nothing measures. So the download-and-parse half takes the three things it actually uses.
+    /// </remarks>
+    public static async Task<BeirCorpus> LoadOrDownloadAsync(
+        string dataBaseDir, string name, string downloadUrl, string expectedMd5)
     {
-        string root = await EnsureDatasetAsync(dataBaseDir, dataset);
+        string root = await EnsureDatasetAsync(dataBaseDir, name, downloadUrl, expectedMd5);
 
         var documents = ParseJsonLines(
             Path.Combine(root, "corpus.jsonl"),
@@ -172,7 +186,7 @@ internal static class BeirLoader
 
         return new BeirCorpus
         {
-            Name = dataset.Name,
+            Name = name,
             Documents = documents,
             Queries = queries,
             TestRelevance = relevance,
@@ -180,9 +194,10 @@ internal static class BeirLoader
     }
 
     /// <summary>Returns the directory containing the BEIR-formatted files, downloading them first when missing.</summary>
-    private static async Task<string> EnsureDatasetAsync(string dataBaseDir, BeirDataset dataset)
+    private static async Task<string> EnsureDatasetAsync(
+        string dataBaseDir, string name, string downloadUrl, string expectedMd5)
     {
-        string nested = Path.Combine(dataBaseDir, dataset.Name);
+        string nested = Path.Combine(dataBaseDir, name);
 
         foreach (string candidate in new[] { dataBaseDir, nested })
         {
@@ -195,21 +210,21 @@ internal static class BeirLoader
         }
 
         Directory.CreateDirectory(dataBaseDir);
-        string zipPath = Path.Combine(dataBaseDir, $"{dataset.Name}.zip");
+        string zipPath = Path.Combine(dataBaseDir, $"{name}.zip");
 
-        Console.WriteLine($"Downloading {dataset.Name} (BEIR) from {dataset.DownloadUrl}");
+        Console.WriteLine($"Downloading {name} (BEIR) from {downloadUrl}");
         using var client = new HttpClient();
-        await using (Stream response = await client.GetStreamAsync(dataset.DownloadUrl))
+        await using (Stream response = await client.GetStreamAsync(downloadUrl))
         await using (FileStream zip = File.Create(zipPath))
             await response.CopyToAsync(zip);
 
         string actualMd5 = await ComputeMd5Async(zipPath);
 
-        if (!string.Equals(actualMd5, dataset.ExpectedMd5, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(actualMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
         {
             File.Delete(zipPath);
             throw new InvalidOperationException(
-                $"{dataset.Name} download checksum mismatch: expected {dataset.ExpectedMd5}, got {actualMd5}.");
+                $"{name} download checksum mismatch: expected {expectedMd5}, got {actualMd5}.");
         }
 
         Console.WriteLine("Download complete, checksum verified.");
