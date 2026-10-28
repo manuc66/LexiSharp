@@ -1015,7 +1015,8 @@ prints, per row, which pass the engine's own decision selects (`per-document`, `
 engine forced to each accumulating pass, and the default engine's bytes per search must equal the one
 the label names. A cursor row's clear share prints a dash, because it rents no accumulator to clear.
 The before column is the library at `3eedf42` — the tree the lane commit sits on, before the cursor
-pass existed; the after column is the tree this page describes.
+pass existed; the after column is the tree this page describes. The 1,000,000 rows are the exception
+and are marked as such below: both their columns are forced passes on this build.
 
 | Documents | Query | df sum | Pass | Before p50 | After p50 | Before p99 | After p99 | Before alloc | After alloc |
 |---:|---|---:|---|---:|---:|---:|---:|---:|---:|
@@ -1028,6 +1029,25 @@ pass existed; the after column is the tree this page describes.
 | 500,000 | one tail term | 90 | cursor | 13.15 µs | **4.40 µs** | 15.15 µs | 5.05 µs | 672 B | 856 B |
 | 500,000 | three tail terms | 220 | cursor | 19.85 µs | **7.85 µs** | 29.85 µs | 14.00 µs | 688 B | 1,008 B |
 | 500,000 | one head term | 477,361 | accumulator | 5.19 ms | 5.24 ms | 5.75 ms | 5.49 ms | 672 B | 672 B |
+| 1,000,000 | one tail term | 152 | cursor | 24.60 µs | **6.35 µs** | — | 9.40 µs | 672 B | 856 B |
+| 1,000,000 | three tail terms | 389 | cursor | 36.15 µs | **12.50 µs** | — | 23.95 µs | 688 B | 1,008 B |
+| 1,000,000 | one head term | 954,943 | accumulator | — | 10.78 ms | — | 11.38 ms | 672 B | 672 B |
+
+**The 1,000,000 rows are not a checkout of `3eedf42`.** They are two runs of this build on
+2026-10-29, with the accumulator forced for the before column and the cursor pass forced for the
+after one, alternated inside one loop, and each cell is the mean of the two (the spread was
+6.30–6.40 µs, 12.30–12.70 µs, and 10.05–11.51 ms for the head). The before `p99` is not tabled
+because the lane prints a `p50` for a forced pass and no distribution behind it. The pre-change build
+took the accumulator for every one of these queries because the cursor pass did not exist, which is
+what makes the forced reading its equivalent; the head row has no before column because both builds
+take that pass there, so the pair would be the same code twice. A same-day control at 100,000
+documents reproduced the published after column exactly on the three-term query (2.20 µs) and the head
+row without inflation (1.18 ms against 1.24–1.28 published); its one-term row read a 1.00 µs minimum
+and a 1.50 µs median, which is the resolution of a one-microsecond measurement rather than a shifted
+pass. That row is left as measured rather than re-taken. **The two tail queries are denser here than
+at 500,000** — df 152 and 389 against 90 and 220 — because the generated vocabulary is held at 30,000
+terms while the corpus doubles, so part of the 3.9× and 2.9× this row shows over the 500,000 row's
+2.99× and 2.53× is density rather than size.
 
 The two 10,000-document tail rows are below the accumulation floor (8 posting entries), so both
 builds take the per-document loop and the cursor pass was never in play; the head row is dense and
@@ -1037,12 +1057,14 @@ than the pass. **The head rows are therefore the same code path in both builds**
 there (1.24 → 1.28 ms at 100,000, 5.19 → 5.24 ms at 500,000) are not attributed: the allocation is
 identical and no mechanism for them was established.
 
-The isolated clear the cursor pass removes is **2.2–2.4 µs at 100,000 and 9.0–9.4 µs at 500,000** —
-69–71 % of the one-term `p50` and 47–56 % of the three-term one before the change. After it, the tail
-`p50` is below the isolated clear at both sizes, which is what a search that does not clear a
-corpus-sized buffer looks like. The allocation rises by **184 B** on a one-term query and **320 B** on
-a three-term one: a weight per term, a `PostingArrays` per term, a cursor array and the sink object —
-O(query) bytes, against a corpus-sized buffer that is rented (and was cleared) before.
+The isolated clear the cursor pass removes is **2.2–2.4 µs at 100,000, 9.0–9.4 µs at 500,000 and
+18.9–19.9 µs at 1,000,000** — 69–71 % of the one-term `p50` and 47–56 % of the three-term one before
+the change at 100,000 and 500,000, and **79 % and 54 %** at 1,000,000. After it, the tail `p50` is
+below the isolated clear at every size — by 3.1× at 1,000,000, where the clear alone is longer than
+the whole search — which is what a search that does not clear a corpus-sized buffer looks like. The
+allocation rises by **184 B** on a one-term query and **320 B** on a three-term one: a weight per
+term, a `PostingArrays` per term, a cursor array and the sink object — O(query) bytes, against a
+corpus-sized buffer that is rented (and was cleared) before.
 
 **The host is part of the measurement.** A run of the same after build while another session's SPLADE
 encoder held about 590 % CPU (load 7.6) read **1.80 / 6.10 µs** at 100,000 with the cursor pass's
@@ -1120,8 +1142,8 @@ BM25, `k1 = 1.5`, `b = 0.75`, the default tokenizer and the in-memory index. Fil
 checked for parity and are not timed. The segment-backed store path was checked for parity (a
 committed store opened with `decodedCacheEntries` lends its arrays; one without the cache falls back to
 the accumulator and serves the same page) and is **not** timed. P99 under concurrency, query mixing,
-other analyzers, other scorers, other `Limit` values and corpora above 500,000 documents are not
-measured in this lane, and neither is the 1,000,000-document size.
+other analyzers, other scorers, other `Limit` values and corpora above 1,000,000 documents are not
+measured in this lane.
 
 ## Dense quantisation lane (`quantize`)
 
