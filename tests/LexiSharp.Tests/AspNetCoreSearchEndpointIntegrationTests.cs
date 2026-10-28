@@ -83,4 +83,33 @@ public class AspNetCoreSearchEndpointIntegrationTests
             await app.DisposeAsync();
         }
     }
+
+    [Fact]
+    public async Task Endpoint_RefusesAPageLargerThanItsBound()
+    {
+        var app = BuildApp();
+        await app.StartAsync();
+
+        try
+        {
+            var client = app.GetTestClient();
+
+            // The bound is enforced in Handle, which is the same function the route calls, so the
+            // status a client sees is the one the unit tests pin.
+            var oversizedLimit = await client.GetAsync(
+                $"/search?q=distributed&limit={LexiSharpSearchEndpoint.MaxLimit + 1}");
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, oversizedLimit.StatusCode);
+
+            var oversizedOffset = await client.GetAsync(
+                $"/search?q=distributed&offset={LexiSharpSearchEndpoint.MaxOffset + 1}");
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, oversizedOffset.StatusCode);
+
+            var body = await oversizedLimit.Content.ReadAsStringAsync();
+            Assert.Contains("\"field\":\"limit\"", body);
+        }
+        finally
+        {
+            await app.DisposeAsync();
+        }
+    }
 }
