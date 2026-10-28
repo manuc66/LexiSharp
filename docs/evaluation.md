@@ -47,6 +47,28 @@ the published **0.3970** — 0.0035 short under the same conventions — and tha
 any configuration tried. The gap between the two row groups is configuration, not ranking; the
 ArguAna gap is not yet explained.
 
+**The 2021 figures the defaults rows sit beside are not reproducible from this repository, and that is
+measured.** The three numbers — 0.325, 0.665, 0.315 — were not produced by any single configuration
+tried here. Rerun over the same corpora and qrels, with Lucene 10's analyzers and with this
+harness's:
+
+| Configuration | NFCorpus | SciFact | ArguAna |
+|---|---:|---:|---:|
+| Lucene `StandardAnalyzer`, distinct terms, k1=0.9/b=0.4 | 0.3039 | **0.6646** | 0.2482 |
+| Lucene `StandardAnalyzer`, repeated terms, k1=0.9/b=0.4 | — | **0.6651** | 0.2872 |
+| this library, `uax29`, distinct, k1=1.2/b=0.75 | **0.324** | 0.687 | 0.308 |
+| this library, `uax29`, distinct, k1=1.5/b=0.75 | 0.328 | 0.693 | **0.315** |
+| this library, `default`, distinct, k1=1.2/b=0.75 | 0.306 | 0.660 | 0.313 |
+| **published, 2021** | **0.325** | **0.665** | **0.315** |
+
+Each corpus comes closest to a *different* configuration — `StandardAnalyzer` at 0.9/0.4 for SciFact,
+`uax29` at 1.2/0.75 for NFCorpus, `uax29` at 1.5/0.75 for ArguAna — so no single pipeline
+reconstructs the paper's three numbers. The paper's BM25 came from its own Anserini build and its
+own per-corpus settings, which are not in this repository. The defaults rows therefore remain
+context — what this library does out of the box, beside a number produced by somebody else's
+configuration — and not a comparison this repository can claim to reproduce. The aligned rows are
+the ones that are pinned and replayed; these are not, and the difference is the point.
+
 **What had to be matched, and how it was found.** The first version of these rows used the `english`
 analyzer and read 0.3215 / 0.6788 against 0.3218 / 0.6789 — close enough to be called equal, and it
 was not: `english` splits a contraction into a stem and a fragment (`don't` becomes two tokens) where
