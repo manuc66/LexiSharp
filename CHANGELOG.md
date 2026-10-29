@@ -744,6 +744,12 @@ workflow.
   moves no figure: the C and `en_US.utf8` orders of the ids are identical on all three BEIR corpora,
   checked against every id.
 
+- **The sparse backend's two PostgreSQL rows are re-measured under the tie-break.** They were
+  published as `0.5200` (HNSW) and `0.5202` (exact scan) nDCG@10, with `0.8201` R@10 for the indexed
+  row: the page among equally-scored documents was the executor's. With the ordinal tie-break both
+  read `0.5216` / `0.4300` / `0.8179`, the same page the in-memory row returns. The run, the command
+  and what it still does not cover are on [the evaluation page](docs/evaluation.md).
+
 - **The vector and sparse engines write `tsv` on the insert, not only on a conflict.**
 
   Both `INSERT` statements listed `tsv` only in their `ON CONFLICT DO UPDATE` clause, so a document
