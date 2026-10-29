@@ -304,7 +304,7 @@ command.CommandText = $"CREATE INDEX IF NOT EXISTS {indexName} ON {_options.Qual
                 SELECT id, content, category, fields, 1 - ({_options.ContentField} <-> @query) AS score
                 FROM {_options.QualifiedTableName}
                 {where}
-                ORDER BY {_options.ContentField} <-> @query ASC, id ASC
+                ORDER BY {_options.ContentField} <-> @query ASC, {PostgresSchema.OrdinalIdTieBreak}
                 LIMIT @limit;
                 """;
         }
@@ -317,7 +317,7 @@ command.CommandText = $"CREATE INDEX IF NOT EXISTS {indexName} ON {_options.Qual
             SELECT id, content, category, fields, similarity({_options.ContentField}, @query) AS score
             FROM {_options.QualifiedTableName}
             WHERE {conditions}{filterSql}
-            ORDER BY score DESC, id ASC
+            ORDER BY score DESC, {PostgresSchema.OrdinalIdTieBreak}
             LIMIT @limit;
             """;
     }

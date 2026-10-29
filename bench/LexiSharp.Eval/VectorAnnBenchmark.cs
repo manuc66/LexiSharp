@@ -302,17 +302,17 @@ internal static class VectorAnnBenchmark
 
     /// <summary>
     /// The search statement this harness explains: a single-column cosine engine, the two parameters
-    /// <see cref="PostgresVectorSearchEngine"/> binds, and the metadata filter's fragment spliced
-    /// where the engine splices it. It is written out here rather than taken from the engine so that
-    /// the harness does not need the engine's internals, and <c>VectorAnnPlanTests</c> asserts the
-    /// two strings are equal — which is what makes the node reported beside a point the node a
-    /// search actually gets.
+    /// <see cref="PostgresVectorSearchEngine"/> binds, the metadata filter's fragment spliced where the
+    /// engine splices it, and the engine's ordinal id tie-break. It is written out here rather than
+    /// taken from the engine so that the harness does not need the engine's internals, and
+    /// <c>VectorAnnPlanTests</c> asserts the two strings are equal — which is what makes the node
+    /// reported beside a point the node a search actually gets.
     /// </summary>
     internal static string SearchStatement(PostgresVectorOptions options, string filterFragment = "") => $"""
         SELECT id, content, category, fields, text_fields, 1 - ("embedding" <=> @query::vector) AS score
         FROM {options.QualifiedTableName}
         WHERE "embedding" IS NOT NULL{filterFragment}
-        ORDER BY "embedding" <=> @query::vector
+        ORDER BY "embedding" <=> @query::vector, id COLLATE "C" ASC
         LIMIT @limit;
         """;
 

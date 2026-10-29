@@ -210,7 +210,7 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, I
                 SELECT id, content, category, fields, text_fields, pdb.score(id) AS score
                 FROM {_options.QualifiedTableName}
                 WHERE {_options.ContentField} ||| @query
-                ORDER BY pdb.score(id) DESC, id ASC
+                ORDER BY pdb.score(id) DESC, {PostgresSchema.OrdinalIdTieBreak}
                 {limitClause}
                 """;
 
@@ -235,7 +235,7 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, I
                 SELECT id, content, category, fields, text_fields, pdb.score(id) AS score
                 FROM {_options.QualifiedTableName}
                 WHERE {string.Join(" AND ", phraseConditions)}
-                ORDER BY pdb.score(id) DESC, id ASC
+                ORDER BY pdb.score(id) DESC, {PostgresSchema.OrdinalIdTieBreak}
                 {limitClause}
                 """;
 

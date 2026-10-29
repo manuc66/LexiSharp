@@ -294,7 +294,7 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
             SELECT id, content, category, fields, text_fields, {scoreExpression} AS score
             FROM {_options.QualifiedTableName}
             WHERE sparse IS NOT NULL{filters.Fragment}
-            ORDER BY sparse {_options.Operator} @query::sparsevec
+            ORDER BY sparse {_options.Operator} @query::sparsevec, {PostgresSchema.OrdinalIdTieBreak}
             LIMIT @limit;
             """;
 
