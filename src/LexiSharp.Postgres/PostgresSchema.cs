@@ -12,6 +12,26 @@ namespace LexiSharp.Postgres;
 public static class PostgresSchema
 {
     /// <summary>
+    /// The tie-break every SQL engine appends to its <c>ORDER BY</c>: the document id, ordinally.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>COLLATE "C"</c> is load-bearing. Ordering a <c>text</c> column under the database's default
+    /// collation is locale-sensitive — <c>en_US.utf8</c> folds case and ignores some punctuation, so
+    /// <c>a</c> sorts before <c>A</c> — while the in-memory engines break ties with
+    /// <c>string.CompareOrdinal</c>. The C collation compares bytes, which is that ordinal order.
+    /// </para>
+    /// <para>
+    /// Without a secondary key the order among exactly equal scores is whatever the executor produced,
+    /// and a page can differ between two plans of the same query. With it, the page is the one
+    /// <see cref="Ranking.TieBreak.DocumentId"/> documents, and the SQL engines agree with the
+    /// in-memory ones. On the three BEIR corpora this repository evaluates, the C and
+    /// <c>en_US.utf8</c> orders of the ids are identical, so no published row moves.
+    /// </para>
+    /// </remarks>
+    internal const string OrdinalIdTieBreak = "id COLLATE \"C\" ASC";
+
+    /// <summary>
     /// Idempotently installs <c>unaccent</c> and the documents table with its <c>tsv</c> column
     /// and GIN index.
     /// </summary>

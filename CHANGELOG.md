@@ -730,6 +730,20 @@ workflow.
 
 ### Fixed
 
+- **Every SQL engine breaks a tie by document id, ordinally.** The text, sparse and vector engines
+  ordered on the score (or the distance) alone, so the page among exactly equal scores was whatever
+  the executor produced. Measured on one server and four documents inserted in reverse id order: a
+  `Seq Scan` returns the heap order (`d4,d3,d2,d1`), an `Index Scan` over the HNSW graph returns
+  `d1,d2,d3,d4`, and nothing in the statement names either — the same query can page differently
+  after a plan change. The in-memory engines break ties on `string.CompareOrdinal` under the default
+  `TieBreak.DocumentId`, and the statements now append `id COLLATE "C" ASC`. The C collation is the
+  point: `en_US.utf8` folds case and orders `a` before `A`, while ordinal order puts `A` first. The
+  vector engine also compares the merged multi-column ranking by id, because a per-column tie-break
+  cannot order two documents that are equal in different columns. The fuzzy and ParadeDB statements
+  already carried an `id ASC` tie-break and now use the same ordinal spelling. The collation itself
+  moves no figure: the C and `en_US.utf8` orders of the ids are identical on all three BEIR corpora,
+  checked against every id.
+
 - **The vector and sparse engines write `tsv` on the insert, not only on a conflict.**
 
   Both `INSERT` statements listed `tsv` only in their `ON CONFLICT DO UPDATE` clause, so a document

@@ -249,7 +249,7 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable, I
             SELECT id, content, category, fields, text_fields, {rank} AS score
             FROM {_options.QualifiedTableName}
             WHERE ({gateCondition}){filters.Fragment}
-            ORDER BY score DESC
+            ORDER BY score DESC, {PostgresSchema.OrdinalIdTieBreak}
             LIMIT @limit;
             """;
 

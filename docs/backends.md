@@ -335,6 +335,13 @@ has put SQL in the user's hands.
 `FetchLimit` caps at 100 000 rows per query in every SQL engine, so an offset past it returns a
 short page rather than moving the whole table across the wire.
 
+Scores that are exactly equal are ordered by document id, ordinally, on every SQL engine — the page
+the in-memory engines return under the default `TieBreak.DocumentId`. The statements spell it
+`id COLLATE "C"` because the database's default collation is locale-sensitive and `en_US.utf8` sorts
+`a` before `A`. A bare `ORDER BY score DESC` leaves the order to the executor, so the same query can
+page differently after a plan change. `TieBreak.InsertionOrder` has no counterpart on a SQL table
+and is ignored there: the id order is the answer.
+
 BM25 scores are PostgreSQL-native, so they are **not** numerically comparable to
 `Bm25Scorer`/`TfIdfScorer` — use the hybrid engine's `ReciprocalRankFusionMerger` (or
 re-rank) for a single cross-engine ordering. Note the extension is **AGPL-3 licensed**: fine

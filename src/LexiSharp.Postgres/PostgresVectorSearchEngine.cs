@@ -523,6 +523,10 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
             .Where(x => x.Value >= options.MinimumScore)
             .Where(x => PostgresDocumentExclusion.Passes(options, x.Key))
             .OrderByDescending(x => x.Value)
+            // The per-column SQL now orders equal distances by id, but the merge across columns
+            // still sees them in column order; the ordinal id is what makes the merged page the
+            // one the in-memory engines return.
+            .ThenBy(x => x.Key, StringComparer.Ordinal)
             .Skip(options.Offset)
             .Take(options.Limit)
             .Select(x => new SearchResult(x.Key, x.Value, documents[x.Key]))
@@ -721,7 +725,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         SELECT id, content, category, fields, text_fields, {ScoreExpression(column)} AS score
         FROM {_options.QualifiedTableName}
         WHERE {SafeIdentifier.QuoteIdentifier(column)} IS NOT NULL{filterFragment}
-        ORDER BY {SafeIdentifier.QuoteIdentifier(column)} {_options.Operator} @query::vector
+        ORDER BY {SafeIdentifier.QuoteIdentifier(column)} {_options.Operator} @query::vector, {PostgresSchema.OrdinalIdTieBreak}
         LIMIT @limit;
         """;
 
