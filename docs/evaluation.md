@@ -535,20 +535,20 @@ The lane indexes the corpus into `PostgresSparseSearchEngine` — a `sparsevec` 
 coordinates, one per term the vector set carries, with an HNSW index at `m = 16` and
 `ef_construction = 64` (pgvector's defaults) — in a table named `lexisharp_eval_arguana`, which is
 dropped when the run ends. It then scores the corpus twice: with that index in place, and after
-`DROP INDEX`, which leaves the same column answered by an exact scan. Measured on 2026-10-26 on one
+`DROP INDEX`, which leaves the same column answered by an exact scan. Measured on 2026-10-29 on one
 host against a fresh container, 1 406 test queries, harness defaults (exponential gains),
 `--exclude-query-doc`:
 
 | ArguAna, `--exclude-query-doc` | nDCG@10 | MAP@10 | MRR@10 | R@10 |
 |---|---:|---:|---:|---:|
 | SPLADE-v3, in memory (`--sparse`, same run) | **0.5216** | 0.4300 | 0.4300 | 0.8179 |
-| `sparsevec` + HNSW, `hnsw.ef_search` 40 | 0.5200 | 0.4272 | 0.4272 | 0.8201 |
-| `sparsevec`, exact scan (index dropped) | 0.5202 | 0.4280 | 0.4280 | 0.8179 |
+| `sparsevec` + HNSW, `hnsw.ef_search` 40 | 0.5216 | 0.4300 | 0.4300 | 0.8179 |
+| `sparsevec`, exact scan (index dropped) | 0.5216 | 0.4300 | 0.4300 | 0.8179 |
 
-- **The index costs 0.0002 nDCG@10 here.** 0.5200 with the graph against 0.5202 without it is the
-  whole of what the HNSW candidate list of 40 costs on this corpus; the 0.0014 between the exact
-  row and the in-memory row is the same vectors summed by a different code path, and this run does
-  not apportion it between pgvector's arithmetic and the order of a page.
+- **The index costs nothing the metric can see here.** The graph and the exact scan both read
+  0.5216 / 0.4300 / 0.8179, and so does the in-memory row: on this corpus at `hnsw.ef_search = 40`
+  the HNSW candidate list of 40 does not cost a point at any printed place, and the arithmetic order
+  of the two SQL rows sits below them.
 - **The plan says which path answered, and the lane prints it.** `EXPLAIN` over the engine's own
   search shape returns `Index Scan using lexisharp_eval_arguana_sparse_hnsw on
   lexisharp_eval_arguana`, and the row's label is read from that plan, so a table cannot say "hnsw"
@@ -563,12 +563,12 @@ host against a fresh container, 1 406 test queries, harness defaults (exponentia
   called with query syntax off and hands the text to the encoder, which hashed it verbatim, so it
   scores every query. A query whose text had no vector is refused by the lane with its id rather
   than skipped.
-- **R@10 moves the other way, and the reason is not measured.** The exact row reads 0.8179 and the
-  indexed one 0.8201, so exactness is not an upper bound on R@10 here: the metric reads a page, the
-  SQL `ORDER BY` has no tie-break where the in-memory engine breaks ties by document id, and which
-  of several equally-scored documents fills rank 10 is then the executor's choice. That is a
-  candidate explanation for the difference; this run does not separate ties from rounding, and no
-  figure above depends on the explanation.
+- **The three rows agree, and the tie-break is what lets them.** Rank 10 is filled by whichever
+  equally-scored document the statement names, and the search now names one: `ORDER BY distance,
+  id COLLATE "C"` is the statement (see [the backends page](backends.md)), so the exact and indexed
+  rows return the page the in-memory engine returns. An earlier run of this lane published 0.8201
+  for the indexed row against 0.8179 for the exact one; that figure is withdrawn, and the changelog
+  records it.
 - **Not measured:** the query-document-kept convention (the SQL counterpart of the 0.3836 row),
   NFCorpus and SciFact (a sparse row needs a vector set per corpus, and ArguAna's is the one this
   page measures both in memory and in PostgreSQL), recall@k as a ratio against an exact top-k, the
