@@ -20,6 +20,17 @@ workflow.
 
 ### Changed
 
+- **The store path is timed, which is the path a deployment runs.** A new `store` lane writes a corpus
+  into `SegmentedTextIndex`, commits it, reopens it three ways and measures the same three queries as
+  the cursor lane. At 100,000 documents: building the in-memory index takes **4.5-4.7 s** while opening
+  the committed segment takes **24-29 ms** (57.5 MB, about 170× less), the store costs **3.2-6.3×** the
+  in-memory index on a tail query and **1.1-1.6×** on a head term, a decoded-postings cache halves the
+  tail (6.30 → 3.20 µs) because it is what lets the cursor pass engage at all, and a store search
+  allocates **6.6-7.8 KB** against 0.7-1.0 KB in memory because it decodes the page it returns. Mapping
+  costs **2.0×** on a 1 µs tail query and **1.14×** on a 1.2 ms head one, so the 1.10-1.14× the
+  indexing page records belongs with the query rather than with the mode. Two runs, every p50 within
+  5 %; one corpus, `Limit: 10`, journal disabled for the write, and nothing above 100,000 documents.
+
 - **The sparse knobs are settled: the truncation and budget margins add up, and the 8-bit export loses
   on two corpora of three.** NFCorpus encoded at 512 tokens with a 128-term budget reads nDCG@10
   **0.3627**, against 0.3567 at (256, 128), 0.3596 at (256, 256) and 0.3665 at (512, 256): doubling

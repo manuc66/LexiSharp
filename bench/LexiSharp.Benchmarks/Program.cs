@@ -35,6 +35,13 @@ public static class Program
             return;
         }
 
+        // What the store a deployment runs costs per query: write, commit, reopen, search. See StoreLane.
+        if (args.Length > 0 && args[0] == "store")
+        {
+            StoreLane.Run(args[1..]);
+            return;
+        }
+
         // int8 versus float32 on the same vectors: memory, recall@10 and scan latency. See QuantizationLane.
         if (args.Length > 0 && args[0] == "quantize")
         {

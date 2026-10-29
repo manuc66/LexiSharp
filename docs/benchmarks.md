@@ -1173,9 +1173,61 @@ here. *This* section measures the plain tail query and the head term at `Limit: 
 BM25, `k1 = 1.5`, `b = 0.75`, the default tokenizer and the in-memory index. Filters and facets were
 checked for parity and are not timed. The segment-backed store path was checked for parity (a
 committed store opened with `decodedCacheEntries` lends its arrays; one without the cache falls back to
-the accumulator and serves the same page) and is **not** timed. P99 under concurrency, query mixing,
-other analyzers, other scorers, other `Limit` values and corpora above 1,000,000 documents are not
-measured in this lane.
+the accumulator and serves the same page) and is timed in the [store lane](#store-lane-store-what-the-deployable-path-costs-per-query)
+below. P99 under concurrency, query mixing, other analyzers, other scorers, other `Limit` values and
+corpora above 1,000,000 documents are not measured in this lane.
+
+## Store lane (`store`): what the deployable path costs per query
+
+Every latency above is measured on `InMemoryTextIndex`, built in the process that times it. That is the
+right instrument for comparing scorers and scoring passes, and it is not the path a service runs: a
+corpus that survives a restart lives in `SegmentedTextIndex`, and what a deployment needs to know is
+what a query costs **after a reopen**.
+
+```bash
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- store 100000
+```
+
+Four configurations over the same 100,000-document Zipf corpus and the same three queries as the cursor
+lane: the in-memory index, the store opened as an array, the same with a 200,000-entry decoded-postings
+cache, and the store mapped. Two runs on 2026-10-29 at a one-minute load of 1.4-1.5, every p50 within
+5 % of its twin.
+
+**Write, commit, reopen.** Building the in-memory index takes **4.5-4.7 s**. Writing the same documents
+into a store is **1.2-1.3 s** of overlay plus **0.82 s** of commit, which lands **57.5 MB** in one
+segment file. Opening that segment takes **24-29 ms** — about **170×** less than building it — and that
+is what the durability story is worth: a restart re-reads 57.5 MB instead of re-tokenising the corpus.
+
+| query | in-memory | store, array | store, array + cache | store, mapped |
+|---|---:|---:|---:|---:|
+| one tail term (df 9) | 1.00 µs | 6.30 µs | **3.20 µs** | 12.90 µs |
+| three tail terms (df 29) | 2.20 µs | 10.20 µs | **6.25 µs** | 27.70 µs |
+| one head term (df 95,402) | 1.20 ms | 1.66 ms | **1.32 ms** | 1.90 ms |
+
+The store is **3.2× to 6.3×** the in-memory index on a tail query and **1.1× to 1.6×** on a head term,
+depending on how it is opened. The cache is not a small win on the tail: it is what lets the
+document-at-a-time cursor pass run at all, since a store without one cannot lend flat posting arrays. At
+10,000 documents the same row reads 2.40 µs with and without the cache, and the reason is the
+accumulation floor rather than the cache — that corpus's tail query has one posting entry, below the
+eight the accumulating path needs, so neither configuration reaches either pass.
+
+**Mapping is not a constant multiplier.** `docs/indexing.md` records 1.10-1.14× for the mapped mode
+against the array one. This lane reads **2.0×** on the 1 µs tail query and **1.14×** on the 1.2 ms head
+query: a mapped read is an OS call and a page fault per block, which is the whole cost of a query that
+takes a microsecond and a rounding on one that takes a millisecond. The multiplier belongs with the
+query, not with the mode.
+
+**A store search allocates 6.6-7.8 KB per query against 0.7-1.0 KB in memory**, and that is the page
+rather than the index: the store decodes the documents it returns, while the in-memory index hands back
+objects it already holds. Reading the two allocation columns as one comparison would compare what a
+response costs to build against what it costs to borrow.
+
+**What is not measured.** One corpus (Zipf, 50-token documents), one host, `Limit: 10`, the default
+BM25 and tokenizer, and the write with the journal disabled — the journal's per-write cost under each
+flush policy is `docs/indexing.md`'s table, measured by `StoreWriteBenchmarks`. Concurrency is the
+`concurrency` lane's subject and is measured on the in-memory index; the store under 1/2/4/8 callers is
+not measured. Nor are the overlay's read path (`Add` before `Commit`), `Merge`, a store whose segment
+does not fit the page cache, or any corpus larger than 100,000 documents.
 
 ## Dense quantisation lane (`quantize`)
 
@@ -1521,6 +1573,8 @@ dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*QueryAl
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- scale
 # tail-query p50/p99, allocation and the cursor pass's density crossing (see the cursor lane above):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- cursor 100000 --sweep --both
+# the path a deployment runs: write, commit, reopen and query the same corpus (see the store lane above):
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- store 100000
 # posting entries a block bound can skip, per query and corpus size (see the pruning lane above):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- wand 100000
 # one shared index at 1/2/4/8 callers, raw and synchronized (see the concurrency lane above):

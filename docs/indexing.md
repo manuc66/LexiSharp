@@ -380,8 +380,11 @@ using var store = new SegmentedTextIndex("./corpus", mode: SegmentSourceMode.Map
 Opening is at parity — a mapped source does *not* open slower, which corrects an earlier figure taken
 on a loaded host. What mapping saves is the segment's own bytes, about 300 a document, and that saving
 is what matters once a segment is large enough that its copy into memory stops the store fitting. What
-it costs is a constant ~1.11× on every query and a lifetime: a mapped store holds a view over a file and
-must be disposed, after which it is unusable. An `Array` store holds nothing that needs releasing.
+it costs is a multiplier on every query and a lifetime: a mapped store holds a view over a file and
+must be disposed, after which it is unusable. An `Array` store holds nothing that needs releasing. The
+multiplier above was measured on queries of about a millisecond; on the microsecond tail queries the
+[store lane](../benchmarks.md#store-lane-store-what-the-deployable-path-costs-per-query) reads **2.0×**
+for the same choice, so what mapping costs belongs with the query and not with the mode.
 
 A segment stores the whole document — its id, its text, its metadata fields, its category and its text
 fields — so a document reads back as the document that was written.
