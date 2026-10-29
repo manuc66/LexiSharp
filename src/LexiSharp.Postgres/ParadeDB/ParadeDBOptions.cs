@@ -34,6 +34,13 @@ public sealed record ParadeDBOptions
     /// plain column expression. The default (<c>pdb.simple</c> with ASCII folding) mirrors
     /// LexiSharp's diacritic-insensitive, lowercase normalization.
     /// </summary>
+    /// <remarks>
+    /// This is the one value in this package that reaches DDL <b>verbatim</b>: a Tantivy tokenizer is
+    /// an expression, not a name that could be allow-listed like <see cref="Schema"/> or
+    /// <see cref="Table"/>. Treat it as trusted configuration — the same class as a connection
+    /// string — and never build it from a request. Every other value a caller supplies is a bound
+    /// parameter; <c>docs/backends.md</c> states the same contract.
+    /// </remarks>
     public string ContentTokenizer { get; init; } = "pdb.simple('ascii_folding=true')";
 
     /// <summary>
