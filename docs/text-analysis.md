@@ -327,6 +327,11 @@ Gini), keeps the best positive one, and recurses. The first question is therefor
 separates the labels most. Ties are broken by ordinal feature order, so a corpus always produces
 the same tree.
 
+A question can carry a cost. `QuestionCost` maps a feature name to a positive number, and the
+split score is divided by it, so a cheap question that is almost as discriminative wins over an
+expensive one; the chosen split's `DecisionSplitMetrics.Cost` reports what it cost. The option is
+passed through to every tree in the forest.
+
 `Explain` returns the questions a text answered and the leaf it reached; `Describe` renders the
 whole tree. On the nine-document Support/Billing/Shipping corpus used by the tests:
 
