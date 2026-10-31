@@ -332,6 +332,11 @@ split score is divided by it, so a cheap question that is almost as discriminati
 expensive one; the chosen split's `DecisionSplitMetrics.Cost` reports what it cost. The option is
 passed through to every tree in the forest.
 
+The tree can also decline. `MinLeafProbability` makes `Predict` and `PredictBest` return nothing
+when the winning probability is below it, and `MinLeafSupport` does the same when the reached
+leaf's summed weight is too small. `Explain` still returns the path and the leaf, so a caller can
+see why the answer was withheld. The forest has `MinProbability` on its averaged distribution.
+
 `Explain` returns the questions a text answered and the leaf it reached; `Describe` renders the
 whole tree. On the nine-document Support/Billing/Shipping corpus used by the tests:
 

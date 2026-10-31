@@ -371,6 +371,12 @@ public sealed class DecisionTreeClassifier<TItem>
         for (int i = 0; i < ranked.Count; i++)
             ranked[i] = ranked[i] with { Probability = ranked[i].Probability / total };
 
+        if (leaf.Weight < _options.MinLeafSupport)
+            return Array.Empty<ClassificationResult>();
+
+        if (ranked[0].Probability < _options.MinLeafProbability)
+            return Array.Empty<ClassificationResult>();
+
         if (ranked.Count > limit)
             ranked.RemoveRange(limit, ranked.Count - limit);
 
