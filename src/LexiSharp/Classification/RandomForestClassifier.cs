@@ -163,6 +163,7 @@ public sealed class RandomForestClassifier<TItem>
                     MinDocumentFrequency = _options.MinDocumentFrequency,
                     Criterion = _options.Criterion,
                     Alpha = _options.Alpha,
+                    QuestionCost = _options.QuestionCost,
                 });
 
             tree.Train(itemArray, allowed);

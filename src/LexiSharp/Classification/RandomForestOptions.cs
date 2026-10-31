@@ -43,6 +43,12 @@ public sealed record RandomForestOptions
     /// <summary>Additive smoothing applied to each tree's leaf counts. Default: <c>1</c>.</summary>
     public double Alpha { get; init; } = 1.0;
 
+    /// <summary>
+    /// The cost of asking any question about a feature, or null for a cost of <c>1</c>; passed to
+    /// every tree. Costs must be finite and positive. Default: <c>null</c>.
+    /// </summary>
+    public Func<string, double>? QuestionCost { get; init; }
+
     internal bool IsValid =>
         Trees >= 1
         && MaxDepth >= 0
