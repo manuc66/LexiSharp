@@ -416,6 +416,16 @@ linear.PredictBest("i cannot connect to the internet");
 linear.TopFeatures("Support", count: 5);
 ```
 
+### Calibration
+
+None of the distributions above is calibrated. `TemperatureCalibrator` fits one temperature on a
+validation set by minimizing log-loss; it preserves the ranking — the argmax is the same at every
+positive temperature — and softens or sharpens the confidence. `CalibratedClassifier.Fit(model,
+validation)` wraps a trained classifier with the fitted temperature, so `PredictBest` is unchanged
+and `Predict` reports the calibrated distribution. One parameter cannot repair a model that is
+systematically wrong, and a temperature fitted on one corpus need not transfer to another: measure
+log-loss on held-out data after applying it.
+
 ### Unsupervised: dividing a corpus
 
 ```csharp
