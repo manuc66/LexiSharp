@@ -138,7 +138,9 @@ was designed from:
   separating tree is NP-hard), and a leaf's distribution is the smoothed label mix of the documents
   that reached it, not a probability of correctness. A numeric feature is learned as an inequality
   (`hour >= 14`), so adjacent values generalize; a categorical bucket, a transition and a process
-  hierarchy are still flat names. On the standard `20news-bydate` split the
+  hierarchy are still flat names. A feature can be present, absent or unknown; a binary question
+  answers no for unknown, and `MaskedFeatureSource` is the caller-side seam for excluding a
+  dimension when an item is generic or excluded. On the standard `20news-bydate` split the
   single tree reads **0.446** accuracy / **0.494** macro-F1, the forest **0.662** / **0.658**, and
   Naive Bayes **0.757** / **0.729**: the forest narrows the gap but does not close it, and a leaf
   is still not calibrated. The command and the pin are in

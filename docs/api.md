@@ -146,7 +146,9 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `FeaturePresenceQuestion` | record | `FeatureQuestion` | True when the item carries a given feature — the only question the built-in builders ask. |
 | `FeatureQuestion` | record | — | A yes/no question asked of an item's features — the unit a question tree is built from. |
 | `FeatureSet` | class | `IFeatureSet` | The default IFeatureSet: a set of names with ordinal comparison, optionally with a numeric value attached to some of them. |
+| `FeatureState` | enum | — | What a feature set knows about one feature: it is present, it is known to be absent, or the source could not determine it. A binary question answers no for both… |
 | `IdfMode` | enum | — | How term evidence is scaled by corpus rarity during classification. Term frequency is always counted from the training corpus; this knob decides whether (and… |
+| `MaskedFeatureSource<TItem>` | class | `IFeatureSource` | Suppresses an inner feature source for the items a mask predicate selects, and reports the mask's own features instead. |
 | `NaiveBayesClassifier` | class | `IIncrementalTextClassifier`, `IReinforceableTextClassifier`, `ITextClassifier`, `IWeightedPredictor` | Multinomial Naive Bayes trained on labelled documents. |
 | `NaiveBayesOptions` | record | — | Tunable knobs for NaiveBayesClassifier; the defaults reproduce the classic Laplace-smoothed, unweighted multinomial Naive Bayes. |
 | `NumericThresholdQuestion` | record | `FeatureQuestion` | True when a feature's numeric value is at or above the threshold. A missing value — the feature is absent, carries no number, or carries NaN — answers no, which… |
