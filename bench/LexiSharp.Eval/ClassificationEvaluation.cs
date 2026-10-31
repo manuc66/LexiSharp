@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using LexiSharp.Classification;
 using LexiSharp.Core;
 
@@ -18,6 +19,15 @@ internal sealed record ClassificationMetrics(
 internal sealed record ClassificationSplit(
     IReadOnlyList<ClassificationDocument> Fit,
     IReadOnlyList<ClassificationDocument> Validation);
+
+/// <summary>One point of the forest's tuning grid.</summary>
+internal sealed record ForestCandidate(int MaxDepth, double FeatureSubset, int MinDocumentsPerLeaf);
+
+/// <summary>The grid point the validation split chose, and the score it won with.</summary>
+internal sealed record TunedForest(
+    ForestCandidate Candidate,
+    double ValidationAccuracy,
+    double ValidationMacroF1);
 
 /// <summary>
 /// Trains and scores the two classifiers on a labelled corpus. The measurement is deliberately
@@ -111,6 +121,52 @@ internal static class ClassificationEvaluation
 
         return best.Candidate;
     }
+
+    /// <summary>
+    /// Trains the forest on the fit split and scores every candidate on the validation split, then
+    /// returns the best one. The test split is deliberately absent from the signature.
+    /// </summary>
+    public static TunedForest TuneForest(
+        IReadOnlyList<ClassificationDocument> fit,
+        IReadOnlyList<ClassificationDocument> validation,
+        IReadOnlyList<ForestCandidate> candidates,
+        RandomForestOptions baseOptions)
+    {
+        ArgumentNullException.ThrowIfNull(fit);
+        ArgumentNullException.ThrowIfNull(validation);
+        ArgumentNullException.ThrowIfNull(candidates);
+        ArgumentNullException.ThrowIfNull(baseOptions);
+
+        if (candidates.Count == 0)
+            throw new ArgumentException("At least one candidate is required.", nameof(candidates));
+
+        var scored = new List<(ForestCandidate Candidate, double Score)>(candidates.Count);
+        var measured = new Dictionary<ForestCandidate, ClassificationMetrics>(candidates.Count);
+
+        foreach (var candidate in candidates)
+        {
+            var options = baseOptions with
+            {
+                MaxDepth = candidate.MaxDepth,
+                FeatureSubsetFraction = candidate.FeatureSubset,
+                MinDocumentsPerLeaf = candidate.MinDocumentsPerLeaf,
+            };
+
+            var metrics = MeasureRandomForest(fit, validation, options);
+            scored.Add((candidate, metrics.Accuracy));
+            measured[candidate] = metrics;
+        }
+
+        ForestCandidate best = SelectBest(scored, CandidateKey);
+        ClassificationMetrics bestMetrics = measured[best];
+
+        return new TunedForest(best, bestMetrics.Accuracy, bestMetrics.MacroF1);
+    }
+
+    private static string CandidateKey(ForestCandidate candidate) =>
+        string.Create(
+            CultureInfo.InvariantCulture,
+            $"{candidate.MaxDepth:D2}|{candidate.FeatureSubset:F2}|{candidate.MinDocumentsPerLeaf:D2}");
 
     public static ClassificationMetrics MeasureNaiveBayes(
         IReadOnlyList<ClassificationDocument> train,
