@@ -121,6 +121,8 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
+        await EnsureEmbeddingSignatureAsync(connection, cancellationToken).ConfigureAwait(false);
+
         // CREATE INDEX runs on its own command: HNSW/IVFFlat builds must not be part of a
         // multi-statement implicit transaction, and IVFFlat requires rows.
         if (_options.IndexMethod == VectorIndexMethod.IvfFlat)
@@ -161,6 +163,67 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         _schemaReady = true;
     }
 
+    private string MetaTableName =>
+        $"{SafeIdentifier.QuoteIdentifier(_options.Schema)}.{SafeIdentifier.QuoteIdentifier(_options.Table + "_meta")}";
+
+    private async Task EnsureEmbeddingSignatureAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        if (_embeddings is not IEmbeddingSignatureProvider signed || signed.EmbeddingSignature is null)
+            return;
+
+        string signature = signed.EmbeddingSignature;
+        string meta = MetaTableName;
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = $"CREATE TABLE IF NOT EXISTS {meta} (key text PRIMARY KEY, value text NOT NULL);"; // NOSONAR:S2077
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        string? existing;
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = $"SELECT value FROM {meta} WHERE key = 'embedding_signature';"; // NOSONAR:S2077
+            existing = (string?)await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        if (existing is null)
+        {
+            long rows;
+
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = $"SELECT COUNT(*) FROM {_options.QualifiedTableName};"; // NOSONAR:S2077
+                rows = (long)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
+            }
+
+            if (rows > 0 && !_options.AllowSignatureMismatch)
+                throw new InvalidOperationException(
+                    $"The table '{_options.QualifiedTableName}' has {rows} row(s) but no embedding signature. " +
+                    "Its vectors cannot be tied to the current provider; re-embed the corpus, or set " +
+                    "AllowSignatureMismatch to adopt it knowingly.");
+        }
+        else if (!string.Equals(existing, signature, StringComparison.Ordinal))
+        {
+            if (!_options.AllowSignatureMismatch)
+                throw new InvalidOperationException(
+                    $"The table '{_options.QualifiedTableName}' was built with embedding signature '{existing}', " +
+                    $"not '{signature}'. Re-embed the corpus, or set AllowSignatureMismatch to adopt it knowingly.");
+        }
+        else
+        {
+            return;
+        }
+
+        await using var write = connection.CreateCommand();
+        write.CommandText = existing is null
+            ? $"INSERT INTO {meta} (key, value) VALUES ('embedding_signature', @signature) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;" // NOSONAR:S2077
+            : $"UPDATE {meta} SET value = @signature WHERE key = 'embedding_signature';"; // NOSONAR:S2077
+        write.Parameters.AddWithValue("signature", signature);
+        await write.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task CreateIndexAsync(NpgsqlConnection connection, string column, string indexBase, CancellationToken cancellationToken)
     {
         var indexName = SafeIdentifier.QuoteIdentifier($"{indexBase}_{_options.IndexMethod.ToString().ToLowerInvariant()}");
@@ -180,7 +243,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         using var connection = _dataSource.OpenConnection();
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"DROP TABLE IF EXISTS {_options.QualifiedTableName}"; // NOSONAR:S2077
+        command.CommandText = $"DROP TABLE IF EXISTS {MetaTableName}; DROP TABLE IF EXISTS {_options.QualifiedTableName}"; // NOSONAR:S2077
         command.ExecuteNonQuery();
     }
 
@@ -189,14 +252,142 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
     {
         ArgumentNullException.ThrowIfNull(documents);
 
-        using var connection = _dataSource.OpenConnection();
+        IReadOnlyList<SearchDocument> materialized = documents as IReadOnlyList<SearchDocument>
+            ?? documents.ToList();
 
-        using var command = connection.CreateCommand();
-        command.CommandText = $"TRUNCATE {_options.QualifiedTableName}"; // NOSONAR:S2077
-        command.ExecuteNonQuery();
+        IndexAsync(materialized).GetAwaiter().GetResult();
+    }
 
-        foreach (var document in documents)
-            Add(document);
+    /// <summary>
+    /// Replaces the table's contents, embedding the whole corpus in one provider call when the
+    /// provider implements <see cref="IBatchEmbeddingProvider"/>. Prefer this over the blocking
+    /// <see cref="Index"/>.
+    /// </summary>
+    /// <param name="documents">The new corpus; the table is truncated first.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="documents"/> is <see langword="null"/>.</exception>
+    public async Task IndexAsync(
+        IReadOnlyList<SearchDocument> documents,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(documents);
+
+        if (_options.EmbeddingBatchSize < 1)
+            throw new InvalidOperationException("EmbeddingBatchSize must be at least 1.");
+
+        for (int i = 0; i < documents.Count; i++)
+            ArgumentNullException.ThrowIfNull(documents[i]);
+
+        // Embed before opening the transaction: a model call is the slowest step and holding the
+        // table lock for its duration would block every reader. The vectors are held in memory
+        // (small: one float per dimension) while the tokenizer's per-batch arrays are chunked.
+        List<string>? columns = null;
+        float[][]? singleVectors = null;
+        float[][][]? columnVectors = null;
+
+        if (_options.EmbeddingColumns is { Count: > 0 } sources)
+        {
+            columns = sources.Keys.ToList();
+            var perColumn = new float[columns.Count][][];
+
+            for (int c = 0; c < columns.Count; c++)
+            {
+                string[] texts = new string[documents.Count];
+
+                for (int i = 0; i < documents.Count; i++)
+                    texts[i] = EmbeddingSource(documents[i], sources[columns[c]]);
+
+                perColumn[c] = await EmbedTextsAsync(texts, columns[c], cancellationToken).ConfigureAwait(false);
+            }
+
+            columnVectors = new float[documents.Count][][];
+
+            for (int i = 0; i < documents.Count; i++)
+            {
+                columnVectors[i] = new float[columns.Count][];
+
+                for (int c = 0; c < columns.Count; c++)
+                    columnVectors[i][c] = perColumn[c][i];
+            }
+        }
+        else
+        {
+            string[] texts = new string[documents.Count];
+
+            for (int i = 0; i < documents.Count; i++)
+                texts[i] = EmbeddingSource(documents[i], _options.EmbeddingTextField);
+
+            singleVectors = await EmbedTextsAsync(texts, column: null, cancellationToken).ConfigureAwait(false);
+        }
+
+        // Truncate and insert in one short transaction: a failed insert rolls the whole
+        // replacement back, so the previous corpus stays queryable.
+        await using NpgsqlConnection connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = $"TRUNCATE {_options.QualifiedTableName}"; // NOSONAR:S2077
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        if (columns is not null)
+        {
+            for (int i = 0; i < documents.Count; i++)
+                await InsertMultiAsync(connection, transaction, documents[i], columns, columnVectors![i], cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            for (int i = 0; i < documents.Count; i++)
+                await InsertSingleAsync(connection, transaction, documents[i], singleVectors![i], cancellationToken).ConfigureAwait(false);
+        }
+
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<float[][]> EmbedTextsAsync(
+        IReadOnlyList<string> texts,
+        string? column,
+        CancellationToken cancellationToken)
+    {
+        float[][] vectors = new float[texts.Count][];
+
+        if (_embeddings is IBatchEmbeddingProvider batch)
+        {
+            for (int start = 0; start < texts.Count; start += _options.EmbeddingBatchSize)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                int count = Math.Min(_options.EmbeddingBatchSize, texts.Count - start);
+                string[] chunk = new string[count];
+
+                for (int i = 0; i < count; i++)
+                    chunk[i] = texts[start + i];
+
+                IReadOnlyList<ReadOnlyMemory<float>> embedded =
+                    column is not null && _embeddings is IColumnAwareBatchEmbeddingProvider columnBatch
+                        ? await columnBatch.GetTextEmbeddingsAsync(chunk, EmbeddingUse.Passage, column, cancellationToken).ConfigureAwait(false)
+                        : await batch.GetTextEmbeddingsAsync(chunk, EmbeddingUse.Passage, cancellationToken).ConfigureAwait(false);
+
+                if (embedded.Count != count)
+                    throw new InvalidOperationException(
+                        $"The provider returned {embedded.Count} embeddings for {count} documents.");
+
+                for (int i = 0; i < count; i++)
+                    vectors[start + i] = embedded[i].ToArray();
+            }
+
+            return vectors;
+        }
+
+        for (int i = 0; i < texts.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            vectors[i] = await EmbedAsync(texts[i], EmbeddingUse.Passage, column, cancellationToken).ConfigureAwait(false);
+        }
+
+        return vectors;
     }
 
     /// <inheritdoc />
@@ -234,6 +425,16 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
     {
         ArgumentNullException.ThrowIfNull(document);
 
+        await using NpgsqlConnection connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        await InsertDocumentAsync(connection, transaction: null, document, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task InsertDocumentAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        SearchDocument document,
+        CancellationToken cancellationToken)
+    {
         var sources = _options.EmbeddingColumns;
 
         if (sources is null)
@@ -242,29 +443,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
                 EmbeddingSource(document, _options.EmbeddingTextField),
                 EmbeddingUse.Passage, column: null, cancellationToken).ConfigureAwait(false);
 
-            await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-            await using var command = connection.CreateCommand();
-
-            string tsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content", "EXCLUDED.text_fields");
-            string tsvInsertExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "@content", "@text_fields");
-
-            string insertSql = $"""
-                INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, embedding, tsv)
-                VALUES (@id, @content, @category, @fields, @text_fields, @embedding::vector, {tsvInsertExpr})
-                ON CONFLICT (id) DO UPDATE
-                    SET content = EXCLUDED.content,
-                        category = EXCLUDED.category,
-                        fields = EXCLUDED.fields,
-                        text_fields = EXCLUDED.text_fields,
-                        embedding = EXCLUDED.embedding,
-                        tsv = {tsvExpr};
-                """;
-
-            // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); values are parameters.
-            command.CommandText = insertSql; // NOSONAR:S2077
-            AddCommonParameters(command, document);
-            command.Parameters.AddWithValue("embedding", VectorText.Format(embedding));
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            await InsertSingleAsync(connection, transaction, document, embedding, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -279,8 +458,51 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
                 EmbeddingUse.Passage, columns[i], cancellationToken).ConfigureAwait(false);
         }
 
-        await using var multiConnection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        await using var multiCommand = multiConnection.CreateCommand();
+        await InsertMultiAsync(connection, transaction, document, columns, embeddings, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task InsertSingleAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        SearchDocument document,
+        float[] embedding,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+
+        string tsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content", "EXCLUDED.text_fields");
+        string tsvInsertExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "@content", "@text_fields");
+
+        string insertSql = $"""
+            INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, embedding, tsv)
+            VALUES (@id, @content, @category, @fields, @text_fields, @embedding::vector, {tsvInsertExpr})
+            ON CONFLICT (id) DO UPDATE
+                SET content = EXCLUDED.content,
+                    category = EXCLUDED.category,
+                    fields = EXCLUDED.fields,
+                    text_fields = EXCLUDED.text_fields,
+                    embedding = EXCLUDED.embedding,
+                    tsv = {tsvExpr};
+            """;
+
+        // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); values are parameters.
+        command.CommandText = insertSql; // NOSONAR:S2077
+        AddCommonParameters(command, document);
+        command.Parameters.AddWithValue("embedding", VectorText.Format(embedding));
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task InsertMultiAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        SearchDocument document,
+        List<string> columns,
+        float[][] embeddings,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
 
         string columnList = string.Join(", ", columns.Select(c => SafeIdentifier.QuoteIdentifier($"{c}_embedding")));
         string parameterList = string.Join(", ", columns.Select((_, i) => $"@e{i}::vector"));
@@ -303,13 +525,13 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
             """;
 
         // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); values are parameters.
-        multiCommand.CommandText = insertMultiSql; // NOSONAR:S2077
-        AddCommonParameters(multiCommand, document);
+        command.CommandText = insertMultiSql; // NOSONAR:S2077
+        AddCommonParameters(command, document);
 
         for (int i = 0; i < columns.Count; i++)
-            multiCommand.Parameters.AddWithValue($"e{i}", VectorText.Format(embeddings[i]));
+            command.Parameters.AddWithValue($"e{i}", VectorText.Format(embeddings[i]));
 
-        await multiCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static void AddCommonParameters(NpgsqlCommand command, SearchDocument document)

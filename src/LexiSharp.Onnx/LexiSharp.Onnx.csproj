@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <RootNamespace>LexiSharp.Onnx</RootNamespace>
+    <PackageId>LexiSharp.Onnx</PackageId>
+    <Title>LexiSharp.Onnx</Title>
+    <Description>ONNX Runtime plumbing for LexiSharp: a dense text encoder implementing IEmbeddingProvider and a pairwise cross-encoder implementing ICrossEncoderScorer, with BERT/WordPiece and SentencePiece tokenizers. No model ships; the caller supplies the .onnx file and the tensor names.</Description>
+    <Authors>manu</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>search;retrieval;embeddings;onnx;onnxruntime;cross-encoder;reranking;semantic-search;tokenizer</PackageTags>
+    <IsPackable>true</IsPackable>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- Measured: a Native AOT console referencing this package published and ran. The
+         repository's own AOT smoke test does not include it yet; see the package README. -->
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.31.0" />
+    <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="LexiSharp.Onnx.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../LexiSharp/LexiSharp.csproj" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

@@ -47,13 +47,14 @@ public partial class VersionTests
         }
     }
 
-    /// <summary>The four library packages, by assembly name. All four are referenced by this project.</summary>
+    /// <summary>The five library packages, by assembly name. All five are referenced by this project.</summary>
     private static readonly string[] ShippedAssemblies =
     [
         "LexiSharp",
         "LexiSharp.AspNetCore",
         "LexiSharp.MessagePack",
         "LexiSharp.Postgres",
+        "LexiSharp.Onnx",
     ];
 
     [GeneratedRegex(@"<Version>(?<value>[^<]*)</Version>")]

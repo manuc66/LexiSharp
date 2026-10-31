@@ -19,7 +19,7 @@ internal static class Program
     /// globbed: a glob over <c>bin</c> silently drops a package that the current build did not
     /// produce, and a reference page missing a package is worse than a build that stops.
     /// </summary>
-    private static readonly string[] Packages = ["LexiSharp", "LexiSharp.MessagePack", "LexiSharp.Postgres", "LexiSharp.AspNetCore"];
+    private static readonly string[] Packages = ["LexiSharp", "LexiSharp.MessagePack", "LexiSharp.Postgres", "LexiSharp.AspNetCore", "LexiSharp.Onnx"];
 
     public static int Main(string[] args)
     {

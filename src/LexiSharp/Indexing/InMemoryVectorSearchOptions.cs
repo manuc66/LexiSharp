@@ -38,4 +38,11 @@ public sealed record InMemoryVectorSearchOptions
     /// The stored representation. Default <see cref="VectorQuantization.None"/>.
     /// </summary>
     public VectorQuantization Quantization { get; init; } = VectorQuantization.None;
+
+    /// <summary>
+    /// Maximum number of texts handed to an <see cref="Core.IBatchEmbeddingProvider"/> in one
+    /// call during <see cref="InMemoryVectorSearchEngine.Index"/>. Bounds the tokenizer and tensor
+    /// memory a large corpus can allocate at once. Default <c>128</c>.
+    /// </summary>
+    public int EmbeddingBatchSize { get; init; } = 128;
 }

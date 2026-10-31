@@ -1,0 +1,264 @@
+{
+  "version": "1.0",
+  "truncation": null,
+  "padding": null,
+  "added_tokens": [
+    {
+      "id": 0,
+      "content": "<unk>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    }
+  ],
+  "normalizer": null,
+  "pre_tokenizer": {
+    "type": "Whitespace"
+  },
+  "post_processor": null,
+  "decoder": null,
+  "model": {
+    "type": "BPE",
+    "dropout": null,
+    "unk_token": null,
+    "continuing_subword_prefix": null,
+    "end_of_word_suffix": null,
+    "fuse_unk": false,
+    "byte_fallback": false,
+    "ignore_merges": false,
+    "vocab": {
+      "<unk>": 0,
+      "a": 1,
+      "c": 2,
+      "d": 3,
+      "e": 4,
+      "f": 5,
+      "g": 6,
+      "h": 7,
+      "i": 8,
+      "k": 9,
+      "l": 10,
+      "m": 11,
+      "n": 12,
+      "o": 13,
+      "q": 14,
+      "r": 15,
+      "s": 16,
+      "t": 17,
+      "u": 18,
+      "v": 19,
+      "w": 20,
+      "x": 21,
+      "y": 22,
+      "se": 23,
+      "en": 24,
+      "ar": 25,
+      "ch": 26,
+      "sear": 27,
+      "search": 28,
+      "al": 29,
+      "an": 30,
+      "cu": 31,
+      "do": 32,
+      "el": 33,
+      "er": 34,
+      "gi": 35,
+      "hel": 36,
+      "ic": 37,
+      "ld": 38,
+      "lo": 39,
+      "men": 40,
+      "ne": 41,
+      "or": 42,
+      "qu": 43,
+      "wor": 44,
+      "engi": 45,
+      "cumen": 46,
+      "documen": 47,
+      "ery": 48,
+      "hello": 49,
+      "query": 50,
+      "world": 51,
+      "engine": 52,
+      "document": 53,
+      "den": 54,
+      "et": 55,
+      "ev": 56,
+      "ex": 57,
+      "fu": 58,
+      "io": 59,
+      "iev": 60,
+      "lex": 61,
+      "man": 62,
+      "ran": 63
+    },
+    "merges": [
+      [
+        "s",
+        "e"
+      ],
+      [
+        "e",
+        "n"
+      ],
+      [
+        "a",
+        "r"
+      ],
+      [
+        "c",
+        "h"
+      ],
+      [
+        "se",
+        "ar"
+      ],
+      [
+        "sear",
+        "ch"
+      ],
+      [
+        "a",
+        "l"
+      ],
+      [
+        "a",
+        "n"
+      ],
+      [
+        "c",
+        "u"
+      ],
+      [
+        "d",
+        "o"
+      ],
+      [
+        "e",
+        "l"
+      ],
+      [
+        "e",
+        "r"
+      ],
+      [
+        "g",
+        "i"
+      ],
+      [
+        "h",
+        "el"
+      ],
+      [
+        "i",
+        "c"
+      ],
+      [
+        "l",
+        "d"
+      ],
+      [
+        "l",
+        "o"
+      ],
+      [
+        "m",
+        "en"
+      ],
+      [
+        "n",
+        "e"
+      ],
+      [
+        "o",
+        "r"
+      ],
+      [
+        "q",
+        "u"
+      ],
+      [
+        "w",
+        "or"
+      ],
+      [
+        "en",
+        "gi"
+      ],
+      [
+        "cu",
+        "men"
+      ],
+      [
+        "do",
+        "cumen"
+      ],
+      [
+        "er",
+        "y"
+      ],
+      [
+        "hel",
+        "lo"
+      ],
+      [
+        "qu",
+        "ery"
+      ],
+      [
+        "wor",
+        "ld"
+      ],
+      [
+        "engi",
+        "ne"
+      ],
+      [
+        "documen",
+        "t"
+      ],
+      [
+        "d",
+        "en"
+      ],
+      [
+        "e",
+        "t"
+      ],
+      [
+        "e",
+        "v"
+      ],
+      [
+        "e",
+        "x"
+      ],
+      [
+        "f",
+        "u"
+      ],
+      [
+        "i",
+        "o"
+      ],
+      [
+        "i",
+        "ev"
+      ],
+      [
+        "l",
+        "ex"
+      ],
+      [
+        "m",
+        "an"
+      ],
+      [
+        "r",
+        "an"
+      ]
+    ]
+  }
+}

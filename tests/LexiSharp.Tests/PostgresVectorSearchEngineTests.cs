@@ -60,6 +60,78 @@ public class PostgresVectorSearchEngineTests
         }
     }
 
+    private sealed class SignedStub : IEmbeddingProvider, IEmbeddingSignatureProvider
+    {
+        public SignedStub(string signature) => EmbeddingSignature = signature;
+
+        public string? EmbeddingSignature { get; }
+
+        public int Dimension => 2;
+
+        public Task<ReadOnlyMemory<float>> GetTextEmbeddingAsync(string text, EmbeddingUse use, CancellationToken cancellationToken = default) =>
+            Task.FromResult<ReadOnlyMemory<float>>(new[] { 1f, 0f });
+    }
+
+    private sealed class ColumnAwareBatchStub : IColumnAwareBatchEmbeddingProvider
+    {
+        public List<(string Column, int Count)> Calls { get; } = [];
+
+        public int Dimension => 2;
+
+        public Task<ReadOnlyMemory<float>> GetTextEmbeddingAsync(string text, EmbeddingUse use, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("The engine must batch each column.");
+
+        public Task<IReadOnlyList<ReadOnlyMemory<float>>> GetTextEmbeddingsAsync(
+            IReadOnlyList<string> texts,
+            EmbeddingUse use,
+            CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("The engine must pass the embedding column.");
+
+        public Task<IReadOnlyList<ReadOnlyMemory<float>>> GetTextEmbeddingsAsync(
+            IReadOnlyList<string> texts,
+            EmbeddingUse use,
+            string column,
+            CancellationToken cancellationToken = default)
+        {
+            Calls.Add((column, texts.Count));
+            return Task.FromResult<IReadOnlyList<ReadOnlyMemory<float>>>(
+                texts.Select(_ => (ReadOnlyMemory<float>)new[] { 1f, 0f }).ToArray());
+        }
+    }
+
+    private sealed class BatchStubEmbeddingProvider : IBatchEmbeddingProvider
+    {
+        private readonly IReadOnlyDictionary<string, float[]> _vectors;
+
+        public BatchStubEmbeddingProvider(IReadOnlyDictionary<string, float[]> vectors) => _vectors = vectors;
+
+        public int BatchCalls { get; private set; }
+
+        public bool Throw { get; set; }
+
+        public List<int> BatchSizes { get; } = [];
+
+        public int Dimension => 2;
+
+        public Task<ReadOnlyMemory<float>> GetTextEmbeddingAsync(string text, EmbeddingUse use, CancellationToken cancellationToken = default) =>
+            Task.FromResult<ReadOnlyMemory<float>>(_vectors[text]);
+
+        public Task<IReadOnlyList<ReadOnlyMemory<float>>> GetTextEmbeddingsAsync(
+            IReadOnlyList<string> texts,
+            EmbeddingUse use,
+            CancellationToken cancellationToken = default)
+        {
+            BatchCalls++;
+            BatchSizes.Add(texts.Count);
+
+            if (Throw)
+                throw new InvalidOperationException("provider failed");
+
+            return Task.FromResult<IReadOnlyList<ReadOnlyMemory<float>>>(
+                texts.Select(text => (ReadOnlyMemory<float>)_vectors[text]).ToArray());
+        }
+    }
+
     private static readonly IReadOnlyDictionary<string, float[]> CosineVectors =
         new Dictionary<string, float[]>
         {
@@ -113,6 +185,191 @@ public class PostgresVectorSearchEngineTests
     }
 
     private static SearchDocument Doc(string id, string text) => new(id, text);
+
+    [SkippableFact]
+    public void EnsureSchema_RejectsADifferentEmbeddingSignature()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        string table = $"signature_{Guid.NewGuid():N}"[..24];
+        var options = new PostgresVectorOptions { Dimension = 2, Table = table };
+        using var first = new PostgresVectorSearchEngine(ConnectionString!, new SignedStub("model-a"), options);
+
+        try
+        {
+            first.Index([Doc("1", "one")]);
+
+            Assert.Throws<InvalidOperationException>(
+                () => new PostgresVectorSearchEngine(ConnectionString!, new SignedStub("model-b"), options));
+        }
+        finally
+        {
+            first.DropSchema();
+        }
+    }
+
+    [SkippableFact]
+    public void EnsureSchema_AdoptsADifferentSignatureWhenAllowed()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        string table = $"signature_{Guid.NewGuid():N}"[..24];
+        var options = new PostgresVectorOptions { Dimension = 2, Table = table };
+        using var first = new PostgresVectorSearchEngine(ConnectionString!, new SignedStub("model-a"), options);
+
+        try
+        {
+            first.Index([Doc("1", "one")]);
+
+            using var second = new PostgresVectorSearchEngine(
+                ConnectionString!,
+                new SignedStub("model-b"),
+                options with { AllowSignatureMismatch = true });
+
+            Assert.Single(second.Search("one", new SearchOptions(Limit: 10)));
+        }
+        finally
+        {
+            first.DropSchema();
+        }
+    }
+
+    [SkippableFact]
+    public void Index_BatchesEachEmbeddingColumnSeparately()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        var provider = new ColumnAwareBatchStub();
+        using var engine = NewEngine(provider, new PostgresVectorOptions
+        {
+            Dimension = 2,
+            EmbeddingBatchSize = 2,
+            EmbeddingColumns = new Dictionary<string, string> { ["title"] = "title", ["body"] = "body" },
+        });
+
+        try
+        {
+            engine.Index(
+            [
+                new SearchDocument("1", "one", TextFields: new Dictionary<string, string> { ["title"] = "t1", ["body"] = "b1" }),
+                new SearchDocument("2", "two", TextFields: new Dictionary<string, string> { ["title"] = "t2", ["body"] = "b2" }),
+                new SearchDocument("3", "three", TextFields: new Dictionary<string, string> { ["title"] = "t3", ["body"] = "b3" }),
+            ]);
+
+            Assert.Equal(2, provider.Calls.Count(call => call.Column == "title"));
+            Assert.Equal(2, provider.Calls.Count(call => call.Column == "body"));
+            Assert.All(provider.Calls, call => Assert.InRange(call.Count, 1, 2));
+            Assert.Equal(6, provider.Calls.Sum(call => call.Count));
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    [SkippableFact]
+    public void Index_KeepsThePreviousRowsWhenEmbeddingFails()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        var provider = new BatchStubEmbeddingProvider(new Dictionary<string, float[]>
+        {
+            ["old"] = new[] { 1f, 0f },
+            ["old query"] = new[] { 1f, 0f },
+            ["new"] = new[] { 0f, 1f },
+        });
+
+        using var engine = NewEngine(provider);
+
+        try
+        {
+            engine.Add(Doc("old", "old"));
+            provider.Throw = true;
+
+            Assert.Throws<InvalidOperationException>(
+                () => engine.Index([Doc("new", "new")]));
+
+            IReadOnlyList<SearchResult> results = engine.Search("old query", new SearchOptions(Limit: 10));
+
+            Assert.Contains(results, result => result.DocumentId == "old");
+            Assert.DoesNotContain(results, result => result.DocumentId == "new");
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    [SkippableFact]
+    public void Index_ChunksTheCorpusAtTheConfiguredBatchSize()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        var provider = new BatchStubEmbeddingProvider(new Dictionary<string, float[]>
+        {
+            ["1"] = new[] { 1f, 0f },
+            ["2"] = new[] { 1f, 0f },
+            ["3"] = new[] { 1f, 0f },
+            ["4"] = new[] { 1f, 0f },
+            ["5"] = new[] { 1f, 0f },
+        });
+
+        using var engine = NewEngine(provider, new PostgresVectorOptions { Dimension = 2, EmbeddingBatchSize = 2 });
+
+        try
+        {
+            engine.Index(
+            [
+                Doc("1", "1"),
+                Doc("2", "2"),
+                Doc("3", "3"),
+                Doc("4", "4"),
+                Doc("5", "5"),
+            ]);
+
+            Assert.Equal(new[] { 2, 2, 1 }, provider.BatchSizes);
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    [SkippableFact]
+    public void Index_EmbedsTheCorpusInOneBatch()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        var provider = new BatchStubEmbeddingProvider(new Dictionary<string, float[]>
+        {
+            ["one"] = new[] { 1f, 0f },
+            ["two"] = new[] { 0f, 1f },
+            ["three"] = new[] { 1f, 1f },
+            ["one query"] = new[] { 1f, 1f },
+        });
+
+        using var engine = NewEngine(provider);
+
+        try
+        {
+            engine.Index(
+            [
+                Doc("1", "one"),
+                Doc("2", "two"),
+                Doc("3", "three"),
+            ]);
+
+            Assert.Equal(1, provider.BatchCalls);
+
+            IReadOnlyList<SearchResult> results = engine.Search("one query", new SearchOptions(Limit: 10));
+
+            Assert.Equal(3, results.Count);
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
 
     [SkippableFact]
     public void EnsureSchema_CreatesVectorColumnAndHnswIndex()

@@ -65,7 +65,7 @@ jobs:
           -p:CollectCoverage=true -p:CoverletOutputFormat=cobertura
           -p:CoverletOutput=../../TestResults/coverage-
           -p:Threshold=60 -p:ThresholdType=line -p:ThresholdStat=total
-          -p:Exclude="[LexiSharp.CodeShape]*%2c[LexiSharp.ApiDocs]*"
+          -p:Exclude="[LexiSharp.CodeShape]*%2c[LexiSharp.ApiDocs]*%2c[LexiSharp.Onnx]*"
 
       # The behavioural gate. The xUnit suite pins contracts - BM25 ranks X above Y on a
       # three-document corpus - but nothing pinned the *output* of a realistic run, so a
@@ -80,6 +80,14 @@ jobs:
       # as somebody else's search results. `bm25f`, `bm25+`, `bm25l` and `bm25-proximity-full` are
       # here for that reason: an audit of the suite found those four defaults were pinned by nothing
       # at all. What that still cannot catch is recorded in the reference corpus README.
+      - name: ONNX package tests and coverage (80% line gate)
+        run: >
+          dotnet test tests/LexiSharp.Onnx.Tests -c Release
+          -p:CollectCoverage=true -p:CoverletOutputFormat=cobertura
+          -p:CoverletOutput=../../TestResults/onnx-coverage-
+          -p:Threshold=90 -p:ThresholdType=line -p:ThresholdStat=total
+          -p:Include="[LexiSharp.Onnx]*"
+
       - name: Golden master (ranking outputs must not drift)
         run: >
           dotnet run --project bench/LexiSharp.Cli -c Release --
@@ -180,7 +188,7 @@ jobs:
           # describing yesterday's code without anything failing.
           dotnet build LexiSharp.slnx -c Release
 
-          for project in LexiSharp LexiSharp.AspNetCore LexiSharp.MessagePack LexiSharp.Postgres; do
+          for project in LexiSharp LexiSharp.AspNetCore LexiSharp.MessagePack LexiSharp.Postgres LexiSharp.Onnx; do
             assembly="src/$project/bin/Release/net10.0/$project.dll"
             test -f "$assembly" || { echo "missing $assembly"; exit 1; }
             dotnet run --project bench/LexiSharp.CodeShape -c Release --no-build -- emit \
@@ -197,7 +205,7 @@ jobs:
         # It reads the Release assemblies the step above produced, so it asserts they are there
         # rather than trusting a previous step to have built them.
         run: |
-          for project in LexiSharp LexiSharp.AspNetCore LexiSharp.MessagePack LexiSharp.Postgres; do
+          for project in LexiSharp LexiSharp.AspNetCore LexiSharp.MessagePack LexiSharp.Postgres LexiSharp.Onnx; do
             test -f "src/$project/bin/Release/net10.0/$project.dll" || { echo "missing build of $project"; exit 1; }
           done
 

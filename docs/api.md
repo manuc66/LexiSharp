@@ -30,14 +30,17 @@ are listed first.
 
 | Contract | Extends | What it is | Guide |
 | --- | --- | --- | --- |
+| `IBatchEmbeddingProvider` | `IEmbeddingProvider` | An IEmbeddingProvider that can embed several texts in one call. Engines that index a corpus check for this interface and use it instead of calling… | [guide](reference.md) |
 | `ICandidateIndex` | `IReadOnlyTextIndex` | Capability for an index that can enumerate only the documents containing at least one of the given query terms, instead of scanning the whole corpus. | [guide](reference.md) |
 | `IChunkContextEnricher` | — | Augments the searchable text of a SearchDocument before it is indexed — the « contextual retrieval » seam. A chunk that only says "the benefit rose 12%" is… | [guide](reference.md) |
+| `IColumnAwareBatchEmbeddingProvider` | `IBatchEmbeddingProvider`, `IEmbeddingProvider` | A batch provider that also knows which column the texts belong to — the pair of capabilities a PostgreSQL engine with EmbeddingColumns needs to batch one column… | [guide](reference.md) |
 | `ICompressingSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that can return, alongside the ranked page, each document compressed to its query-relevant content — the surface a… | [guide](reference.md) |
 | `IContextCompressor` | — | Reduces a document's text to the content a query actually cares about — the token-reduction seam between a ranked page and a generation model. LexiSharp never… | [guide](reference.md) |
 | `IContextualSearchEngine<TPayload>` | `ITextSearchEngine` | An ITextSearchEngine that accepts a caller-supplied payload alongside a query, for the cases a query alone does not carry: who is asking, what time it is, which… | [guide](reference.md) |
 | `ICrossEncoderScorer` | — | Scores a (query, document) pair as a single relevance value — the job of a cross-encoder (concatenate query and document into one input) or, more generally, of… | [guide](reference.md) |
 | `IDetailedSearchEngine` | — | Optional capability of an ITextSearchEngine that can return, alongside the merged ranking, the per-source score breakdown that fed it (see Contributions). | [guide](reference.md) |
 | `IEmbeddingProvider` | — | Contract for producing text embeddings. LexiSharp never computes embeddings itself: implementing this interface is up to the consumer — a local ONNX model, an… | [guide](reference.md) |
+| `IEmbeddingSignatureProvider` | — | An IEmbeddingProvider that can identify the model and preprocessing that produce its vectors. The signature is what lets a persisted index refuse to compare… | [guide](reference.md) |
 | `IExplainableSearchEngine` | — | Optional capability of an ITextSearchEngine that can explain why a document received the score it did for a query, when its scorer is an IScoreExplainer. | [guide](reference.md) |
 | `IFacetedSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that can return, alongside the ranked results, facet counts over Fields. | [guide](reference.md) |
 | `IFieldScopedScorer` | `ITextScorer` | Capability for a scorer that can score a query term from one field's statistics instead of the whole document's: the arithmetic behind title:term. | [guide](reference.md) |
@@ -79,6 +82,12 @@ are listed first.
 | Contract | Extends | What it is | Guide |
 | --- | --- | --- | --- |
 | `IColumnAwareEmbeddingProvider` | `IEmbeddingProvider` | Optional capability of an IEmbeddingProvider used by a multi-column PostgresVectorSearchEngine: the provider is told which embedding column the text is being… | [guide](backends.md) |
+
+### `LexiSharp.Onnx` package
+
+| Contract | Extends | What it is | Guide |
+| --- | --- | --- | --- |
+| `IOnnxTokenizer` | — | The tokenizer seam an ONNX encoder needs: text in, ids out. LexiSharp does not ship a model vocabulary, so the implementation carries the checkpoint's own rules… | [guide](onnx.md) |
 
 ## The types
 
@@ -280,6 +289,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `SparseIndexEntry` | record | — | A document together with its stored sparse vector — the atomic unit of Export and Import, and what a persistence backend serializes to reload a corpus without… |
 | `SparseTextSearchEngine` | class | `IQuerySyntaxSupport`, `ITextSearchEngine` | In-memory sparse search engine: indexes documents as their sparse learned embeddings (SPLADE, uniCOIL, ...) and answers queries by dot-product scoring. |
 | `VectorIndexEntry` | record | — | A document together with its stored dense embedding — the atomic unit of Export / Import, letting a corpus be reloaded without re-embedding it. |
+| `VectorIndexSnapshot` | record | — | A whole vector index: its entries and the identity of the embedding pipeline that produced them. ExportSnapshot writes one and ImportSnapshot reads it, refusing… |
 | `VectorQuantization` | enum | — | How InMemoryVectorSearchEngine stores the document vectors it scans. |
 
 #### `LexiSharp.Keywords`
@@ -424,4 +434,25 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `LexiSharpSearchParameters` | record | — | Query-string parameters of a LexiSharpSearchEndpoint request, bound by ASP.NET Core model binding. Mirror the knobs of LexiSharpQueryOptions. |
 | `LexiSharpSearchResponse<TDocument>` | record | — | The payload of a successful search response. |
 | `RetrievalLogger` | class | — | Bridges a RetrievalTelemetry onto ILogger, so an application that already has a logging pipeline gets retrieval events in it without the LexiSharp core taking a… |
+
+### `LexiSharp.Onnx` package
+
+#### `LexiSharp.Onnx`
+
+| Type | Kind | Contracts | What it is |
+| --- | --- | --- | --- |
+| `BatchedCrossEncoderReranker` | class | `IReranker` | The batched counterpart of CrossEncoderReranker: it re-scores the whole shortlist in one padded session call instead of one call per candidate, and otherwise… |
+| `BertWordPieceOptions` | class | — | Normalization rules for BertWordPieceTokenizer. The BERT family does not agree on them: bert-base-uncased lowercases and strips accents, bert-base-cased does… |
+| `BertWordPieceTokenizer` | class | `IOnnxTokenizer` | A BERT WordPiece tokenizer over a vocab.txt: the tokenizer most BERT-derived encoders and cross-encoders (including the MiniLM family) publish beside their ONNX… |
+| `BpeOnnxTokenizer` | class | `IOnnxTokenizer` | A byte-level BPE tokenizer loaded from a HuggingFace tokenizer.json — the file most modern exports actually ship, where vocab.json and merges.txt are no longer… |
+| `BpeOnnxTokenizerOptions` | class | — | Options for BpeOnnxTokenizer: the file carries the vocabulary and the merges, the caller states the byte-level and special-token conventions. |
+| `OnnxCrossEncoderOptions` | class | — | Everything the pairwise scorer needs from the caller. As with the dense encoder, no default guesses a checkpoint: the export states its own tensor names, its… |
+| `OnnxCrossEncoderScorer` | class | `ICrossEncoderScorer`, `IDisposable` | A pairwise relevance model backed by an ONNX Runtime session: the shipped implementation of ICrossEncoderScorer for a local cross-encoder, ready for… |
+| `OnnxPooling` | enum | — | How a token-level model output is reduced to one vector per text. |
+| `OnnxScoreTransform` | enum | — | How the selected cross-encoder logit is turned into a score. |
+| `OnnxTextEncoder` | class | `IBatchEmbeddingProvider`, `IDisposable`, `IEmbeddingProvider`, `IEmbeddingSignatureProvider` | A dense text encoder backed by an ONNX Runtime session: the shipped implementation of IEmbeddingProvider when the model runs in-process rather than behind an… |
+| `OnnxTextEncoderOptions` | class | — | Everything the dense encoder needs from the caller: the model file, the tokenizer and the graph's own names. Nothing here has a default that guesses a… |
+| `OnnxTokenizedText` | struct | — | A tokenized text ready to be bound to an ONNX graph: the token ids and the optional segment ids, with no padding applied. Padding and batching are the caller's… |
+| `SentencePieceOnnxTokenizer` | class | `IOnnxTokenizer` | A SentencePiece tokenizer over a checkpoint's sentencepiece.bpe.model (or spiece.model): the tokenizer E5, multilingual MiniLM and most non-BERT encoders… |
+| `SentencePieceOnnxTokenizerOptions` | class | — | Options for SentencePieceOnnxTokenizer: the model decides the pieces, the caller decides the special tokens and the id remapping. |
 
