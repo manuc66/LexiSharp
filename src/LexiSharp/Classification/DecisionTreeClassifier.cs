@@ -46,6 +46,7 @@ public sealed record DecisionLeaf(
 /// <param name="DocumentsFalse">How many documents answered no.</param>
 /// <param name="WeightTrue">The summed sample weight of the documents that answered yes.</param>
 /// <param name="WeightFalse">The summed sample weight of the documents that answered no.</param>
+/// <param name="Cost">The cost of the chosen question; <c>1</c> when no cost was configured.</param>
 public sealed record DecisionSplitMetrics(
     double Gain,
     double GainRatio,
@@ -54,7 +55,8 @@ public sealed record DecisionSplitMetrics(
     int DocumentsTrue,
     int DocumentsFalse,
     double WeightTrue,
-    double WeightFalse);
+    double WeightFalse,
+    double Cost);
 
 /// <summary>One question and the answer a particular item gave it.</summary>
 /// <param name="Question">The question asked.</param>
@@ -139,6 +141,7 @@ public sealed class DecisionTreeClassifier<TItem>
     private IReadOnlyList<string> _categories = Array.Empty<string>();
     private Dictionary<string, int> _categoryIndex = new(StringComparer.Ordinal);
     private string[] _featuresById = Array.Empty<string>();
+    private double[] _featureCosts = Array.Empty<double>();
 
     /// <summary>Creates a classifier over a feature space.</summary>
     /// <param name="features">The feature space the tree reads.</param>
@@ -214,6 +217,7 @@ public sealed class DecisionTreeClassifier<TItem>
         {
             _root = null;
             _featuresById = Array.Empty<string>();
+            _featureCosts = Array.Empty<double>();
             return;
         }
 
@@ -244,6 +248,23 @@ public sealed class DecisionTreeClassifier<TItem>
         }
 
         _featuresById = featuresById.ToArray();
+        _featureCosts = Array.Empty<double>();
+
+        if (_options.QuestionCost is { } questionCost)
+        {
+            _featureCosts = new double[_featuresById.Length];
+
+            for (int id = 0; id < _featuresById.Length; id++)
+            {
+                double cost = questionCost(_featuresById[id]);
+
+                if (!double.IsFinite(cost) || cost <= 0)
+                    throw new ArgumentException("Question costs must be finite and positive.");
+
+                _featureCosts[id] = cost;
+            }
+        }
+
         var candidate = new bool[_featuresById.Length];
 
         for (int id = 0; id < documentFrequency.Count; id++)
@@ -470,7 +491,8 @@ public sealed class DecisionTreeClassifier<TItem>
             choice.DocumentsTrue,
             choice.DocumentsFalse,
             choice.WeightTrue,
-            choice.WeightFalse);
+            choice.WeightFalse,
+            choice.Cost);
 
         return new DecisionBranch(
             question,
@@ -579,7 +601,9 @@ public sealed class DecisionTreeClassifier<TItem>
             double weightTrue,
             double weightFalse)
         {
-            double score = _options.Criterion == SplitCriterion.GainRatio ? ratio : gain;
+            double baseScore = _options.Criterion == SplitCriterion.GainRatio ? ratio : gain;
+            double cost = CostOf(featureId);
+            double score = baseScore / cost;
 
             bool better = best is null
                 || score > bestScore + SplitFloor
@@ -592,6 +616,7 @@ public sealed class DecisionTreeClassifier<TItem>
             best = new SplitChoice(
                 featureId,
                 threshold,
+                cost,
                 gain,
                 ratio,
                 impurityBefore,
@@ -726,6 +751,9 @@ public sealed class DecisionTreeClassifier<TItem>
     /// Ordinal feature-name order, then presence before a threshold, then the smaller threshold:
     /// the same candidate set always selects the same split, whatever the dictionary order was.
     /// </summary>
+    private double CostOf(int featureId) =>
+        _featureCosts.Length == 0 ? 1.0 : _featureCosts[featureId];
+
     private bool IsTieBreakBetter(int featureId, double threshold, SplitChoice best)
     {
         int byName = string.CompareOrdinal(_featuresById[featureId], _featuresById[best.FeatureId]);
@@ -978,6 +1006,7 @@ public sealed class DecisionTreeClassifier<TItem>
     private readonly record struct SplitChoice(
         int FeatureId,
         double Threshold,
+        double Cost,
         double Gain,
         double GainRatio,
         double ImpurityBefore,
