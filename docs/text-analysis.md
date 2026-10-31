@@ -391,9 +391,30 @@ forest.PredictBest("i cannot connect to the internet");
 ```
 
 The same measurement puts the forest at **0.662** accuracy / **0.658** macro-F1, so it recovers
-most of the single tree's gap but does not close it; the linear model is still ahead on this
-corpus. The command and the pinned figures are in
+most of the single tree's gap but does not close it. The command and the pinned figures are in
 [Evaluation](evaluation.md#classification-on-20-newsgroups).
+
+### When the label is the point: the linear model
+
+`LinearClassifier` is multinomial logistic regression over the same `IFeatureSource`, trained with
+AdaGrad and a deterministic shuffle. It has no path, but it sees every feature at once and its
+coefficients are readable through `TopFeatures`. On 20 Newsgroups it reads **0.8085** accuracy /
+**0.8027** macro-F1 against Naive Bayes's **0.7573 / 0.7289**, the forest's **0.6621 / 0.6584**
+and the tree's **0.4457 / 0.4945**. The three are not competitors: the tree explains, the forest
+ensembles, the linear model decides.
+
+```csharp
+var linear = new LinearClassifier(new LinearClassifierOptions
+{
+    Epochs = 20,
+    LearningRate = 0.1,
+    L2 = 1e-4,
+    MinDocumentFrequency = 2,
+});
+linear.Train(documents);
+linear.PredictBest("i cannot connect to the internet");
+linear.TopFeatures("Support", count: 5);
+```
 
 ### Unsupervised: dividing a corpus
 
@@ -450,11 +471,13 @@ exists on `CorpusDivider<TItem>`.
 - **Greedy, not optimal.** Finding the smallest tree that separates a labelled corpus is NP-hard.
   The builder takes the best split at each node; a corpus whose labels depend on an exclusive-or of
   two features has zero gain at the root and is not split at all.
-- **Not calibrated.** A leaf distribution is a smoothed training mix, not a probability of
-  correctness. Measure before thresholding it.
+- **Not calibrated.** A leaf distribution is a smoothed training mix, and the linear model's
+  softmax is a distribution over labels, not a calibrated probability of correctness. Measure
+  before thresholding either.
 - **Measured on one public corpus, and the linear model wins.** On 20 Newsgroups the single tree
-  reads 0.446 accuracy / 0.494 macro-F1 and the forest 0.662 / 0.658, against Naive Bayes's
-  0.757 / 0.729. The forest narrows the gap; it does not close it. The command and the pin are in
+  reads 0.446 accuracy / 0.494 macro-F1, the forest 0.662 / 0.658, Naive Bayes 0.757 / 0.729, and
+  `LinearClassifier` **0.8085 / 0.8027**. The tree and forest are explainability/ensemble options;
+  the linear model is the accuracy one. The command and the pin are in
   [Evaluation](evaluation.md#classification-on-20-newsgroups), and the figures are one machine and
   one tokenizer, not a promise about your labels.
 - **Bounded search.** The divider scores at most `MaxCandidateTerms` features per node over at most

@@ -11,6 +11,10 @@
   "forestTrees": 25,
   "forestFeatureSubset": 0.5,
   "forestSeed": 7,
+  "validationFraction": 0,
+  "linearEpochs": 20,
+  "linearLearningRate": 0.1,
+  "linearL2": 0.0001,
   "rows": [
     {
       "method": "Naive Bayes",
@@ -28,6 +32,12 @@
       "method": "Random forest",
       "accuracy": 0.6329568106312292,
       "macroF1": 0.6421222261955093,
+      "averageQuestions": null
+    },
+    {
+      "method": "Linear",
+      "accuracy": 0.8085049833887044,
+      "macroF1": 0.8027443794644749,
       "averageQuestions": null
     }
   ]

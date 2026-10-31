@@ -47,11 +47,13 @@ workflow.
   zero removes the class. A feature can be present, absent or unknown, and `MaskedFeatureSource`
   suppresses the inner dimensions when an item is generic or excluded. The tree keeps a correction
   ledger: `Reinforce`/`Unreinforce` add or remove signed mass at the leaf an item reaches without
-  retraining, `Explain` shows the adjusted leaf, and `Train` clears it. Measured on the standard
-  `20news-bydate` split: the single tree reads
-  **0.446** accuracy / **0.494** macro-F1, the forest **0.662** / **0.658**, and Naive Bayes
-  **0.757** / **0.729** — the forest narrows the gap but does not close it, and a leaf is not a
-  calibrated probability. See
+  retraining, `Explain` shows the adjusted leaf, and `Train` clears it. `LinearClassifier` is the
+  accuracy companion: multinomial logistic regression over the same feature seam, AdaGrad, a
+  deterministic shuffle, and coefficients through `TopFeatures`; it has no question path. Measured
+  on the standard `20news-bydate` split: the single tree reads **0.4457** accuracy / **0.4945**
+  macro-F1, the forest **0.6621** / **0.6584**, Naive Bayes **0.7573** / **0.7289**, and
+  `LinearClassifier` **0.8085** / **0.8027** — the tree and forest are explainability/ensemble
+  options, the linear model is the accuracy one, and none of the distributions is calibrated. See
   [evaluation](docs/evaluation.md#classification-on-20-newsgroups) and
   [text analysis](docs/text-analysis.md#question-trees-classification-and-corpus-division).
 
