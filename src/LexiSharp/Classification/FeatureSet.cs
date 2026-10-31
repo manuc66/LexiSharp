@@ -4,6 +4,23 @@ using LexiSharp.Linguistics;
 namespace LexiSharp.Classification;
 
 /// <summary>
+/// What a feature set knows about one feature: it is present, it is known to be absent, or the
+/// source could not determine it. A binary question answers no for both absent and unknown; the
+/// state is what lets a source route an unknown item deliberately instead of silently.
+/// </summary>
+public enum FeatureState
+{
+    /// <summary>The feature is known not to apply.</summary>
+    Absent,
+
+    /// <summary>The feature applies.</summary>
+    Present,
+
+    /// <summary>The source could not determine whether the feature applies.</summary>
+    Unknown,
+}
+
+/// <summary>
 /// The features of one item, as a question sees them: a set of names, no domain.
 /// </summary>
 /// <remarks>
@@ -30,6 +47,17 @@ public interface IFeatureSet
 
     /// <summary>The feature names in the set. Order is not part of the contract.</summary>
     IReadOnlyCollection<string> Features { get; }
+
+    /// <summary>
+    /// What the set knows about <paramref name="feature"/>. <see cref="FeatureState.Present"/>
+    /// implies <see cref="Contains"/>; <see cref="FeatureState.Unknown"/> does not.
+    /// </summary>
+    /// <param name="feature">The feature name to inspect.</param>
+    /// <returns>The state of the feature.</returns>
+    FeatureState State(string feature);
+
+    /// <summary>The features the source could not determine, in no particular order.</summary>
+    IReadOnlyCollection<string> UnknownFeatures { get; }
 }
 
 /// <summary>
@@ -49,11 +77,12 @@ public sealed class FeatureSet : IFeatureSet
     private readonly string[]? _small;
     private readonly HashSet<string>? _large;
     private readonly Dictionary<string, double>? _numeric;
+    private readonly HashSet<string>? _unknown;
 
     /// <summary>Creates a binary feature set from names; duplicates collapse.</summary>
     /// <param name="features">The feature names. Each must be non-empty.</param>
     public FeatureSet(IEnumerable<string> features)
-        : this(features, numericValues: null)
+        : this(features, numericValues: null, unknownFeatures: null)
     {
     }
 
@@ -67,6 +96,21 @@ public sealed class FeatureSet : IFeatureSet
     public FeatureSet(
         IEnumerable<string> features,
         IReadOnlyDictionary<string, double>? numericValues)
+        : this(features, numericValues, unknownFeatures: null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a feature set from names, numeric values and the features the source could not
+    /// determine. A feature cannot be both present and unknown.
+    /// </summary>
+    /// <param name="features">The present feature names. Each must be non-empty.</param>
+    /// <param name="numericValues">The numeric values, keyed by feature name; null for a binary set.</param>
+    /// <param name="unknownFeatures">The features whose state is unknown; null when every feature is decided.</param>
+    public FeatureSet(
+        IEnumerable<string> features,
+        IReadOnlyDictionary<string, double>? numericValues,
+        IEnumerable<string>? unknownFeatures)
     {
         ArgumentNullException.ThrowIfNull(features);
 
@@ -75,24 +119,43 @@ public sealed class FeatureSet : IFeatureSet
         if (numericValues is null || numericValues.Count == 0)
         {
             (_small, _large) = BuildNames(buffer);
-            return;
+        }
+        else
+        {
+            var combined = new string[buffer.Count + numericValues.Count];
+            int count = 0;
+
+            foreach (string feature in buffer)
+                combined[count++] = feature;
+
+            foreach (string feature in numericValues.Keys)
+                combined[count++] = feature;
+
+            (_small, _large) = BuildNames(combined);
+
+            _numeric = new Dictionary<string, double>(numericValues.Count, StringComparer.Ordinal);
+
+            foreach (var pair in numericValues)
+                _numeric[pair.Key] = pair.Value;
         }
 
-        var combined = new string[buffer.Count + numericValues.Count];
-        int count = 0;
+        if (unknownFeatures is null)
+            return;
 
-        foreach (string feature in buffer)
-            combined[count++] = feature;
+        var unknown = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (string feature in numericValues.Keys)
-            combined[count++] = feature;
+        foreach (string feature in unknownFeatures)
+        {
+            if (string.IsNullOrEmpty(feature))
+                throw new ArgumentException("Feature names must be non-empty strings.", nameof(unknownFeatures));
 
-        (_small, _large) = BuildNames(combined);
+            if (Contains(feature))
+                throw new ArgumentException("A feature cannot be both present and unknown.", nameof(unknownFeatures));
 
-        _numeric = new Dictionary<string, double>(numericValues.Count, StringComparer.Ordinal);
+            unknown.Add(feature);
+        }
 
-        foreach (var pair in numericValues)
-            _numeric[pair.Key] = pair.Value;
+        _unknown = unknown.Count == 0 ? null : unknown;
     }
 
     /// <summary>An empty feature set.</summary>
@@ -127,6 +190,23 @@ public sealed class FeatureSet : IFeatureSet
 
         return _numeric is not null && _numeric.TryGetValue(feature, out double value) ? value : null;
     }
+
+    /// <inheritdoc />
+    public FeatureState State(string feature)
+    {
+        ArgumentNullException.ThrowIfNull(feature);
+
+        if (Contains(feature))
+            return FeatureState.Present;
+
+        return _unknown is not null && _unknown.Contains(feature)
+            ? FeatureState.Unknown
+            : FeatureState.Absent;
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyCollection<string> UnknownFeatures =>
+        _unknown is not null ? (IReadOnlyCollection<string>)_unknown : Array.Empty<string>();
 
     private static (string[]? Small, HashSet<string>? Large) BuildNames(IReadOnlyList<string> names)
     {
@@ -249,6 +329,7 @@ public sealed class CompositeFeatureSource<TItem> : IFeatureSource<TItem>
     public IFeatureSet FeaturesOf(TItem item)
     {
         var union = new HashSet<string>(StringComparer.Ordinal);
+        var unknown = new HashSet<string>(StringComparer.Ordinal);
         Dictionary<string, double>? numeric = null;
 
         foreach (var source in _sources)
@@ -265,10 +346,64 @@ public sealed class CompositeFeatureSource<TItem> : IFeatureSource<TItem>
                 numeric ??= new Dictionary<string, double>(StringComparer.Ordinal);
                 numeric[feature] = value;
             }
+
+            foreach (string feature in features.UnknownFeatures)
+                unknown.Add(feature);
         }
 
-        return new FeatureSet(union, numeric);
+        // A source that knows the feature wins over one that could not decide it.
+        foreach (string feature in union)
+            unknown.Remove(feature);
+
+        return new FeatureSet(union, numeric, unknown);
     }
+}
+
+/// <summary>
+/// Suppresses an inner feature source for the items a mask predicate selects, and reports the
+/// mask's own features instead.
+/// </summary>
+/// <remarks>
+/// This is the generic « excluded » / « generic » seam: the caller decides what the mask means,
+/// the library only knows that when it is true the inner dimensions are not trusted and the mask
+/// features are. It is not a filter over individual features — a masked item carries the mask
+/// features and nothing from the inner source, so the tree learns a separate branch rather than
+/// a split that mixes a generic item's text with its flag.
+/// </remarks>
+/// <typeparam name="TItem">The item type the sources read.</typeparam>
+public sealed class MaskedFeatureSource<TItem> : IFeatureSource<TItem>
+{
+    private readonly IFeatureSource<TItem> _inner;
+    private readonly Func<TItem, bool> _isMasked;
+    private readonly string[] _maskFeatures;
+
+    /// <summary>Creates a source that replaces the inner features with the mask's when masked.</summary>
+    /// <param name="inner">The source whose features are suppressed.</param>
+    /// <param name="isMasked">Returns true for an item whose inner features must not be used.</param>
+    /// <param name="maskFeatures">The feature names reported for a masked item. Each must be non-empty.</param>
+    public MaskedFeatureSource(
+        IFeatureSource<TItem> inner,
+        Func<TItem, bool> isMasked,
+        params string[] maskFeatures)
+    {
+        ArgumentNullException.ThrowIfNull(inner);
+        ArgumentNullException.ThrowIfNull(isMasked);
+        ArgumentNullException.ThrowIfNull(maskFeatures);
+
+        foreach (string feature in maskFeatures)
+        {
+            if (string.IsNullOrEmpty(feature))
+                throw new ArgumentException("Feature names must be non-empty strings.", nameof(maskFeatures));
+        }
+
+        _inner = inner;
+        _isMasked = isMasked;
+        _maskFeatures = [.. maskFeatures];
+    }
+
+    /// <inheritdoc />
+    public IFeatureSet FeaturesOf(TItem item) =>
+        _isMasked(item) ? new FeatureSet(_maskFeatures) : _inner.FeaturesOf(item);
 }
 
 /// <summary>
