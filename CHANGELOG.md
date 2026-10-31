@@ -45,7 +45,9 @@ workflow.
   flat or too small, and `Explain` still shows the path. `ClassWeights` multiplies a category's
   sample weight, so a majority class no longer dominates the impurity and the leaves; a weight of
   zero removes the class. A feature can be present, absent or unknown, and `MaskedFeatureSource`
-  suppresses the inner dimensions when an item is generic or excluded. Measured on the standard
+  suppresses the inner dimensions when an item is generic or excluded. The tree keeps a correction
+  ledger: `Reinforce`/`Unreinforce` add or remove signed mass at the leaf an item reaches without
+  retraining, `Explain` shows the adjusted leaf, and `Train` clears it. Measured on the standard
   `20news-bydate` split: the single tree reads
   **0.446** accuracy / **0.494** macro-F1, the forest **0.662** / **0.658**, and Naive Bayes
   **0.757** / **0.729** — the forest narrows the gap but does not close it, and a leaf is not a
