@@ -14,6 +14,11 @@ internal sealed record ClassificationMetrics(
     TimeSpan TrainTime,
     TimeSpan PredictTime);
 
+/// <summary>A stratified fit/validation split of a labelled corpus.</summary>
+internal sealed record ClassificationSplit(
+    IReadOnlyList<ClassificationDocument> Fit,
+    IReadOnlyList<ClassificationDocument> Validation);
+
 /// <summary>
 /// Trains and scores the two classifiers on a labelled corpus. The measurement is deliberately
 /// the same for both: accuracy and macro-F1 over the test split, with training and prediction time
@@ -21,6 +26,92 @@ internal sealed record ClassificationMetrics(
 /// </summary>
 internal static class ClassificationEvaluation
 {
+    /// <summary>
+    /// Splits a labelled corpus into fit and validation, stratified by category and deterministic
+    /// for a seed. The test split is never an argument here: a tuner that can see it is not a
+    /// held-out measurement.
+    /// </summary>
+    /// <param name="documents">The training corpus to split.</param>
+    /// <param name="validationFraction">Share of each category kept for validation, in (0, 1).</param>
+    /// <param name="seed">Fixed seed for the shuffle.</param>
+    public static ClassificationSplit HoldOut(
+        IReadOnlyList<ClassificationDocument> documents,
+        double validationFraction,
+        int seed = 7)
+    {
+        ArgumentNullException.ThrowIfNull(documents);
+
+        if (validationFraction <= 0 || validationFraction >= 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(validationFraction),
+                "The validation fraction must be in (0, 1).");
+        }
+
+        var fit = new List<ClassificationDocument>(documents.Count);
+        var validation = new List<ClassificationDocument>();
+        var random = new Random(seed); // NOSONAR:S2245 (fixed seed: the split is part of the reproduction)
+
+        foreach (var group in documents
+                     .GroupBy(document => document.Category, StringComparer.Ordinal)
+                     .OrderBy(group => group.Key, StringComparer.Ordinal))
+        {
+            var ordered = group.OrderBy(document => document.Id, StringComparer.Ordinal).ToList();
+
+            for (int i = ordered.Count - 1; i > 0; i--)
+            {
+                int j = random.Next(i + 1);
+                (ordered[i], ordered[j]) = (ordered[j], ordered[i]);
+            }
+
+            int validationCount = (int)Math.Round(
+                ordered.Count * validationFraction,
+                MidpointRounding.AwayFromZero);
+
+            // A category with one document cannot be on both sides; it stays in fit rather than
+            // making the validation split lie about a class it never saw.
+            validationCount = ordered.Count >= 2
+                ? Math.Clamp(validationCount, 1, ordered.Count - 1)
+                : 0;
+
+            for (int i = 0; i < ordered.Count; i++)
+                (i < validationCount ? validation : fit).Add(ordered[i]);
+        }
+
+        return new ClassificationSplit(fit, validation);
+    }
+
+    /// <summary>
+    /// Picks the candidate with the highest score; ties are broken by the ordinal key so the
+    /// selection is deterministic. The score is the caller's validation metric, never a test one.
+    /// </summary>
+    public static T SelectBest<T>(
+        IReadOnlyList<(T Candidate, double Score)> candidates,
+        Func<T, string> key)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
+        ArgumentNullException.ThrowIfNull(key);
+
+        if (candidates.Count == 0)
+            throw new ArgumentException("At least one candidate is required.", nameof(candidates));
+
+        var best = candidates[0];
+
+        for (int i = 1; i < candidates.Count; i++)
+        {
+            var candidate = candidates[i];
+
+            bool better = candidate.Score > best.Score + 1e-12
+                || (Math.Abs(candidate.Score - best.Score) <= 1e-12
+                    && string.CompareOrdinal(key(candidate.Candidate), key(best.Candidate)) < 0);
+
+            if (better)
+                best = candidate;
+        }
+
+        return best.Candidate;
+    }
+
     public static ClassificationMetrics MeasureNaiveBayes(
         IReadOnlyList<ClassificationDocument> train,
         IReadOnlyList<ClassificationDocument> test)
