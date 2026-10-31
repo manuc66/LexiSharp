@@ -55,6 +55,12 @@ public sealed record RandomForestOptions
     /// </summary>
     public double MinProbability { get; init; }
 
+    /// <summary>
+    /// A multiplier applied to every document's sample weight, keyed by category; passed to every
+    /// tree. A value of <c>0</c> removes the category from training. Default: <c>null</c>.
+    /// </summary>
+    public IReadOnlyDictionary<string, double>? ClassWeights { get; init; }
+
     internal bool IsValid =>
         Trees >= 1
         && MaxDepth >= 0

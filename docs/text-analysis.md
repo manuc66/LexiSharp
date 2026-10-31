@@ -337,6 +337,10 @@ when the winning probability is below it, and `MinLeafSupport` does the same whe
 leaf's summed weight is too small. `Explain` still returns the path and the leaf, so a caller can
 see why the answer was withheld. The forest has `MinProbability` on its averaged distribution.
 
+`ClassWeights` multiplies each document's sample weight by its category, so a majority class no
+longer dominates the impurity or the leaves; a weight of zero removes the category. The same
+option is passed to every tree in the forest.
+
 `Explain` returns the questions a text answered and the leaf it reached; `Describe` renders the
 whole tree. On the nine-document Support/Billing/Shipping corpus used by the tests:
 
