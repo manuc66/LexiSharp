@@ -224,6 +224,28 @@ internal static class ClassificationEvaluation
             predictTime.Elapsed);
     }
 
+    public static ClassificationMetrics MeasureLinear(
+        IReadOnlyList<ClassificationDocument> train,
+        IReadOnlyList<ClassificationDocument> test,
+        LinearClassifierOptions options)
+    {
+        var classifier = new LinearClassifier(options: options);
+
+        var trainTime = Stopwatch.StartNew();
+        classifier.Train(train.Select(ToSearchDocument));
+        trainTime.Stop();
+
+        var predictTime = Stopwatch.StartNew();
+        var predictions = new string?[test.Count];
+
+        for (int i = 0; i < test.Count; i++)
+            predictions[i] = classifier.PredictBest(test[i].Text);
+
+        predictTime.Stop();
+
+        return Score("Linear", test, predictions, double.NaN, trainTime.Elapsed, predictTime.Elapsed);
+    }
+
     public static ClassificationMetrics MeasureRandomForest(
         IReadOnlyList<ClassificationDocument> train,
         IReadOnlyList<ClassificationDocument> test,
