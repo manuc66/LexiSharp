@@ -30,6 +30,8 @@ are listed first.
 
 | Contract | Extends | What it is | Guide |
 | --- | --- | --- | --- |
+| `IFeatureSet` | — | The features of one item, as a question sees them: a set of names, no domain. | [guide](text-analysis.md) |
+| `IFeatureSource<TItem>` | — | Extracts the features of an item — the seam that keeps the question trees domain-agnostic. | [guide](text-analysis.md) |
 | `ICandidateIndex` | `IReadOnlyTextIndex` | Capability for an index that can enumerate only the documents containing at least one of the given query terms, instead of scanning the whole corpus. | [guide](reference.md) |
 | `IChunkContextEnricher` | — | Augments the searchable text of a SearchDocument before it is indexed — the « contextual retrieval » seam. A chunk that only says "the benefit rose 12%" is… | [guide](reference.md) |
 | `ICompressingSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that can return, alongside the ranked page, each document compressed to its query-relevant content — the surface a… | [guide](reference.md) |
@@ -122,10 +124,38 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
+| `CompositeFeatureSource<TItem>` | class | `IFeatureSource` | Combines several feature sources by union: an item carries every feature any source reports. |
+| `CorpusCluster` | record | — | One terminal region of a corpus division: its document ids, the features that best represent it, and the depth at which it was found. |
+| `CorpusDivider` | class | — | The text convenience over CorpusDivider: divides a SearchDocument corpus by the terms of Text. |
+| `CorpusDivider<TItem>` | class | — | Divides an unlabelled corpus over any feature space into two recursively: at each node it asks the feature whose presence splits the items into the two most… |
+| `CorpusDividerOptions` | record | — | Tunable knobs for CorpusDivider; the defaults keep the tree shallow enough to read and bound the vocabulary the split search compares. |
+| `CorpusDivision` | class | — | The tree and terminal clusters produced by CorpusDivider. |
+| `DecisionBranch` | record | `DecisionTreeNode` | An internal node: a question, the two subtrees it selects between, and the score the split earned when the tree was built. |
+| `DecisionExplanation` | record | — | The path an item took through a tree, and the leaf it reached. |
+| `DecisionLeaf` | record | `DecisionTreeNode` | A leaf: the category the tree predicts and the smoothed class distribution behind it. |
+| `DecisionSplitMetrics` | record | — | The measurements behind one chosen split. |
+| `DecisionTreeClassifier` | class | `ITextClassifier` | The text convenience over DecisionTreeClassifier: a SearchDocument classifier that reads Text and implements ITextClassifier. |
+| `DecisionTreeClassifier<TItem>` | class | — | A supervised classifier over any feature space: at each node it asks the feature whose presence best separates the training labels, so the most discriminative… |
+| `DecisionTreeNode` | record | — | A node of a trained decision tree: either a question or a leaf. |
+| `DecisionTreeOptions` | record | — | Tunable knobs for DecisionTreeClassifier; the defaults stop a tree before it memorizes the training corpus. |
+| `DelegateFeatureSource<TItem>` | class | `IFeatureSource` | A feature source built from a delegate, for the one-off projection that does not deserve a class. |
+| `DivisionBranch` | record | `DivisionNode` | An internal node of a corpus division: the question that split this region of the corpus and the two regions it produced. |
+| `DivisionLeaf` | record | `DivisionNode` | A terminal region of the corpus. |
+| `DivisionNode` | record | — | A node of a corpus division: either a question or a cluster. |
+| `DivisionSplitMetrics` | record | — | The measurements behind one chosen corpus split. |
+| `FeaturePresenceQuestion` | record | `FeatureQuestion` | True when the item carries a given feature — the only question the built-in builders ask. |
+| `FeatureQuestion` | record | — | A yes/no question asked of an item's features — the unit a question tree is built from. |
+| `FeatureSet` | class | `IFeatureSet` | The default IFeatureSet: a set of names with ordinal comparison. |
 | `IdfMode` | enum | — | How term evidence is scaled by corpus rarity during classification. Term frequency is always counted from the training corpus; this knob decides whether (and… |
 | `NaiveBayesClassifier` | class | `IIncrementalTextClassifier`, `IReinforceableTextClassifier`, `ITextClassifier`, `IWeightedPredictor` | Multinomial Naive Bayes trained on labelled documents. |
 | `NaiveBayesOptions` | record | — | Tunable knobs for NaiveBayesClassifier; the defaults reproduce the classic Laplace-smoothed, unweighted multinomial Naive Bayes. |
+| `QuestionAnswer` | record | — | One question and the answer a particular item gave it. |
+| `RandomForestClassifier` | class | `ITextClassifier` | The text convenience over RandomForestClassifier: a SearchDocument forest over Text. |
+| `RandomForestClassifier<TItem>` | class | — | A bagged forest of DecisionTreeClassifier trees: each tree sees a bootstrap sample and a random subset of the features, and the forest averages their… |
+| `RandomForestOptions` | record | — | Tunable knobs for RandomForestClassifier: how many trees, how deep, and how much of the feature space each tree is allowed to see. |
+| `SplitCriterion` | enum | — | How a candidate split is scored when a decision tree chooses its next question. |
 | `SynchronizedTextClassifier` | class | `IDisposable`, `IIncrementalTextClassifier`, `IReinforceableTextClassifier`, `ITextClassifier`, `IWeightedPredictor` | Wraps an IReinforceableTextClassifier so that concurrent prediction and concurrent mutation stop being the caller's problem: any number of Predict and… |
+| `TextFeatureSource` | class | `IFeatureSource` | The text feature space: the normalized terms of Text. |
 
 #### `LexiSharp.Compression`
 

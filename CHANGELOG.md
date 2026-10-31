@@ -18,6 +18,22 @@ workflow.
 
 ## [Unreleased]
 
+### Added
+
+- **Question trees and a forest over any feature space.** `DecisionTreeClassifier` learns a binary
+  question tree — the most discriminative feature first — and `Explain` returns the path;
+  `CorpusDivider` does the same without labels, splitting an unlabelled corpus into two
+  recursively; `RandomForestClassifier` bags the trees for accuracy and deliberately drops the
+  path. All three read an `IFeatureSource<TItem>`, so text is one dimension among any others
+  (bucketed time, transitions, derived flags), and all take an optional sample weight, which is
+  where a half-life belongs: `weightOf: item => Math.Pow(0.5, age(item) / halfLife)`. The core
+  never sees a clock. Measured on the standard `20news-bydate` split: the single tree reads
+  **0.446** accuracy / **0.494** macro-F1, the forest **0.633** / **0.642**, and Naive Bayes
+  **0.757** / **0.729** — the forest narrows the gap but does not close it, and a leaf is not a
+  calibrated probability. See
+  [evaluation](docs/evaluation.md#classification-on-20-newsgroups) and
+  [text analysis](docs/text-analysis.md#question-trees-classification-and-corpus-division).
+
 ### Changed
 
 - **The store path is timed, which is the path a deployment runs.** A new `store` lane writes a corpus

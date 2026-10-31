@@ -1251,3 +1251,41 @@ one that travels is **allocation** (counted in bytes, host-independent); wall-cl
 from a shared or contended machine are not publishable, and none are quoted from CI.
 What *does* gate a build is deterministic and clock-free: `lexisharp verify`, which replays
 the reference corpus against a committed baseline.
+
+## Classification on 20 Newsgroups
+
+The classifiers have their own corpus and their own verb, because accuracy is not nDCG and a
+labelled document is not a query. The run downloads the standard `20news-bydate` split (11 314
+train / 7 532 test, 20 categories, md5 `D6E9E45C…`), strips every header except `Subject` — in
+particular `Newsgroups`, which would leak the label — removes messages whose text already appeared
+in either half, and scores the test split. That leaves 11 300 train and 7 525 test documents.
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- classification \
+    --depth 30 --min-leaf 2 --min-df 2 --criterion Gini \
+    --trees 25 --subset 0.5
+```
+
+| Method | Accuracy | Macro-F1 | Avg. questions | Train | Predict |
+|---|---:|---:|---:|---:|---:|
+| Naive Bayes | 0.7573 | 0.7289 | — | 1.25 s | 0.440 ms/doc |
+| Decision tree (depth 30, Gini) | 0.4457 | 0.4945 | 25.7 | 2.00 s | 0.037 ms/doc |
+| Random forest (25 trees, 50 % subset) | 0.6330 | 0.6421 | — | 12.22 s | 0.163 ms/doc |
+
+The tree is the explainable model, not the accuracy model: one greedy path over binary term
+presence plateaus at **0.446**, and the forest recovers most of that gap at **0.633** but still
+trails Naive Bayes's **0.757**. On sparse text the linear model wins; a forest narrows the gap, it
+does not close it. The figures are pinned in
+[`reference/classification-20news.json`](https://github.com/manuc66/LexiSharp/blob/main/bench/LexiSharp.Eval/reference/classification-20news.json)
+and replayed by the same command with `--verify`:
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- classification \
+    --depth 30 --min-leaf 2 --min-df 2 --criterion Gini \
+    --trees 25 --subset 0.5 \
+    --verify bench/LexiSharp.Eval/reference/classification-20news.json
+```
+
+The numbers are one machine, one run, and the default tokenizer (no stemming, no stop-word list).
+They are indicative in the same sense as the retrieval tables: re-run on your hardware before
+quoting them.
