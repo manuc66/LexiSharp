@@ -164,6 +164,7 @@ public sealed class RandomForestClassifier<TItem>
                     Criterion = _options.Criterion,
                     Alpha = _options.Alpha,
                     QuestionCost = _options.QuestionCost,
+                    ClassWeights = _options.ClassWeights,
                 });
 
             tree.Train(itemArray, allowed);

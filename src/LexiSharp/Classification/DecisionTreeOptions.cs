@@ -69,6 +69,14 @@ public sealed record DecisionTreeOptions
     /// </summary>
     public double MinLeafSupport { get; init; }
 
+    /// <summary>
+    /// A multiplier applied to every document's sample weight, keyed by category. A value of
+    /// <c>0</c> removes the category from training; values must be finite and non-negative. Use it
+    /// to keep a majority class from dominating the impurity and the leaves. Default: <c>null</c>
+    /// (every class weighs <c>1</c>).
+    /// </summary>
+    public IReadOnlyDictionary<string, double>? ClassWeights { get; init; }
+
     /// <summary>The split score to maximize. Default: <see cref="SplitCriterion.InformationGain"/>.</summary>
     public SplitCriterion Criterion { get; init; } = SplitCriterion.InformationGain;
 
