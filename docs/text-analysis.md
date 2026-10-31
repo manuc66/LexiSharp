@@ -387,9 +387,21 @@ its top features by document frequency × idf, its depth and its summed weight.
 
 ### Several dimensions, and weights
 
-A feature is an opaque name. Time is a bucket name, a transition is a pair name, a process is an
-identifier, and "generic" or "excluded" is another name; the caller's source decides. Compose the
-dimensions with `CompositeFeatureSource<TItem>`:
+A feature is an opaque name. Time is a bucket name or a number, a transition is a pair name, a
+process is an identifier, and "generic" or "excluded" is another name; the caller's source decides.
+A feature may also carry a number: the tree then scores thresholds over the values in the node, so
+`hour >= 14` is a question it can learn — and it places 13 and 17 by the same inequality, which a
+bucket named `hour:14` would not. A missing value answers no, so an item whose source could not
+provide the value takes the false branch rather than being read as zero.
+
+```csharp
+IFeatureSource<Observation> features = new DelegateFeatureSource<Observation>(
+    o => new FeatureSet(
+        new[] { "term" },
+        new Dictionary<string, double> { ["hour"] = o.Hour }));
+```
+
+Compose the dimensions with `CompositeFeatureSource<TItem>`:
 
 ```csharp
 var features = new CompositeFeatureSource<Observation>(

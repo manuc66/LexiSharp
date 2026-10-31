@@ -10,7 +10,7 @@ namespace LexiSharp.Classification;
 /// A feature is an opaque, non-empty string. What it means — a term, a time bucket, a transition,
 /// a process name, the fact that an item is generic or excluded — is decided entirely by the
 /// <see cref="IFeatureSource{TItem}"/> that produced it. The classifier only asks whether a name
-/// is present.
+/// is present, and, when the name carries one, what its numeric value is.
 /// </remarks>
 public interface IFeatureSet
 {
@@ -19,12 +19,22 @@ public interface IFeatureSet
     /// <returns><c>true</c> when the feature is present.</returns>
     bool Contains(string feature);
 
+    /// <summary>
+    /// The numeric value attached to <paramref name="feature"/>, or null when the feature is
+    /// absent or carries no value. A <see cref="double.NaN"/> value is treated as missing by the
+    /// threshold question.
+    /// </summary>
+    /// <param name="feature">The feature name to read.</param>
+    /// <returns>The value, or null.</returns>
+    double? NumericValue(string feature);
+
     /// <summary>The feature names in the set. Order is not part of the contract.</summary>
     IReadOnlyCollection<string> Features { get; }
 }
 
 /// <summary>
-/// The default <see cref="IFeatureSet"/>: a set of names with ordinal comparison.
+/// The default <see cref="IFeatureSet"/>: a set of names with ordinal comparison, optionally with
+/// a numeric value attached to some of them.
 /// </summary>
 /// <remarks>
 /// Small sets — a text document's terms, typically — are stored as a deduplicated array and tested
@@ -38,57 +48,51 @@ public sealed class FeatureSet : IFeatureSet
 
     private readonly string[]? _small;
     private readonly HashSet<string>? _large;
+    private readonly Dictionary<string, double>? _numeric;
 
-    /// <summary>Creates a feature set from names; duplicates collapse.</summary>
+    /// <summary>Creates a binary feature set from names; duplicates collapse.</summary>
     /// <param name="features">The feature names. Each must be non-empty.</param>
     public FeatureSet(IEnumerable<string> features)
+        : this(features, numericValues: null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a feature set from names and, optionally, the numeric value of some of them. A
+    /// numeric key is a feature too: it is added to the set even when it is absent from
+    /// <paramref name="features"/>.
+    /// </summary>
+    /// <param name="features">The binary feature names. Each must be non-empty.</param>
+    /// <param name="numericValues">The numeric values, keyed by feature name; null for a binary set.</param>
+    public FeatureSet(
+        IEnumerable<string> features,
+        IReadOnlyDictionary<string, double>? numericValues)
     {
         ArgumentNullException.ThrowIfNull(features);
 
-        // A tokenizer already hands us a list; materializing only when it is not one avoids a
-        // second copy of the document's terms.
         IReadOnlyList<string> buffer = features as IReadOnlyList<string> ?? features.ToList();
 
-        if (buffer.Count <= SmallSetThreshold)
+        if (numericValues is null || numericValues.Count == 0)
         {
-            var small = new string[buffer.Count];
-            int count = 0;
-
-            foreach (string feature in buffer)
-            {
-                if (string.IsNullOrEmpty(feature))
-                    throw new ArgumentException("Feature names must be non-empty strings.", nameof(features));
-
-                bool duplicate = false;
-
-                for (int i = 0; i < count; i++)
-                {
-                    if (string.Equals(small[i], feature, StringComparison.Ordinal))
-                    {
-                        duplicate = true;
-                        break;
-                    }
-                }
-
-                if (!duplicate)
-                    small[count++] = feature;
-            }
-
-            _small = count == small.Length ? small : small[..count];
+            (_small, _large) = BuildNames(buffer);
             return;
         }
 
-        var large = new HashSet<string>(buffer.Count, StringComparer.Ordinal);
+        var combined = new string[buffer.Count + numericValues.Count];
+        int count = 0;
 
         foreach (string feature in buffer)
-        {
-            if (string.IsNullOrEmpty(feature))
-                throw new ArgumentException("Feature names must be non-empty strings.", nameof(features));
+            combined[count++] = feature;
 
-            large.Add(feature);
-        }
+        foreach (string feature in numericValues.Keys)
+            combined[count++] = feature;
 
-        _large = large;
+        (_small, _large) = BuildNames(combined);
+
+        _numeric = new Dictionary<string, double>(numericValues.Count, StringComparer.Ordinal);
+
+        foreach (var pair in numericValues)
+            _numeric[pair.Key] = pair.Value;
     }
 
     /// <summary>An empty feature set.</summary>
@@ -115,6 +119,57 @@ public sealed class FeatureSet : IFeatureSet
 
         return false;
     }
+
+    /// <inheritdoc />
+    public double? NumericValue(string feature)
+    {
+        ArgumentNullException.ThrowIfNull(feature);
+
+        return _numeric is not null && _numeric.TryGetValue(feature, out double value) ? value : null;
+    }
+
+    private static (string[]? Small, HashSet<string>? Large) BuildNames(IReadOnlyList<string> names)
+    {
+        if (names.Count <= SmallSetThreshold)
+        {
+            var small = new string[names.Count];
+            int count = 0;
+
+            foreach (string feature in names)
+            {
+                if (string.IsNullOrEmpty(feature))
+                    throw new ArgumentException("Feature names must be non-empty strings.", nameof(names));
+
+                bool duplicate = false;
+
+                for (int i = 0; i < count; i++)
+                {
+                    if (string.Equals(small[i], feature, StringComparison.Ordinal))
+                    {
+                        duplicate = true;
+                        break;
+                    }
+                }
+
+                if (!duplicate)
+                    small[count++] = feature;
+            }
+
+            return (count == small.Length ? small : small[..count], null);
+        }
+
+        var large = new HashSet<string>(names.Count, StringComparer.Ordinal);
+
+        foreach (string feature in names)
+        {
+            if (string.IsNullOrEmpty(feature))
+                throw new ArgumentException("Feature names must be non-empty strings.", nameof(names));
+
+            large.Add(feature);
+        }
+
+        return (null, large);
+    }
 }
 
 /// <summary>
@@ -123,8 +178,9 @@ public sealed class FeatureSet : IFeatureSet
 /// <remarks>
 /// Implement this once per domain and compose it with <see cref="CompositeFeatureSource{TItem}"/>
 /// when several dimensions have to count together. Every dimension is expressed the same way: a
-/// name the caller chose. A time is a bucket name, a transition is a pair name, a process is an
-/// identifier, and a derived flag is simply another name.
+/// name the caller chose, with an optional numeric value. A time is a bucket name or a number, a
+/// transition is a pair name, a process is an identifier, and a derived flag is simply another
+/// name.
 /// </remarks>
 /// <typeparam name="TItem">The item type the classifier or divider is built over.</typeparam>
 public interface IFeatureSource<in TItem>
@@ -165,7 +221,8 @@ public sealed class TextFeatureSource : IFeatureSource<SearchDocument>
 /// <remarks>
 /// The composition point for multi-dimensional models — text plus derived flags, text plus
 /// bucketed time, several independent encodings of the same event. A source cannot remove a
-/// feature another source added; if two dimensions collide on a name, they are the same feature.
+/// feature another source added; if two dimensions collide on a name, they are the same feature
+/// and the later source's numeric value wins.
 /// </remarks>
 /// <typeparam name="TItem">The item type the sources read.</typeparam>
 public sealed class CompositeFeatureSource<TItem> : IFeatureSource<TItem>
@@ -192,14 +249,25 @@ public sealed class CompositeFeatureSource<TItem> : IFeatureSource<TItem>
     public IFeatureSet FeaturesOf(TItem item)
     {
         var union = new HashSet<string>(StringComparer.Ordinal);
+        Dictionary<string, double>? numeric = null;
 
         foreach (var source in _sources)
         {
-            foreach (string feature in source.FeaturesOf(item).Features)
+            IFeatureSet features = source.FeaturesOf(item);
+
+            foreach (string feature in features.Features)
+            {
                 union.Add(feature);
+
+                if (features.NumericValue(feature) is not { } value)
+                    continue;
+
+                numeric ??= new Dictionary<string, double>(StringComparer.Ordinal);
+                numeric[feature] = value;
+            }
         }
 
-        return new FeatureSet(union);
+        return new FeatureSet(union, numeric);
     }
 }
 

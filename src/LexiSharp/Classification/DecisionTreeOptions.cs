@@ -42,6 +42,13 @@ public sealed record DecisionTreeOptions
     /// <summary>Minimum information gain a split must add; <c>0</c> refuses a gain of exactly zero.</summary>
     public double MinGain { get; init; }
 
+    /// <summary>
+    /// Maximum number of thresholds evaluated per numeric feature at one node. The thresholds are
+    /// taken from the node's sorted values at an even stride, so the cap bounds the search without
+    /// fixing it to a bucket boundary. Default: <c>32</c>.
+    /// </summary>
+    public int MaxThresholdsPerFeature { get; init; } = 32;
+
     /// <summary>The split score to maximize. Default: <see cref="SplitCriterion.InformationGain"/>.</summary>
     public SplitCriterion Criterion { get; init; } = SplitCriterion.InformationGain;
 
@@ -58,6 +65,7 @@ public sealed record DecisionTreeOptions
         && MinGain >= 0
         && !double.IsNaN(MinGain)
         && !double.IsInfinity(MinGain)
+        && MaxThresholdsPerFeature >= 1
         && Alpha > 0
         && !double.IsNaN(Alpha)
         && !double.IsInfinity(Alpha);

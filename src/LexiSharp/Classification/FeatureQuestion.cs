@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace LexiSharp.Classification;
 
 /// <summary>
@@ -38,4 +40,28 @@ public sealed record FeaturePresenceQuestion(string Feature) : FeatureQuestion
 
     /// <inheritdoc />
     public override string Describe() => $"contains \"{Feature}\"";
+}
+
+/// <summary>
+/// True when a feature's numeric value is at or above the threshold. A missing value — the
+/// feature is absent, carries no number, or carries <see cref="double.NaN"/> — answers no, which
+/// is what puts an unknown item on the false branch rather than treating it as zero.
+/// </summary>
+/// <param name="Feature">The feature name to read.</param>
+/// <param name="Threshold">The inclusive lower bound.</param>
+public sealed record NumericThresholdQuestion(string Feature, double Threshold) : FeatureQuestion
+{
+    /// <inheritdoc />
+    public override bool Matches(IFeatureSet features)
+    {
+        ArgumentNullException.ThrowIfNull(features);
+
+        return features.NumericValue(Feature) is { } value
+            && !double.IsNaN(value)
+            && value >= Threshold;
+    }
+
+    /// <inheritdoc />
+    public override string Describe() =>
+        string.Create(CultureInfo.InvariantCulture, $"{Feature} >= {Threshold}");
 }

@@ -93,6 +93,14 @@ public sealed record DecisionExplanation(IReadOnlyList<QuestionAnswer> Path, Dec
 /// beats <see cref="DecisionTreeOptions.MinGain"/>.
 /// </para>
 /// <para>
+/// A feature may carry a numeric value (<see cref="IFeatureSet.NumericValue"/>): the tree also
+/// scores thresholds over the node's values, so it can learn <c>hour &gt;= 14</c> rather than only
+/// the presence of a bucket, and a value it has not seen — 13 or 17 — is placed by the same
+/// inequality. A missing value answers no, so an item whose source could not provide the value
+/// takes the false branch rather than being treated as zero. The threshold search is capped by
+/// <see cref="DecisionTreeOptions.MaxThresholdsPerFeature"/>.
+/// </para>
+/// <para>
 /// Greedy is not optimal: finding the smallest tree that separates a labelled corpus is NP-hard,
 /// and a zero-gain corpus — labels that depend on an exclusive-or of two features, for example —
 /// is not split at all. The tree is also not a probability model. A leaf's distribution is the
@@ -261,6 +269,7 @@ public sealed class DecisionTreeClassifier<TItem>
         }
 
         var flat = new int[total];
+        var flatValues = new double[total];
         var training = new List<TrainingItem>(pending.Count);
         int offset = 0;
 
@@ -274,7 +283,9 @@ public sealed class DecisionTreeClassifier<TItem>
                 if (!featureIds.TryGetValue(feature, out int id) || !candidate[id])
                     continue;
 
-                flat[offset++] = id;
+                flat[offset] = id;
+                flatValues[offset] = item.Features.NumericValue(feature) ?? double.NaN;
+                offset++;
             }
 
             training.Add(new TrainingItem(
@@ -292,7 +303,7 @@ public sealed class DecisionTreeClassifier<TItem>
 
         try
         {
-            _root = Build(training, flat, depth: 0, scratch);
+            _root = Build(training, flat, flatValues, depth: 0, scratch);
         }
         finally
         {
@@ -413,6 +424,7 @@ public sealed class DecisionTreeClassifier<TItem>
     private DecisionTreeNode Build(
         List<TrainingItem> items,
         int[] featureIds,
+        double[] featureValues,
         int depth,
         SplitScratch scratch)
     {
@@ -421,20 +433,31 @@ public sealed class DecisionTreeClassifier<TItem>
         if (depth >= _options.MaxDepth || items.Count < 2 * _options.MinDocumentsPerLeaf)
             return MakeLeaf(counts, totalWeight, items.Count);
 
-        SplitChoice? best = FindBestSplit(items, featureIds, counts, totalWeight, scratch);
+        SplitChoice? best = FindBestSplit(
+            items, featureIds, featureValues, counts, totalWeight, scratch);
 
         if (best is null)
             return MakeLeaf(counts, totalWeight, items.Count);
 
         SplitChoice choice = best.Value;
         string feature = _featuresById[choice.FeatureId];
+        FeatureQuestion question = double.IsNaN(choice.Threshold)
+            ? new FeaturePresenceQuestion(feature)
+            : new NumericThresholdQuestion(feature, choice.Threshold);
         var trueItems = new List<TrainingItem>(choice.DocumentsTrue);
         var falseItems = new List<TrainingItem>(choice.DocumentsFalse);
 
         foreach (var item in items)
         {
-            bool hasFeature = Array.IndexOf(
-                featureIds, choice.FeatureId, item.FeatureStart, item.FeatureCount) >= 0;
+            bool hasFeature = double.IsNaN(choice.Threshold)
+                ? Array.IndexOf(featureIds, choice.FeatureId, item.FeatureStart, item.FeatureCount) >= 0
+                : HasNumericAtLeast(
+                    featureIds,
+                    featureValues,
+                    choice.FeatureId,
+                    choice.Threshold,
+                    item.FeatureStart,
+                    item.FeatureCount);
 
             (hasFeature ? trueItems : falseItems).Add(item);
         }
@@ -450,9 +473,9 @@ public sealed class DecisionTreeClassifier<TItem>
             choice.WeightFalse);
 
         return new DecisionBranch(
-            new FeaturePresenceQuestion(feature),
-            Build(trueItems, featureIds, depth + 1, scratch),
-            Build(falseItems, featureIds, depth + 1, scratch),
+            question,
+            Build(trueItems, featureIds, featureValues, depth + 1, scratch),
+            Build(falseItems, featureIds, featureValues, depth + 1, scratch),
             metrics);
     }
 
@@ -473,6 +496,7 @@ public sealed class DecisionTreeClassifier<TItem>
     private SplitChoice? FindBestSplit(
         List<TrainingItem> items,
         int[] featureIds,
+        double[] featureValues,
         double[] parentCounts,
         double parentWeight,
         SplitScratch scratch)
@@ -485,6 +509,7 @@ public sealed class DecisionTreeClassifier<TItem>
         var slotVersion = scratch.SlotVersion;
         var nodeFeatureIds = scratch.NodeFeatureIds;
         var documentCounts = scratch.DocumentCounts;
+        Dictionary<int, List<NumericPoint>>? numericPoints = null;
 
         // One flat buffer per training run, reused by every node, instead of one double[] per
         // feature per node: the counts for feature slot s live at
@@ -520,6 +545,21 @@ public sealed class DecisionTreeClassifier<TItem>
 
                 documentCounts[slot]++;
                 scratch.Weights[slot * classCount + item.CategoryIndex] += item.Weight;
+
+                double value = featureValues[i];
+
+                if (double.IsNaN(value))
+                    continue;
+
+                numericPoints ??= new Dictionary<int, List<NumericPoint>>();
+
+                if (!numericPoints.TryGetValue(featureId, out List<NumericPoint>? points))
+                {
+                    points = new List<NumericPoint>();
+                    numericPoints[featureId] = points;
+                }
+
+                points.Add(new NumericPoint(value, item.CategoryIndex, item.Weight));
             }
         }
 
@@ -527,6 +567,41 @@ public sealed class DecisionTreeClassifier<TItem>
         bool gini = _options.Criterion == SplitCriterion.Gini;
         SplitChoice? best = null;
         double bestScore = double.NegativeInfinity;
+
+        void Consider(
+            int featureId,
+            double threshold,
+            double gain,
+            double ratio,
+            double impurityAfter,
+            int documentsTrue,
+            int documentsFalse,
+            double weightTrue,
+            double weightFalse)
+        {
+            double score = _options.Criterion == SplitCriterion.GainRatio ? ratio : gain;
+
+            bool better = best is null
+                || score > bestScore + SplitFloor
+                || (Math.Abs(score - bestScore) <= SplitFloor
+                    && IsTieBreakBetter(featureId, threshold, best.Value));
+
+            if (!better)
+                return;
+
+            best = new SplitChoice(
+                featureId,
+                threshold,
+                gain,
+                ratio,
+                impurityBefore,
+                impurityAfter,
+                documentsTrue,
+                documentsFalse,
+                weightTrue,
+                weightFalse);
+            bestScore = score;
+        }
 
         foreach (int featureId in nodeFeatureIds)
         {
@@ -558,30 +633,151 @@ public sealed class DecisionTreeClassifier<TItem>
             double probability = weightTrue / parentWeight;
             double splitInfo = -probability * Math.Log2(probability) - (1 - probability) * Math.Log2(1 - probability);
             double ratio = splitInfo > 0 ? gain / splitInfo : 0;
-            double score = _options.Criterion == SplitCriterion.GainRatio ? ratio : gain;
 
-            bool better = best is null
-                || score > bestScore + SplitFloor
-                || (Math.Abs(score - bestScore) <= SplitFloor
-                    && string.CompareOrdinal(_featuresById[featureId], _featuresById[best.Value.FeatureId]) < 0);
-
-            if (!better)
-                continue;
-
-            best = new SplitChoice(
+            Consider(
                 featureId,
+                double.NaN,
                 gain,
                 ratio,
-                impurityBefore,
                 impurityAfter,
                 documentsTrue,
                 documentsFalse,
                 weightTrue,
                 weightFalse);
-            bestScore = score;
+        }
+
+        if (numericPoints is not null)
+        {
+            foreach (var (featureId, points) in numericPoints)
+            {
+                points.Sort(static (left, right) => left.Value.CompareTo(right.Value));
+
+                var boundaries = new List<double>();
+
+                for (int i = 0; i < points.Count; i++)
+                {
+                    if (i == 0 || points[i].Value != points[i - 1].Value)
+                        boundaries.Add(points[i].Value);
+                }
+
+                int step = Math.Max(
+                    1,
+                    (boundaries.Count + _options.MaxThresholdsPerFeature - 1)
+                    / _options.MaxThresholdsPerFeature);
+
+                for (int b = 0; b < boundaries.Count; b += step)
+                    EvaluateNumeric(featureId, points, boundaries[b]);
+
+                if (boundaries.Count > 0 && (boundaries.Count - 1) % step != 0)
+                    EvaluateNumeric(featureId, points, boundaries[^1]);
+            }
+        }
+
+        void EvaluateNumeric(int featureId, List<NumericPoint> points, double threshold)
+        {
+            int first = LowerBound(points, threshold);
+            int documentsTrue = points.Count - first;
+
+            if (documentsTrue < _options.MinDocumentsPerLeaf
+                || items.Count - documentsTrue < _options.MinDocumentsPerLeaf)
+                return;
+
+            var trueCounts = new double[classCount];
+            double weightTrue = 0;
+
+            for (int i = first; i < points.Count; i++)
+            {
+                trueCounts[points[i].CategoryIndex] += points[i].Weight;
+                weightTrue += points[i].Weight;
+            }
+
+            double weightFalse = parentWeight - weightTrue;
+
+            if (weightTrue <= 0 || weightFalse <= 0)
+                return;
+
+            double impurityAfter = ChildImpurity(
+                parentCounts, trueCounts, 0, weightTrue, weightFalse, gini);
+            double gain = impurityBefore - impurityAfter;
+
+            if (gain <= Math.Max(_options.MinGain, SplitFloor))
+                return;
+
+            double probability = weightTrue / parentWeight;
+            double splitInfo = -probability * Math.Log2(probability) - (1 - probability) * Math.Log2(1 - probability);
+            double ratio = splitInfo > 0 ? gain / splitInfo : 0;
+
+            Consider(
+                featureId,
+                threshold,
+                gain,
+                ratio,
+                impurityAfter,
+                documentsTrue,
+                items.Count - documentsTrue,
+                weightTrue,
+                weightFalse);
         }
 
         return best;
+    }
+
+    /// <summary>
+    /// Ordinal feature-name order, then presence before a threshold, then the smaller threshold:
+    /// the same candidate set always selects the same split, whatever the dictionary order was.
+    /// </summary>
+    private bool IsTieBreakBetter(int featureId, double threshold, SplitChoice best)
+    {
+        int byName = string.CompareOrdinal(_featuresById[featureId], _featuresById[best.FeatureId]);
+
+        if (byName != 0)
+            return byName < 0;
+
+        if (double.IsNaN(threshold))
+            return !double.IsNaN(best.Threshold);
+
+        if (double.IsNaN(best.Threshold))
+            return false;
+
+        return threshold < best.Threshold;
+    }
+
+    /// <summary>The first index whose value is at or above <paramref name="threshold"/>.</summary>
+    private static int LowerBound(List<NumericPoint> points, double threshold)
+    {
+        int low = 0;
+        int high = points.Count;
+
+        while (low < high)
+        {
+            int middle = low + ((high - low) >> 1);
+
+            if (points[middle].Value < threshold)
+                low = middle + 1;
+            else
+                high = middle;
+        }
+
+        return low;
+    }
+
+    /// <summary>Whether an item's numeric feature is present and at or above the threshold.</summary>
+    private static bool HasNumericAtLeast(
+        int[] featureIds,
+        double[] featureValues,
+        int featureId,
+        double threshold,
+        int start,
+        int count)
+    {
+        int index = Array.IndexOf(featureIds, featureId, start, count);
+
+        if (index < 0)
+            return false;
+
+        double value = featureValues[index];
+
+        return !double.IsNaN(value) && value >= threshold;
     }
 
     /// <summary>
@@ -777,8 +973,11 @@ public sealed class DecisionTreeClassifier<TItem>
         }
     }
 
+    private readonly record struct NumericPoint(double Value, int CategoryIndex, double Weight);
+
     private readonly record struct SplitChoice(
         int FeatureId,
+        double Threshold,
         double Gain,
         double GainRatio,
         double ImpurityBefore,

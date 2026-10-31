@@ -133,10 +133,12 @@ was designed from:
   [learning from past choices](ranking.md#learning-from-past-choices-queryfeedbackhistory),
   [fitted confidence](observability.md#fitted-confidence-and-the-abstention-threshold-calibratedscoreconfidence).
 - **The question trees are greedy and uncalibrated, and on 20 Newsgroups the linear model wins.**
-  `DecisionTreeClassifier`, `RandomForestClassifier` and `CorpusDivider` learn binary feature
-  questions; each split is the best greedy one, not the optimal tree (finding the smallest
+  `DecisionTreeClassifier`, `RandomForestClassifier` and `CorpusDivider` learn binary or threshold
+  feature questions; each split is the best greedy one, not the optimal tree (finding the smallest
   separating tree is NP-hard), and a leaf's distribution is the smoothed label mix of the documents
-  that reached it, not a probability of correctness. On the standard `20news-bydate` split the
+  that reached it, not a probability of correctness. A numeric feature is learned as an inequality
+  (`hour >= 14`), so adjacent values generalize; a categorical bucket, a transition and a process
+  hierarchy are still flat names. On the standard `20news-bydate` split the
   single tree reads **0.446** accuracy / **0.494** macro-F1, the forest **0.662** / **0.658**, and
   Naive Bayes **0.757** / **0.729**: the forest narrows the gap but does not close it, and a leaf
   is still not calibrated. The command and the pin are in
