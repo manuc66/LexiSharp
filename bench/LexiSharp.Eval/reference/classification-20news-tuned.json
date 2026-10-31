@@ -1,0 +1,35 @@
+{
+  "dataset": "20news-bydate",
+  "sourceMd5": "D6E9E45CB8CB77EC5276DFA6DFC14318",
+  "trainDocuments": 11300,
+  "testDocuments": 7525,
+  "categories": 20,
+  "maxDepth": 30,
+  "minDocumentsPerLeaf": 2,
+  "minDocumentFrequency": 2,
+  "criterion": "Gini",
+  "forestTrees": 25,
+  "forestFeatureSubset": 0.3,
+  "forestSeed": 7,
+  "validationFraction": 0.15,
+  "rows": [
+    {
+      "method": "Naive Bayes",
+      "accuracy": 0.7573421926910299,
+      "macroF1": 0.7288962907578111,
+      "averageQuestions": null
+    },
+    {
+      "method": "Decision tree",
+      "accuracy": 0.44571428571428573,
+      "macroF1": 0.4944912150573752,
+      "averageQuestions": 25.728504983388703
+    },
+    {
+      "method": "Random forest",
+      "accuracy": 0.6620598006644518,
+      "macroF1": 0.6583519872474559,
+      "averageQuestions": null
+    }
+  ]
+}
