@@ -57,6 +57,18 @@ public sealed record DecisionTreeOptions
     /// </summary>
     public Func<string, double>? QuestionCost { get; init; }
 
+    /// <summary>
+    /// When the winning category's probability is below this, prediction returns nothing instead
+    /// of an answer. <c>0</c> never abstains. Default: <c>0</c>.
+    /// </summary>
+    public double MinLeafProbability { get; init; }
+
+    /// <summary>
+    /// When the reached leaf's summed sample weight is below this, prediction returns nothing.
+    /// <c>0</c> never abstains on support. Default: <c>0</c>.
+    /// </summary>
+    public double MinLeafSupport { get; init; }
+
     /// <summary>The split score to maximize. Default: <see cref="SplitCriterion.InformationGain"/>.</summary>
     public SplitCriterion Criterion { get; init; } = SplitCriterion.InformationGain;
 
@@ -74,6 +86,13 @@ public sealed record DecisionTreeOptions
         && !double.IsNaN(MinGain)
         && !double.IsInfinity(MinGain)
         && MaxThresholdsPerFeature >= 1
+        && MinLeafProbability >= 0
+        && MinLeafProbability <= 1
+        && !double.IsNaN(MinLeafProbability)
+        && !double.IsInfinity(MinLeafProbability)
+        && MinLeafSupport >= 0
+        && !double.IsNaN(MinLeafSupport)
+        && !double.IsInfinity(MinLeafSupport)
         && Alpha > 0
         && !double.IsNaN(Alpha)
         && !double.IsInfinity(Alpha);
