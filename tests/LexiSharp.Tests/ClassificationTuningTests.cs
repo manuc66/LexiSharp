@@ -1,3 +1,4 @@
+using LexiSharp.Classification;
 using LexiSharp.Eval;
 using Xunit;
 
@@ -112,6 +113,53 @@ public class ClassificationTuningTests
         string best = ClassificationEvaluation.SelectBest(candidates, candidate => candidate);
 
         Assert.Equal("a", best);
+    }
+
+    [Fact]
+    public void TuneForest_ReturnsTheCandidateWithTheBestValidationAccuracy()
+    {
+        var documents = new List<ClassificationDocument>();
+
+        foreach (string category in new[] { "A", "B", "C" })
+        {
+            for (int i = 0; i < 12; i++)
+                documents.Add(new ClassificationDocument($"{category}-{i}", $"{category} term{i % 4}", category));
+        }
+
+        var split = ClassificationEvaluation.HoldOut(documents, validationFraction: 0.25, seed: 7);
+        var candidates = new[]
+        {
+            new ForestCandidate(MaxDepth: 2, FeatureSubset: 0.5, MinDocumentsPerLeaf: 1),
+            new ForestCandidate(MaxDepth: 8, FeatureSubset: 0.5, MinDocumentsPerLeaf: 1),
+        };
+        var baseOptions = new RandomForestOptions
+        {
+            Trees = 5,
+            MinDocumentFrequency = 1,
+            Seed = 7,
+        };
+
+        var tuned = ClassificationEvaluation.TuneForest(split.Fit, split.Validation, candidates, baseOptions);
+
+        var scores = candidates
+            .Select(candidate => (
+                Candidate: candidate,
+                Score: ClassificationEvaluation.MeasureRandomForest(
+                    split.Fit,
+                    split.Validation,
+                    baseOptions with
+                    {
+                        MaxDepth = candidate.MaxDepth,
+                        FeatureSubsetFraction = candidate.FeatureSubset,
+                        MinDocumentsPerLeaf = candidate.MinDocumentsPerLeaf,
+                    }).Accuracy))
+            .ToArray();
+
+        Assert.Equal(scores.Max(score => score.Score), tuned.ValidationAccuracy, precision: 12);
+        Assert.Contains(
+            scores,
+            score => score.Candidate == tuned.Candidate
+                && Math.Abs(score.Score - tuned.ValidationAccuracy) < 1e-12);
     }
 
     [Fact]
