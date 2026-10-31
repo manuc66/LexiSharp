@@ -1272,14 +1272,16 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- classification \
 
 | Method | Accuracy | Macro-F1 | Avg. questions | Train | Predict |
 |---|---:|---:|---:|---:|---:|
-| Naive Bayes | 0.7573 | 0.7289 | — | 7.24 s | 2.523 ms/doc |
-| Decision tree (depth 30, Gini) | 0.4457 | 0.4945 | 25.7 | 6.15 s | 0.059 ms/doc |
-| Random forest (25 trees, 30 % subset) | 0.6621 | 0.6584 | — | 31.80 s | 0.622 ms/doc |
+| Naive Bayes | 0.7573 | 0.7289 | — | 3.16 s | 1.336 ms/doc |
+| Decision tree (depth 30, Gini) | 0.4457 | 0.4945 | 25.7 | 5.05 s | 0.052 ms/doc |
+| Random forest (25 trees, 30 % subset) | 0.6621 | 0.6584 | — | 18.68 s | 0.184 ms/doc |
+| Linear (logistic, AdaGrad) | **0.8085** | **0.8027** | — | 12.79 s | 0.108 ms/doc |
 
 The tree is the explainable model, not the accuracy model: one greedy path over binary term
-presence plateaus at **0.446**, and the forest recovers most of that gap at **0.662** but still
-trails Naive Bayes's **0.757**. On sparse text the linear model wins; a forest narrows the gap, it
-does not close it. The figures are pinned in
+presence plateaus at **0.446**. The forest recovers most of that gap at **0.662**, and the linear
+model — the same feature seam, a softmax over every feature at once — is the accuracy leader at
+**0.8085**, ahead of Naive Bayes's **0.7573**. The tree and the forest are not the accuracy models;
+the linear model is. The figures are pinned in
 [`reference/classification-20news-tuned.json`](https://github.com/manuc66/LexiSharp/blob/main/bench/LexiSharp.Eval/reference/classification-20news-tuned.json)
 and replayed by the same command with `--verify`:
 

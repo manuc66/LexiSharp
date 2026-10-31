@@ -132,7 +132,7 @@ was designed from:
   many recorded associations it starts to. Measure on your own data before relying on either —
   [learning from past choices](ranking.md#learning-from-past-choices-queryfeedbackhistory),
   [fitted confidence](observability.md#fitted-confidence-and-the-abstention-threshold-calibratedscoreconfidence).
-- **The question trees are greedy and uncalibrated, and on 20 Newsgroups the linear model wins.**
+- **The question trees are greedy and uncalibrated, and the linear model is the accuracy leader.**
   `DecisionTreeClassifier`, `RandomForestClassifier` and `CorpusDivider` learn binary or threshold
   feature questions; each split is the best greedy one, not the optimal tree (finding the smallest
   separating tree is NP-hard), and a leaf's distribution is the smoothed label mix of the documents
@@ -140,10 +140,11 @@ was designed from:
   (`hour >= 14`), so adjacent values generalize; a categorical bucket, a transition and a process
   hierarchy are still flat names. A feature can be present, absent or unknown; a binary question
   answers no for unknown, and `MaskedFeatureSource` is the caller-side seam for excluding a
-  dimension when an item is generic or excluded. On the standard `20news-bydate` split the
-  single tree reads **0.446** accuracy / **0.494** macro-F1, the forest **0.662** / **0.658**, and
-  Naive Bayes **0.757** / **0.729**: the forest narrows the gap but does not close it, and a leaf
-  is still not calibrated. The command and the pin are in
+  dimension when an item is generic or excluded. On the standard `20news-bydate` split the single
+  tree reads **0.4457** accuracy / **0.4945** macro-F1, the forest **0.6621** / **0.6584**, Naive
+  Bayes **0.7573** / **0.7289**, and `LinearClassifier` **0.8085** / **0.8027**: the tree and forest
+  are explainability/ensemble options, the linear model is the accuracy one, and none of the
+  distributions is calibrated. The command and the pin are in
   [Evaluation](evaluation.md#classification-on-20-newsgroups); [Benchmarks](benchmarks.md#classification-classificationbenchmarks)
   reports cost. Measure on your own labels before trusting either. See
   [question trees](text-analysis.md#question-trees-classification-and-corpus-division).

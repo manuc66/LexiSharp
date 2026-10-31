@@ -148,6 +148,10 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `FeatureSet` | class | `IFeatureSet` | The default IFeatureSet: a set of names with ordinal comparison, optionally with a numeric value attached to some of them. |
 | `FeatureState` | enum | — | What a feature set knows about one feature: it is present, it is known to be absent, or the source could not determine it. A binary question answers no for both… |
 | `IdfMode` | enum | — | How term evidence is scaled by corpus rarity during classification. Term frequency is always counted from the training corpus; this knob decides whether (and… |
+| `LinearClassifier` | class | `ITextClassifier` | The text convenience over LinearClassifier: a SearchDocument model over Text. |
+| `LinearClassifier<TItem>` | class | — | A multinomial logistic regression over the same IFeatureSource seam as the question trees, trained with AdaGrad and a deterministic shuffle. |
+| `LinearClassifierOptions` | record | — | Tunable knobs for LinearClassifier: the AdaGrad pass, the vocabulary floor, and the abstention threshold. |
+| `LinearFeatureWeight` | record | — | One feature and the weight the linear model gives it for a category. |
 | `MaskedFeatureSource<TItem>` | class | `IFeatureSource` | Suppresses an inner feature source for the items a mask predicate selects, and reports the mask's own features instead. |
 | `NaiveBayesClassifier` | class | `IIncrementalTextClassifier`, `IReinforceableTextClassifier`, `ITextClassifier`, `IWeightedPredictor` | Multinomial Naive Bayes trained on labelled documents. |
 | `NaiveBayesOptions` | record | — | Tunable knobs for NaiveBayesClassifier; the defaults reproduce the classic Laplace-smoothed, unweighted multinomial Naive Bayes. |
