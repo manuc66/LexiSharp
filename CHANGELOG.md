@@ -40,8 +40,10 @@ workflow.
   never sees a clock. A feature can also carry a numeric value, and the tree scores thresholds
   over it, so a time or a frequency is learned as `>= t` rather than as a bucket name; a missing
   value answers no. A question can also carry a cost, and the split score is divided by it, so a
-  cheap question that is almost as discriminative wins over an expensive one. Measured on the
-  standard `20news-bydate` split: the single tree reads
+  cheap question that is almost as discriminative wins over an expensive one. The tree can decline
+  to answer: `MinLeafProbability` and `MinLeafSupport` withhold a prediction whose leaf is too
+  flat or too small, and `Explain` still shows the path. Measured on the standard `20news-bydate`
+  split: the single tree reads
   **0.446** accuracy / **0.494** macro-F1, the forest **0.662** / **0.658**, and Naive Bayes
   **0.757** / **0.729** — the forest narrows the gap but does not close it, and a leaf is not a
   calibrated probability. See

@@ -224,6 +224,9 @@ public sealed class RandomForestClassifier<TItem>
         for (int i = 0; i < ranked.Count; i++)
             ranked[i] = ranked[i] with { Probability = ranked[i].Probability / sum };
 
+        if (ranked[0].Probability < _options.MinProbability)
+            return Array.Empty<ClassificationResult>();
+
         if (ranked.Count > limit)
             ranked.RemoveRange(limit, ranked.Count - limit);
 

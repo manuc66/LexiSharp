@@ -49,6 +49,12 @@ public sealed record RandomForestOptions
     /// </summary>
     public Func<string, double>? QuestionCost { get; init; }
 
+    /// <summary>
+    /// When the averaged winning probability is below this, prediction returns nothing instead of
+    /// an answer. <c>0</c> never abstains. Default: <c>0</c>.
+    /// </summary>
+    public double MinProbability { get; init; }
+
     internal bool IsValid =>
         Trees >= 1
         && MaxDepth >= 0
@@ -59,6 +65,10 @@ public sealed record RandomForestOptions
         && !double.IsNaN(FeatureSubsetFraction)
         && !double.IsInfinity(FeatureSubsetFraction)
         && Seed >= 0
+        && MinProbability >= 0
+        && MinProbability <= 1
+        && !double.IsNaN(MinProbability)
+        && !double.IsInfinity(MinProbability)
         && Alpha > 0
         && !double.IsNaN(Alpha)
         && !double.IsInfinity(Alpha);
