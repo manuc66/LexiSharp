@@ -124,6 +124,8 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
+| `CalibratedClassifier` | class | `ITextClassifier` | Wraps an ITextClassifier with a fitted temperature, so Predict returns the calibrated distribution and PredictBest the same top category. |
+| `CalibrationSample` | record | — | One validation observation for calibration: the distribution a model produced and the category that was actually right. |
 | `CompositeFeatureSource<TItem>` | class | `IFeatureSource` | Combines several feature sources by union: an item carries every feature any source reports. |
 | `CorpusCluster` | record | — | One terminal region of a corpus division: its document ids, the features that best represent it, and the depth at which it was found. |
 | `CorpusDivider` | class | — | The text convenience over CorpusDivider: divides a SearchDocument corpus by the terms of Text. |
@@ -162,6 +164,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `RandomForestOptions` | record | — | Tunable knobs for RandomForestClassifier: how many trees, how deep, and how much of the feature space each tree is allowed to see. |
 | `SplitCriterion` | enum | — | How a candidate split is scored when a decision tree chooses its next question. |
 | `SynchronizedTextClassifier` | class | `IDisposable`, `IIncrementalTextClassifier`, `IReinforceableTextClassifier`, `ITextClassifier`, `IWeightedPredictor` | Wraps an IReinforceableTextClassifier so that concurrent prediction and concurrent mutation stop being the caller's problem: any number of Predict and… |
+| `TemperatureCalibrator` | class | — | A one-parameter post-hoc calibrator: it divides the log-probabilities by a temperature fitted on a validation set to minimize log-loss. |
 | `TextFeatureSource` | class | `IFeatureSource` | The text feature space: the normalized terms of Text. |
 
 #### `LexiSharp.Compression`
