@@ -70,6 +70,7 @@ public static class Program
             typeof(LevenshteinBenchmarks),
             typeof(ClassificationBenchmarks),
             typeof(StoreWriteBenchmarks),
+            typeof(OnnxEncoderBenchmarks),
         });
 
         switcher.Run(args);

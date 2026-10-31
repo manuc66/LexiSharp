@@ -51,6 +51,9 @@ internal static class DenseEmbedder
     public static async Task<DenseVectors?> TryBuildAsync(
         BeirCorpus corpus, string dataDir, string modelCacheDir, int maxSeqLength, CancellationToken ct)
     {
+        if (Environment.GetEnvironmentVariable("LEXISHARP_EVAL_DENSE_PACKAGE") == "1")
+            return await PackageDenseEmbedder.TryBuildAsync(corpus, dataDir, modelCacheDir, maxSeqLength, ct).ConfigureAwait(false);
+
         int docCount = corpus.Documents.Count;
         int queryCount = corpus.Queries.Count;
 
@@ -103,16 +106,16 @@ internal static class DenseEmbedder
 
         WriteMatrix(docCache, docVectors);
         WriteMatrix(queryCache, queryVectors);
-File.WriteAllText(metaCache, JsonSerializer.Serialize(new
-            {
-                model = DenseModels.ModelId,
-                version = CacheVersion,
-                docCount,
-                queryCount,
-                maxSeqLength,
-                dimension = HiddenDim,
-                elapsed = sw.Elapsed,
-            }));
+        File.WriteAllText(metaCache, JsonSerializer.Serialize(new
+        {
+            model = DenseModels.ModelId,
+            version = CacheVersion,
+            docCount,
+            queryCount,
+            maxSeqLength,
+            dimension = HiddenDim,
+            elapsed = sw.Elapsed,
+        }));
 
         Console.WriteLine($"Embeddings written to {Path.GetFileName(docCache)} and {Path.GetFileName(queryCache)} ({sw.Elapsed.TotalSeconds:0}s).");
 

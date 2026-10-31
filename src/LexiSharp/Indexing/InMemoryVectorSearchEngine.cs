@@ -151,15 +151,96 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
     /// </remarks>
     public int Dimension => _embeddings.Dimension;
 
+    /// <summary>
+    /// The provider's embedding signature, when it implements
+    /// <see cref="IEmbeddingSignatureProvider"/>; <see langword="null"/> otherwise.
+    /// </summary>
+    public string? EmbeddingSignature => (_embeddings as IEmbeddingSignatureProvider)?.EmbeddingSignature;
+
     /// <inheritdoc />
     public void Index(IEnumerable<SearchDocument> documents)
     {
         ArgumentNullException.ThrowIfNull(documents);
 
+        IReadOnlyList<SearchDocument> materialized = documents as IReadOnlyList<SearchDocument>
+            ?? documents.ToList();
+
+        IndexAsync(materialized).GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// Replaces the corpus, embedding the whole batch in one provider call when the provider
+    /// implements <see cref="IBatchEmbeddingProvider"/>. Prefer this over the blocking
+    /// <see cref="Index"/>.
+    /// </summary>
+    /// <param name="documents">The new corpus; the current one is cleared first.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="documents"/> is <see langword="null"/>.</exception>
+    public async Task IndexAsync(
+        IReadOnlyList<SearchDocument> documents,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(documents);
+
+        if (Options.EmbeddingBatchSize < 1)
+            throw new InvalidOperationException("EmbeddingBatchSize must be at least 1.");
+
+        for (int i = 0; i < documents.Count; i++)
+            ArgumentNullException.ThrowIfNull(documents[i]);
+
+        // Embed everything before touching the live corpus. A failed provider call therefore
+        // leaves the previous index searchable, and a large corpus is embedded in bounded chunks
+        // rather than one allocation per token in the whole input.
+        ReadOnlyMemory<float>[] vectors = new ReadOnlyMemory<float>[documents.Count];
+
+        if (_embeddings is IBatchEmbeddingProvider batch)
+        {
+            for (int start = 0; start < documents.Count; start += Options.EmbeddingBatchSize)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                int count = Math.Min(Options.EmbeddingBatchSize, documents.Count - start);
+                string[] texts = new string[count];
+
+                for (int i = 0; i < count; i++)
+                    texts[i] = documents[start + i].Text;
+
+                IReadOnlyList<ReadOnlyMemory<float>> embedded = await batch
+                    .GetTextEmbeddingsAsync(texts, EmbeddingUse.Passage, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (embedded.Count != count)
+                    throw new InvalidOperationException(
+                        $"The provider returned {embedded.Count} embeddings for {count} documents.");
+
+                for (int i = 0; i < count; i++)
+                    vectors[start + i] = embedded[i];
+            }
+        }
+        else
+        {
+            for (int i = 0; i < documents.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                vectors[i] = await _embeddings
+                    .GetTextEmbeddingAsync(documents[i].Text, EmbeddingUse.Passage, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+
+        // Validate before mutating: AddVector would reject a wrong shape, but by then the old
+        // corpus would already be gone.
+        for (int i = 0; i < vectors.Length; i++)
+        {
+            if (vectors[i].Length != Dimension)
+                throw new InvalidOperationException(
+                    $"The provider returned a {vectors[i].Length}D vector but the engine expects {Dimension}D.");
+        }
+
         Clear();
 
-        foreach (var document in documents)
-            Add(document);
+        for (int i = 0; i < documents.Count; i++)
+            AddVector(documents[i], vectors[i]);
     }
 
     /// <inheritdoc />
@@ -254,13 +335,48 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
         {
             ArgumentNullException.ThrowIfNull(entry);
             ArgumentNullException.ThrowIfNull(entry.Document);
-
             AddVector(entry.Document, entry.Vector);
         }
     }
 
+    /// <summary>
+    /// Exports the corpus with the embedding signature, so a later import can refuse vectors from
+    /// a different model or preprocessing.
+    /// </summary>
+    public VectorIndexSnapshot ExportSnapshot() => new(Export(), EmbeddingSignature);
+
+    /// <summary>
+    /// Replaces the corpus from a snapshot, refusing a signature that differs from this engine's
+    /// provider unless <paramref name="allowSignatureMismatch"/> is set. A snapshot with no
+    /// signature (an older file, or a provider that cannot identify itself) is accepted.
+    /// </summary>
+    /// <param name="snapshot">The exported entries and signature.</param>
+    /// <param name="allowSignatureMismatch">When true, imports anyway; the caller is asserting the vectors are compatible.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="snapshot"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">The signatures differ and <paramref name="allowSignatureMismatch"/> is false.</exception>
+    public void ImportSnapshot(VectorIndexSnapshot snapshot, bool allowSignatureMismatch = false)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        if (!allowSignatureMismatch
+            && EmbeddingSignature is not null
+            && snapshot.EmbeddingSignature is not null
+            && !string.Equals(EmbeddingSignature, snapshot.EmbeddingSignature, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The snapshot was produced by a different embedding pipeline: " +
+                $"'{snapshot.EmbeddingSignature}' against '{EmbeddingSignature}'. Re-embed the corpus, " +
+                "or pass allowSignatureMismatch: true if the vectors are known to be compatible.");
+        }
+
+        Import(snapshot.Entries);
+    }
+
     /// <inheritdoc />
-    public IReadOnlyList<SearchResult> Search(string query, SearchOptions? options = null, CancellationToken cancellationToken = default)
+    public IReadOnlyList<SearchResult> Search(
+        string query,
+        SearchOptions? options = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
         return SearchAsync(query, options, cancellationToken).GetAwaiter().GetResult();
@@ -340,8 +456,8 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
         // Bounded window rather than materializing and sorting every document that scores above
         // zero: a dense scan routinely matches most of the corpus, and the page is `Window` rows.
         // The slot is not the insertion order: slots are vacated by Remove and reused, so a slot number
-// orders by where a vector happens to sit now. Tie-breaking on that would be neither stable nor
-// meaningful, so this engine keeps the default and passes no ordinal.
+        // orders by where a vector happens to sit now. Tie-breaking on that would be neither stable nor
+        // meaningful, so this engine keeps the default and passes no ordinal.
         var top = new TopRankedWindow(options.WindowFor(Count), TieBreak.DocumentId, _resolveDocument);
         int stride = _stride;
         var data = _vectorData;
