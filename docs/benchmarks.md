@@ -1531,12 +1531,32 @@ machine.
 
 ## Classification (`ClassificationBenchmarks`)
 
-Synthetic in-memory Naive Bayes classifier (no external data or network):
+Synthetic in-memory classifiers (no external data or network), one `MediumRun` on the machine
+above. The tree rows use 10 000 documents of 30 tokens over 5 random categories; the divider runs
+on the first 2 000 because its per-node profile search is the expensive part. The categories are
+random, so the tree rows price the builder, not its accuracy:
 
-| Method          | Mean        | Error     | StdDev    | Allocated  |
-|---------------- |------------:|----------:|----------:|-----------:|
-| TrainClassifier | 2,097.52 us | 30.799 us | 25.719 us | 1571.28 KB |
-| PredictText     |    10.59 us |  0.209 us |  0.280 us |    9.44 KB |
+| Method              | Mean          | Error       | StdDev      | Allocated   |
+|-------------------- |--------------:|------------:|------------:|------------:|
+| TrainClassifier     |   1,683.26 us |   15.17 us |    22.23 us |   1571.28 KB |
+| PredictText         |       9.81 us |    0.27 us |     0.38 us |     10.63 KB |
+| TrainDecisionTree   |  43,640.45 us |  527.53 us |   756.56 us |  22723.11 KB |
+| PredictDecisionTree |       3.95 us |    0.12 us |     0.17 us |      5.45 KB |
+| DivideCorpus        |   9,582.25 us |  480.35 us |   704.09 us |   4484.59 KB |
+
+The tree's training cost is the split search, not prediction: every node walks its documents and
+their features once, and the scratch buffers are reused across nodes. The allocation is the corpus
+the builder retains while it walks — the default text source materializes a feature set per
+document, and the tree holds those until the build ends. Prediction is a root-to-leaf walk over
+the document's feature set, which is why it reads below the Naive Bayes `Predict` row even though
+the model is larger.
+
+The table is one `MediumRun` on an idle machine. Against the build before the integer-id refactor,
+the tree's training reads **43.6 ms instead of 53.2 ms** and allocates **22.7 MB instead of
+33.9 MB**; prediction reads **3.95 µs instead of 4.51 µs** and allocates 5.45 KB instead of
+7.13 KB; the divider allocates **4.5 MB instead of 6.7 MB**. The divider's mean is flat within
+noise, which is what the allocation change alone should do — its cost is the profile walk, not the
+hash set.
 
 ## Behavioural gate (`lexisharp verify`)
 
