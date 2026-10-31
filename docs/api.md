@@ -145,10 +145,11 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `DivisionSplitMetrics` | record | — | The measurements behind one chosen corpus split. |
 | `FeaturePresenceQuestion` | record | `FeatureQuestion` | True when the item carries a given feature — the only question the built-in builders ask. |
 | `FeatureQuestion` | record | — | A yes/no question asked of an item's features — the unit a question tree is built from. |
-| `FeatureSet` | class | `IFeatureSet` | The default IFeatureSet: a set of names with ordinal comparison. |
+| `FeatureSet` | class | `IFeatureSet` | The default IFeatureSet: a set of names with ordinal comparison, optionally with a numeric value attached to some of them. |
 | `IdfMode` | enum | — | How term evidence is scaled by corpus rarity during classification. Term frequency is always counted from the training corpus; this knob decides whether (and… |
 | `NaiveBayesClassifier` | class | `IIncrementalTextClassifier`, `IReinforceableTextClassifier`, `ITextClassifier`, `IWeightedPredictor` | Multinomial Naive Bayes trained on labelled documents. |
 | `NaiveBayesOptions` | record | — | Tunable knobs for NaiveBayesClassifier; the defaults reproduce the classic Laplace-smoothed, unweighted multinomial Naive Bayes. |
+| `NumericThresholdQuestion` | record | `FeatureQuestion` | True when a feature's numeric value is at or above the threshold. A missing value — the feature is absent, carries no number, or carries NaN — answers no, which… |
 | `QuestionAnswer` | record | — | One question and the answer a particular item gave it. |
 | `RandomForestClassifier` | class | `ITextClassifier` | The text convenience over RandomForestClassifier: a SearchDocument forest over Text. |
 | `RandomForestClassifier<TItem>` | class | — | A bagged forest of DecisionTreeClassifier trees: each tree sees a bootstrap sample and a random subset of the features, and the forest averages their… |
