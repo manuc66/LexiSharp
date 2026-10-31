@@ -304,3 +304,122 @@ strongest and the blend's gain is not claimed here.
 What this does not do: there are no class priors (a frequent category is not favoured), no
 incremental `Learn`/`Unlearn` (retrain instead), no persistence for the centroid model, and no
 calibration between the two models. The temperature changes confidence, never the cosine ranking.
+## Question trees: classification and corpus division
+
+`NaiveBayesClassifier` is a linear model over terms. Two question-tree builders sit beside it, and
+neither knows what a term is: both read an `IFeatureSource<TItem>`, so the same tree can classify on
+text, on bucketed time, on transitions, on derived flags — or on all of them at once through
+`CompositeFeatureSource<TItem>`. The core sees features and weights, never a domain.
+
+### Supervised: the most discriminative question first
+
+```csharp
+var classifier = new DecisionTreeClassifier();
+classifier.Train(documents);                       // SearchDocument.Category
+
+classifier.PredictBest("i cannot connect to the internet");
+classifier.Explain("i cannot connect to the internet");
+// contains "delivery" no -> contains "internet" yes -> Support
+```
+
+At each node the tree scores every candidate feature by information gain (or gain ratio, or
+Gini), keeps the best positive one, and recurses. The first question is therefore the one that
+separates the labels most. Ties are broken by ordinal feature order, so a corpus always produces
+the same tree.
+
+`Explain` returns the questions a text answered and the leaf it reached; `Describe` renders the
+whole tree. On the nine-document Support/Billing/Shipping corpus used by the tests:
+
+```
+contains "delivery"
+  yes: -> Shipping (2)
+  no:  contains "internet"
+    yes: -> Support (2)
+    no:  contains "invoice"
+      yes: -> Billing (2)
+      no:  -> Billing (3)
+```
+
+A leaf's `Probabilities` is the smoothed label mix of the training documents that reached it. It
+is not a calibrated posterior: text whose features are all unknown still follows the false
+branches to a leaf and gets an answer, and no abstention option is offered here. `Predict` and
+`PredictBest` take the same `excludedCategories` set as Naive Bayes and renormalize over the rest.
+
+### When the label matters more than the path: the forest
+
+A single tree is the explainable model. On sparse text it is not the accurate one: measured on
+20 Newsgroups, one tree reaches **0.446** accuracy against Naive Bayes's **0.757**. The forest is
+the accuracy answer — bootstrap samples and random feature subsets, averaged — and it deliberately
+has no `Explain`, because an ensemble's answer is not one path.
+
+```csharp
+var forest = new RandomForestClassifier(new RandomForestOptions
+{
+    Trees = 25,
+    MaxDepth = 30,
+    FeatureSubsetFraction = 0.5,
+    Criterion = SplitCriterion.Gini,
+});
+forest.Train(documents);
+forest.PredictBest("i cannot connect to the internet");
+```
+
+The same measurement puts the forest at **0.633** accuracy / **0.642** macro-F1, so it recovers
+most of the single tree's gap but does not close it; the linear model is still ahead on this
+corpus. The command and the pinned figures are in
+[Evaluation](evaluation.md#classification-on-20-newsgroups).
+
+### Unsupervised: dividing a corpus
+
+```csharp
+var division = new CorpusDivider().Divide(documents);
+Console.WriteLine(division.Describe());
+```
+
+There are no labels. For each candidate feature, the items that carry it and the items that do not
+become two weighted presence profiles, and the score is the balance-weighted mean squared
+difference between them — the between-group variance of binary features, with the candidate's own
+profile excluded so the score is about the rest. A rare feature that isolates one item scores low
+because the balance factor is low; a feature every item carries scores zero.
+
+`CorpusDivision.Clusters` lists the terminal regions in tree order, each with its document ids,
+its top features by document frequency × idf, its depth and its summed weight.
+
+### Several dimensions, and weights
+
+A feature is an opaque name. Time is a bucket name, a transition is a pair name, a process is an
+identifier, and "generic" or "excluded" is another name; the caller's source decides. Compose the
+dimensions with `CompositeFeatureSource<TItem>`:
+
+```csharp
+var features = new CompositeFeatureSource<Observation>(
+    new DelegateFeatureSource<Observation>(o => new[] { $"bucket:{o.Bucket}" }),
+    new DelegateFeatureSource<Observation>(o => o.IsGeneric ? new[] { "generic" } : Array.Empty<string>()));
+
+var tree = new DecisionTreeClassifier<Observation>(
+    features,
+    o => o.Category,
+    weightOf: o => Math.Pow(0.5, o.Age.TotalDays / halfLife.TotalDays));
+```
+
+The third argument is the whole half-life story. The core does not know what an age is: it knows
+a non-negative sample weight, and every gain, impurity, leaf distribution and cluster profile is
+weighted by it. A half-life is the caller's policy, computed once per item. The same argument
+exists on `CorpusDivider<TItem>`.
+
+### What it is not
+
+- **Greedy, not optimal.** Finding the smallest tree that separates a labelled corpus is NP-hard.
+  The builder takes the best split at each node; a corpus whose labels depend on an exclusive-or of
+  two features has zero gain at the root and is not split at all.
+- **Not calibrated.** A leaf distribution is a smoothed training mix, not a probability of
+  correctness. Measure before thresholding it.
+- **Measured on one public corpus, and the linear model wins.** On 20 Newsgroups the single tree
+  reads 0.446 accuracy / 0.494 macro-F1 and the forest 0.633 / 0.642, against Naive Bayes's
+  0.757 / 0.729. The forest narrows the gap; it does not close it. The command and the pin are in
+  [Evaluation](evaluation.md#classification-on-20-newsgroups), and the figures are one machine and
+  one tokenizer, not a promise about your labels.
+- **Bounded search.** The divider scores at most `MaxCandidateTerms` features per node over at most
+  `MaxVocabularyTerms` profile features, both by decreasing document frequency. A discriminative
+  feature outside the cap is not considered. The supervised tree has no such cap and scores every
+  feature above `MinDocumentFrequency`.

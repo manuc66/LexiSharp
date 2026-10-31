@@ -132,6 +132,17 @@ was designed from:
   many recorded associations it starts to. Measure on your own data before relying on either —
   [learning from past choices](ranking.md#learning-from-past-choices-queryfeedbackhistory),
   [fitted confidence](observability.md#fitted-confidence-and-the-abstention-threshold-calibratedscoreconfidence).
+- **The question trees are greedy and uncalibrated, and on 20 Newsgroups the linear model wins.**
+  `DecisionTreeClassifier`, `RandomForestClassifier` and `CorpusDivider` learn binary feature
+  questions; each split is the best greedy one, not the optimal tree (finding the smallest
+  separating tree is NP-hard), and a leaf's distribution is the smoothed label mix of the documents
+  that reached it, not a probability of correctness. On the standard `20news-bydate` split the
+  single tree reads **0.446** accuracy / **0.494** macro-F1, the forest **0.633** / **0.642**, and
+  Naive Bayes **0.757** / **0.729**: the forest narrows the gap but does not close it, and a leaf
+  is still not calibrated. The command and the pin are in
+  [Evaluation](evaluation.md#classification-on-20-newsgroups); [Benchmarks](benchmarks.md#classification-classificationbenchmarks)
+  reports cost. Measure on your own labels before trusting either. See
+  [question trees](text-analysis.md#question-trees-classification-and-corpus-division).
 - **Combinatorial coverage is partial.** Engines, scorers, rerankers and mergers are tested
   individually *and* in the combinations described here, but not every pairing is exercised.
   Treat an unusual combination as supported but unproven until you test it on your data.
