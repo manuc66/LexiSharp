@@ -49,6 +49,14 @@ public sealed record DecisionTreeOptions
     /// </summary>
     public int MaxThresholdsPerFeature { get; init; } = 32;
 
+    /// <summary>
+    /// The cost of asking any question about a feature, or null for a cost of <c>1</c>. The split
+    /// score is divided by it, so a cheap question that is almost as discriminative wins over an
+    /// expensive one. Costs must be finite and positive; a non-positive or non-finite value fails
+    /// training. Default: <c>null</c>.
+    /// </summary>
+    public Func<string, double>? QuestionCost { get; init; }
+
     /// <summary>The split score to maximize. Default: <see cref="SplitCriterion.InformationGain"/>.</summary>
     public SplitCriterion Criterion { get; init; } = SplitCriterion.InformationGain;
 
