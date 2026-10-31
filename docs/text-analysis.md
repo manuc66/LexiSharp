@@ -364,7 +364,7 @@ forest.Train(documents);
 forest.PredictBest("i cannot connect to the internet");
 ```
 
-The same measurement puts the forest at **0.633** accuracy / **0.642** macro-F1, so it recovers
+The same measurement puts the forest at **0.662** accuracy / **0.658** macro-F1, so it recovers
 most of the single tree's gap but does not close it; the linear model is still ahead on this
 corpus. The command and the pinned figures are in
 [Evaluation](evaluation.md#classification-on-20-newsgroups).
@@ -415,7 +415,7 @@ exists on `CorpusDivider<TItem>`.
 - **Not calibrated.** A leaf distribution is a smoothed training mix, not a probability of
   correctness. Measure before thresholding it.
 - **Measured on one public corpus, and the linear model wins.** On 20 Newsgroups the single tree
-  reads 0.446 accuracy / 0.494 macro-F1 and the forest 0.633 / 0.642, against Naive Bayes's
+  reads 0.446 accuracy / 0.494 macro-F1 and the forest 0.662 / 0.658, against Naive Bayes's
   0.757 / 0.729. The forest narrows the gap; it does not close it. The command and the pin are in
   [Evaluation](evaluation.md#classification-on-20-newsgroups), and the figures are one machine and
   one tokenizer, not a promise about your labels.
