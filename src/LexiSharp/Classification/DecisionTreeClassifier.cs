@@ -185,6 +185,15 @@ public sealed class DecisionTreeClassifier<TItem>
     {
         ArgumentNullException.ThrowIfNull(items);
 
+        if (_options.ClassWeights is { } classWeights)
+        {
+            foreach (var pair in classWeights)
+            {
+                if (!double.IsFinite(pair.Value) || pair.Value < 0)
+                    throw new ArgumentException("Class weights must be finite and non-negative.");
+            }
+        }
+
         var pending = new List<PendingItem>();
         var categories = new SortedSet<string>(StringComparer.Ordinal);
 
@@ -200,11 +209,20 @@ public sealed class DecisionTreeClassifier<TItem>
             if (!double.IsFinite(weight) || weight < 0)
                 throw new ArgumentException("Sample weights must be finite and non-negative.", nameof(items));
 
-            if (weight == 0)
+            double classWeight = _options.ClassWeights is { } weights
+                && weights.TryGetValue(category, out double configured)
+                    ? configured
+                    : 1.0;
+            double effectiveWeight = weight * classWeight;
+
+            if (!double.IsFinite(effectiveWeight))
+                throw new ArgumentException("The effective sample weight must be finite.");
+
+            if (effectiveWeight == 0)
                 continue;
 
             categories.Add(category);
-            pending.Add(new PendingItem(category, _features.FeaturesOf(item), weight));
+            pending.Add(new PendingItem(category, _features.FeaturesOf(item), effectiveWeight));
         }
 
         _categories = categories.ToArray();
