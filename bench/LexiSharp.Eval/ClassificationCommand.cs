@@ -29,6 +29,9 @@ internal sealed record ClassificationPin(
     double ForestFeatureSubset,
     int ForestSeed,
     double ValidationFraction,
+    int LinearEpochs,
+    double LinearLearningRate,
+    double LinearL2,
     IReadOnlyList<ClassificationPinRow> Rows);
 
 /// <summary>
@@ -219,13 +222,25 @@ internal static class ClassificationCommand
             Criterion = criterion,
         };
 
+        var linearOptions = new LinearClassifierOptions
+        {
+            MinDocumentFrequency = minDocumentFrequency,
+        };
+
+        Console.WriteLine(string.Create(
+            CultureInfo.InvariantCulture,
+            $"Linear: epochs={linearOptions.Epochs}, rate={linearOptions.LearningRate:F2}, " +
+            $"l2={linearOptions.L2}, min df={linearOptions.MinDocumentFrequency}"));
+
         var naiveBayes = ClassificationEvaluation.MeasureNaiveBayes(corpus.Train, corpus.Test);
         var tree = ClassificationEvaluation.MeasureDecisionTree(corpus.Train, corpus.Test, options);
         var forest = ClassificationEvaluation.MeasureRandomForest(corpus.Train, corpus.Test, forestOptions);
+        var linear = ClassificationEvaluation.MeasureLinear(corpus.Train, corpus.Test, linearOptions);
 
         Print(naiveBayes);
         Print(tree);
         Print(forest);
+        Print(linear);
 
         var pin = new ClassificationPin(
             corpus.Name,
@@ -241,7 +256,10 @@ internal static class ClassificationCommand
             forestSubset,
             forestSeed,
             tune ? validationFraction : 0,
-            [ToRow(naiveBayes), ToRow(tree), ToRow(forest)]);
+            linearOptions.Epochs,
+            linearOptions.LearningRate,
+            linearOptions.L2,
+            [ToRow(naiveBayes), ToRow(tree), ToRow(forest), ToRow(linear)]);
 
         if (writePath is not null)
         {
@@ -303,7 +321,10 @@ internal static class ClassificationCommand
             || expected.ForestTrees != actual.ForestTrees
             || Math.Abs(expected.ForestFeatureSubset - actual.ForestFeatureSubset) > 1e-12
             || expected.ForestSeed != actual.ForestSeed
-            || Math.Abs(expected.ValidationFraction - actual.ValidationFraction) > 1e-12)
+            || Math.Abs(expected.ValidationFraction - actual.ValidationFraction) > 1e-12
+            || expected.LinearEpochs != actual.LinearEpochs
+            || Math.Abs(expected.LinearLearningRate - actual.LinearLearningRate) > 1e-12
+            || Math.Abs(expected.LinearL2 - actual.LinearL2) > 1e-12)
         {
             Console.Error.WriteLine("classification: the pin describes a different dataset or configuration.");
             return 1;
