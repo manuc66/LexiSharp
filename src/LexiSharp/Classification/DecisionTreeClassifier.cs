@@ -35,7 +35,11 @@ public sealed record DecisionLeaf(
     string Category,
     IReadOnlyDictionary<string, double> Probabilities,
     int DocumentCount,
-    double Weight) : DecisionTreeNode;
+    double Weight) : DecisionTreeNode
+{
+    /// <summary>The unsmoothed class counts behind <see cref="Probabilities"/>, for the ledger.</summary>
+    internal double[] RawCounts { get; init; } = Array.Empty<double>();
+}
 
 /// <summary>The measurements behind one chosen split.</summary>
 /// <param name="Gain">The weighted impurity reduction the split achieved.</param>
@@ -143,6 +147,9 @@ public sealed class DecisionTreeClassifier<TItem>
     private string[] _featuresById = Array.Empty<string>();
     private double[] _featureCosts = Array.Empty<double>();
 
+    private readonly Dictionary<DecisionLeaf, Dictionary<string, double>> _reinforcement =
+        new(ReferenceEqualityComparer.Instance);
+
     /// <summary>Creates a classifier over a feature space.</summary>
     /// <param name="features">The feature space the tree reads.</param>
     /// <param name="categoryOf">Returns an item's label, or null/empty to skip it during training.</param>
@@ -184,6 +191,8 @@ public sealed class DecisionTreeClassifier<TItem>
     internal void Train(IEnumerable<TItem> items, IReadOnlySet<string>? featureSubset)
     {
         ArgumentNullException.ThrowIfNull(items);
+
+        _reinforcement.Clear();
 
         if (_options.ClassWeights is { } classWeights)
         {
@@ -363,7 +372,7 @@ public sealed class DecisionTreeClassifier<TItem>
         if (limit <= 0 || _root is null)
             return Array.Empty<ClassificationResult>();
 
-        var leaf = Walk(item);
+        var leaf = ApplyReinforcement(Walk(item));
         var ranked = new List<ClassificationResult>(leaf.Probabilities.Count);
         double total = 0;
 
@@ -412,6 +421,77 @@ public sealed class DecisionTreeClassifier<TItem>
         return results.Count > 0 ? results[0].Category : null;
     }
 
+    /// <summary>Records a signed correction at the leaf an item reaches, without retraining.</summary>
+    /// <param name="item">The item whose leaf is corrected.</param>
+    /// <param name="category">A category seen during training.</param>
+    /// <param name="weight">The positive mass to add. Default: <c>1</c>.</param>
+    public void Reinforce(TItem item, string category, double weight = 1.0) =>
+        AdjustReinforcement(item, category, weight, sign: 1.0);
+
+    /// <summary>Removes a correction previously added with <see cref="Reinforce"/>.</summary>
+    /// <param name="item">The item whose leaf is corrected.</param>
+    /// <param name="category">The corrected category.</param>
+    /// <param name="weight">The positive mass to remove. Default: <c>1</c>.</param>
+    public void Unreinforce(TItem item, string category, double weight = 1.0) =>
+        AdjustReinforcement(item, category, weight, sign: -1.0);
+
+    /// <summary>Clears every correction; the tree returns to its training distribution.</summary>
+    public void ForgetReinforcement() => _reinforcement.Clear();
+
+    private void AdjustReinforcement(TItem item, string category, double weight, double sign)
+    {
+        ArgumentNullException.ThrowIfNull(category);
+
+        if (_root is null)
+            throw new InvalidOperationException("The model is untrained.");
+
+        if (!double.IsFinite(weight) || weight <= 0)
+            throw new ArgumentException("The reinforcement weight must be finite and positive.", nameof(weight));
+
+        if (!_categoryIndex.ContainsKey(category))
+            throw new ArgumentException("The category was not seen during training.", nameof(category));
+
+        DecisionLeaf leaf = Walk(item);
+
+        if (!_reinforcement.TryGetValue(leaf, out Dictionary<string, double>? adjustments))
+        {
+            adjustments = new Dictionary<string, double>(StringComparer.Ordinal);
+            _reinforcement[leaf] = adjustments;
+        }
+
+        double updated = adjustments.GetValueOrDefault(category) + sign * weight;
+
+        if (Math.Abs(updated) <= 1e-12)
+            adjustments.Remove(category);
+        else
+            adjustments[category] = updated;
+
+        if (adjustments.Count == 0)
+            _reinforcement.Remove(leaf);
+    }
+
+    private DecisionLeaf ApplyReinforcement(DecisionLeaf leaf)
+    {
+        if (!_reinforcement.TryGetValue(leaf, out Dictionary<string, double>? adjustments)
+            || adjustments.Count == 0)
+        {
+            return leaf;
+        }
+
+        double[] counts = leaf.RawCounts;
+        var adjusted = new double[counts.Length];
+        double total = 0;
+
+        for (int c = 0; c < counts.Length; c++)
+        {
+            double value = Math.Max(0, counts[c] + adjustments.GetValueOrDefault(_categories[c]));
+            adjusted[c] = value;
+            total += value;
+        }
+
+        return CreateLeaf(adjusted, total, leaf.DocumentCount, leaf.Weight);
+    }
+
     /// <summary>Returns the questions an item answered on its way to a leaf, and the leaf it reached.</summary>
     /// <param name="item">The item to explain.</param>
     /// <returns>The path and outcome, or null when the model is untrained.</returns>
@@ -431,7 +511,7 @@ public sealed class DecisionTreeClassifier<TItem>
             node = answer ? branch.TrueBranch : branch.FalseBranch;
         }
 
-        return new DecisionExplanation(path, (DecisionLeaf)node);
+        return new DecisionExplanation(path, ApplyReinforcement((DecisionLeaf)node));
     }
 
     /// <summary>Renders the trained tree as indented text, or <c>(untrained)</c> before training.</summary>
@@ -907,7 +987,10 @@ public sealed class DecisionTreeClassifier<TItem>
         return impurity;
     }
 
-    private DecisionLeaf MakeLeaf(double[] counts, double totalWeight, int documentCount)
+    private DecisionLeaf MakeLeaf(double[] counts, double totalWeight, int documentCount) =>
+        CreateLeaf(counts, totalWeight, documentCount, totalWeight);
+
+    private DecisionLeaf CreateLeaf(double[] counts, double total, int documentCount, double weight)
     {
         int classCount = _categories.Count;
         var probabilities = new Dictionary<string, double>(classCount, StringComparer.Ordinal);
@@ -916,7 +999,7 @@ public sealed class DecisionTreeClassifier<TItem>
 
         for (int c = 0; c < classCount; c++)
         {
-            double probability = (counts[c] + _options.Alpha) / (totalWeight + _options.Alpha * classCount);
+            double probability = (counts[c] + _options.Alpha) / (total + _options.Alpha * classCount);
             string category = _categories[c];
             probabilities[category] = probability;
 
@@ -934,7 +1017,10 @@ public sealed class DecisionTreeClassifier<TItem>
             bestCategory,
             new ReadOnlyDictionary<string, double>(probabilities),
             documentCount,
-            totalWeight);
+            weight)
+        {
+            RawCounts = counts,
+        };
     }
 
     private DecisionLeaf Walk(TItem item)
@@ -1105,6 +1191,31 @@ public sealed class DecisionTreeClassifier : ITextClassifier
 
         return _inner.PredictBest(new SearchDocument(string.Empty, text), excludedCategories);
     }
+
+    /// <summary>Records a correction at the leaf a text reaches, without retraining.</summary>
+    /// <param name="text">Raw text; tokenized internally with this model's tokenizer.</param>
+    /// <param name="category">A category seen during training.</param>
+    /// <param name="weight">The positive mass to add. Default: <c>1</c>.</param>
+    public void Reinforce(string text, string category, double weight = 1.0)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        _inner.Reinforce(new SearchDocument(string.Empty, text), category, weight);
+    }
+
+    /// <summary>Removes a correction previously added with <see cref="Reinforce"/>.</summary>
+    /// <param name="text">Raw text; tokenized internally with this model's tokenizer.</param>
+    /// <param name="category">The corrected category.</param>
+    /// <param name="weight">The positive mass to remove. Default: <c>1</c>.</param>
+    public void Unreinforce(string text, string category, double weight = 1.0)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        _inner.Unreinforce(new SearchDocument(string.Empty, text), category, weight);
+    }
+
+    /// <summary>Clears every correction; the tree returns to its training distribution.</summary>
+    public void ForgetReinforcement() => _inner.ForgetReinforcement();
 
     /// <summary>Returns the questions a text answered on its way to a leaf, and the leaf it reached.</summary>
     /// <param name="text">Raw text; tokenized internally with this model's tokenizer.</param>

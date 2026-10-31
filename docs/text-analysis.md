@@ -347,6 +347,12 @@ as a known false. When an item's other dimensions must not be trusted — the «
 « excluded » case — `MaskedFeatureSource` suppresses the inner source and reports only the mask's
 features, so the tree learns a separate branch instead of mixing the flag with the text.
 
+The tree keeps a correction ledger. `Reinforce(text, category, weight)` adds signed mass to the
+leaf the text reaches, `Unreinforce` removes it exactly, and `ForgetReinforcement` clears the
+ledger; no retrain, and the tree structure is untouched. `Explain` shows the adjusted leaf, so the
+path and the corrected distribution agree. `Train` clears the ledger, because the leaves it
+replaced are gone.
+
 `Explain` returns the questions a text answered and the leaf it reached; `Describe` renders the
 whole tree. On the nine-document Support/Billing/Shipping corpus used by the tests:
 
