@@ -341,6 +341,12 @@ see why the answer was withheld. The forest has `MinProbability` on its averaged
 longer dominates the impurity or the leaves; a weight of zero removes the category. The same
 option is passed to every tree in the forest.
 
+A feature can be present, absent, or unknown. `FeatureSet.State` reports which; the binary
+questions answer no for both absent and unknown, so the tree never silently reads a missing value
+as a known false. When an item's other dimensions must not be trusted — the « generic » or
+« excluded » case — `MaskedFeatureSource` suppresses the inner source and reports only the mask's
+features, so the tree learns a separate branch instead of mixing the flag with the text.
+
 `Explain` returns the questions a text answered and the leaf it reached; `Describe` renders the
 whole tree. On the nine-document Support/Billing/Shipping corpus used by the tests:
 
