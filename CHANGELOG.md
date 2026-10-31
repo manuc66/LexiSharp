@@ -42,8 +42,9 @@ workflow.
   value answers no. A question can also carry a cost, and the split score is divided by it, so a
   cheap question that is almost as discriminative wins over an expensive one. The tree can decline
   to answer: `MinLeafProbability` and `MinLeafSupport` withhold a prediction whose leaf is too
-  flat or too small, and `Explain` still shows the path. Measured on the standard `20news-bydate`
-  split: the single tree reads
+  flat or too small, and `Explain` still shows the path. `ClassWeights` multiplies a category's
+  sample weight, so a majority class no longer dominates the impurity and the leaves; a weight of
+  zero removes the class. Measured on the standard `20news-bydate` split: the single tree reads
   **0.446** accuracy / **0.494** macro-F1, the forest **0.662** / **0.658**, and Naive Bayes
   **0.757** / **0.729** — the forest narrows the gap but does not close it, and a leaf is not a
   calibrated probability. See
