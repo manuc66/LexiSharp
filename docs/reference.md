@@ -137,7 +137,7 @@ was designed from:
   questions; each split is the best greedy one, not the optimal tree (finding the smallest
   separating tree is NP-hard), and a leaf's distribution is the smoothed label mix of the documents
   that reached it, not a probability of correctness. On the standard `20news-bydate` split the
-  single tree reads **0.446** accuracy / **0.494** macro-F1, the forest **0.633** / **0.642**, and
+  single tree reads **0.446** accuracy / **0.494** macro-F1, the forest **0.662** / **0.658**, and
   Naive Bayes **0.757** / **0.729**: the forest narrows the gap but does not close it, and a leaf
   is still not calibrated. The command and the pin are in
   [Evaluation](evaluation.md#classification-on-20-newsgroups); [Benchmarks](benchmarks.md#classification-classificationbenchmarks)
