@@ -28,6 +28,7 @@ internal sealed record ClassificationPin(
     int ForestTrees,
     double ForestFeatureSubset,
     int ForestSeed,
+    double ValidationFraction,
     IReadOnlyList<ClassificationPinRow> Rows);
 
 /// <summary>
@@ -52,6 +53,8 @@ internal static class ClassificationCommand
         int forestTrees = 40;
         double forestSubset = 0.3;
         int forestSeed = 7;
+        bool tune = false;
+        double validationFraction = 0.15;
         string? verifyPath = null;
         string? writePath = null;
 
@@ -127,6 +130,17 @@ internal static class ClassificationCommand
                     }
 
                     break;
+                case "--tune":
+                    tune = true;
+                    break;
+                case "--validation" when i + 1 < args.Length:
+                    if (!TryReadFraction(args[++i], out validationFraction))
+                    {
+                        Console.Error.WriteLine("classification: --validation expects a number in (0, 1).");
+                        return 2;
+                    }
+
+                    break;
                 case "--verify" when i + 1 < args.Length:
                     verifyPath = args[++i];
                     break;
@@ -145,6 +159,50 @@ internal static class ClassificationCommand
             CultureInfo.InvariantCulture,
             $"20 Newsgroups ({corpus.Name}): {corpus.Train.Count} train, {corpus.Test.Count} test, " +
             $"{corpus.Categories.Count} categories, md5 {corpus.SourceMd5}"));
+
+        var forestOptions = new RandomForestOptions
+        {
+            Trees = forestTrees,
+            MaxDepth = maxDepth,
+            MinDocumentsPerLeaf = minDocumentsPerLeaf,
+            MinDocumentFrequency = minDocumentFrequency,
+            FeatureSubsetFraction = forestSubset,
+            Criterion = criterion,
+            Seed = forestSeed,
+        };
+
+        if (tune)
+        {
+            var split = ClassificationEvaluation.HoldOut(corpus.Train, validationFraction);
+            var candidates = new[]
+            {
+                new ForestCandidate(12, 0.3, 2),
+                new ForestCandidate(20, 0.5, 2),
+                new ForestCandidate(30, 0.5, 2),
+                new ForestCandidate(30, 0.3, 2),
+                new ForestCandidate(20, 0.5, 5),
+            };
+
+            var tuned = ClassificationEvaluation.TuneForest(split.Fit, split.Validation, candidates, forestOptions);
+
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"Tuning on validation ({split.Fit.Count} fit / {split.Validation.Count} validation): " +
+                $"depth={tuned.Candidate.MaxDepth}, subset={tuned.Candidate.FeatureSubset:F2}, " +
+                $"min leaf={tuned.Candidate.MinDocumentsPerLeaf} " +
+                $"(accuracy={tuned.ValidationAccuracy:F4}, macro-F1={tuned.ValidationMacroF1:F4})"));
+
+            maxDepth = tuned.Candidate.MaxDepth;
+            minDocumentsPerLeaf = tuned.Candidate.MinDocumentsPerLeaf;
+            forestSubset = tuned.Candidate.FeatureSubset;
+            forestOptions = forestOptions with
+            {
+                MaxDepth = maxDepth,
+                MinDocumentsPerLeaf = minDocumentsPerLeaf,
+                FeatureSubsetFraction = forestSubset,
+            };
+        }
+
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
             $"Decision tree: depth={maxDepth}, min leaf={minDocumentsPerLeaf}, " +
@@ -159,16 +217,6 @@ internal static class ClassificationCommand
             MinDocumentsPerLeaf = minDocumentsPerLeaf,
             MinDocumentFrequency = minDocumentFrequency,
             Criterion = criterion,
-        };
-        var forestOptions = new RandomForestOptions
-        {
-            Trees = forestTrees,
-            MaxDepth = maxDepth,
-            MinDocumentsPerLeaf = minDocumentsPerLeaf,
-            MinDocumentFrequency = minDocumentFrequency,
-            FeatureSubsetFraction = forestSubset,
-            Criterion = criterion,
-            Seed = forestSeed,
         };
 
         var naiveBayes = ClassificationEvaluation.MeasureNaiveBayes(corpus.Train, corpus.Test);
@@ -192,6 +240,7 @@ internal static class ClassificationCommand
             forestTrees,
             forestSubset,
             forestSeed,
+            tune ? validationFraction : 0,
             [ToRow(naiveBayes), ToRow(tree), ToRow(forest)]);
 
         if (writePath is not null)
@@ -253,7 +302,8 @@ internal static class ClassificationCommand
             || !string.Equals(expected.Criterion, actual.Criterion, StringComparison.Ordinal)
             || expected.ForestTrees != actual.ForestTrees
             || Math.Abs(expected.ForestFeatureSubset - actual.ForestFeatureSubset) > 1e-12
-            || expected.ForestSeed != actual.ForestSeed)
+            || expected.ForestSeed != actual.ForestSeed
+            || Math.Abs(expected.ValidationFraction - actual.ValidationFraction) > 1e-12)
         {
             Console.Error.WriteLine("classification: the pin describes a different dataset or configuration.");
             return 1;

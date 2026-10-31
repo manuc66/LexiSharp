@@ -38,7 +38,7 @@ workflow.
   (bucketed time, transitions, derived flags), and all take an optional sample weight, which is
   where a half-life belongs: `weightOf: item => Math.Pow(0.5, age(item) / halfLife)`. The core
   never sees a clock. Measured on the standard `20news-bydate` split: the single tree reads
-  **0.446** accuracy / **0.494** macro-F1, the forest **0.633** / **0.642**, and Naive Bayes
+  **0.446** accuracy / **0.494** macro-F1, the forest **0.662** / **0.658**, and Naive Bayes
   **0.757** / **0.729** — the forest narrows the gap but does not close it, and a leaf is not a
   calibrated probability. See
   [evaluation](docs/evaluation.md#classification-on-20-newsgroups) and
