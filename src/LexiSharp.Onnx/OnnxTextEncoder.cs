@@ -50,6 +50,7 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
     private readonly CancellationTokenSource _disposeCancellation = new();
     private int _disposeStarted;
     private readonly Lazy<string> _signature;
+    private readonly OnnxInferenceScheduler _scheduler;
     private bool _disposed;
 
     /// <summary>Loads the model, validates its tensors and resolves its output dimension.</summary>
@@ -82,6 +83,9 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
             _outputNames = [options.OutputName];
 
             Dimension = ResolveDimension();
+            _scheduler = new OnnxInferenceScheduler(
+                options.MaxConcurrentInference,
+                options.InferenceQueueCapacity);
         }
         catch
         {
@@ -107,6 +111,12 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
 
         if (options.MaxBatchSize < 1)
             throw new ArgumentException("MaxBatchSize must be at least 1.", nameof(options));
+
+        if (options.MaxConcurrentInference < 1)
+            throw new ArgumentException("MaxConcurrentInference must be at least 1.", nameof(options));
+
+        if (options.InferenceQueueCapacity < 1)
+            throw new ArgumentException("InferenceQueueCapacity must be at least 1.", nameof(options));
 
         if (options.PadTokenId < 0)
             throw new ArgumentException("PadTokenId cannot be negative.", nameof(options));
@@ -331,8 +341,8 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
         EmbeddingUse use,
         CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(GetTextEmbedding(text, use, cancellationToken));
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _scheduler.EnqueueAsync(() => GetTextEmbedding(text, use, cancellationToken), cancellationToken);
     }
 
     /// <summary>Embeds several texts asynchronously; the work still runs on the calling thread.</summary>
@@ -344,8 +354,8 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
         EmbeddingUse use,
         CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(GetTextEmbeddings(texts, use, cancellationToken));
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _scheduler.EnqueueAsync(() => GetTextEmbeddings(texts, use, cancellationToken), cancellationToken);
     }
 
     /// <summary>
@@ -363,6 +373,7 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
         // Cancel first: an in-flight Run holds the read lock, and waiting for the write lock
         // without terminating it would make shutdown wait for the whole inference.
         _disposeCancellation.Cancel();
+        _scheduler.Dispose();
         _gate.EnterWriteLock();
 
         try

@@ -135,9 +135,14 @@ has nothing to amortize.
 The evaluation harness can run its dense lane through this package instead of its own session:
 
 ```bash
-LEXISHARP_EVAL_DENSE_PACKAGE=1 dotnet run --project bench/LexiSharp.Eval -c Release -- \
-    --dataset nfcorpus --no-tuned --dense --jobs 4 --top-k 10
+dotnet run --project bench/LexiSharp.Eval -c Release -- \
+    --dataset nfcorpus --no-tuned --dense --dense-package --jobs 4 --top-k 10
 ```
+
+The harness also accepts `--rerank-package`; both flags are explicit so a typo is a parse error
+rather than a silent fallback to the harness's own encoder. The older
+`LEXISHARP_EVAL_DENSE_PACKAGE`/`LEXISHARP_EVAL_RERANK_PACKAGE` variables still work. The package
+cache is keyed by the model file's SHA-256, so replacing the export invalidates it.
 
 Measured on the three public corpora, with multilingual-e5-small:
 
@@ -187,6 +192,15 @@ the checkpoint before trusting a result:
 - **Signature.** It covers the model file, the tokenizer fingerprint and the preprocessing
   options. A custom `IdMap` is recorded as present/absent, not by value; give such a tokenizer its
   own fingerprint if two mappings can differ.
+
+## Asynchronous calls and inference workers
+
+`GetTextEmbeddingAsync` and `GetTextEmbeddingsAsync` return immediately: the session call runs on
+one of `MaxConcurrentInference` workers (default `1`) with a bounded `InferenceQueueCapacity`
+(default `64`), so an ASP.NET request does not hold a thread pool thread for the inference. The
+synchronous overloads still run on the caller. `MaxConcurrentInference` is a CPU-bound limit, not a
+throughput knob: raising it lets more model calls overlap, which usually helps only when the
+threads are not already saturated.
 
 ## Signature, warm-up and cancellation
 

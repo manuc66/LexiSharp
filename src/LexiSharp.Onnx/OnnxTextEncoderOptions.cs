@@ -59,6 +59,18 @@ public sealed class OnnxTextEncoderOptions
     public int PadTokenId { get; init; }
 
     /// <summary>
+    /// Dedicated inference workers used by the asynchronous methods. Defaults to <c>1</c>, which
+    /// serialises CPU-bound calls without blocking the caller's thread. The synchronous methods
+    /// ignore it.
+    /// </summary>
+    public int MaxConcurrentInference { get; init; } = 1;
+
+    /// <summary>
+    /// Maximum queued asynchronous calls before a caller waits for a worker. Defaults to 64.
+    /// </summary>
+    public int InferenceQueueCapacity { get; init; } = 64;
+
+    /// <summary>
     /// Maximum texts per session call when the batch API is used. Bounds the padded token arrays
     /// a large corpus allocates at once. Defaults to 32.
     /// </summary>

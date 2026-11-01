@@ -19,6 +19,22 @@ public sealed class OnnxTextEncoderTests
             Tokenizer = Tokenizer(),
         };
 
+    private sealed class BlockingTokenizer : IOnnxTokenizer
+    {
+        public ManualResetEventSlim Gate { get; } = new(initialState: false);
+
+        public OnnxTokenizedText Encode(string text, int maxSequenceLength)
+        {
+            if (text != "probe")
+                Gate.Wait(TimeSpan.FromSeconds(5));
+
+            return new OnnxTokenizedText([4, 5]);
+        }
+
+        public OnnxTokenizedText EncodePair(string query, string document, int maxSequenceLength, int maxQueryTokens) =>
+            new([2, 4, 5, 3]);
+    }
+
     private static float[] Row(int id) =>
         Enumerable.Range(0, 8).Select(d => (float)((id * 10) + d)).ToArray();
 
@@ -116,6 +132,42 @@ public sealed class OnnxTextEncoderTests
         Assert.NotEqual(
             cls.GetTextEmbedding("hello world").ToArray(),
             mean.GetTextEmbedding("hello world").ToArray());
+    }
+
+    [Fact]
+    public async Task Encoder_AsyncDoesNotBlockTheCaller()
+    {
+        var tokenizer = new BlockingTokenizer();
+
+        using var encoder = new OnnxTextEncoder(new OnnxTextEncoderOptions
+        {
+            ModelPath = Fixture("tiny-encoder.onnx"),
+            Tokenizer = tokenizer,
+        });
+
+        Task<ReadOnlyMemory<float>> task = encoder.GetTextEmbeddingAsync("hello", EmbeddingUse.Passage);
+        Assert.False(task.IsCompleted);
+
+        tokenizer.Gate.Set();
+        Assert.Equal(8, (await task).Length);
+    }
+
+    [Fact]
+    public void Encoder_RejectsANonPositiveWorkerCount()
+    {
+        Assert.Throws<ArgumentException>(() => new OnnxTextEncoder(new OnnxTextEncoderOptions
+        {
+            ModelPath = Fixture("tiny-encoder.onnx"),
+            Tokenizer = Tokenizer(),
+            MaxConcurrentInference = 0,
+        }));
+
+        Assert.Throws<ArgumentException>(() => new OnnxTextEncoder(new OnnxTextEncoderOptions
+        {
+            ModelPath = Fixture("tiny-encoder.onnx"),
+            Tokenizer = Tokenizer(),
+            InferenceQueueCapacity = 0,
+        }));
     }
 
     [Fact]
@@ -306,6 +358,10 @@ public sealed class OnnxTextEncoderTests
                         encoder.GetTextEmbedding("hello world");
                     }
                     catch (ObjectDisposedException)
+                    {
+                        return;
+                    }
+                    catch (OperationCanceledException)
                     {
                         return;
                     }

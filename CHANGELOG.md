@@ -137,6 +137,10 @@ workflow.
 
 ### Added
 
+- **`OnnxTextEncoder` asynchronous methods run on bounded workers.** `MaxConcurrentInference`
+  (default `1`) and `InferenceQueueCapacity` (default `64`) move the session call off the caller's
+  thread and provide backpressure; the synchronous overloads are unchanged.
+
 - **`LexiSharp.Onnx`, an optional ONNX Runtime package for local embeddings and reranking.**
   `OnnxTextEncoder` implements `IEmbeddingProvider` and `OnnxCrossEncoderScorer` implements
   `ICrossEncoderScorer`; `BatchedCrossEncoderReranker` is their `IReranker`. BERT WordPiece,
