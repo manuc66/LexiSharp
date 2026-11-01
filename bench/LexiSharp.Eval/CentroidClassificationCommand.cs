@@ -177,7 +177,12 @@ internal static class CentroidClassificationCommand
         {
             Evaluate("Naive Bayes", test, corpus.Test, corpus.Categories, weight: 0),
             Evaluate("Centroid (E5)", test, corpus.Test, corpus.Categories, weight: 1),
-            Evaluate($"Fusion (w={bestWeight:0.00})", test, corpus.Test, corpus.Categories, bestWeight),
+            Evaluate(
+                string.Create(CultureInfo.InvariantCulture, $"Fusion (w={bestWeight:0.00})"),
+                test,
+                corpus.Test,
+                corpus.Categories,
+                bestWeight),
         };
 
         Console.WriteLine("| Method | Accuracy | Macro-F1 |");
@@ -188,6 +193,25 @@ internal static class CentroidClassificationCommand
             Console.WriteLine(string.Create(
                 CultureInfo.InvariantCulture,
                 $"| {row.Method} | {row.Accuracy:0.0000} | {row.MacroF1:0.0000} |"));
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Fusion weight curve on the test split:");
+        Console.WriteLine("| Weight | Accuracy | Macro-F1 |");
+        Console.WriteLine("|---:|---:|---:|");
+
+        var printed = new HashSet<double>();
+
+        foreach (double weight in new[] { 0.0, 0.25, 0.5, 0.75, 1.0, bestWeight })
+        {
+            if (!printed.Add(weight))
+                continue;
+
+            var row = Evaluate($"w={weight:0.00}", test, corpus.Test, corpus.Categories, weight);
+
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"| {weight:0.00} | {row.Accuracy:0.0000} | {row.MacroF1:0.0000} |"));
         }
 
         return 0;
