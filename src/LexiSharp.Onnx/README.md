@@ -122,7 +122,7 @@ var e5Tokenizer = new SentencePieceOnnxTokenizer("model/sentencepiece.bpe.model"
 ## AOT
 
 The package is analyzer-clean under `IsAotCompatible`, and a Native AOT console referencing it
-was published and run against the test fixtures (38 MB output, `libonnxruntime.so` included).
+was published and run against the test fixtures (48 MB output, `libonnxruntime.so` and the tokenizer dependency included).
 The repository's own `AotSmoke` project does not include it yet.
 
 ## Size

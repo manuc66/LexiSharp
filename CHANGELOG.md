@@ -137,6 +137,29 @@ workflow.
 
 ### Added
 
+- **`LexiSharp.Onnx`, an optional ONNX Runtime package for local embeddings and reranking.**
+  `OnnxTextEncoder` implements `IEmbeddingProvider` and `OnnxCrossEncoderScorer` implements
+  `ICrossEncoderScorer`; `BatchedCrossEncoderReranker` is their `IReranker`. BERT WordPiece,
+  SentencePiece and byte-level BPE tokenizers are included, and no model ships — the caller
+  supplies the `.onnx` file, the vocabulary and the tensor names. Additive: installing the core
+  package alone is unchanged. Its measurements, commands and limits are in
+  [the ONNX guide](docs/onnx.md); the BEIR dense rows it reproduces are 0.304 / 0.655 / 0.313 on
+  NFCorpus / SciFact / ArguAna.
+
+- **`IBatchEmbeddingProvider` and atomic, chunked `IndexAsync` on the vector engines.** A provider
+  that implements the batch interface embeds a corpus in bounded chunks; the in-memory engine
+  leaves the previous corpus searchable when a provider call fails, and the PostgreSQL engine
+  computes embeddings before opening the truncate-and-insert transaction. Existing
+  `IEmbeddingProvider` implementations keep working one text at a time. `EmbeddingBatchSize`
+  defaults to 128.
+
+- **`IEmbeddingSignatureProvider`, `VectorIndexSnapshot` and a PostgreSQL `*_meta` signature.**
+  A provider can identify the model, tokenizer and preprocessing that produced its vectors;
+  `ExportSnapshot`/`ImportSnapshot` and `EnsureSchema` refuse a different pipeline unless the
+  caller passes `allowSignatureMismatch`/`AllowSignatureMismatch`. Additive: a provider without a
+  signature keeps the old behaviour until it is imported into a signed engine, which now requires
+  the opt-in.
+
 - **The cursor lane's table reaches 1,000,000 documents.** Two runs on 2026-10-29, both passes forced
   and alternated inside one loop, each cell the mean of the two: a one-term tail query reads a `p50`
   of **6.35 µs** and a three-term one **12.50 µs**, against an isolated clear of **18.9-19.9 µs**,

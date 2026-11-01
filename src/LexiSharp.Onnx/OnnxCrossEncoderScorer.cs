@@ -156,69 +156,20 @@ public sealed class OnnxCrossEncoderScorer : ICrossEncoderScorer, IDisposable
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            CheckLength(query, nameof(query));
 
             if (documents.Count == 0)
                 return Array.Empty<double>();
 
-            CheckLength(query, nameof(query));
-
             double[] scores = new double[documents.Count];
 
-        for (int start = 0; start < documents.Count; start += _options.MaxBatchSize)
-        {
-            int count = Math.Min(_options.MaxBatchSize, documents.Count - start);
-            var items = new (int Index, OnnxTokenizedText Tokenized)[count];
-
-            cancellationToken.ThrowIfCancellationRequested();
-
-            for (int i = 0; i < count; i++)
+            for (int start = 0; start < documents.Count; start += _options.MaxBatchSize)
             {
-                SearchDocument document = documents[start + i] ?? throw new ArgumentException("The document list contains null.", nameof(documents));
-                CheckLength(document.Text, nameof(documents));
-                items[i] = (start + i, _options.Tokenizer.EncodePair(
-                    query,
-                    document.Text,
-                    _options.MaxSequenceLength,
-                    _options.MaxQueryTokens));
-            }
+                int count = Math.Min(_options.MaxBatchSize, documents.Count - start);
+                double[] chunk = ScoreChunk(query, documents, start, count, cancellationToken);
 
-            Array.Sort(items, (left, right) => left.Tokenized.Length.CompareTo(right.Tokenized.Length));
-
-            int sequenceLength = 1;
-
-            foreach (var item in items)
-                sequenceLength = Math.Max(sequenceLength, item.Tokenized.Length);
-
-            int elements = count * sequenceLength;
-            long[] ids = new long[elements];
-            long[] mask = new long[elements];
-            long[] types = new long[elements];
-
-            for (int i = 0; i < count; i++)
-            {
-                OnnxTokenizedText tokenized = items[i].Tokenized;
-                ReadOnlySpan<int> tokenIds = tokenized.Ids.Span;
-                ReadOnlySpan<int> typeIds = tokenized.TypeIds.Span;
-                int offset = i * sequenceLength;
-
-                for (int position = 0; position < tokenized.Length; position++)
-                {
-                    ids[offset + position] = tokenIds[position];
-                    mask[offset + position] = 1;
-
-                    if (tokenized.HasTypeIds)
-                        types[offset + position] = typeIds[position];
-                }
-            }
-
-            float[] output = _inputType == TensorElementType.Int32
-                ? RunInt32(ids, mask, types, count, sequenceLength, cancellationToken)
-                : RunInt64(ids, mask, types, count, sequenceLength, cancellationToken);
-
-            double[] chunkScores = ExtractScores(output, count);
-
-            for (int i = 0; i < count; i++)
-                scores[items[i].Index] = chunkScores[i];
+                for (int i = 0; i < count; i++)
+                    scores[start + i] = chunk[i];
             }
 
             return scores;
@@ -227,6 +178,56 @@ public sealed class OnnxCrossEncoderScorer : ICrossEncoderScorer, IDisposable
         {
             _gate.ExitReadLock();
         }
+    }
+
+    private double[] ScoreChunk(
+        string query,
+        IReadOnlyList<SearchDocument> documents,
+        int start,
+        int count,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var items = new (int Index, OnnxTokenizedText Tokenized)[count];
+
+        for (int i = 0; i < count; i++)
+        {
+            SearchDocument document = documents[start + i] ?? throw new ArgumentException("The document list contains null.", nameof(documents));
+            CheckLength(document.Text, nameof(documents));
+            items[i] = (start + i, _options.Tokenizer.EncodePair(
+                query,
+                document.Text,
+                _options.MaxSequenceLength,
+                _options.MaxQueryTokens));
+        }
+
+        // Shortest first: padding to the longest member is what a heterogeneous batch pays for,
+        // and the indices restore the caller's order below.
+        Array.Sort(items, (left, right) => left.Tokenized.Length.CompareTo(right.Tokenized.Length));
+
+        OnnxTokenizedText[] batch = new OnnxTokenizedText[count];
+
+        for (int i = 0; i < count; i++)
+            batch[i] = items[i].Tokenized;
+
+        float[] output = OnnxSessionRunner.Run(
+            _session,
+            _inputNames,
+            _outputNames,
+            _inputType,
+            batch,
+            cancellationToken,
+            _disposeCancellation.Token,
+            out _);
+
+        double[] chunkScores = ExtractScores(output, count);
+        double[] scores = new double[count];
+
+        for (int i = 0; i < count; i++)
+            scores[items[i].Index - start] = chunkScores[i];
+
+        return scores;
     }
 
     /// <summary>Runs one short pair through the session to pay the first-call cost up front.</summary>
@@ -328,56 +329,4 @@ public sealed class OnnxCrossEncoderScorer : ICrossEncoderScorer, IDisposable
         return Math.Exp(output[rowStart + index] - max) / sum;
     }
 
-    private float[] RunInt64(long[] ids, long[] mask, long[] types, int count, int sequenceLength, CancellationToken cancellationToken)
-    {
-        using var idsValue = OrtValue.CreateTensorValueFromMemory<long>(ids, [count, sequenceLength]);
-        using var maskValue = OrtValue.CreateTensorValueFromMemory<long>(mask, [count, sequenceLength]);
-        using OrtValue? typesValue = _inputNames.Length < 3
-            ? null
-            : OrtValue.CreateTensorValueFromMemory<long>(types, [count, sequenceLength]);
-
-        return Execute(idsValue, maskValue, typesValue, cancellationToken);
-    }
-
-    private float[] RunInt32(long[] ids, long[] mask, long[] types, int count, int sequenceLength, CancellationToken cancellationToken)
-    {
-        int[] ids32 = Array.ConvertAll(ids, value => (int)value);
-        int[] mask32 = Array.ConvertAll(mask, value => (int)value);
-        int[] types32 = Array.ConvertAll(types, value => (int)value);
-
-        using var idsValue = OrtValue.CreateTensorValueFromMemory<int>(ids32, [count, sequenceLength]);
-        using var maskValue = OrtValue.CreateTensorValueFromMemory<int>(mask32, [count, sequenceLength]);
-        using OrtValue? typesValue = _inputNames.Length < 3
-            ? null
-            : OrtValue.CreateTensorValueFromMemory<int>(types32, [count, sequenceLength]);
-
-        return Execute(idsValue, maskValue, typesValue, cancellationToken);
-    }
-
-    private float[] Execute(OrtValue idsValue, OrtValue maskValue, OrtValue? typesValue, CancellationToken cancellationToken)
-    {
-        OrtValue[] inputs = typesValue is null
-            ? [idsValue, maskValue]
-            : [idsValue, maskValue, typesValue];
-
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCancellation.Token);
-        using var runOptions = new RunOptions();
-        using CancellationTokenRegistration registration = linked.Token.Register(() => runOptions.Terminate = true);
-        using var output = _session.Run(runOptions, _inputNames, inputs, _outputNames);
-
-        OrtTensorTypeAndShapeInfo info = output[0].GetTensorTypeAndShape();
-
-        if (info.ElementDataType == TensorElementType.Float16)
-        {
-            ReadOnlySpan<Float16> half = output[0].GetTensorDataAsSpan<Float16>();
-            float[] converted = new float[half.Length];
-
-            for (int i = 0; i < half.Length; i++)
-                converted[i] = (float)half[i];
-
-            return converted;
-        }
-
-        return output[0].GetTensorDataAsSpan<float>().ToArray();
-    }
 }

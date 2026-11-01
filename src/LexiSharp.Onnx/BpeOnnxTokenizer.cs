@@ -281,14 +281,70 @@ public sealed class BpeOnnxTokenizer : IOnnxTokenizer
         if (!root.TryGetProperty("pre_tokenizer", out JsonElement pre) || pre.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
             return;
 
+        ValidatePreTokenizer(pre);
+    }
+
+    private static void ValidatePreTokenizer(JsonElement pre)
+    {
         string? type = pre.TryGetProperty("type", out JsonElement typeElement) ? typeElement.GetString() : null;
 
-        if (type is "ByteLevel" or "Whitespace" or "WhitespaceSplit" or "Punctuation" or "Sequence" or "BertPreTokenizer")
+        if (string.Equals(type, "Sequence", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!pre.TryGetProperty("pretokenizers", out JsonElement children) || children.ValueKind != JsonValueKind.Array)
+                throw new InvalidOperationException("The tokenizer.json Sequence pre-tokenizer has no 'pretokenizers' array.");
+
+            foreach (JsonElement child in children.EnumerateArray())
+                ValidatePreTokenizer(child);
+
+            return;
+        }
+
+        if (type is "ByteLevel" or "Whitespace" or "WhitespaceSplit" or "Punctuation" or "BertPreTokenizer")
             return;
 
         throw new NotSupportedException(
             $"The tokenizer.json declares the pre-tokenizer '{type}', which this package does not interpret. " +
             "Pass BpeOnnxTokenizerOptions.PreTokenizer explicitly.");
+    }
+
+    private static int ReadProcessingId(JsonElement post, string name)
+    {
+        if (!post.TryGetProperty(name, out JsonElement value)
+            || value.ValueKind != JsonValueKind.Array
+            || value.GetArrayLength() < 2
+            || value[1].ValueKind != JsonValueKind.Number)
+        {
+            throw new InvalidOperationException(
+                $"The post-processor's '{name}' must be a [token, id] pair with a numeric id.");
+        }
+
+        return value[1].GetInt32();
+    }
+
+    private static TemplateStep[]? ValidateTemplate(TemplateStep[]? template, string name, bool allowSecond)
+    {
+        if (template is null)
+            return null;
+
+        int first = 0;
+        int second = 0;
+
+        foreach (TemplateStep step in template)
+        {
+            if (step.IsSpecial)
+                continue;
+
+            if (step.IsSecondSequence)
+                second++;
+            else
+                first++;
+        }
+
+        if (first > 1 || second > 1 || (second > 0 && !allowSecond))
+            throw new NotSupportedException(
+                $"The post-processor's {name} template uses a sequence it cannot represent (A: {first}, B: {second}).");
+
+        return template;
     }
 
     private static bool InferByteLevel(JsonElement root)
@@ -412,15 +468,15 @@ public sealed class BpeOnnxTokenizer : IOnnxTokenizer
             }
 
             return (
-                ParseTemplate(post, "single", special),
-                ParseTemplate(post, "pair", special));
+                ValidateTemplate(ParseTemplate(post, "single", special), "single", allowSecond: false),
+                ValidateTemplate(ParseTemplate(post, "pair", special), "pair", allowSecond: true));
         }
 
         if (string.Equals(type, "RobertaProcessing", StringComparison.OrdinalIgnoreCase)
             || string.Equals(type, "BertProcessing", StringComparison.OrdinalIgnoreCase))
         {
-            int cls = post.GetProperty("cls")[1].GetInt32();
-            int sep = post.GetProperty("sep")[1].GetInt32();
+            int cls = ReadProcessingId(post, "cls");
+            int sep = ReadProcessingId(post, "sep");
             bool roberta = string.Equals(type, "RobertaProcessing", StringComparison.OrdinalIgnoreCase);
 
             TemplateStep[] single =
@@ -449,7 +505,9 @@ public sealed class BpeOnnxTokenizer : IOnnxTokenizer
                     new(true, false, sep, 0),
                 ];
 
-            return (single, pair);
+            return (
+                ValidateTemplate(single, "single", allowSecond: false),
+                ValidateTemplate(pair, "pair", allowSecond: true));
         }
 
         throw new NotSupportedException(
@@ -482,6 +540,10 @@ public sealed class BpeOnnxTokenizer : IOnnxTokenizer
             else if (step.TryGetProperty("Sequence", out JsonElement sequence))
             {
                 string id = sequence.GetProperty("id").GetString()!;
+
+                if (id is not ("A" or "B"))
+                    throw new NotSupportedException($"The post-processor references the sequence '{id}'; only A and B are supported.");
+
                 int typeId = sequence.TryGetProperty("type_id", out JsonElement typeElement) ? typeElement.GetInt32() : 0;
                 result.Add(new TemplateStep(false, id == "B", 0, typeId));
             }
