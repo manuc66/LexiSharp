@@ -32,6 +32,7 @@ internal sealed record ClassificationPin(
     int LinearEpochs,
     double LinearLearningRate,
     double LinearL2,
+    bool LinearIdf,
     double LinearTemperature,
     double LinearLogLoss,
     double LinearCalibratedLogLoss,
@@ -62,6 +63,7 @@ internal static class ClassificationCommand
         double forestSubset = 0.3;
         int forestSeed = 7;
         bool tune = false;
+        bool linearIdf = false;
         double validationFraction = 0.15;
         string? verifyPath = null;
         string? writePath = null;
@@ -140,6 +142,9 @@ internal static class ClassificationCommand
                     break;
                 case "--tune":
                     tune = true;
+                    break;
+                case "--linear-idf":
+                    linearIdf = true;
                     break;
                 case "--validation" when i + 1 < args.Length:
                     if (!TryReadFraction(args[++i], out validationFraction))
@@ -230,12 +235,13 @@ internal static class ClassificationCommand
         var linearOptions = new LinearClassifierOptions
         {
             MinDocumentFrequency = minDocumentFrequency,
+            IdfWeighting = linearIdf,
         };
 
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
             $"Linear: epochs={linearOptions.Epochs}, rate={linearOptions.LearningRate:F2}, " +
-            $"l2={linearOptions.L2}, min df={linearOptions.MinDocumentFrequency}"));
+            $"l2={linearOptions.L2}, min df={linearOptions.MinDocumentFrequency}, idf={linearIdf}"));
 
         var naiveBayes = ClassificationEvaluation.MeasureNaiveBayes(corpus.Train, corpus.Test);
         var tree = ClassificationEvaluation.MeasureDecisionTree(corpus.Train, corpus.Test, options);
@@ -276,6 +282,7 @@ internal static class ClassificationCommand
             linearOptions.Epochs,
             linearOptions.LearningRate,
             linearOptions.L2,
+            linearOptions.IdfWeighting,
             calibration.Temperature,
             calibration.LogLoss,
             calibration.CalibratedLogLoss,
@@ -347,6 +354,7 @@ internal static class ClassificationCommand
             || expected.LinearEpochs != actual.LinearEpochs
             || Math.Abs(expected.LinearLearningRate - actual.LinearLearningRate) > 1e-12
             || Math.Abs(expected.LinearL2 - actual.LinearL2) > 1e-12
+            || expected.LinearIdf != actual.LinearIdf
             || Math.Abs(expected.LinearTemperature - actual.LinearTemperature) > 1e-9
             || Math.Abs(expected.LinearLogLoss - actual.LinearLogLoss) > 1e-9
             || Math.Abs(expected.LinearCalibratedLogLoss - actual.LinearCalibratedLogLoss) > 1e-9

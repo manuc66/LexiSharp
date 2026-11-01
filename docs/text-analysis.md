@@ -416,6 +416,12 @@ linear.PredictBest("i cannot connect to the internet");
 linear.TopFeatures("Support", count: 5);
 ```
 
+Two scaling knobs exist and both default off. `IdfWeighting` downweights binary features by
+`log(1 + N/df)`; on 20NG it **loses** — 0.7753 accuracy / 0.7682 macro-F1 against 0.8085 / 0.8027
+without — so it stays off. `StandardizeNumericFeatures` z-scores numeric features so an hour and a
+frequency reach the model on the same scale; it is unit-tested on a 1000–2100 corpus and not
+measured on 20NG, which has no numeric features.
+
 ### Calibration
 
 None of the distributions above is calibrated. `TemperatureCalibrator` fits one temperature on a

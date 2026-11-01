@@ -31,6 +31,19 @@ public sealed record LinearClassifierOptions
     public int Seed { get; init; } = 7;
 
     /// <summary>
+    /// Weight binary features by <c>log(1 + N / df)</c>, so a term present in every document stops
+    /// dominating the coefficients. Numeric features keep their own value. Default: <c>false</c>.
+    /// </summary>
+    public bool IdfWeighting { get; init; }
+
+    /// <summary>
+    /// Standardize numeric features to zero mean and unit variance over their training values, so
+    /// an hour (0–23) and a frequency (0–1000) reach the model on the same scale. Binary features
+    /// are unaffected. Default: <c>false</c>.
+    /// </summary>
+    public bool StandardizeNumericFeatures { get; init; }
+
+    /// <summary>
     /// A multiplier applied to every document's sample weight, keyed by category. A value of
     /// <c>0</c> removes the category; values must be finite and non-negative. Default: <c>null</c>.
     /// </summary>

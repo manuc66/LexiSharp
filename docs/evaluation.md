@@ -1289,6 +1289,10 @@ measures the test split before and after: **T = 1.04**, log-loss **0.7741 → 0.
 small; the calibrator is generic, and the tree and forest distributions are the ones likely to
 need it, but their calibration is not measured here.
 
+`IdfWeighting` was measured on the same split and lost: **0.7753** accuracy / **0.7682** macro-F1
+against **0.8085** / **0.8027** without, with a raw log-loss of **1.5790**. It stays off by default;
+`StandardizeNumericFeatures` is available, but 20NG has no numeric features to measure it on.
+
 The figures are pinned in
 [`reference/classification-20news-tuned.json`](https://github.com/manuc66/LexiSharp/blob/main/bench/LexiSharp.Eval/reference/classification-20news-tuned.json)
 and replayed by the same command with `--verify`:

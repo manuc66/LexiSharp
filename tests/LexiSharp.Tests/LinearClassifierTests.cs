@@ -126,6 +126,64 @@ public class LinearClassifierTests
     }
 
     [Fact]
+    public void IdfWeighting_StillClassifiesTheCorpus()
+    {
+        var classifier = Trained(new LinearClassifierOptions
+        {
+            Epochs = 50,
+            LearningRate = 0.5,
+            L2 = 0,
+            MinDocumentFrequency = 1,
+            Seed = 7,
+            IdfWeighting = true,
+        });
+
+        Assert.Equal("A", classifier.PredictBest("alpha one"));
+        Assert.Equal("B", classifier.PredictBest("beta two"));
+        Assert.Equal("C", classifier.PredictBest("gamma one"));
+    }
+
+    [Fact]
+    public void StandardizeNumericFeatures_ClassifiesAHugeScaleCorpus()
+    {
+        var classifier = new LinearClassifier<NumericSample>(
+            new HourFeatures(),
+            sample => sample.Category,
+            options: new LinearClassifierOptions
+            {
+                Epochs = 100,
+                LearningRate = 0.5,
+                L2 = 0,
+                MinDocumentFrequency = 1,
+                Seed = 7,
+                StandardizeNumericFeatures = true,
+            });
+        classifier.Train(new[]
+        {
+            new NumericSample("a1", "A", 1000),
+            new NumericSample("a2", "A", 1100),
+            new NumericSample("b1", "B", 2000),
+            new NumericSample("b2", "B", 2100),
+        });
+
+        Assert.Equal("A", classifier.PredictBest(new NumericSample("q1", "", 1050)));
+        Assert.Equal("B", classifier.PredictBest(new NumericSample("q2", "", 2050)));
+
+        var results = classifier.Predict(new NumericSample("q1", "", 1050), limit: 2);
+        Assert.All(results, result => Assert.True(double.IsFinite(result.Probability)));
+    }
+
+    private sealed record NumericSample(string Id, string Category, double Hour);
+
+    private sealed class HourFeatures : IFeatureSource<NumericSample>
+    {
+        public IFeatureSet FeaturesOf(NumericSample item) =>
+            new FeatureSet(
+                Array.Empty<string>(),
+                new Dictionary<string, double>(StringComparer.Ordinal) { ["hour"] = item.Hour });
+    }
+
+    [Fact]
     public void TopFeatures_ContainsTheClassTerm()
     {
         var classifier = Trained();
