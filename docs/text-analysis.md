@@ -455,12 +455,37 @@ the logit with the same feature value the model uses (IDF or standardized), so i
 other items sharing the feature; an item with no feature in the vocabulary has no effect.
 `TopFeatures` reports the training coefficients, not the ledger.
 
+### Persisting a trained model
+
+```csharp
+using (var file = File.Create("classifier.lxcl"))
+    ClassificationModelSerializer.Save(linear, file);
+
+using (var file = File.OpenRead("classifier.lxcl"))
+{
+    var loaded = ClassificationModelSerializer.LoadLinear(file);
+    loaded.PredictBest("i cannot connect to the internet");
+}
+```
+
+The format is versioned binary (`LXCL`, version 1) and carries the trained state: the tree's
+questions, the forest's trees, or the linear model's coefficients, plus the vocabulary, the
+prediction options and the correction ledger. `Load` dispatches on the stored kind and returns an
+`ITextClassifier`; the typed loaders return the concrete type, so `Explain`, `TopFeatures` and
+`Reinforce` survive the round trip. A version mismatch, the wrong kind, a bad magic or a truncated
+file throws instead of guessing, and the stored feature-space hash is verified against the loaded
+vocabulary.
+
+The one thing the file cannot carry is the tokenizer or the feature source — a delegate is not
+data. Load with the same source configuration you trained with, or the same text maps to different
+features. The hash identifies the vocabulary for your own bookkeeping; it cannot detect a source
+that changed while keeping the same names.
+
 There is no online learning. `Train` rebuilds the model from the documents it is given, and
 `Reinforce`/`Unreinforce` are corrections on top of a trained model — there is no `Learn`/`Unlearn`
 that folds a document into the counts the way Naive Bayes does. For a corpus of a few thousand
 examples, retraining on every synchronization is likely cheap enough, but that cost has not been
-measured here, so treat it as an assumption to check on your data. No model serializes either:
-the intended persistence is to replay the history and retrain.
+measured here, so treat it as an assumption to check on your data.
 
 ### Unsupervised: dividing a corpus
 

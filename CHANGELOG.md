@@ -71,8 +71,10 @@ workflow.
   **0.8918 ± 0.0070** and Naive Bayes **0.8190 ± 0.0063**, about eight points above the held-out
   figures because `20news-bydate`'s halves are disjoint date windows — the held-out number is the
   one to quote, and the CV table is published with that limit. A CI job replays the tuned pin.
-  None of the models learns online — `Train` rebuilds, `Reinforce`/`Unreinforce` correct — and none
-  persists a model; replaying the history is the intended path. The evidence is long 20 Newsgroups
+  None of the models learns online — `Train` rebuilds, `Reinforce`/`Unreinforce` correct.
+  `ClassificationModelSerializer` saves a trained tree, forest, linear model or calibrated wrapper
+  in a versioned binary (`LXCL`, version 1) with the vocabulary, prediction options and ledger; the
+  tokenizer is not stored, so load with the same feature source. The evidence is long 20 Newsgroups
   messages, and the subject-only run (`--text subject`) confirms it does not transfer: linear
   **0.5533 / 0.5295** against Naive Bayes **0.5624 / 0.5293**, McNemar p = 0.16.
   Measured on the standard `20news-bydate` split: the single tree reads **0.4457** accuracy / **0.4945**
