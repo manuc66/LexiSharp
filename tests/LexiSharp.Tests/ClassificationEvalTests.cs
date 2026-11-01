@@ -1,6 +1,7 @@
 using System.Formats.Tar;
 using System.IO.Compression;
 using System.Text;
+using LexiSharp.Classification;
 using LexiSharp.Eval;
 using Xunit;
 
@@ -209,6 +210,84 @@ public class ClassificationEvalTests
 
         Assert.Equal(1.0, metrics.Accuracy, precision: 10);
         Assert.Equal(1.0, metrics.MacroF1, precision: 10);
+    }
+
+    [Fact]
+    public void Bootstrap_IsReproducibleAndBracketsThePointEstimate()
+    {
+        var test = new List<ClassificationDocument>();
+        var predictions = new List<string?>();
+
+        for (int i = 0; i < 100; i++)
+        {
+            test.Add(new ClassificationDocument($"d{i}", "x", i % 2 == 0 ? "A" : "B"));
+            predictions.Add(i % 10 == 0 ? "B" : test[i].Category);
+        }
+
+        var first = ClassificationStatistics.Bootstrap(test, predictions);
+        var second = ClassificationStatistics.Bootstrap(test, predictions);
+
+        Assert.Equal(first, second);
+        Assert.True(first.Accuracy.Lower <= 0.9);
+        Assert.True(first.Accuracy.Upper >= 0.9);
+        Assert.True(first.MacroF1.Lower <= first.MacroF1.Upper);
+    }
+
+    [Fact]
+    public void Bootstrap_OnPerfectPredictions_IsExactlyOne()
+    {
+        var test = new[]
+        {
+            new ClassificationDocument("1", "a", "A"),
+            new ClassificationDocument("2", "b", "B"),
+            new ClassificationDocument("3", "c", "B"),
+        };
+        string?[] predictions = { "A", "B", "B" };
+
+        var intervals = ClassificationStatistics.Bootstrap(test, predictions);
+
+        Assert.Equal(1.0, intervals.Accuracy.Lower);
+        Assert.Equal(1.0, intervals.Accuracy.Upper);
+        Assert.Equal(1.0, intervals.MacroF1.Lower);
+        Assert.Equal(1.0, intervals.MacroF1.Upper);
+    }
+
+    [Fact]
+    public void Bootstrap_WithMismatchedCounts_Throws()
+    {
+        var test = new[] { new ClassificationDocument("1", "a", "A") };
+
+        Assert.Throws<ArgumentException>(
+            () => ClassificationStatistics.Bootstrap(test, Array.Empty<string?>()));
+    }
+
+    [Fact]
+    public void CrossValidate_OnSeparableData_ReadsOne()
+    {
+        var train = new List<ClassificationDocument>();
+
+        for (int i = 0; i < 20; i++)
+        {
+            train.Add(new ClassificationDocument($"a{i}", "alpha alpha", "A"));
+            train.Add(new ClassificationDocument($"b{i}", "beta beta", "B"));
+        }
+
+        var metrics = ClassificationEvaluation.CrossValidate(
+            "Naive Bayes", train, 5, () => new NaiveBayesClassifier());
+
+        Assert.Equal(5, metrics.Folds);
+        Assert.Equal(1.0, metrics.AccuracyMean, precision: 10);
+        Assert.Equal(0.0, metrics.AccuracyStd, precision: 10);
+        Assert.Equal(1.0, metrics.MacroF1Mean, precision: 10);
+    }
+
+    [Fact]
+    public void CrossValidate_WithFewerThanTwoFolds_Throws()
+    {
+        var train = new[] { new ClassificationDocument("1", "a", "A") };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => ClassificationEvaluation.CrossValidate(
+            "Naive Bayes", train, 1, () => new NaiveBayesClassifier()));
     }
 
     [Fact]
