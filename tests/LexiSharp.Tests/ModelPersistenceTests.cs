@@ -420,6 +420,78 @@ public class ModelPersistenceTests
             loaded.Predict("alpha").Select(result => (result.Category, result.Probability)));
     }
 
+    [Fact]
+    public void Load_DispatchesOnTheStoredKind()
+    {
+        using (var buffer = new MemoryStream())
+        {
+            ClassificationModelSerializer.Save(TrainTree(), buffer);
+            buffer.Position = 0;
+            Assert.IsType<DecisionTreeClassifier>(ClassificationModelSerializer.Load(buffer));
+        }
+
+        using (var buffer = new MemoryStream())
+        {
+            ClassificationModelSerializer.Save(TrainForest(), buffer);
+            buffer.Position = 0;
+            Assert.IsType<RandomForestClassifier>(ClassificationModelSerializer.Load(buffer));
+        }
+
+        using (var buffer = new MemoryStream())
+        {
+            ClassificationModelSerializer.Save(TrainLinear(), buffer);
+            buffer.Position = 0;
+            Assert.IsType<LinearClassifier>(ClassificationModelSerializer.Load(buffer));
+        }
+
+        using (var buffer = new MemoryStream())
+        {
+            var calibrated = new CalibratedClassifier(TrainLinear(), new TemperatureCalibrator(0.75));
+            ClassificationModelSerializer.Save(calibrated, buffer);
+            buffer.Position = 0;
+            Assert.IsType<CalibratedClassifier>(ClassificationModelSerializer.Load(buffer));
+        }
+
+        var embeddings = new HashingEmbeddingProvider(dimension: 64);
+        var centroid = new CentroidClassifier(embeddings);
+        centroid.Train(Corpus);
+
+        using (var buffer = new MemoryStream())
+        {
+            ClassificationModelSerializer.Save(centroid, buffer);
+            buffer.Position = 0;
+            Assert.IsType<CentroidClassifier>(ClassificationModelSerializer.Load(buffer, embeddings: embeddings));
+        }
+    }
+
+    [Fact]
+    public void Save_WithAnUnknownKind_Throws()
+    {
+        Assert.Throws<NotSupportedException>(() =>
+            ClassificationModelSerializer.Save(new UnknownClassifier(), new MemoryStream()));
+    }
+
+    [Fact]
+    public void Load_WithAnUnknownKindByte_Throws()
+    {
+        byte[] bytes = Save(TrainTree());
+        bytes[8] = 99;
+
+        Assert.Throws<InvalidDataException>(() =>
+            ClassificationModelSerializer.Load(new MemoryStream(bytes)));
+    }
+
+    private sealed class UnknownClassifier : ITextClassifier
+    {
+        public void Train(IEnumerable<SearchDocument> documents) { }
+
+        public IReadOnlyList<ClassificationResult> Predict(
+            string text, int limit = 3, IReadOnlySet<string>? excludedCategories = null) =>
+            Array.Empty<ClassificationResult>();
+
+        public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null) => null;
+    }
+
     private static byte[] Save(DecisionTreeClassifier tree)
     {
         using var buffer = new MemoryStream();

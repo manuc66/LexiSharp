@@ -184,6 +184,85 @@ public class LinearClassifierTests
     }
 
     [Fact]
+    public void Train_WithNoLabelledDocumentLeavesAnUntrainedModel()
+    {
+        var classifier = new LinearClassifier();
+        classifier.Train(new[]
+        {
+            new SearchDocument("1", "alpha", Category: null),
+        });
+
+        Assert.Empty(classifier.Predict("alpha"));
+        Assert.Empty(classifier.TopFeatures("A"));
+    }
+
+    [Fact]
+    public void ClassWeightsMustBeFiniteAndNonNegative()
+    {
+        Assert.Throws<ArgumentException>(() => new LinearClassifier(options: new LinearClassifierOptions
+        {
+            ClassWeights = new Dictionary<string, double> { ["A"] = -1 },
+        }).Train(Corpus));
+
+        Assert.Throws<ArgumentException>(() => new LinearClassifier(options: new LinearClassifierOptions
+        {
+            ClassWeights = new Dictionary<string, double> { ["A"] = double.NaN },
+        }).Train(Corpus));
+    }
+
+    [Fact]
+    public void SampleWeightsMustBeFiniteAndNonNegative()
+    {
+        var classifier = new LinearClassifier<SearchDocument>(
+            new TextFeatureSource(),
+            document => document.Category,
+            _ => -1);
+
+        Assert.Throws<ArgumentException>(() => classifier.Train(Corpus));
+    }
+
+    [Fact]
+    public void ExcludingEveryCategoryReturnsNothing()
+    {
+        var classifier = Trained();
+
+        Assert.Empty(classifier.Predict(
+            "alpha",
+            excludedCategories: new HashSet<string>(new[] { "A", "B", "C" })));
+    }
+
+    [Fact]
+    public void Learn_RequiresACategory()
+    {
+        var classifier = Trained();
+
+        Assert.Throws<ArgumentException>(() => classifier.Learn("alpha", null!));
+    }
+
+    [Fact]
+    public void Learn_RejectsAZeroEffectiveWeight()
+    {
+        double weight = 1;
+        var classifier = new LinearClassifier<SearchDocument>(
+            new TextFeatureSource(),
+            document => document.Category,
+            _ => weight);
+        classifier.Train(Corpus);
+        weight = 0;
+
+        Assert.Throws<ArgumentException>(() => classifier.Learn(Corpus[0]));
+    }
+
+    [Fact]
+    public void TopFeatures_OnAnUntrainedModelIsEmptyAndNegativeCountIsClamped()
+    {
+        Assert.Empty(new LinearClassifier().TopFeatures("A"));
+
+        var classifier = Trained();
+        Assert.Empty(classifier.TopFeatures("A", count: -1));
+    }
+
+    [Fact]
     public void Learn_CanIntroduceACategoryTheModelNeverTrainedOn()
     {
         var classifier = Trained(new LinearClassifierOptions

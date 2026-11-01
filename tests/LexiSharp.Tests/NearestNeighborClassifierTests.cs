@@ -333,15 +333,237 @@ public class NearestNeighborClassifierTests
             new SearchDocument("1", "bad", Category: "A")));
     }
 
-    private sealed class FakeEmbeddings : IEmbeddingProvider
+    [Fact]
+    public void TheConfigurationIsExposed()
+    {
+        var lexical = new NearestNeighborClassifier(options: new NearestNeighborOptions { K = 7 });
+        Assert.Equal(7, lexical.Options.K);
+        Assert.False(lexical.IsDense);
+        Assert.Equal(0, lexical.Count);
+
+        var dense = new NearestNeighborClassifier(new FakeEmbeddings());
+        Assert.True(dense.IsDense);
+    }
+
+    [Fact]
+    public void TheDenseConstructorValidatesItsOptions()
+    {
+        Assert.Throws<ArgumentException>(() => new NearestNeighborClassifier(
+            new FakeEmbeddings(),
+            new NearestNeighborOptions { K = -1 }));
+    }
+
+    [Fact]
+    public async Task TrainAsync_OnTheLexicalPath_DelegatesToTrain()
+    {
+        var classifier = new NearestNeighborClassifier();
+
+        await classifier.TrainAsync(Corpus);
+
+        Assert.Equal(4, classifier.Count);
+        Assert.Equal("A", classifier.PredictBest("alpha"));
+    }
+
+    [Fact]
+    public async Task LearnAsync_OnTheLexicalPath_DelegatesToLearn()
+    {
+        var classifier = new NearestNeighborClassifier();
+
+        await classifier.LearnAsync(new SearchDocument("1", "alpha", Category: "A"));
+
+        Assert.Equal(1, classifier.Count);
+        Assert.Equal("A", classifier.PredictBest("alpha"));
+    }
+
+    [Fact]
+    public async Task DenseTrainAsync_UsesTheBatchProviderOnce()
+    {
+        var embeddings = new BatchEmbeddings()
+            .Add("A", new[] { 1f, 0f })
+            .Add("B", new[] { 0f, 1f });
+
+        var classifier = new NearestNeighborClassifier(embeddings);
+        await classifier.TrainAsync(new[]
+        {
+            new SearchDocument("a", "A", Category: "A"),
+            new SearchDocument("b", "B", Category: "B"),
+        });
+
+        Assert.Equal(1, embeddings.BatchCalls);
+        Assert.Equal(2, classifier.Count);
+    }
+
+    [Fact]
+    public async Task DenseTrainAsync_RejectsABatchCountMismatch()
+    {
+        var embeddings = new BatchEmbeddings { ReturnOne = true }
+            .Add("A", new[] { 1f, 0f })
+            .Add("B", new[] { 0f, 1f });
+
+        var classifier = new NearestNeighborClassifier(embeddings);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => classifier.TrainAsync(new[]
+        {
+            new SearchDocument("a", "A", Category: "A"),
+            new SearchDocument("b", "B", Category: "B"),
+        }));
+    }
+
+    [Fact]
+    public void LearnAndUnlearnIgnoreADocumentWithoutCategory()
+    {
+        var classifier = new NearestNeighborClassifier();
+        var document = new SearchDocument("1", "alpha", Category: null);
+
+        classifier.Learn(document);
+        classifier.Unlearn(document);
+
+        Assert.Equal(0, classifier.Count);
+    }
+
+    [Fact]
+    public async Task LearnAsyncAndUnlearnAsyncIgnoreADocumentWithoutCategory()
+    {
+        var embeddings = new FakeEmbeddings().Add("alpha", new[] { 1f, 0f });
+        var classifier = new NearestNeighborClassifier(embeddings);
+        var document = new SearchDocument("1", "alpha", Category: null);
+
+        await classifier.LearnAsync(document);
+        await classifier.UnlearnAsync(document);
+
+        Assert.Equal(0, classifier.Count);
+    }
+
+    [Fact]
+    public async Task DensePredictAsync_ReturnsNothingBeforeTraining()
+    {
+        var embeddings = new FakeEmbeddings();
+        var classifier = new NearestNeighborClassifier(embeddings);
+
+        Assert.Empty(await classifier.PredictAsync("anything"));
+        Assert.Equal(0, embeddings.Calls);
+        Assert.Empty(await classifier.PredictAsync("anything", limit: 0));
+    }
+
+    [Fact]
+    public async Task LexicalPredictAsync_DelegatesToTheSynchronousPath()
+    {
+        var classifier = new NearestNeighborClassifier();
+        classifier.Train(Corpus);
+
+        Assert.Equal("A", (await classifier.PredictAsync("alpha", limit: 1))[0].Category);
+    }
+
+    [Fact]
+    public void DenseScoreVote_WithAllNegativeSimilarities_IsUniform()
+    {
+        var embeddings = new FakeEmbeddings()
+            .Add("A", new[] { 1f, 0f })
+            .Add("B", new[] { 0f, 1f })
+            .Add("query", new[] { -1f, -1f });
+
+        var classifier = new NearestNeighborClassifier(embeddings, new NearestNeighborOptions
+        {
+            K = 2,
+            Vote = NeighborVote.Score,
+        });
+        classifier.Train(new[]
+        {
+            new SearchDocument("a", "A", Category: "A"),
+            new SearchDocument("b", "B", Category: "B"),
+        });
+
+        var results = classifier.Predict("query", limit: 2);
+
+        Assert.Equal(2, results.Count);
+        Assert.All(results, result => Assert.Equal(0.5, result.Probability, precision: 10));
+    }
+
+    [Fact]
+    public void ADenseNonFiniteVectorIsRejected()
+    {
+        var embeddings = new FakeEmbeddings()
+            .Add("bad", new[] { float.NaN, 0f });
+
+        var classifier = new NearestNeighborClassifier(embeddings);
+
+        Assert.Throws<InvalidOperationException>(() => classifier.Learn(
+            new SearchDocument("1", "bad", Category: "A")));
+    }
+
+    [Fact]
+    public void TheTopKBufferReplacesTheWorstCandidate()
+    {
+        var classifier = new NearestNeighborClassifier(options: new NearestNeighborOptions { K = 1 });
+        classifier.Learn(new SearchDocument("weak", "alpha", Category: "A"));
+        classifier.Learn(new SearchDocument("strong", "alpha alpha alpha alpha", Category: "B"));
+
+        Assert.Equal("B", classifier.PredictBest("alpha"));
+    }
+
+    [Fact]
+    public void AnEmptyIdIsRejectedByBothStores()
+    {
+        var lexical = new NearestNeighborClassifier();
+        Assert.Throws<ArgumentException>(() =>
+            lexical.Learn(new SearchDocument(string.Empty, "alpha", Category: "A")));
+
+        var embeddings = new FakeEmbeddings().Add("alpha", new[] { 1f, 0f });
+        var dense = new NearestNeighborClassifier(embeddings);
+        Assert.Throws<ArgumentException>(() =>
+            dense.Learn(new SearchDocument(string.Empty, "alpha", Category: "A")));
+    }
+
+    [Fact]
+    public void ADuplicateIdIsRejectedByTheDenseStore()
+    {
+        var embeddings = new FakeEmbeddings()
+            .Add("one", new[] { 1f, 0f })
+            .Add("two", new[] { 0f, 1f });
+
+        var classifier = new NearestNeighborClassifier(embeddings);
+        classifier.Learn(new SearchDocument("1", "one", Category: "A"));
+
+        Assert.Throws<ArgumentException>(() =>
+            classifier.Learn(new SearchDocument("1", "two", Category: "B")));
+    }
+
+    [Fact]
+    public void UnlearningAUniqueTermRemovesItFromTheDocumentFrequency()
+    {
+        var classifier = new NearestNeighborClassifier();
+        classifier.Train(new[]
+        {
+            new SearchDocument("1", "unique alpha", Category: "A"),
+            new SearchDocument("2", "beta", Category: "B"),
+        });
+
+        classifier.Unlearn(new SearchDocument("1", "unique alpha", Category: "A"));
+
+        Assert.Empty(classifier.Predict("unique"));
+    }
+
+    [Fact]
+    public void AnEmptyModelAndAnEmptyTextReturnNothing()
+    {
+        var emptyModel = new NearestNeighborClassifier();
+        emptyModel.Train(Array.Empty<SearchDocument>());
+        Assert.Empty(emptyModel.Predict("alpha"));
+
+        var emptyDocuments = new NearestNeighborClassifier();
+        emptyDocuments.Train(new[] { new SearchDocument("1", string.Empty, Category: "A") });
+        Assert.Empty(emptyDocuments.Predict("alpha"));
+    }
+
+    private sealed class BatchEmbeddings : IEmbeddingProvider, IBatchEmbeddingProvider
     {
         private readonly Dictionary<string, float[]> _vectors = new(StringComparer.Ordinal);
 
-        public FakeEmbeddings(int dimension = 2) => Dimension = dimension;
+        public int Dimension => 2;
+        public int BatchCalls { get; private set; }
+        public bool ReturnOne { get; init; }
 
-        public int Dimension { get; }
-
-        public FakeEmbeddings Add(string text, float[] vector)
+        public BatchEmbeddings Add(string text, float[] vector)
         {
             _vectors[text] = vector;
             return this;
@@ -352,5 +574,45 @@ public class NearestNeighborClassifierTests
             EmbeddingUse use,
             CancellationToken cancellationToken = default) =>
             Task.FromResult<ReadOnlyMemory<float>>(_vectors[text]);
+
+        public Task<IReadOnlyList<ReadOnlyMemory<float>>> GetTextEmbeddingsAsync(
+            IReadOnlyList<string> texts,
+            EmbeddingUse use,
+            CancellationToken cancellationToken = default)
+        {
+            BatchCalls++;
+            IReadOnlyList<ReadOnlyMemory<float>> vectors = texts
+                .Take(ReturnOne ? 1 : texts.Count)
+                .Select(text => (ReadOnlyMemory<float>)_vectors[text])
+                .ToArray();
+
+            return Task.FromResult(vectors);
+        }
+    }
+
+    private sealed class FakeEmbeddings : IEmbeddingProvider
+    {
+        private readonly Dictionary<string, float[]> _vectors = new(StringComparer.Ordinal);
+
+        public FakeEmbeddings(int dimension = 2) => Dimension = dimension;
+
+        public int Dimension { get; }
+
+        public int Calls { get; private set; }
+
+        public FakeEmbeddings Add(string text, float[] vector)
+        {
+            _vectors[text] = vector;
+            return this;
+        }
+
+        public Task<ReadOnlyMemory<float>> GetTextEmbeddingAsync(
+            string text,
+            EmbeddingUse use,
+            CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            return Task.FromResult<ReadOnlyMemory<float>>(_vectors[text]);
+        }
     }
 }
