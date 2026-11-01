@@ -207,6 +207,53 @@ public class SynchronizedTextClassifierTests
     }
 
     /// <summary>
+    /// The smallest contract: prediction and training only. A wrapper that required reinforcement
+    /// to be present could not carry a nearest-neighbour or a centroid model, and those are exactly
+    /// the models whose mutations need the same lock.
+    /// </summary>
+    private sealed class PlainTextClassifier : ITextClassifier
+    {
+        private bool _trained;
+
+        public void Train(IEnumerable<SearchDocument> documents) => _trained = true;
+
+        public IReadOnlyList<ClassificationResult> Predict(
+            string text, int limit = 3, IReadOnlySet<string>? excludedCategories = null) =>
+            _trained && limit > 0
+                ? new[] { new ClassificationResult("Only", 1.0) }
+                : Array.Empty<ClassificationResult>();
+
+        public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null) =>
+            Predict(text, limit: 1).Count > 0 ? "Only" : null;
+    }
+
+    [Fact]
+    public void TheWrapper_CarriesAPlainClassifier()
+    {
+        using var classifier = new SynchronizedTextClassifier(new PlainTextClassifier());
+
+        classifier.Train(Corpus);
+
+        Assert.Equal("Only", classifier.PredictBest("anything"));
+    }
+
+    [Fact]
+    public void Reinforce_ThrowsWhenTheWrappedModelCannotDoIt()
+    {
+        using var classifier = new SynchronizedTextClassifier(new PlainTextClassifier());
+
+        var reinforce = Assert.Throws<NotSupportedException>(
+            () => classifier.Reinforce("anything", "Only"));
+        var unreinforce = Assert.Throws<NotSupportedException>(
+            () => classifier.Unreinforce("anything", "Only"));
+        var forget = Assert.Throws<NotSupportedException>(classifier.ForgetReinforcement);
+
+        Assert.Contains(nameof(PlainTextClassifier), reinforce.Message, StringComparison.Ordinal);
+        Assert.Contains(nameof(PlainTextClassifier), unreinforce.Message, StringComparison.Ordinal);
+        Assert.Contains(nameof(PlainTextClassifier), forget.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Reinforceable but not incremental: the wrapper must refuse the incremental members by name
     /// instead of quietly retraining, which is what a silent fallback here would look like.
     /// </summary>

@@ -52,6 +52,20 @@ public sealed record LinearClassifierOptions
     /// </summary>
     public IReadOnlyDictionary<string, double>? ClassWeights { get; init; }
 
+    /// <summary>
+    /// Multiplies the mass a single <c>Learn</c> call adds. It is separate from
+    /// <see cref="LearningRate"/>, which is the AdaGrad step used by <c>Train</c>, and from
+    /// the per-item sample weight: a half-life belongs in the latter, while this is how strongly a
+    /// correction moves the model. Must be finite and strictly positive. Default: <c>1</c>.
+    /// </summary>
+    public double CorrectionWeight { get; init; } = 1.0;
+
+    /// <summary>
+    /// Logit given to a category that was never seen during training when <c>Learn</c> introduces
+    /// it. It is not learned; it is the baseline the correction mass is added to. Default: <c>0</c>.
+    /// </summary>
+    public double UnseenCategoryBias { get; init; }
+
     internal bool IsValid =>
         Epochs >= 1
         && LearningRate > 0
@@ -65,5 +79,8 @@ public sealed record LinearClassifierOptions
         && MinProbability <= 1
         && !double.IsNaN(MinProbability)
         && !double.IsInfinity(MinProbability)
+        && CorrectionWeight > 0
+        && double.IsFinite(CorrectionWeight)
+        && double.IsFinite(UnseenCategoryBias)
         && Seed >= 0;
 }
