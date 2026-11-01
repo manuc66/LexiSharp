@@ -5,6 +5,16 @@ using System.Text;
 
 namespace LexiSharp.Eval;
 
+/// <summary>Which part of a message the classifier sees.</summary>
+internal enum ClassificationTextMode
+{
+    /// <summary>The subject and the body, with every header removed.</summary>
+    SubjectAndBody,
+
+    /// <summary>The subject line only — the short-text variant of the corpus.</summary>
+    SubjectOnly,
+}
+
 /// <summary>One labelled document of the 20 Newsgroups corpus.</summary>
 internal sealed record ClassificationDocument(string Id, string Text, string Category);
 
@@ -35,7 +45,11 @@ internal static class TwentyNewsgroups
     /// <summary>Loads the corpus, downloading and extracting it on first use.</summary>
     /// <param name="dataBaseDir">Directory the archive and extracted corpus live in.</param>
     /// <param name="limit">Optional cap per split, drawn by a fixed-seed shuffle for a quick run.</param>
-    public static async Task<ClassificationCorpus> LoadOrDownloadAsync(string dataBaseDir, int? limit = null)
+    /// <param name="mode">Whether the model sees the full message or the subject only.</param>
+    public static async Task<ClassificationCorpus> LoadOrDownloadAsync(
+        string dataBaseDir,
+        int? limit = null,
+        ClassificationTextMode mode = ClassificationTextMode.SubjectAndBody)
     {
         string root = Path.Combine(dataBaseDir, DatasetName);
         string trainDir = Path.Combine(root, "20news-bydate-train");
@@ -45,8 +59,8 @@ internal static class TwentyNewsgroups
             await DownloadAndExtractAsync(dataBaseDir, root);
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        var train = Deduplicate(ReadSplit(trainDir), seen);
-        var test = Deduplicate(ReadSplit(testDir), seen);
+        var train = Deduplicate(ReadSplit(trainDir, mode), seen);
+        var test = Deduplicate(ReadSplit(testDir, mode), seen);
 
         if (limit is { } cap)
         {
@@ -60,7 +74,11 @@ internal static class TwentyNewsgroups
             .OrderBy(category => category, StringComparer.Ordinal)
             .ToArray();
 
-        return new ClassificationCorpus(DatasetName, ExpectedMd5, train, test, categories);
+        string name = mode == ClassificationTextMode.SubjectOnly
+            ? DatasetName + "-subject"
+            : DatasetName;
+
+        return new ClassificationCorpus(name, ExpectedMd5, train, test, categories);
     }
 
     /// <summary>
@@ -68,7 +86,16 @@ internal static class TwentyNewsgroups
     /// every header removed.
     /// </summary>
     /// <param name="raw">The file as it appears in the corpus.</param>
-    internal static string ParseMessage(string raw)
+    internal static string ParseMessage(string raw) =>
+        ParseMessage(raw, ClassificationTextMode.SubjectAndBody);
+
+    /// <summary>
+    /// Reduces one raw message to the text the classifier sees, according to
+    /// <paramref name="mode"/>.
+    /// </summary>
+    /// <param name="raw">The file as it appears in the corpus.</param>
+    /// <param name="mode">Whether the body is kept.</param>
+    internal static string ParseMessage(string raw, ClassificationTextMode mode)
     {
         ArgumentNullException.ThrowIfNull(raw);
 
@@ -87,6 +114,9 @@ internal static class TwentyNewsgroups
             subject = line["Subject:".Length..].Trim();
             break;
         }
+
+        if (mode == ClassificationTextMode.SubjectOnly)
+            return subject ?? string.Empty;
 
         body = body.Trim();
 
@@ -126,7 +156,7 @@ internal static class TwentyNewsgroups
         }
     }
 
-    private static List<ClassificationDocument> ReadSplit(string root)
+    private static List<ClassificationDocument> ReadSplit(string root, ClassificationTextMode mode)
     {
         var documents = new List<ClassificationDocument>();
 
@@ -140,7 +170,7 @@ internal static class TwentyNewsgroups
                          .EnumerateFiles(categoryDirectory)
                          .OrderBy(path => path, StringComparer.Ordinal))
             {
-                string text = ParseMessage(File.ReadAllText(file));
+                string text = ParseMessage(File.ReadAllText(file), mode);
 
                 if (text.Length == 0)
                     continue;

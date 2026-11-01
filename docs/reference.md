@@ -160,9 +160,10 @@ was designed from:
   **0.8085 / 0.8027**), and sublinear TF-IDF (`emitTermFrequency: true` plus `IdfWeighting`) lost
   too (**0.7757 / 0.7676**), so both are off by default. None of the models learns online: `Train`
   rebuilds, `Reinforce`/`Unreinforce` correct, and the persistence story is to replay the history
-  and retrain. The evidence comes from long 20 Newsgroups messages, so transfer to short text is
-  unproven; on a short-text problem the context features can carry most of the gain. The command
-  and the pin are in
+  and retrain. The long-document figures do not transfer to short text: with only the `Subject`
+  line the linear model reads **0.5533 / 0.5295** and Naive Bayes **0.5624 / 0.5293**, with no
+  significant difference (McNemar p = 0.16), so run the baseline on your own short texts first.
+  The command and the pin are in
   [Evaluation](evaluation.md#classification-on-20-newsgroups); [Benchmarks](benchmarks.md#classification-classificationbenchmarks)
   reports cost. Measure on your own labels before trusting either. See
   [question trees](text-analysis.md#question-trees-classification-and-corpus-division).
