@@ -79,7 +79,10 @@ internal static class ClassificationCommand
     {
         for (int i = 0; i < args.Length; i++)
         {
-            bool? parsed = ParseDataFlag(args, ref i, options);
+            bool? parsed = ParseDatasetFlag(args, ref i, options);
+
+            if (parsed is null)
+                parsed = ParseTreeFlag(args, ref i, options);
 
             if (parsed is null)
                 parsed = ParseForestFlag(args, ref i, options);
@@ -103,7 +106,7 @@ internal static class ClassificationCommand
         return true;
     }
 
-    private static bool? ParseDataFlag(string[] args, ref int i, CommandOptions options)
+    private static bool? ParseDatasetFlag(string[] args, ref int i, CommandOptions options)
     {
         switch (args[i])
         {
@@ -119,6 +122,15 @@ internal static class ClassificationCommand
 
                 options.Limit = limit;
                 return true;
+            default:
+                return null;
+        }
+    }
+
+    private static bool? ParseTreeFlag(string[] args, ref int i, CommandOptions options)
+    {
+        switch (args[i])
+        {
             case "--depth" when i + 1 < args.Length:
                 if (!TryReadNonNegative(args[++i], out int depth))
                 {
