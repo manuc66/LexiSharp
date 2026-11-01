@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using LexiSharp.Classification;
 using LexiSharp.Core;
 
@@ -13,7 +15,18 @@ internal sealed record ClassificationMetrics(
     double MacroF1,
     double AverageQuestions,
     TimeSpan TrainTime,
-    TimeSpan PredictTime);
+    TimeSpan PredictTime,
+    IReadOnlyDictionary<string, double> PerClassF1,
+    string PredictionHash,
+    IReadOnlyList<string?> Predictions);
+
+/// <summary>McNemar's paired comparison of two classifiers on the same test split.</summary>
+internal sealed record McNemarResult(
+    string Baseline,
+    string Candidate,
+    int BaselineOnly,
+    int CandidateOnly,
+    double PValue);
 
 /// <summary>A stratified fit/validation split of a labelled corpus.</summary>
 internal sealed record ClassificationSplit(
@@ -411,6 +424,7 @@ internal static class ClassificationEvaluation
         }
 
         double macroF1 = 0;
+        var perClassF1 = new Dictionary<string, double>(categories.Length, StringComparer.Ordinal);
 
         foreach (string category in categories)
         {
@@ -420,6 +434,7 @@ internal static class ClassificationEvaluation
             double precision = tp + fp == 0 ? 0 : (double)tp / (tp + fp);
             double recall = tp + fn == 0 ? 0 : (double)tp / (tp + fn);
             double f1 = precision + recall == 0 ? 0 : 2 * precision * recall / (precision + recall);
+            perClassF1[category] = f1;
             macroF1 += f1;
         }
 
@@ -433,7 +448,91 @@ internal static class ClassificationEvaluation
             macroF1,
             averageQuestions,
             trainTime,
-            predictTime);
+            predictTime,
+            perClassF1,
+            HashPredictions(test, predictions),
+            predictions);
+    }
+
+    /// <summary>
+    /// McNemar's test on the paired correctness of two classifiers: only the documents they
+    /// disagree on contribute, which is the right comparison for two models scored on one split.
+    /// The p-value is the chi-square 1 df approximation with continuity correction.
+    /// </summary>
+    public static McNemarResult McNemar(
+        IReadOnlyList<ClassificationDocument> test,
+        IReadOnlyList<string?> baseline,
+        IReadOnlyList<string?> candidate,
+        string baselineName,
+        string candidateName)
+    {
+        ArgumentNullException.ThrowIfNull(test);
+        ArgumentNullException.ThrowIfNull(baseline);
+        ArgumentNullException.ThrowIfNull(candidate);
+
+        if (test.Count != baseline.Count || test.Count != candidate.Count)
+            throw new ArgumentException("One prediction is required per test document.");
+
+        int baselineOnly = 0;
+        int candidateOnly = 0;
+
+        for (int i = 0; i < test.Count; i++)
+        {
+            bool baselineCorrect = string.Equals(baseline[i], test[i].Category, StringComparison.Ordinal);
+            bool candidateCorrect = string.Equals(candidate[i], test[i].Category, StringComparison.Ordinal);
+
+            if (baselineCorrect && !candidateCorrect)
+                baselineOnly++;
+            else if (!baselineCorrect && candidateCorrect)
+                candidateOnly++;
+        }
+
+        int discordant = baselineOnly + candidateOnly;
+        double pValue = discordant == 0
+            ? 1.0
+            : Erfc(Math.Sqrt(Math.Pow(Math.Abs(baselineOnly - candidateOnly) - 1, 2) / discordant / 2));
+
+        return new McNemarResult(baselineName, candidateName, baselineOnly, candidateOnly, pValue);
+    }
+
+    /// <summary>A stable hash of the ordered predictions, for the pin.</summary>
+    internal static string HashPredictions(
+        IReadOnlyList<ClassificationDocument> test,
+        IReadOnlyList<string?> predictions)
+    {
+        if (test.Count != predictions.Count)
+            throw new ArgumentException("One prediction is required per test document.", nameof(predictions));
+
+        var builder = new StringBuilder(test.Count * 24);
+
+        for (int i = 0; i < test.Count; i++)
+        {
+            builder.Append(test[i].Id)
+                .Append('\t')
+                .Append(predictions[i] ?? "<none>")
+                .Append('\n');
+        }
+
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString())));
+    }
+
+    /// <summary>The complementary error function, for the chi-square 1 df tail.</summary>
+    private static double Erfc(double x)
+    {
+        double z = Math.Abs(x);
+        double t = 1.0 / (1.0 + 0.5 * z);
+        double result = t * Math.Exp(
+            -z * z - 1.26551223
+            + t * (1.00002368
+                + t * (0.37409196
+                    + t * (0.09678418
+                        + t * (-0.18628806
+                            + t * (0.27886807
+                                + t * (-1.13520398
+                                    + t * (1.48851587
+                                        + t * (-0.82215223 + t * 0.17087277)))))))));
+
+        return x >= 0 ? result : 2.0 - result;
     }
 
     private static SearchDocument ToSearchDocument(ClassificationDocument document) =>
