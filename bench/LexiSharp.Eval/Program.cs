@@ -18,6 +18,8 @@ public static class Program
         int? limit = null;
         int denseSeq = 256;
         bool dense = false;
+        bool densePackage = false;
+        bool rerankPackage = false;
         bool tuned = true;
         bool rerank = false;
         int rerankCandidates = 100;
@@ -131,6 +133,12 @@ public static class Program
                     break;
                 case "--dense":
                     dense = true;
+                    break;
+                case "--dense-package":
+                    densePackage = true;
+                    break;
+                case "--rerank-package":
+                    rerankPackage = true;
                     break;
                 case "--no-tuned":
                     tuned = false;
@@ -472,7 +480,7 @@ public static class Program
             string rerankCache = Path.Combine(dataBaseDir, "models", "cross-encoder");
             await CrossEncoderModels.EnsureFilesAsync(rerankCache, CancellationToken.None);
 
-            if (Environment.GetEnvironmentVariable("LEXISHARP_EVAL_RERANK_PACKAGE") == "1")
+            if (rerankPackage || Environment.GetEnvironmentVariable("LEXISHARP_EVAL_RERANK_PACKAGE") == "1")
             {
                 reranker = new PackageCrossEncoderReranker(
                     Path.Combine(rerankCache, "onnx", "model.onnx"),
@@ -555,7 +563,7 @@ public static class Program
             await RunDatasetAsync(
                 dataset, dataBaseDir, topK, limit, tokenizer, tokenizerOptions, analysisDescription, gain,
                 excludeQueryDocument, fingerprintOnly, referenceBm25, queryFrequency, scoreRounding,
-                saturationConstant, singlePrecision, dense, denseSeq,
+                saturationConstant, singlePrecision, dense, densePackage, denseSeq,
                 tuned, reranker, rerankCandidates, runPath, jobs, indexCache, parseQuerySyntax,
                 querySyntaxReference, segment, tuneBm25F, tuneSearchOptions,
                 analyzePath, analyzeBaseline, analyzeCandidate,
@@ -684,7 +692,7 @@ public static class Program
         BeirDataset dataset, string dataBaseDir, int topK, int? limit, ITokenizer tokenizer, TokenizerOptions tokenizerOptions,
         string analysisDescription, NdcgGain gain, bool excludeQueryDocument, bool fingerprintOnly,
         Bm25Parameters? referenceBm25, bool queryFrequency, bool scoreRounding, bool saturationConstant,
-        bool singlePrecision, bool dense, int denseSeq, bool tuned,
+        bool singlePrecision, bool dense, bool densePackage, int denseSeq, bool tuned,
         IReranker? reranker, int rerankCandidates, string? runPath, int jobs, string? indexCache,
         bool parseQuerySyntax, bool referenceIndexStatistics, bool segment, bool tuneBm25F,
         bool tuneSearchOptions,
@@ -763,7 +771,7 @@ public static class Program
         if (dense)
         {
             denseVectors = await DenseEmbedder.TryBuildAsync(
-                corpus, Path.Combine(dataBaseDir, dataset.Name), Path.Combine(dataBaseDir, "models"), denseSeq, CancellationToken.None);
+                corpus, Path.Combine(dataBaseDir, dataset.Name), Path.Combine(dataBaseDir, "models"), denseSeq, CancellationToken.None, densePackage);
 
             Console.WriteLine("Dense configs enabled (multilingual-e5-small, Xenova ONNX export — MIT, weights from intfloat/multilingual-e5-small).");
         }

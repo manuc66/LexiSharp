@@ -49,9 +49,9 @@ internal static class DenseEmbedder
     internal const int CacheVersion = 3;
 
     public static async Task<DenseVectors?> TryBuildAsync(
-        BeirCorpus corpus, string dataDir, string modelCacheDir, int maxSeqLength, CancellationToken ct)
+        BeirCorpus corpus, string dataDir, string modelCacheDir, int maxSeqLength, CancellationToken ct, bool usePackage = false)
     {
-        if (Environment.GetEnvironmentVariable("LEXISHARP_EVAL_DENSE_PACKAGE") == "1")
+        if (usePackage || Environment.GetEnvironmentVariable("LEXISHARP_EVAL_DENSE_PACKAGE") == "1")
             return await PackageDenseEmbedder.TryBuildAsync(corpus, dataDir, modelCacheDir, maxSeqLength, ct).ConfigureAwait(false);
 
         int docCount = corpus.Documents.Count;

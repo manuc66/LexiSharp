@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using LexiSharp.Core;
 using LexiSharp.Onnx;
 
@@ -31,12 +32,14 @@ internal static class PackageDenseEmbedder
             return Task.FromResult<DenseVectors?>(null);
         }
 
+        string modelHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(model)));
+
         string documentCache = Path.Combine(dataDir, "e5-small.package.docs.bin");
         string queryCache = Path.Combine(dataDir, "e5-small.package.queries.bin");
         string metaCache = Path.Combine(dataDir, "e5-small.package.json");
 
         if (File.Exists(documentCache) && File.Exists(queryCache) && File.Exists(metaCache)
-            && CacheMatches(metaCache, corpus.Documents.Count, corpus.Queries.Count, maxSeqLength))
+            && CacheMatches(metaCache, corpus.Documents.Count, corpus.Queries.Count, maxSeqLength, modelHash))
         {
             Console.WriteLine($"Loading cached package embeddings ({corpus.Documents.Count}+{corpus.Queries.Count} vectors).");
             return Task.FromResult<DenseVectors?>(new DenseVectors(
@@ -89,6 +92,7 @@ internal static class PackageDenseEmbedder
         {
             model = DenseModels.ModelId,
             packageVersion = PackageCacheVersion,
+            modelHash,
             docCount = corpus.Documents.Count,
             queryCount = corpus.Queries.Count,
             maxSeqLength,
@@ -98,7 +102,7 @@ internal static class PackageDenseEmbedder
         return Task.FromResult<DenseVectors?>(new DenseVectors(documentVectors, queryMap, encoder.Dimension));
     }
 
-    internal static bool CacheMatches(string metaPath, int documentCount, int queryCount, int maxSeqLength)
+    internal static bool CacheMatches(string metaPath, int documentCount, int queryCount, int maxSeqLength, string modelHash)
     {
         try
         {
@@ -107,6 +111,7 @@ internal static class PackageDenseEmbedder
 
             return root.GetProperty("model").GetString() == DenseModels.ModelId
                 && root.GetProperty("packageVersion").GetInt32() == PackageCacheVersion
+                && root.GetProperty("modelHash").GetString() == modelHash
                 && root.GetProperty("docCount").GetInt32() == documentCount
                 && root.GetProperty("queryCount").GetInt32() == queryCount
                 && root.GetProperty("maxSeqLength").GetInt32() == maxSeqLength;
