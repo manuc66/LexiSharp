@@ -1289,6 +1289,11 @@ measures the test split before and after: **T = 1.04**, log-loss **0.7741 → 0.
 small; the calibrator is generic, and the tree and forest distributions are the ones likely to
 need it, but their calibration is not measured here.
 
+The pin stores each model's **per-class F1** and a **SHA-256 of its ordered predictions**, so a
+change that keeps the aggregate but moves an error still fails `--verify`. The paired McNemar
+comparison against Naive Bayes reads: linear **p = 2.6e-24** (905 documents it fixes, 520 it
+breaks), forest **p = 4.6e-51** (776 vs 1,493), tree **p < 1e-12** (616 vs 2,961).
+
 `IdfWeighting` was measured on the same split and lost: **0.7753** accuracy / **0.7682** macro-F1
 against **0.8085** / **0.8027** without, with a raw log-loss of **1.5790**. It stays off by default;
 `StandardizeNumericFeatures` is available, but 20NG has no numeric features to measure it on.

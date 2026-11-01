@@ -58,6 +58,9 @@ workflow.
   `Reinforce`/`Unreinforce` add or remove signed mass on the item's features without retraining,
   and `Train` clears it. `IdfWeighting` and `StandardizeNumericFeatures` are opt-in;
   IDF measured a loss on 20NG (**0.7753 / 0.7682** against **0.8085 / 0.8027**) and stays off.
+  The classification pin stores per-class F1 and a SHA-256 of the ordered predictions, and the
+  eval prints McNemar against Naive Bayes: the linear model fixes 905 documents and breaks 520
+  (p = 2.6e-24), while the forest and the tree lose significantly.
   Measured on the standard `20news-bydate` split: the single tree reads **0.4457** accuracy / **0.4945**
   macro-F1, the forest **0.6621** / **0.6584**, Naive Bayes **0.7573** / **0.7289**, and
   `LinearClassifier` **0.8085** / **0.8027** — the tree and forest are explainability/ensemble

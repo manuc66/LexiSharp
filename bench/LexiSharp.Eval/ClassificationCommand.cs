@@ -9,7 +9,9 @@ internal sealed record ClassificationPinRow(
     string Method,
     double Accuracy,
     double MacroF1,
-    double? AverageQuestions);
+    double? AverageQuestions,
+    string PredictionHash,
+    IReadOnlyDictionary<string, double> PerClassF1);
 
 /// <summary>
 /// The pinned outcome of a classification run: the dataset identity, the split sizes, the tree
@@ -253,6 +255,23 @@ internal static class ClassificationCommand
         Print(forest);
         Print(linear);
 
+        foreach (var result in new[]
+        {
+            ClassificationEvaluation.McNemar(
+                corpus.Test, naiveBayes.Predictions, tree.Predictions, "Naive Bayes", "Decision tree"),
+            ClassificationEvaluation.McNemar(
+                corpus.Test, naiveBayes.Predictions, forest.Predictions, "Naive Bayes", "Random forest"),
+            ClassificationEvaluation.McNemar(
+                corpus.Test, naiveBayes.Predictions, linear.Predictions, "Naive Bayes", "Linear"),
+        })
+        {
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"McNemar {result.Candidate} vs {result.Baseline}: " +
+                $"baseline-only={result.BaselineOnly}, candidate-only={result.CandidateOnly}, " +
+                $"p={result.PValue:G4}"));
+        }
+
         var calibration = ClassificationEvaluation.MeasureLinearCalibration(
             corpus.Train,
             corpus.Test,
@@ -320,7 +339,9 @@ internal static class ClassificationCommand
             metrics.Method,
             metrics.Accuracy,
             metrics.MacroF1,
-            double.IsNaN(metrics.AverageQuestions) ? null : metrics.AverageQuestions);
+            double.IsNaN(metrics.AverageQuestions) ? null : metrics.AverageQuestions,
+            metrics.PredictionHash,
+            metrics.PerClassF1);
 
     private static int Verify(ClassificationPin actual, string path)
     {
@@ -386,6 +407,22 @@ internal static class ClassificationCommand
                     $"classification: {row.Method} drifted: accuracy {pinned.Accuracy:F4} -> {row.Accuracy:F4}, " +
                     $"macro-F1 {pinned.MacroF1:F4} -> {row.MacroF1:F4}."));
                 matches = false;
+            }
+
+            if (!string.Equals(pinned.PredictionHash, row.PredictionHash, StringComparison.Ordinal))
+            {
+                Console.Error.WriteLine($"classification: {row.Method} predictions drifted.");
+                matches = false;
+            }
+
+            foreach (var (category, f1) in row.PerClassF1)
+            {
+                if (!pinned.PerClassF1.TryGetValue(category, out double pinnedF1)
+                    || Math.Abs(pinnedF1 - f1) > 1e-9)
+                {
+                    Console.Error.WriteLine($"classification: {row.Method} per-class F1 drifted for {category}.");
+                    matches = false;
+                }
             }
         }
 

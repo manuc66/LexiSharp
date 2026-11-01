@@ -123,6 +123,73 @@ public class ClassificationEvalTests
     }
 
     [Fact]
+    public void Score_ComputesPerClassF1AndAStablePredictionHash()
+    {
+        var test = new[]
+        {
+            new ClassificationDocument("1", "a", "A"),
+            new ClassificationDocument("2", "b", "B"),
+            new ClassificationDocument("3", "c", "B"),
+        };
+        string?[] predictions = { "A", "A", "B" };
+
+        var metrics = ClassificationEvaluation.Score(
+            "test",
+            test,
+            predictions,
+            averageQuestions: double.NaN,
+            TimeSpan.Zero,
+            TimeSpan.Zero);
+
+        Assert.Equal(2.0 / 3.0, metrics.PerClassF1["A"], precision: 10);
+        Assert.Equal(2.0 / 3.0, metrics.PerClassF1["B"], precision: 10);
+        Assert.Equal(metrics.PredictionHash, ClassificationEvaluation.HashPredictions(test, predictions));
+        Assert.NotEqual(
+            metrics.PredictionHash,
+            ClassificationEvaluation.HashPredictions(test, new string?[] { "A", "B", "B" }));
+    }
+
+    [Fact]
+    public void McNemar_WithNoDiscordance_ReturnsOne()
+    {
+        var test = new[]
+        {
+            new ClassificationDocument("1", "a", "A"),
+            new ClassificationDocument("2", "b", "B"),
+        };
+        string?[] predictions = { "A", "B" };
+
+        var result = ClassificationEvaluation.McNemar(
+            test, predictions, predictions, "baseline", "candidate");
+
+        Assert.Equal(0, result.BaselineOnly);
+        Assert.Equal(0, result.CandidateOnly);
+        Assert.Equal(1.0, result.PValue, precision: 12);
+    }
+
+    [Fact]
+    public void McNemar_WithABaselineOnlyAdvantage_ReturnsASmallP()
+    {
+        var test = new List<ClassificationDocument>();
+        var baseline = new List<string?>();
+        var candidate = new List<string?>();
+
+        for (int i = 0; i < 10; i++)
+        {
+            test.Add(new ClassificationDocument($"d{i}", "x", "A"));
+            baseline.Add("A");
+            candidate.Add("B");
+        }
+
+        var result = ClassificationEvaluation.McNemar(
+            test, baseline, candidate, "baseline", "candidate");
+
+        Assert.Equal(10, result.BaselineOnly);
+        Assert.Equal(0, result.CandidateOnly);
+        Assert.True(result.PValue < 0.01);
+    }
+
+    [Fact]
     public void Score_OnPerfectPredictions_ReadsOne()
     {
         var test = new[]
