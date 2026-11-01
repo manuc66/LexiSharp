@@ -277,6 +277,9 @@ internal static class CentroidClassificationCommand
         IReadOnlyList<int> indices,
         IReadOnlyList<string> categories)
     {
+        if (predictions.Length == 0)
+            return 0;
+
         double bestWeight = 0;
         double bestScore = double.NegativeInfinity;
 
@@ -365,6 +368,9 @@ internal static class CentroidClassificationCommand
         IReadOnlyList<string?> predicted,
         IReadOnlyList<string> categories)
     {
+        if (expected.Count == 0)
+            return (0, 0);
+
         int correct = 0;
         var truePositives = new Dictionary<string, int>(StringComparer.Ordinal);
         var falsePositives = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -424,6 +430,9 @@ internal static class CentroidClassificationCommand
 
         int validationCount = Math.Max(1, (int)Math.Round(documents.Count * validationFraction));
         validationCount = Math.Min(validationCount, documents.Count - 1);
+
+        if (validationCount <= 0)
+            return new DataSplit(Array.Empty<int>(), indices);
 
         return new DataSplit(
             indices[..validationCount],
