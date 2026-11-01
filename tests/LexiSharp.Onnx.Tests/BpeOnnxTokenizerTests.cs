@@ -189,6 +189,27 @@ public sealed class BpeOnnxTokenizerTests
     }
 
     [Fact]
+    public void Constructor_RejectsATemplateWithTwoSequences()
+    {
+        Assert.Throws<NotSupportedException>(
+            () => new BpeOnnxTokenizer(Fixture("tiny-bpe-two-sequences.json")).Encode("hello", 8));
+    }
+
+    [Fact]
+    public void Constructor_RejectsAMalformedProcessingPair()
+    {
+        Assert.Throws<InvalidOperationException>(
+            () => new BpeOnnxTokenizer(Fixture("tiny-bpe-bad-cls.json")));
+    }
+
+    [Fact]
+    public void Constructor_RejectsAnUnsupportedSequenceChild()
+    {
+        Assert.Throws<NotSupportedException>(
+            () => new BpeOnnxTokenizer(Fixture("tiny-bpe-sequence-fancy.json")));
+    }
+
+    [Fact]
     public void Constructor_RejectsANonBpeModel()
     {
         Assert.Throws<NotSupportedException>(() => new BpeOnnxTokenizer(Fixture("tiny-wordpiece-tokenizer.json")));

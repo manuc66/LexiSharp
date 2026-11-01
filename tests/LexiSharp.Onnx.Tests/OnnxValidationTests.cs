@@ -197,6 +197,7 @@ public sealed class OnnxValidationTests
     {
         using var scorer = new OnnxCrossEncoderScorer(ScorerVariant(maxInput: 3));
 
+        Assert.Throws<ArgumentException>(() => scorer.ScoreBatch("long query", []));
         Assert.Throws<ArgumentException>(
             () => scorer.ScoreBatch("long query", [new SearchDocument("1", "abc")]));
         Assert.Throws<ArgumentException>(

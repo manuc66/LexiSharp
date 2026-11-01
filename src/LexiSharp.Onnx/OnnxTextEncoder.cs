@@ -224,49 +224,8 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
 
             ReadOnlyMemory<float>[] vectors = new ReadOnlyMemory<float>[texts.Count];
 
-        for (int start = 0; start < texts.Count; start += _options.MaxBatchSize)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            int count = Math.Min(_options.MaxBatchSize, texts.Count - start);
-            var items = new (int Index, OnnxTokenizedText Tokenized)[count];
-
-            for (int i = 0; i < count; i++)
-            {
-                string text = texts[start + i] ?? throw new ArgumentException("The text list contains null.", nameof(texts));
-                items[i] = (start + i, Encode(text, use));
-            }
-
-            // Shortest first: padding to the longest member is what a heterogeneous batch pays
-            // for, and the sort is local to the chunk so the caller's order is restored below.
-            Array.Sort(items, (left, right) => left.Tokenized.Length.CompareTo(right.Tokenized.Length));
-
-            OnnxTokenizedText[] batch = new OnnxTokenizedText[count];
-
-            for (int i = 0; i < count; i++)
-                batch[i] = items[i].Tokenized;
-
-            float[] output = RunBatch(batch, cancellationToken, out int sequenceLength);
-
-            if (_pooledOutput)
-            {
-                if (output.Length != count * Dimension)
-                    throw new InvalidOperationException(
-                        $"The model returned {output.Length} values, not {count} pooled vectors of {Dimension} dimensions.");
-
-                for (int i = 0; i < count; i++)
-                    vectors[items[i].Index] = ReadPooled(output, i);
-            }
-            else
-            {
-                if (output.Length != count * sequenceLength * Dimension)
-                    throw new InvalidOperationException(
-                        $"The model returned {output.Length} values, not {count} sequences of {sequenceLength} positions of {Dimension} dimensions.");
-
-                for (int i = 0; i < count; i++)
-                    vectors[items[i].Index] = PoolTokenLevel(output, i, sequenceLength, batch[i].Length);
-            }
-            }
+            for (int start = 0; start < texts.Count; start += _options.MaxBatchSize)
+                EmbedChunk(texts, start, Math.Min(_options.MaxBatchSize, texts.Count - start), use, cancellationToken, vectors);
 
             return vectors;
         }
@@ -274,6 +233,55 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
         {
             _gate.ExitReadLock();
         }
+    }
+
+    private void EmbedChunk(
+        IReadOnlyList<string> texts,
+        int start,
+        int count,
+        EmbeddingUse use,
+        CancellationToken cancellationToken,
+        ReadOnlyMemory<float>[] vectors)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var items = new (int Index, OnnxTokenizedText Tokenized)[count];
+
+        for (int i = 0; i < count; i++)
+        {
+            string text = texts[start + i] ?? throw new ArgumentException("The text list contains null.", nameof(texts));
+            items[i] = (start + i, Encode(text, use));
+        }
+
+        // Shortest first: padding to the longest member is what a heterogeneous batch pays for,
+        // and the sort is local to the chunk so the caller's order is restored below.
+        Array.Sort(items, (left, right) => left.Tokenized.Length.CompareTo(right.Tokenized.Length));
+
+        OnnxTokenizedText[] batch = new OnnxTokenizedText[count];
+
+        for (int i = 0; i < count; i++)
+            batch[i] = items[i].Tokenized;
+
+        float[] output = RunBatch(batch, cancellationToken, out int sequenceLength);
+
+        if (_pooledOutput)
+        {
+            if (output.Length != count * Dimension)
+                throw new InvalidOperationException(
+                    $"The model returned {output.Length} values, not {count} pooled vectors of {Dimension} dimensions.");
+
+            for (int i = 0; i < count; i++)
+                vectors[items[i].Index] = ReadPooled(output, i);
+
+            return;
+        }
+
+        if (output.Length != count * sequenceLength * Dimension)
+            throw new InvalidOperationException(
+                $"The model returned {output.Length} values, not {count} sequences of {sequenceLength} positions of {Dimension} dimensions.");
+
+        for (int i = 0; i < count; i++)
+            vectors[items[i].Index] = PoolTokenLevel(output, i, sequenceLength, batch[i].Length);
     }
 
     private ReadOnlyMemory<float> ReadPooled(float[] output, int index)
@@ -382,93 +390,16 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
         return _options.Tokenizer.Encode(prefixed, _options.MaxSequenceLength);
     }
 
-    private float[] RunBatch(OnnxTokenizedText[] batch, CancellationToken cancellationToken, out int sequenceLength)
-    {
-        int count = batch.Length;
-        sequenceLength = 1;
-
-        foreach (OnnxTokenizedText tokenized in batch)
-            sequenceLength = Math.Max(sequenceLength, tokenized.Length);
-
-        int elements = count * sequenceLength;
-        long[] ids = new long[elements];
-        long[] mask = new long[elements];
-        long[] types = new long[elements];
-
-        for (int i = 0; i < count; i++)
-        {
-            OnnxTokenizedText tokenized = batch[i];
-            ReadOnlySpan<int> tokenIds = tokenized.Ids.Span;
-            ReadOnlySpan<int> typeIds = tokenized.TypeIds.Span;
-            int offset = i * sequenceLength;
-
-            for (int position = 0; position < tokenized.Length; position++)
-            {
-                ids[offset + position] = tokenIds[position];
-                mask[offset + position] = 1;
-
-                if (tokenized.HasTypeIds)
-                    types[offset + position] = typeIds[position];
-            }
-        }
-
-        return _inputType == TensorElementType.Int32
-            ? RunInt32(ids, mask, types, count, sequenceLength, cancellationToken)
-            : RunInt64(ids, mask, types, count, sequenceLength, cancellationToken);
-    }
-
-    private float[] RunInt64(long[] ids, long[] mask, long[] types, int count, int sequenceLength, CancellationToken cancellationToken)
-    {
-        using var idsValue = OrtValue.CreateTensorValueFromMemory<long>(ids, [count, sequenceLength]);
-        using var maskValue = OrtValue.CreateTensorValueFromMemory<long>(mask, [count, sequenceLength]);
-        using OrtValue? typesValue = _inputNames.Length < 3
-            ? null
-            : OrtValue.CreateTensorValueFromMemory<long>(types, [count, sequenceLength]);
-
-        return Execute(idsValue, maskValue, typesValue, cancellationToken);
-    }
-
-    private float[] RunInt32(long[] ids, long[] mask, long[] types, int count, int sequenceLength, CancellationToken cancellationToken)
-    {
-        int[] ids32 = Array.ConvertAll(ids, value => (int)value);
-        int[] mask32 = Array.ConvertAll(mask, value => (int)value);
-        int[] types32 = Array.ConvertAll(types, value => (int)value);
-
-        using var idsValue = OrtValue.CreateTensorValueFromMemory<int>(ids32, [count, sequenceLength]);
-        using var maskValue = OrtValue.CreateTensorValueFromMemory<int>(mask32, [count, sequenceLength]);
-        using OrtValue? typesValue = _inputNames.Length < 3
-            ? null
-            : OrtValue.CreateTensorValueFromMemory<int>(types32, [count, sequenceLength]);
-
-        return Execute(idsValue, maskValue, typesValue, cancellationToken);
-    }
-
-    private float[] Execute(OrtValue idsValue, OrtValue maskValue, OrtValue? typesValue, CancellationToken cancellationToken)
-    {
-        OrtValue[] inputs = typesValue is null
-            ? [idsValue, maskValue]
-            : [idsValue, maskValue, typesValue];
-
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCancellation.Token);
-        using var runOptions = new RunOptions();
-        using CancellationTokenRegistration registration = linked.Token.Register(() => runOptions.Terminate = true);
-        using var output = _session.Run(runOptions, _inputNames, inputs, _outputNames);
-
-        OrtTensorTypeAndShapeInfo info = output[0].GetTensorTypeAndShape();
-
-        if (info.ElementDataType == TensorElementType.Float16)
-        {
-            ReadOnlySpan<Float16> half = output[0].GetTensorDataAsSpan<Float16>();
-            float[] converted = new float[half.Length];
-
-            for (int i = 0; i < half.Length; i++)
-                converted[i] = (float)half[i];
-
-            return converted;
-        }
-
-        return output[0].GetTensorDataAsSpan<float>().ToArray();
-    }
+    private float[] RunBatch(OnnxTokenizedText[] batch, CancellationToken cancellationToken, out int sequenceLength) =>
+        OnnxSessionRunner.Run(
+            _session,
+            _inputNames,
+            _outputNames,
+            _inputType,
+            batch,
+            cancellationToken,
+            _disposeCancellation.Token,
+            out sequenceLength);
 
     private int ResolveDimension()
     {
