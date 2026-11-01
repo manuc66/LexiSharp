@@ -174,7 +174,8 @@ internal static class NearestNeighborClassificationCommand
         for (int i = 0; i < args.Length; i++)
         {
             bool? handled = TryParseData(args, ref i, options)
-                ?? TryParseNeighbours(args, ref i, options)
+                ?? TryParseNeighbourSelection(args, ref i, options)
+                ?? TryParseNeighbourScores(args, ref i, options)
                 ?? TryParseBm25(args, ref i, options)
                 ?? TryParseOutput(args, ref i, options);
 
@@ -239,7 +240,7 @@ internal static class NearestNeighborClassificationCommand
         }
     }
 
-    private static bool? TryParseNeighbours(string[] args, ref int i, CommandOptions options)
+    private static bool? TryParseNeighbourSelection(string[] args, ref int i, CommandOptions options)
     {
         switch (args[i])
         {
@@ -262,6 +263,15 @@ internal static class NearestNeighborClassificationCommand
 
                 options.Vote = vote;
                 return true;
+            default:
+                return null;
+        }
+    }
+
+    private static bool? TryParseNeighbourScores(string[] args, ref int i, CommandOptions options)
+    {
+        switch (args[i])
+        {
             case "--temperature" when i + 1 < args.Length:
                 if (!CommandParsing.TryPositiveDouble(args[++i], out double temperature))
                 {
