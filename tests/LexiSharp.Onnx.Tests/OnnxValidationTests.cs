@@ -41,6 +41,7 @@ public sealed class OnnxValidationTests
         int maxInput = 1_000_000,
         int maxBatch = 32,
         int scoreIndex = 0,
+        int padTokenId = 0,
         OnnxScoreTransform transform = OnnxScoreTransform.None) =>
         new()
         {
@@ -54,6 +55,7 @@ public sealed class OnnxValidationTests
             MaxInputCharacters = maxInput,
             MaxBatchSize = maxBatch,
             ScoreIndex = scoreIndex,
+            PadTokenId = padTokenId,
             ScoreTransform = transform,
         };
 
@@ -165,6 +167,12 @@ public sealed class OnnxValidationTests
     }
 
     [Fact]
+    public void TokenizedText_RejectsDifferentLengths()
+    {
+        Assert.Throws<ArgumentException>(() => new OnnxTokenizedText([1, 2], [0]));
+    }
+
+    [Fact]
     public void Scorer_RejectsInvalidOptions()
     {
         Assert.Throws<ArgumentNullException>(() => new OnnxCrossEncoderScorer(null!));
@@ -175,6 +183,7 @@ public sealed class OnnxValidationTests
         Assert.Throws<ArgumentException>(() => new OnnxCrossEncoderScorer(ScorerVariant(maxInput: -1)));
         Assert.Throws<ArgumentException>(() => new OnnxCrossEncoderScorer(ScorerVariant(maxBatch: 0)));
         Assert.Throws<ArgumentException>(() => new OnnxCrossEncoderScorer(ScorerVariant(scoreIndex: -1)));
+        Assert.Throws<ArgumentException>(() => new OnnxCrossEncoderScorer(ScorerVariant(padTokenId: -1)));
     }
 
     [Fact]

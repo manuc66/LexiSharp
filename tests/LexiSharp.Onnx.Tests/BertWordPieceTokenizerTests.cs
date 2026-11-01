@@ -93,6 +93,12 @@ public sealed class BertWordPieceTokenizerTests
     }
 
     [Fact]
+    public void Constructor_RejectsAnEmptyVocabulary()
+    {
+        Assert.Throws<ArgumentException>(() => new BertWordPieceTokenizer(Array.Empty<string>()));
+    }
+
+    [Fact]
     public void Constructor_RejectsAVocabularyWithoutTheSpecialTokens()
     {
         Assert.Throws<InvalidOperationException>(() => new BertWordPieceTokenizer(["hello", "world"]));
