@@ -22,6 +22,12 @@ internal static class CentroidClassificationCommand
     private const int MaximumSequenceLength = 512;
     private const int EmbeddingBatchSize = 8;
 
+    private static readonly Dictionary<string, ClassificationTextMode> TextModes = new(StringComparer.Ordinal)
+    {
+        ["full"] = ClassificationTextMode.SubjectAndBody,
+        ["subject"] = ClassificationTextMode.SubjectOnly,
+    };
+
     public static async Task<int> RunAsync(string[] args)
     {
         CommandOptions? options = ParseOptions(args);
@@ -143,15 +149,7 @@ internal static class CentroidClassificationCommand
                     options = options with { ModelDir = value };
                     break;
                 case "--text":
-                {
-                    var textMode = value switch
-                    {
-                        "full" => ClassificationTextMode.SubjectAndBody,
-                        "subject" => ClassificationTextMode.SubjectOnly,
-                        _ => (ClassificationTextMode)(-1),
-                    };
-
-                    if (!Enum.IsDefined(textMode))
+                    if (!TextModes.TryGetValue(value, out ClassificationTextMode textMode))
                     {
                         Console.Error.WriteLine("classification-centroid: --text expects 'full' or 'subject'.");
                         return null;
@@ -159,7 +157,6 @@ internal static class CentroidClassificationCommand
 
                     options = options with { TextMode = textMode };
                     break;
-                }
                 case "--limit":
                     if (!TryReadPositive(value, out int parsedLimit))
                     {
