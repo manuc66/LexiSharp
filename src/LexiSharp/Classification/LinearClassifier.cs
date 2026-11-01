@@ -89,16 +89,53 @@ public sealed class LinearClassifier<TItem>
 
         _reinforcement.Clear();
         _learned.Clear();
+        ValidateClassWeights();
 
-        if (_options.ClassWeights is { } classWeights)
+        var (pending, categories, featuresById, documentFrequency) = Materialize(items);
+        _categories = categories;
+        _categoryIndex = new Dictionary<string, int>(_categories.Count, StringComparer.Ordinal);
+
+        for (int i = 0; i < _categories.Count; i++)
+            _categoryIndex[_categories[i]] = i;
+
+        SelectVocabulary(featuresById, documentFrequency, pending.Count);
+        _numericMeans = new double[_featuresById.Length];
+        _numericStandardDeviations = new double[_featuresById.Length];
+        _trained = false;
+
+        if (pending.Count == 0 || _categories.Count == 0)
         {
-            foreach (var pair in classWeights)
-            {
-                if (!double.IsFinite(pair.Value) || pair.Value < 0)
-                    throw new ArgumentException("Class weights must be finite and non-negative.");
-            }
+            _weights = Array.Empty<double>();
+            _bias = Array.Empty<double>();
+            return;
         }
 
+        if (_options.StandardizeNumericFeatures)
+            Standardize(pending);
+
+        List<SparseItem> sparse = BuildSparse(pending);
+        TrainEpochs(sparse);
+        _trained = true;
+    }
+
+    private void ValidateClassWeights()
+    {
+        if (_options.ClassWeights is not { } classWeights)
+            return;
+
+        foreach (var pair in classWeights)
+        {
+            if (!double.IsFinite(pair.Value) || pair.Value < 0)
+                throw new ArgumentException("Class weights must be finite and non-negative.");
+        }
+    }
+
+    private (
+        List<PendingItem> Pending,
+        string[] Categories,
+        List<string> FeaturesById,
+        List<int> DocumentFrequency) Materialize(IEnumerable<TItem> items)
+    {
         var pending = new List<PendingItem>();
         var categories = new SortedSet<string>(StringComparer.Ordinal);
         var featureIds = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -147,12 +184,14 @@ public sealed class LinearClassifier<TItem>
             }
         }
 
-        _categories = categories.ToArray();
-        _categoryIndex = new Dictionary<string, int>(_categories.Count, StringComparer.Ordinal);
+        return (pending, categories.ToArray(), featuresById, documentFrequency);
+    }
 
-        for (int i = 0; i < _categories.Count; i++)
-            _categoryIndex[_categories[i]] = i;
-
+    private void SelectVocabulary(
+        List<string> featuresById,
+        List<int> documentFrequency,
+        int documentCount)
+    {
         _featureIds = new Dictionary<string, int>(StringComparer.Ordinal);
         var kept = new List<string>();
         var keptDocumentFrequency = new List<int>();
@@ -173,61 +212,53 @@ public sealed class LinearClassifier<TItem>
         for (int id = 0; id < kept.Count; id++)
         {
             _idf[id] = _options.IdfWeighting
-                ? Math.Log(1 + (double)pending.Count / keptDocumentFrequency[id])
+                ? Math.Log(1 + ((double)documentCount / keptDocumentFrequency[id]))
                 : 1.0;
         }
+    }
 
-        _numericMeans = new double[_featuresById.Length];
-        _numericStandardDeviations = new double[_featuresById.Length];
-        _trained = false;
+    private void Standardize(List<PendingItem> pending)
+    {
+        var sums = new double[_featuresById.Length];
+        var sumSquares = new double[_featuresById.Length];
+        var counts = new int[_featuresById.Length];
 
-        if (pending.Count == 0 || _categories.Count == 0)
+        foreach (var item in pending)
         {
-            _weights = Array.Empty<double>();
-            _bias = Array.Empty<double>();
-            return;
-        }
-
-        if (_options.StandardizeNumericFeatures)
-        {
-            var sums = new double[_featuresById.Length];
-            var sumSquares = new double[_featuresById.Length];
-            var counts = new int[_featuresById.Length];
-
-            foreach (var item in pending)
+            foreach (string feature in item.Features.Features)
             {
-                foreach (string feature in item.Features.Features)
-                {
-                    if (!_featureIds.TryGetValue(feature, out int id))
-                        continue;
-
-                    if (item.Features.Kind(feature) != FeatureKind.Numeric)
-                        continue;
-
-                    if (item.Features.NumericValue(feature) is not { } value || double.IsNaN(value))
-                        continue;
-
-                    sums[id] += value;
-                    sumSquares[id] += value * value;
-                    counts[id]++;
-                }
-            }
-
-            for (int id = 0; id < _featuresById.Length; id++)
-            {
-                if (counts[id] == 0)
+                if (!_featureIds.TryGetValue(feature, out int id))
                     continue;
 
-                // Every item is in the denominator, not only the items that carried a value: an
-                // absent numeric feature is a zero in the vector, and a z-score that ignores those
-                // zeros is not centered on the data the model actually sees.
-                double mean = sums[id] / pending.Count;
-                double variance = sumSquares[id] / pending.Count - mean * mean;
-                _numericMeans[id] = mean;
-                _numericStandardDeviations[id] = variance > 0 ? Math.Sqrt(variance) : 0;
+                if (item.Features.Kind(feature) != FeatureKind.Numeric)
+                    continue;
+
+                if (item.Features.NumericValue(feature) is not { } value || double.IsNaN(value))
+                    continue;
+
+                sums[id] += value;
+                sumSquares[id] += value * value;
+                counts[id]++;
             }
         }
 
+        for (int id = 0; id < _featuresById.Length; id++)
+        {
+            if (counts[id] == 0)
+                continue;
+
+            // Every item is in the denominator, not only the items that carried a value: an
+            // absent numeric feature is a zero in the vector, and a z-score that ignores those
+            // zeros is not centered on the data the model actually sees.
+            double mean = sums[id] / pending.Count;
+            double variance = (sumSquares[id] / pending.Count) - (mean * mean);
+            _numericMeans[id] = mean;
+            _numericStandardDeviations[id] = variance > 0 ? Math.Sqrt(variance) : 0;
+        }
+    }
+
+    private List<SparseItem> BuildSparse(List<PendingItem> pending)
+    {
         var sparse = new List<SparseItem>(pending.Count);
 
         foreach (var item in pending)
@@ -251,9 +282,13 @@ public sealed class LinearClassifier<TItem>
                 item.Weight));
         }
 
+        return sparse;
+    }
+
+    private void TrainEpochs(List<SparseItem> sparse)
+    {
         int classCount = _categories.Count;
-        int featureCount = _featuresById.Length;
-        _weights = new double[featureCount * classCount];
+        _weights = new double[_featuresById.Length * classCount];
         _bias = new double[classCount];
 
         var weightAccumulator = new double[_weights.Length];
@@ -261,60 +296,84 @@ public sealed class LinearClassifier<TItem>
         var logits = new double[classCount];
         var probabilities = new double[classCount];
         var errors = new double[classCount];
-        var order = Enumerable.Range(0, sparse.Count).ToArray();
+        var order = new int[sparse.Count];
+
+        for (int i = 0; i < order.Length; i++)
+            order[i] = i;
+
         var random = new Random(_options.Seed); // NOSONAR:S2245 (fixed seed: the model is reproducible)
 
         for (int epoch = 0; epoch < _options.Epochs; epoch++)
         {
-            for (int i = order.Length - 1; i > 0; i--)
-            {
-                int j = random.Next(i + 1);
-                (order[i], order[j]) = (order[j], order[i]);
-            }
+            Shuffle(order, random);
 
             foreach (int index in order)
             {
-                var item = sparse[index];
-                Array.Copy(_bias, logits, classCount);
-
-                for (int k = 0; k < item.FeatureIds.Length; k++)
-                {
-                    int offset = item.FeatureIds[k] * classCount;
-                    double value = item.Values[k];
-
-                    for (int c = 0; c < classCount; c++)
-                        logits[c] += _weights[offset + c] * value;
-                }
-
-                Softmax(logits, probabilities);
-
-                for (int c = 0; c < classCount; c++)
-                {
-                    double error = (probabilities[c] - (c == item.CategoryIndex ? 1 : 0)) * item.Weight;
-                    errors[c] = error;
-
-                    biasAccumulator[c] += error * error;
-                    _bias[c] -= _options.LearningRate * error / Math.Sqrt(biasAccumulator[c] + Epsilon);
-                }
-
-                for (int k = 0; k < item.FeatureIds.Length; k++)
-                {
-                    int offset = item.FeatureIds[k] * classCount;
-                    double value = item.Values[k];
-
-                    for (int c = 0; c < classCount; c++)
-                    {
-                        int parameter = offset + c;
-                        double gradient = errors[c] * value + _options.L2 * _weights[parameter];
-                        weightAccumulator[parameter] += gradient * gradient;
-                        _weights[parameter] -=
-                            _options.LearningRate * gradient / Math.Sqrt(weightAccumulator[parameter] + Epsilon);
-                    }
-                }
+                UpdateItem(
+                    sparse[index],
+                    logits,
+                    probabilities,
+                    errors,
+                    biasAccumulator,
+                    weightAccumulator);
             }
         }
+    }
 
-        _trained = true;
+    private static void Shuffle(int[] order, Random random)
+    {
+        for (int i = order.Length - 1; i > 0; i--)
+        {
+            int j = random.Next(i + 1);
+            (order[i], order[j]) = (order[j], order[i]);
+        }
+    }
+
+    private void UpdateItem(
+        SparseItem item,
+        double[] logits,
+        double[] probabilities,
+        double[] errors,
+        double[] biasAccumulator,
+        double[] weightAccumulator)
+    {
+        int classCount = _categories.Count;
+        Array.Copy(_bias, logits, classCount);
+
+        for (int k = 0; k < item.FeatureIds.Length; k++)
+        {
+            int offset = item.FeatureIds[k] * classCount;
+            double value = item.Values[k];
+
+            for (int c = 0; c < classCount; c++)
+                logits[c] += _weights[offset + c] * value;
+        }
+
+        Softmax(logits, probabilities);
+
+        for (int c = 0; c < classCount; c++)
+        {
+            double error = (probabilities[c] - (c == item.CategoryIndex ? 1 : 0)) * item.Weight;
+            errors[c] = error;
+
+            biasAccumulator[c] += error * error;
+            _bias[c] -= _options.LearningRate * error / Math.Sqrt(biasAccumulator[c] + Epsilon);
+        }
+
+        for (int k = 0; k < item.FeatureIds.Length; k++)
+        {
+            int offset = item.FeatureIds[k] * classCount;
+            double value = item.Values[k];
+
+            for (int c = 0; c < classCount; c++)
+            {
+                int parameter = offset + c;
+                double gradient = (errors[c] * value) + (_options.L2 * _weights[parameter]);
+                weightAccumulator[parameter] += gradient * gradient;
+                _weights[parameter] -=
+                    _options.LearningRate * gradient / Math.Sqrt(weightAccumulator[parameter] + Epsilon);
+            }
+        }
     }
 
     /// <summary>Predicts the most likely categories for an item, by decreasing probability.</summary>
@@ -330,8 +389,15 @@ public sealed class LinearClassifier<TItem>
         if (limit <= 0 || !_trained)
             return Array.Empty<ClassificationResult>();
 
-        int classCount = _categories.Count;
         IFeatureSet features = _features.FeaturesOf(item);
+        double[] logits = ComputeLogits(features);
+
+        return Rank(logits, excludedCategories, limit);
+    }
+
+    private double[] ComputeLogits(IFeatureSet features)
+    {
+        int classCount = _categories.Count;
         var logits = new double[classCount];
         Array.Copy(_bias, logits, classCount);
 
@@ -348,28 +414,42 @@ public sealed class LinearClassifier<TItem>
         }
 
         if (_reinforcement.Count > 0)
+            ApplyReinforcement(features, logits);
+
+        return logits;
+    }
+
+    private void ApplyReinforcement(IFeatureSet features, double[] logits)
+    {
+        int classCount = _categories.Count;
+
+        foreach (string feature in features.Features)
         {
-            foreach (string feature in features.Features)
+            if (!_featureIds.TryGetValue(feature, out int id))
+                continue;
+
+            double value = ValueOf(id, feature, features);
+
+            if (value == 0)
+                continue;
+
+            for (int c = 0; c < classCount; c++)
             {
-                if (!_featureIds.TryGetValue(feature, out int id))
-                    continue;
-
-                double value = ValueOf(id, feature, features);
-
-                if (value == 0)
-                    continue;
-
-                for (int c = 0; c < classCount; c++)
+                if (_reinforcement.TryGetValue(_categories[c], out Dictionary<string, double>? deltas)
+                    && deltas.TryGetValue(feature, out double delta))
                 {
-                    if (_reinforcement.TryGetValue(_categories[c], out Dictionary<string, double>? deltas)
-                        && deltas.TryGetValue(feature, out double delta))
-                    {
-                        logits[c] += delta * value;
-                    }
+                    logits[c] += delta * value;
                 }
             }
         }
+    }
 
+    private IReadOnlyList<ClassificationResult> Rank(
+        double[] logits,
+        IReadOnlySet<string>? excludedCategories,
+        int limit)
+    {
+        int classCount = _categories.Count;
         var probabilities = new double[classCount];
         Softmax(logits, probabilities);
 
@@ -524,7 +604,7 @@ public sealed class LinearClassifier<TItem>
             if (!_featureIds.ContainsKey(feature))
                 continue;
 
-            double updated = deltas.GetValueOrDefault(feature) + sign * weight;
+            double updated = deltas.GetValueOrDefault(feature) + (sign * weight);
 
             if (Math.Abs(updated) <= 1e-12)
                 deltas.Remove(feature);
@@ -558,7 +638,7 @@ public sealed class LinearClassifier<TItem>
 
         for (int featureId = 0; featureId < _featuresById.Length; featureId++)
         {
-            double weight = _weights[featureId * classCount + categoryIndex];
+            double weight = _weights[(featureId * classCount) + categoryIndex];
 
             if (weight != 0)
                 ranked.Add(new LinearFeatureWeight(_featuresById[featureId], weight));
