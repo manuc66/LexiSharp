@@ -146,7 +146,9 @@ was designed from:
   are explainability/ensemble options and the linear model is the accuracy one. A temperature
   calibrator exists (`TemperatureCalibrator` / `CalibratedClassifier`); on 20NG the linear model
   reads **T = 1.04**, log-loss **0.7741 → 0.7650**, Brier **0.2855 → 0.2855**, so its softmax was
-  already close, and the tree/forest calibration is not measured. The command and the pin are in
+  already close, and the tree/forest calibration is not measured. `IdfWeighting` is available and
+  measured a loss on 20NG (**0.7753 / 0.7682** against **0.8085 / 0.8027**), so it is off by
+  default. The command and the pin are in
   [Evaluation](evaluation.md#classification-on-20-newsgroups); [Benchmarks](benchmarks.md#classification-classificationbenchmarks)
   reports cost. Measure on your own labels before trusting either. See
   [question trees](text-analysis.md#question-trees-classification-and-corpus-division).

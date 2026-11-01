@@ -44,6 +44,9 @@ public sealed class LinearClassifier<TItem>
     private string[] _featuresById = Array.Empty<string>();
     private double[] _weights = Array.Empty<double>();
     private double[] _bias = Array.Empty<double>();
+    private double[] _idf = Array.Empty<double>();
+    private double[] _numericMeans = Array.Empty<double>();
+    private double[] _numericStandardDeviations = Array.Empty<double>();
     private bool _trained;
 
     /// <param name="features">The feature space the model reads.</param>
@@ -143,6 +146,7 @@ public sealed class LinearClassifier<TItem>
 
         _featureIds = new Dictionary<string, int>(StringComparer.Ordinal);
         var kept = new List<string>();
+        var keptDocumentFrequency = new List<int>();
 
         for (int id = 0; id < featuresById.Count; id++)
         {
@@ -151,9 +155,21 @@ public sealed class LinearClassifier<TItem>
 
             _featureIds[featuresById[id]] = kept.Count;
             kept.Add(featuresById[id]);
+            keptDocumentFrequency.Add(documentFrequency[id]);
         }
 
         _featuresById = kept.ToArray();
+        _idf = new double[kept.Count];
+
+        for (int id = 0; id < kept.Count; id++)
+        {
+            _idf[id] = _options.IdfWeighting
+                ? Math.Log(1 + (double)pending.Count / keptDocumentFrequency[id])
+                : 1.0;
+        }
+
+        _numericMeans = new double[_featuresById.Length];
+        _numericStandardDeviations = new double[_featuresById.Length];
         _trained = false;
 
         if (pending.Count == 0 || _categories.Count == 0)
@@ -161,6 +177,40 @@ public sealed class LinearClassifier<TItem>
             _weights = Array.Empty<double>();
             _bias = Array.Empty<double>();
             return;
+        }
+
+        if (_options.StandardizeNumericFeatures)
+        {
+            var sums = new double[_featuresById.Length];
+            var sumSquares = new double[_featuresById.Length];
+            var counts = new int[_featuresById.Length];
+
+            foreach (var item in pending)
+            {
+                foreach (string feature in item.Features.Features)
+                {
+                    if (!_featureIds.TryGetValue(feature, out int id))
+                        continue;
+
+                    if (item.Features.NumericValue(feature) is not { } value || double.IsNaN(value))
+                        continue;
+
+                    sums[id] += value;
+                    sumSquares[id] += value * value;
+                    counts[id]++;
+                }
+            }
+
+            for (int id = 0; id < _featuresById.Length; id++)
+            {
+                if (counts[id] == 0)
+                    continue;
+
+                double mean = sums[id] / counts[id];
+                double variance = sumSquares[id] / counts[id] - mean * mean;
+                _numericMeans[id] = mean;
+                _numericStandardDeviations[id] = variance > 0 ? Math.Sqrt(variance) : 0;
+            }
         }
 
         var sparse = new List<SparseItem>(pending.Count);
@@ -176,7 +226,7 @@ public sealed class LinearClassifier<TItem>
                     continue;
 
                 ids.Add(id);
-                values.Add(item.Features.NumericValue(feature) ?? 1.0);
+                values.Add(ValueOf(id, item.Features.NumericValue(feature)));
             }
 
             sparse.Add(new SparseItem(
@@ -276,7 +326,7 @@ public sealed class LinearClassifier<TItem>
                 continue;
 
             int offset = id * classCount;
-            double value = features.NumericValue(feature) ?? 1.0;
+            double value = ValueOf(id, features.NumericValue(feature));
 
             for (int c = 0; c < classCount; c++)
                 logits[c] += _weights[offset + c] * value;
@@ -371,6 +421,22 @@ public sealed class LinearClassifier<TItem>
             ranked.RemoveRange(count, ranked.Count - count);
 
         return ranked;
+    }
+
+    private double ValueOf(int featureId, double? numeric)
+    {
+        if (numeric is not { } value)
+            return _idf[featureId];
+
+        if (double.IsNaN(value))
+            return 0;
+
+        if (!_options.StandardizeNumericFeatures)
+            return value;
+
+        double deviation = _numericStandardDeviations[featureId];
+
+        return deviation > 0 ? (value - _numericMeans[featureId]) / deviation : 0;
     }
 
     private static void Softmax(double[] logits, double[] probabilities)
