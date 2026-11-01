@@ -1385,6 +1385,8 @@ Three limits matter when carrying these figures to another problem:
   has far fewer features per item, and the classifier's share of the total accuracy can be much
   smaller than a context feature's. Measure on your own labels and compare against the baseline
   you already have.
-- **No persistence.** The models are in-memory and have no versioned serialization; the intended
-  workflow is to replay the history and retrain. A saved model would also need a feature-space
-  version, which is not designed here.
+- **Persistence is versioned, not portable across tokenizers.** `ClassificationModelSerializer`
+  saves the trained state (structure or coefficients, vocabulary, ledger) in a versioned binary
+  with a feature-space hash, but it cannot store the tokenizer or the feature source — a delegate
+  is not data. Load with the same source configuration, or the same text maps to different
+  features.

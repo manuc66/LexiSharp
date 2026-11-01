@@ -126,6 +126,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | --- | --- | --- | --- |
 | `CalibratedClassifier` | class | `ITextClassifier` | Wraps an ITextClassifier with a fitted temperature, so Predict returns the calibrated distribution and PredictBest the same top category. |
 | `CalibrationSample` | record | — | One validation observation for calibration: the distribution a model produced and the category that was actually right. |
+| `ClassificationModelSerializer` | class | — | Saves and loads trained text classifiers in a versioned, dependency-free binary format. |
 | `CompositeFeatureSource<TItem>` | class | `IFeatureSource` | Combines several feature sources by union: an item carries every feature any source reports. |
 | `CorpusCluster` | record | — | One terminal region of a corpus division: its document ids, the features that best represent it, and the depth at which it was found. |
 | `CorpusDivider` | class | — | The text convenience over CorpusDivider: divides a SearchDocument corpus by the terms of Text. |

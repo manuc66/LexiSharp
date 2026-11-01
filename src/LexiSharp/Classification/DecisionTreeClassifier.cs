@@ -1042,6 +1042,131 @@ public sealed class DecisionTreeClassifier<TItem>
         int FeatureCount,
         double Weight);
 
+    internal string FeatureSpaceHash => ModelFormat.Hash(_featuresById);
+
+    internal IReadOnlyList<string> FeatureNames => _featuresById;
+
+    internal static (double MinLeafProbability, double MinLeafSupport) ReadPredictionOptions(
+        BinaryReader reader) =>
+        (reader.ReadDouble(), reader.ReadDouble());
+
+    internal void WriteState(BinaryWriter writer)
+    {
+        writer.Write(_options.MinLeafProbability);
+        writer.Write(_options.MinLeafSupport);
+        ModelFormat.WriteStrings(writer, _categories);
+        ModelFormat.WriteStrings(writer, _featuresById);
+        ModelFormat.WriteNode(writer, _root);
+
+        var entries = new List<(bool[] Path, string Category, double Weight)>();
+        var visited = new HashSet<DecisionLeaf>();
+
+        if (_root is not null && _reinforcement.Count > 0)
+            CollectReinforcement(_root, new List<bool>(), visited, entries);
+
+        writer.Write(entries.Count);
+
+        foreach (var entry in entries)
+        {
+            writer.Write(entry.Path.Length);
+
+            foreach (bool answer in entry.Path)
+                writer.Write((byte)(answer ? 1 : 0));
+
+            ModelFormat.WriteString(writer, entry.Category);
+            writer.Write(entry.Weight);
+        }
+    }
+
+    internal void ReadBody(BinaryReader reader)
+    {
+        _categories = ModelFormat.ReadStrings(reader);
+        _categoryIndex = new Dictionary<string, int>(_categories.Count, StringComparer.Ordinal);
+
+        for (int i = 0; i < _categories.Count; i++)
+            _categoryIndex[_categories[i]] = i;
+
+        _featuresById = ModelFormat.ReadStrings(reader);
+        _featureCosts = Array.Empty<double>();
+        _root = ModelFormat.ReadNode(reader);
+        _reinforcement.Clear();
+
+        int entries = ModelFormat.ReadCount(reader);
+
+        for (int i = 0; i < entries; i++)
+        {
+            int length = ModelFormat.ReadCount(reader);
+
+            if (length > 4096)
+                throw new InvalidDataException("A reinforcement path is too long.");
+
+            var path = new bool[length];
+
+            for (int step = 0; step < length; step++)
+            {
+                byte answer = reader.ReadByte();
+
+                if (answer > 1)
+                    throw new InvalidDataException("A reinforcement path is not a bit sequence.");
+
+                path[step] = answer == 1;
+            }
+
+            string category = ModelFormat.ReadString(reader)
+                ?? throw new InvalidDataException("A reinforcement entry has no category.");
+            double weight = reader.ReadDouble();
+            DecisionLeaf leaf = LeafAt(path)
+                ?? throw new InvalidDataException("A reinforcement path does not reach a leaf.");
+
+            if (!_reinforcement.TryGetValue(leaf, out var weights))
+            {
+                weights = new Dictionary<string, double>(StringComparer.Ordinal);
+                _reinforcement[leaf] = weights;
+            }
+
+            weights[category] = weight;
+        }
+    }
+
+    private void CollectReinforcement(
+        DecisionTreeNode node,
+        List<bool> path,
+        HashSet<DecisionLeaf> visited,
+        List<(bool[] Path, string Category, double Weight)> entries)
+    {
+        switch (node)
+        {
+            case DecisionBranch branch:
+                path.Add(true);
+                CollectReinforcement(branch.TrueBranch, path, visited, entries);
+                path[^1] = false;
+                CollectReinforcement(branch.FalseBranch, path, visited, entries);
+                path.RemoveAt(path.Count - 1);
+                break;
+
+            case DecisionLeaf leaf when _reinforcement.TryGetValue(leaf, out var weights)
+                                        && visited.Add(leaf):
+                foreach (var pair in weights.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+                    entries.Add((path.ToArray(), pair.Key, pair.Value));
+                break;
+        }
+    }
+
+    private DecisionLeaf? LeafAt(IReadOnlyList<bool> path)
+    {
+        DecisionTreeNode? node = _root;
+
+        foreach (bool answer in path)
+        {
+            if (node is not DecisionBranch branch)
+                return null;
+
+            node = answer ? branch.TrueBranch : branch.FalseBranch;
+        }
+
+        return node as DecisionLeaf;
+    }
+
     /// <summary>
     /// The per-training scratch a depth-first build reuses across nodes. The slot maps are sized
     /// once for the corpus vocabulary and stamped by node version, so a node neither allocates a
@@ -1230,4 +1355,26 @@ public sealed class DecisionTreeClassifier : ITextClassifier
     /// <summary>Renders the trained tree as indented text, or <c>(untrained)</c> before training.</summary>
     /// <returns>A deterministic, human-readable rendering of the questions and leaves.</returns>
     public string Describe() => _inner.Describe();
+
+    internal string FeatureSpaceHash => _inner.FeatureSpaceHash;
+
+    internal void WriteState(BinaryWriter writer) => _inner.WriteState(writer);
+
+    internal static DecisionTreeClassifier ReadState(
+        BinaryReader reader,
+        IFeatureSource<SearchDocument>? features)
+    {
+        var (minLeafProbability, minLeafSupport) =
+            DecisionTreeClassifier<SearchDocument>.ReadPredictionOptions(reader);
+        var model = new DecisionTreeClassifier(
+            features ?? new TextFeatureSource(),
+            new DecisionTreeOptions
+            {
+                MinLeafProbability = minLeafProbability,
+                MinLeafSupport = minLeafSupport,
+            });
+
+        model._inner.ReadBody(reader);
+        return model;
+    }
 }
