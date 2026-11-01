@@ -166,6 +166,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `SynchronizedTextClassifier` | class | `IDisposable`, `IIncrementalTextClassifier`, `IReinforceableTextClassifier`, `ITextClassifier`, `IWeightedPredictor` | Wraps an IReinforceableTextClassifier so that concurrent prediction and concurrent mutation stop being the caller's problem: any number of Predict and… |
 | `TemperatureCalibrator` | class | — | A one-parameter post-hoc calibrator: it divides the log-probabilities by a temperature fitted on a validation set to minimize log-loss. |
 | `TextFeatureSource` | class | `IFeatureSource` | The text feature space: the normalized terms of Text. |
+| `UnknownIndicatorSource<TItem>` | class | `IFeatureSource` | Turns every unknown feature into an explicit binary indicator named prefix + feature, so a model that only asks binary questions can learn the difference… |
 
 #### `LexiSharp.Compression`
 
