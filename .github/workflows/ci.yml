@@ -478,6 +478,30 @@ jobs:
           --tune --validation 0.15 --trees 25 --criterion Gini
           --verify bench/LexiSharp.Eval/reference/classification-20news-subject.json
 
+      - name: Online reference (predict, then learn, verify)
+        run: >
+          dotnet run --project bench/LexiSharp.Eval -c Release --
+          classification-online
+          --data bench/LexiSharp.Eval/data
+          --text subject --model nb --warmup 0.8 --blocks 20 --top-k 3 --seed 7
+          --verify bench/LexiSharp.Eval/reference/classification-online-20news-subject.json
+
+      - name: Nearest-neighbour reference (BM25 subject, verify)
+        run: >
+          dotnet run --project bench/LexiSharp.Eval -c Release --
+          classification-knn
+          --data bench/LexiSharp.Eval/data
+          --text subject --k 1,3,5,10,25,50 --seed 7
+          --verify bench/LexiSharp.Eval/reference/classification-20news-subject-knn.json
+
+      - name: New-class reference (virtual learn vs retrain, verify)
+        run: >
+          dotnet run --project bench/LexiSharp.Eval -c Release --
+          classification-new-class
+          --data bench/LexiSharp.Eval/data
+          --text subject --held-out 5 --correction-weight 20 --retrain-every 50 --seed 7
+          --verify bench/LexiSharp.Eval/reference/classification-20news-subject-new-class.json
+
   bench-smoke:
     # Does not measure performance: only proves the benchmarks build and run
     # end-to-end (regressions in the bench harness fail CI just like tests).
