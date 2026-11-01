@@ -444,9 +444,6 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
 
         public void Add(Neighbor candidate)
         {
-            if (_items.Length == 0)
-                return;
-
             int index;
 
             if (_count < _items.Length)
@@ -633,9 +630,6 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
             int k,
             IReadOnlySet<string>? excludedCategories)
         {
-            if (k <= 0 || _documents.Count == 0)
-                return Array.Empty<Neighbor>();
-
             var top = new TopKBuffer(k);
 
             foreach (var (id, entry) in _documents)

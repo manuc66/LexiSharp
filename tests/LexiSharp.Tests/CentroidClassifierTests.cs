@@ -446,6 +446,193 @@ public class CentroidClassifierTests
     }
 
     [Fact]
+    public void TheGenericOptionsAreValidated()
+    {
+        Assert.Throws<ArgumentException>(() => new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category,
+            new CentroidClassifierOptions { Temperature = 0 }));
+    }
+
+    [Fact]
+    public void Train_RejectsANullItem()
+    {
+        var classifier = new CentroidClassifier<string>(
+            _ => new[] { 1f, 0f },
+            _ => "A");
+
+        Assert.Throws<ArgumentNullException>(() => classifier.Train(new string[] { null! }));
+    }
+
+    [Fact]
+    public void Train_RejectsAnEmptyVector()
+    {
+        var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category);
+
+        Assert.Throws<ArgumentException>(() => classifier.Train(new[]
+        {
+            ("A", Array.Empty<float>()),
+        }));
+    }
+
+    [Fact]
+    public void Learn_IgnoresACategorylessItem()
+    {
+        var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category);
+
+        classifier.Learn(("", new[] { 1f, 0f }));
+
+        Assert.Equal(0, classifier.CategoryCount);
+        Assert.Empty(classifier.Predict(new[] { 1f, 0f }));
+    }
+
+    [Fact]
+    public void Learn_RejectsAnEmptyVectorAndADimensionMismatch()
+    {
+        var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category);
+        classifier.Train(new[] { ("A", new[] { 1f, 0f }) });
+
+        Assert.Throws<ArgumentException>(() => classifier.Learn(("B", Array.Empty<float>())));
+        Assert.Throws<ArgumentException>(() => classifier.Learn(("B", new[] { 1f, 0f, 0f })));
+    }
+
+    [Fact]
+    public void Unlearn_IgnoresACategorylessOrUnknownItem()
+    {
+        var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category);
+        classifier.Train(new[] { ("A", new[] { 1f, 0f }) });
+
+        classifier.Unlearn(("", new[] { 1f, 0f }));
+        classifier.Unlearn(("Missing", new[] { 1f, 0f }));
+
+        Assert.Equal(1, classifier.CategoryCount);
+    }
+
+    [Fact]
+    public void Unlearn_RejectsADimensionMismatch()
+    {
+        var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category);
+        classifier.Train(new[] { ("A", new[] { 1f, 0f }) });
+
+        Assert.Throws<ArgumentException>(() => classifier.Unlearn(("A", new[] { 1f, 0f, 0f })));
+    }
+
+    [Fact]
+    public void Unlearn_OneOfSeveralDocumentsKeepsTheCategory()
+    {
+        var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category);
+        classifier.Train(new[]
+        {
+            ("A", new[] { 1f, 0f }),
+            ("A", new[] { 0f, 1f }),
+        });
+
+        classifier.Unlearn(("A", new[] { 1f, 0f }));
+
+        Assert.Equal(1, classifier.CategoryCount);
+        Assert.Equal("A", classifier.PredictBest(new[] { 0.2f, 0.8f }));
+    }
+
+    [Fact]
+    public void Unlearn_AllDocumentsClearsTheModel()
+    {
+        var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category);
+        classifier.Train(new[]
+        {
+            ("A", new[] { 1f, 0f }),
+            ("B", new[] { 0f, 1f }),
+        });
+
+        classifier.Unlearn(("A", new[] { 1f, 0f }));
+        classifier.Unlearn(("B", new[] { 0f, 1f }));
+
+        Assert.Equal(0, classifier.CategoryCount);
+        Assert.Empty(classifier.Predict(new[] { 1f, 0f }));
+    }
+
+    [Fact]
+    public void Learn_OnAFreshModelStartsTheModel()
+    {
+        var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category);
+
+        classifier.Learn(("A", new[] { 1f, 0f }));
+
+        Assert.Equal(1, classifier.CategoryCount);
+        Assert.Equal("A", classifier.PredictBest(new[] { 1f, 0f }));
+    }
+
+    [Fact]
+    public void LoadState_RejectsInconsistentState()
+    {
+        var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category);
+
+        Assert.Throws<InvalidDataException>(() => classifier.LoadState(
+            -1,
+            new Dictionary<string, double[]>(),
+            new Dictionary<string, int>(),
+            Array.Empty<double>(),
+            0));
+
+        Assert.Throws<InvalidDataException>(() => classifier.LoadState(
+            2,
+            new Dictionary<string, double[]>(),
+            new Dictionary<string, int> { ["A"] = 1 },
+            new double[2],
+            1));
+    }
+
+    [Fact]
+    public async Task TrainAsync_WithNoLabelledDocumentLeavesTheModelEmpty()
+    {
+        var classifier = new CentroidClassifier(new FakeEmbeddings(dimension: 2));
+
+        await classifier.TrainAsync(Array.Empty<SearchDocument>());
+
+        Assert.Equal(0, classifier.CategoryCount);
+    }
+
+    [Fact]
+    public async Task LearnAsync_IgnoresACategorylessDocument()
+    {
+        var embeddings = new FakeEmbeddings(dimension: 2);
+        var classifier = new CentroidClassifier(embeddings);
+
+        await classifier.LearnAsync(new SearchDocument("1", "text", Category: null));
+
+        Assert.Equal(0, classifier.CategoryCount);
+        Assert.Empty(embeddings.SingleCalls);
+    }
+
+    [Fact]
+    public void TheCenteringFlagIsExposed()
+    {
+        var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category,
+            new CentroidClassifierOptions { CenterOnGlobalMean = true });
+
+        Assert.True(classifier.CenterOnGlobalMean);
+    }
+
+    [Fact]
     public void TheTextWrapper_IsIncremental()
     {
         ITextClassifier classifier = new CentroidClassifier(TwoClasses());

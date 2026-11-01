@@ -13,6 +13,116 @@ public class BlendTextClassifierTests
     };
 
     [Fact]
+    public void TheLanesAndEvidenceAreExposed()
+    {
+        var lane = new TextClassifierLane(new FixedClassifier(new ClassificationResult("A", 1)), 1);
+        var candidate = new CandidateLane(new FixedCandidateSource(new TextEvidence("X", 1)), 1);
+        var prior = new PriorLane(new FixedPriorSource(new TextEvidence("A", 0)), 1);
+
+        var blend = new BlendTextClassifier(new[] { lane }, new[] { candidate }, new[] { prior });
+
+        Assert.Same(lane, Assert.Single(blend.Lanes));
+        Assert.Same(candidate, Assert.Single(blend.Candidates));
+        Assert.Same(prior, Assert.Single(blend.Priors));
+    }
+
+    [Fact]
+    public void TheConstructorValidatesItsLanesAndEvidence()
+    {
+        Assert.Throws<ArgumentNullException>(() => new BlendTextClassifier(null!));
+        Assert.Throws<ArgumentNullException>(() => new BlendTextClassifier(new TextClassifierLane[]
+        {
+            null!,
+        }));
+        Assert.Throws<ArgumentNullException>(() => new BlendTextClassifier(new[]
+        {
+            new TextClassifierLane(null!, 1),
+        }));
+        Assert.Throws<ArgumentNullException>(() => new BlendTextClassifier(
+            new[] { new TextClassifierLane(new FixedClassifier(new ClassificationResult("A", 1)), 1) },
+            new[] { new CandidateLane(null!, 1) }));
+        Assert.Throws<ArgumentNullException>(() => new BlendTextClassifier(
+            new[] { new TextClassifierLane(new FixedClassifier(new ClassificationResult("A", 1)), 1) },
+            priors: new[] { new PriorLane(null!, 1) }));
+        Assert.Throws<ArgumentException>(() => new BlendTextClassifier(
+            new[] { new TextClassifierLane(new FixedClassifier(new ClassificationResult("A", 1)), 1) },
+            new[] { new CandidateLane(new FixedCandidateSource(new TextEvidence("X", 1)), -1) }));
+        Assert.Throws<ArgumentException>(() => new BlendTextClassifier(
+            new[] { new TextClassifierLane(new FixedClassifier(new ClassificationResult("A", 1)), 1) },
+            priors: new[] { new PriorLane(new FixedPriorSource(new TextEvidence("A", 0)), -1) }));
+    }
+
+    [Fact]
+    public void A_ZeroMassDistributionReturnsNothing()
+    {
+        var blend = new BlendTextClassifier(new[]
+        {
+            new TextClassifierLane(new FixedClassifier(new ClassificationResult("A", 0)), 1),
+        });
+
+        Assert.Empty(blend.Predict("anything"));
+    }
+
+    [Fact]
+    public void A_PriorOnAZeroMassDistributionStillReturnsNothing()
+    {
+        var blend = new BlendTextClassifier(
+            new[] { new TextClassifierLane(new FixedClassifier(new ClassificationResult("A", 0)), 1) },
+            priors: new[] { new PriorLane(new FixedPriorSource(new TextEvidence("A", 5)), 1) });
+
+        Assert.Empty(blend.Predict("anything"));
+    }
+
+    [Fact]
+    public void A_ZeroProbabilityCategoryStaysAtZeroAfterAPrior()
+    {
+        var blend = new BlendTextClassifier(
+            new[]
+            {
+                new TextClassifierLane(new FixedClassifier(
+                    new ClassificationResult("A", 1), new ClassificationResult("B", 0)), 1),
+            },
+            priors: new[] { new PriorLane(new FixedPriorSource(new TextEvidence("A", 1)), 1) });
+
+        var results = blend.Predict("anything", limit: 2);
+
+        Assert.Equal("A", results[0].Category);
+        Assert.Equal(0, results.Single(result => result.Category == "B").Probability);
+    }
+
+    [Fact]
+    public void ExcludingEveryCategoryReturnsNothing()
+    {
+        var blend = new BlendTextClassifier(new[]
+        {
+            new TextClassifierLane(new FixedClassifier(
+                new ClassificationResult("A", 0.5), new ClassificationResult("B", 0.5)), 1),
+        });
+
+        Assert.Empty(blend.Predict("anything", excludedCategories: new HashSet<string>(new[] { "A", "B" })));
+    }
+
+    [Fact]
+    public void EvidenceWithAnEmptyCategoryIsRejected()
+    {
+        var blend = new BlendTextClassifier(
+            new[] { new TextClassifierLane(new FixedClassifier(new ClassificationResult("A", 1)), 1) },
+            new[] { new CandidateLane(new FixedCandidateSource(new TextEvidence(string.Empty, 1)), 1) });
+
+        Assert.Throws<ArgumentException>(() => blend.Predict("anything"));
+    }
+
+    [Fact]
+    public void ANonFinitePriorIsRejected()
+    {
+        var blend = new BlendTextClassifier(
+            new[] { new TextClassifierLane(new FixedClassifier(new ClassificationResult("A", 1)), 1) },
+            priors: new[] { new PriorLane(new FixedPriorSource(new TextEvidence("A", double.NaN)), 1) });
+
+        Assert.Throws<ArgumentException>(() => blend.Predict("anything"));
+    }
+
+    [Fact]
     public void A_ThreeLaneBlendSumsTheWeightedDistributions()
     {
         var blend = new BlendTextClassifier(new[]
