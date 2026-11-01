@@ -407,6 +407,65 @@ public sealed class MaskedFeatureSource<TItem> : IFeatureSource<TItem>
 }
 
 /// <summary>
+/// Turns every unknown feature into an explicit binary indicator named <c>prefix + feature</c>, so
+/// a model that only asks binary questions can learn the difference between "absent" and "I could
+/// not tell".
+/// </summary>
+/// <remarks>
+/// The models stay binary: the indicator is present when the inner source reported the feature as
+/// unknown and absent otherwise. The caller owns the prefix, so it should be one no real feature
+/// uses; a collision collapses the two into the same name.
+/// </remarks>
+/// <typeparam name="TItem">The item type the source reads.</typeparam>
+public sealed class UnknownIndicatorSource<TItem> : IFeatureSource<TItem>
+{
+    private readonly IFeatureSource<TItem> _inner;
+    private readonly string _prefix;
+
+    /// <summary>Creates a source that reports unknown features as prefixed indicators.</summary>
+    /// <param name="inner">The source whose unknown features are made explicit.</param>
+    /// <param name="prefix">The non-empty prefix for the indicator names. Default: <c>unknown:</c>.</param>
+    public UnknownIndicatorSource(IFeatureSource<TItem> inner, string prefix = "unknown:")
+    {
+        ArgumentNullException.ThrowIfNull(inner);
+
+        if (string.IsNullOrEmpty(prefix))
+            throw new ArgumentException("The prefix must be a non-empty string.", nameof(prefix));
+
+        _inner = inner;
+        _prefix = prefix;
+    }
+
+    /// <inheritdoc />
+    public IFeatureSet FeaturesOf(TItem item)
+    {
+        IFeatureSet inner = _inner.FeaturesOf(item);
+
+        if (inner.UnknownFeatures.Count == 0)
+            return inner;
+
+        var present = new List<string>(inner.Features.Count + inner.UnknownFeatures.Count);
+        Dictionary<string, double>? numeric = null;
+
+        foreach (string feature in inner.Features)
+        {
+            present.Add(feature);
+
+            if (inner.NumericValue(feature) is not { } value)
+                continue;
+
+            numeric ??= new Dictionary<string, double>(StringComparer.Ordinal);
+            numeric[feature] = value;
+        }
+
+        foreach (string feature in inner.UnknownFeatures)
+            present.Add(_prefix + feature);
+
+        return new FeatureSet(present, numeric);
+    }
+}
+
+/// <summary>
 /// A feature source built from a delegate, for the one-off projection that does not deserve a
 /// class.
 /// </summary>
