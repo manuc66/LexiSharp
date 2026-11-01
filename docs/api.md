@@ -131,7 +131,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
-| `CentroidClassifier` | class | `ITextClassifier` | Text wrapper over CentroidClassifier: embeds documents with an IEmbeddingProvider, computes one centroid per Category, and classifies a text by cosine… |
+| `CentroidClassifier` | class | `ITextClassifier` | Text wrapper over the generic nearest-centroid model: embeds documents with an IEmbeddingProvider, computes one centroid per Category, and classifies a text by… |
 | `CentroidClassifier<TItem>` | class | — | Nearest-centroid classifier over caller-supplied vectors: one mean per category, ranked by cosine similarity, with a softmax over the cosines as the posterior. |
 | `CentroidClassifierOptions` | record | — | Tunable knobs for the nearest-centroid classifiers: the softmax temperature, and the embedding role the text wrapper uses on each side. |
 | `FusedTextClassifier` | class | `ITextClassifier` | Blends two text classifiers by probability: (1 - w) · P(first) + w · P(second). |

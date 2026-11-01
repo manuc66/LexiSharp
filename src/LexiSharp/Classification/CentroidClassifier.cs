@@ -263,7 +263,7 @@ public sealed class CentroidClassifier<TItem>
 }
 
 /// <summary>
-/// Text wrapper over <see cref="CentroidClassifier{TItem}"/>: embeds documents with an
+/// Text wrapper over the generic nearest-centroid model: embeds documents with an
 /// <see cref="IEmbeddingProvider"/>, computes one centroid per <see cref="SearchDocument.Category"/>,
 /// and classifies a text by cosine similarity to those centroids.
 /// </summary>
