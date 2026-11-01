@@ -168,6 +168,27 @@ public sealed class BpeOnnxTokenizerTests
     }
 
     [Fact]
+    public void Constructor_RejectsANormalizerItCannotInterpret()
+    {
+        Assert.Throws<NotSupportedException>(
+            () => new BpeOnnxTokenizer(Fixture("tiny-bpe-normalizer.json")));
+    }
+
+    [Fact]
+    public void Constructor_RejectsAPreTokenizerItCannotInterpret()
+    {
+        Assert.Throws<NotSupportedException>(
+            () => new BpeOnnxTokenizer(Fixture("tiny-bpe-fancy-pre.json")));
+    }
+
+    [Fact]
+    public void Constructor_RejectsAFileOverTheConfiguredLimit()
+    {
+        Assert.Throws<InvalidOperationException>(
+            () => new BpeOnnxTokenizer(Fixture("tiny-bpe.json"), new BpeOnnxTokenizerOptions { MaxFileBytes = 1 }));
+    }
+
+    [Fact]
     public void Constructor_RejectsANonBpeModel()
     {
         Assert.Throws<NotSupportedException>(() => new BpeOnnxTokenizer(Fixture("tiny-wordpiece-tokenizer.json")));

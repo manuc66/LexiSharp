@@ -46,7 +46,7 @@ internal static class DenseEmbedder
 {
     private const int BatchSize = 8;
     private const long PadTokenId = 1;
-    private const int CacheVersion = 3;
+    internal const int CacheVersion = 3;
 
     public static async Task<DenseVectors?> TryBuildAsync(
         BeirCorpus corpus, string dataDir, string modelCacheDir, int maxSeqLength, CancellationToken ct)
@@ -122,7 +122,7 @@ internal static class DenseEmbedder
         return new DenseVectors(docVectors, ToQueryMap(corpus, queryVectors), HiddenDim);
     }
 
-    private const int HiddenDim = 384;
+    internal const int HiddenDim = 384;
 
     private static async Task<float[][]> EncodeAsync(
         IReadOnlyList<string> texts,
@@ -263,7 +263,7 @@ internal static class DenseEmbedder
     private static int ToCrossrefId(int msId, SentencePieceTokenizer tokenizer) =>
         msId == tokenizer.UnknownId ? 3 : msId + 1;
 
-    private static bool MetaMatches(string metaCache, int docCount, int queryCount, int maxSeqLength)
+    internal static bool MetaMatches(string metaCache, int docCount, int queryCount, int maxSeqLength)
     {
         try
         {
@@ -281,7 +281,7 @@ internal static class DenseEmbedder
         }
     }
 
-    private static void WriteMatrix(string path, float[][] vectors)
+    internal static void WriteMatrix(string path, float[][] vectors)
     {
         using var writer = new BinaryWriter(File.Create(path));
 
@@ -290,7 +290,7 @@ internal static class DenseEmbedder
                 writer.Write(value);
     }
 
-    private static float[][] ReadMatrix(string path, int count)
+    internal static float[][] ReadMatrix(string path, int count)
     {
         using BinaryReader reader = new(File.OpenRead(path));
 
@@ -309,13 +309,13 @@ internal static class DenseEmbedder
         return vectors;
     }
 
-    private static IReadOnlyDictionary<string, float[]> ReadMatrixAsQueryMap(string path, int count, BeirCorpus corpus)
+    internal static IReadOnlyDictionary<string, float[]> ReadMatrixAsQueryMap(string path, int count, BeirCorpus corpus)
     {
         float[][] vectors = ReadMatrix(path, count);
         return ToQueryMap(corpus, vectors);
     }
 
-    private static IReadOnlyDictionary<string, float[]> ToQueryMap(BeirCorpus corpus, float[][] queryVectors)
+    internal static IReadOnlyDictionary<string, float[]> ToQueryMap(BeirCorpus corpus, float[][] queryVectors)
     {
         var map = new Dictionary<string, float[]>(StringComparer.Ordinal);
 

@@ -39,6 +39,8 @@ public sealed class OnnxCrossEncoderScorer : ICrossEncoderScorer, IDisposable
     private readonly TensorElementType _outputType;
     private readonly int _outputRank;
     private readonly ReaderWriterLockSlim _gate = new(LockRecursionPolicy.NoRecursion);
+    private readonly CancellationTokenSource _disposeCancellation = new();
+    private int _disposeStarted;
     private bool _disposed;
 
     /// <summary>Loads the model and validates its tensors.</summary>
@@ -233,15 +235,19 @@ public sealed class OnnxCrossEncoderScorer : ICrossEncoderScorer, IDisposable
     /// <summary>Releases the ONNX Runtime session.</summary>
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposeStarted, 1) == 1)
+            return;
+
+        // Cancel first: an in-flight Run holds the read lock, and waiting for the write lock
+        // without terminating it would make shutdown wait for the whole inference.
+        _disposeCancellation.Cancel();
         _gate.EnterWriteLock();
 
         try
         {
-            if (_disposed)
-                return;
-
             _disposed = true;
             _session.Dispose();
+            _disposeCancellation.Dispose();
         }
         finally
         {
@@ -354,8 +360,9 @@ public sealed class OnnxCrossEncoderScorer : ICrossEncoderScorer, IDisposable
             ? [idsValue, maskValue]
             : [idsValue, maskValue, typesValue];
 
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCancellation.Token);
         using var runOptions = new RunOptions();
-        using CancellationTokenRegistration registration = cancellationToken.Register(() => runOptions.Terminate = true);
+        using CancellationTokenRegistration registration = linked.Token.Register(() => runOptions.Terminate = true);
         using var output = _session.Run(runOptions, _inputNames, inputs, _outputNames);
 
         OrtTensorTypeAndShapeInfo info = output[0].GetTensorTypeAndShape();

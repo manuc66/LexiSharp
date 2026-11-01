@@ -47,6 +47,8 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
     private readonly TensorElementType _outputType;
     private readonly bool _pooledOutput;
     private readonly ReaderWriterLockSlim _gate = new(LockRecursionPolicy.NoRecursion);
+    private readonly CancellationTokenSource _disposeCancellation = new();
+    private int _disposeStarted;
     private readonly Lazy<string> _signature;
     private bool _disposed;
 
@@ -153,7 +155,8 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
 
         string configuration =
             $"{_options.Pooling}|{_options.Normalize}|{_options.MaxSequenceLength}|" +
-            $"{_options.QueryPrefix}|{_options.PassagePrefix}|{_options.Tokenizer.Fingerprint ?? "none"}";
+            $"{_options.QueryPrefix}|{_options.PassagePrefix}|" +
+            $"{_options.Tokenizer.Fingerprint ?? _options.Tokenizer.GetType().FullName}";
 
         hash.AppendData(Encoding.UTF8.GetBytes(configuration));
         return Convert.ToHexString(hash.GetHashAndReset());
@@ -348,15 +351,19 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
     /// <summary>Releases the ONNX Runtime session.</summary>
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposeStarted, 1) == 1)
+            return;
+
+        // Cancel first: an in-flight Run holds the read lock, and waiting for the write lock
+        // without terminating it would make shutdown wait for the whole inference.
+        _disposeCancellation.Cancel();
         _gate.EnterWriteLock();
 
         try
         {
-            if (_disposed)
-                return;
-
             _disposed = true;
             _session.Dispose();
+            _disposeCancellation.Dispose();
         }
         finally
         {
@@ -442,8 +449,9 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
             ? [idsValue, maskValue]
             : [idsValue, maskValue, typesValue];
 
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCancellation.Token);
         using var runOptions = new RunOptions();
-        using CancellationTokenRegistration registration = cancellationToken.Register(() => runOptions.Terminate = true);
+        using CancellationTokenRegistration registration = linked.Token.Register(() => runOptions.Terminate = true);
         using var output = _session.Run(runOptions, _inputNames, inputs, _outputNames);
 
         OrtTensorTypeAndShapeInfo info = output[0].GetTensorTypeAndShape();

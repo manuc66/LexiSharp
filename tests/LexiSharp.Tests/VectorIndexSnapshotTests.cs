@@ -62,12 +62,21 @@ public sealed class VectorIndexSnapshotTests
     }
 
     [Fact]
-    public void ImportSnapshot_AcceptsASnapshotWithoutASignature()
+    public void ImportSnapshot_RejectsASnapshotWithoutASignature()
     {
         var source = Engine(null);
         var target = Engine("model-b");
 
-        target.ImportSnapshot(source.ExportSnapshot());
+        Assert.Throws<InvalidOperationException>(() => target.ImportSnapshot(source.ExportSnapshot()));
+    }
+
+    [Fact]
+    public void ImportSnapshot_AcceptsAnUnsignedSnapshotWhenAsked()
+    {
+        var source = Engine(null);
+        var target = Engine("model-b");
+
+        target.ImportSnapshot(source.ExportSnapshot(), allowSignatureMismatch: true);
 
         Assert.Equal(1, target.Count);
     }
