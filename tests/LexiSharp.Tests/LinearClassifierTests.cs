@@ -184,6 +184,191 @@ public class LinearClassifierTests
     }
 
     [Fact]
+    public void Train_WithNoLabelledDocumentLeavesAnUntrainedModel()
+    {
+        var classifier = new LinearClassifier();
+        classifier.Train(new[]
+        {
+            new SearchDocument("1", "alpha", Category: null),
+        });
+
+        Assert.Empty(classifier.Predict("alpha"));
+        Assert.Empty(classifier.TopFeatures("A"));
+    }
+
+    [Fact]
+    public void ClassWeightsMustBeFiniteAndNonNegative()
+    {
+        Assert.Throws<ArgumentException>(() => new LinearClassifier(options: new LinearClassifierOptions
+        {
+            ClassWeights = new Dictionary<string, double> { ["A"] = -1 },
+        }).Train(Corpus));
+
+        Assert.Throws<ArgumentException>(() => new LinearClassifier(options: new LinearClassifierOptions
+        {
+            ClassWeights = new Dictionary<string, double> { ["A"] = double.NaN },
+        }).Train(Corpus));
+    }
+
+    [Fact]
+    public void SampleWeightsMustBeFiniteAndNonNegative()
+    {
+        var classifier = new LinearClassifier<SearchDocument>(
+            new TextFeatureSource(),
+            document => document.Category,
+            _ => -1);
+
+        Assert.Throws<ArgumentException>(() => classifier.Train(Corpus));
+    }
+
+    [Fact]
+    public void ExcludingEveryCategoryReturnsNothing()
+    {
+        var classifier = Trained();
+
+        Assert.Empty(classifier.Predict(
+            "alpha",
+            excludedCategories: new HashSet<string>(new[] { "A", "B", "C" })));
+    }
+
+    [Fact]
+    public void Learn_RequiresACategory()
+    {
+        var classifier = Trained();
+
+        Assert.Throws<ArgumentException>(() => classifier.Learn("alpha", null!));
+    }
+
+    [Fact]
+    public void Learn_RejectsAZeroEffectiveWeight()
+    {
+        double weight = 1;
+        var classifier = new LinearClassifier<SearchDocument>(
+            new TextFeatureSource(),
+            document => document.Category,
+            _ => weight);
+        classifier.Train(Corpus);
+        weight = 0;
+
+        Assert.Throws<ArgumentException>(() => classifier.Learn(Corpus[0]));
+    }
+
+    [Fact]
+    public void TopFeatures_OnAnUntrainedModelIsEmptyAndNegativeCountIsClamped()
+    {
+        Assert.Empty(new LinearClassifier().TopFeatures("A"));
+
+        var classifier = Trained();
+        Assert.Empty(classifier.TopFeatures("A", count: -1));
+    }
+
+    [Fact]
+    public void Learn_CanIntroduceACategoryTheModelNeverTrainedOn()
+    {
+        var classifier = Trained(new LinearClassifierOptions
+        {
+            Epochs = 50,
+            LearningRate = 0.5,
+            L2 = 0,
+            MinDocumentFrequency = 1,
+            Seed = 7,
+            CorrectionWeight = 20,
+        });
+
+        long token = classifier.Learn("alpha alpha", "D");
+
+        var results = classifier.Predict("alpha", limit: 10);
+
+        Assert.Contains(results, result => result.Category == "D");
+        Assert.Equal("D", classifier.PredictBest("alpha"));
+
+        Assert.True(classifier.Unlearn(token));
+        Assert.DoesNotContain(classifier.Predict("alpha", limit: 10), result => result.Category == "D");
+    }
+
+    [Fact]
+    public void TheCorrectionWeightScalesTheLearnedMass()
+    {
+        double Probability(double correctionWeight)
+        {
+            var classifier = Trained(new LinearClassifierOptions
+            {
+                Epochs = 50,
+                LearningRate = 0.5,
+                L2 = 0,
+                MinDocumentFrequency = 1,
+                Seed = 7,
+                CorrectionWeight = correctionWeight,
+            });
+            classifier.Learn("alpha", "D");
+
+            return classifier.Predict("alpha", limit: 10)
+                .Single(result => result.Category == "D").Probability;
+        }
+
+        Assert.True(Probability(2) > Probability(1));
+    }
+
+    [Fact]
+    public void AnUnseenCategoryBiasCanCarryACategoryWithNoKnownFeature()
+    {
+        var classifier = Trained(new LinearClassifierOptions
+        {
+            Epochs = 50,
+            LearningRate = 0.5,
+            L2 = 0,
+            MinDocumentFrequency = 1,
+            Seed = 7,
+            UnseenCategoryBias = 8,
+        });
+
+        long token = classifier.Learn("an-unknown-word", "D");
+
+        Assert.Equal("D", classifier.PredictBest("an-unknown-word"));
+
+        classifier.Unlearn(token);
+        Assert.DoesNotContain(classifier.Predict("an-unknown-word", limit: 10), result => result.Category == "D");
+    }
+
+    [Fact]
+    public void Train_ClearsTheCategoriesIntroducedByLearn()
+    {
+        var classifier = Trained();
+        classifier.Learn("alpha", "D");
+
+        classifier.Train(Corpus);
+
+        Assert.DoesNotContain(classifier.Predict("alpha", limit: 10), result => result.Category == "D");
+    }
+
+    [Fact]
+    public void TopFeatures_OnAVirtualCategoryIsEmptyRatherThanAnError()
+    {
+        var classifier = Trained();
+        classifier.Learn("alpha", "D");
+
+        Assert.Empty(classifier.TopFeatures("D"));
+        Assert.Throws<ArgumentException>(() => classifier.TopFeatures("missing"));
+    }
+
+    [Fact]
+    public void TheCorrectionWeightMustBePositiveAndFinite()
+    {
+        Assert.Throws<ArgumentException>(() => new LinearClassifier(options: new LinearClassifierOptions
+        {
+            CorrectionWeight = 0,
+        }));
+        Assert.Throws<ArgumentException>(() => new LinearClassifier(options: new LinearClassifierOptions
+        {
+            CorrectionWeight = -1,
+        }));
+        Assert.Throws<ArgumentException>(() => new LinearClassifier(options: new LinearClassifierOptions
+        {
+            CorrectionWeight = double.NaN,
+        }));
+    }
+
+    [Fact]
     public void TopFeatures_ContainsTheClassTerm()
     {
         var classifier = Trained();

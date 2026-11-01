@@ -23,8 +23,9 @@ better.
   smoothing, or Complement Naive Bayes for imbalanced labels, behind a dedicated
   `ITextClassifier` interface, with incremental `Learn`/`Unlearn` for labelled documents that
   arrive over time. A nearest-centroid classifier reads vectors from an `IEmbeddingProvider`
-  (E5, MiniLM, an HTTP endpoint — LexiSharp never runs the model), and
-  `FusedTextClassifier` blends the lexical and semantic posteriors.
+  (E5, MiniLM, an HTTP endpoint — LexiSharp never runs the model), a nearest-neighbour classifier
+  ranks terms with BM25 or vectors with cosine, and `FusedTextClassifier`/`BlendTextClassifier`
+  combine the posteriors — two lanes, or any number with candidate and prior evidence.
 
 ## Lexical similarity and keyword extraction
 
@@ -267,6 +268,33 @@ The two models need not know the same categories: a category only one of them ho
 blend with a zero contribution from the other, and the result is renormalized. Ties are ordered by
 category name, so the output is deterministic.
 
+### More than two lanes, and evidence that was never trained
+
+`BlendTextClassifier` takes any number of trained lanes and two optional kinds of evidence:
+
+```csharp
+var blend = new BlendTextClassifier(
+    new[]
+    {
+        new TextClassifierLane(nb, 0.8),
+        new TextClassifierLane(centroid, 0.2),
+    },
+    candidates: new[] { new CandidateLane(new JiraKeySource(), 1.0) },
+    priors: new[] { new PriorLane(new RecentSubjectSource(), 0.5) });
+
+blend.Train(trainingDocuments);
+var category = blend.PredictBest("see PROJ-42, like the ticket next door");
+```
+
+A candidate source (`ICandidateTextSource`) may introduce a category no model learned: the text
+names `PROJ-42`, so `PROJ-42` enters the blend with its own normalized mass and can win. A prior
+source (`ITextPriorSource`) can only shift a category a trained lane already produced; its score
+is a **log** multiplier, so two sources compose by adding their bonuses. A prior does not apply to
+a category a candidate source injected. The rules are deliberate: evidence
+introduces, a prior reweights. Weights are tuned on validation like any other blend weight, and a
+probability average is still not a calibration. The Jira regex, the neighbour subjects and the
+recency term are the caller's domain and stay outside `LexiSharp.Classification`.
+
 ### What the centroids cost and how they read
 
 Training is one pass over the vectors plus the mean and the centroid norms; prediction is one
@@ -301,9 +329,66 @@ The model is external: the command reads `onnx/model.onnx` (or `model.onnx`) and
 temperature; `--text full` runs the long-message configuration, where the lexical model is at its
 strongest and the blend's gain is not claimed here.
 
-What this does not do: there are no class priors (a frequent category is not favoured), no
-incremental `Learn`/`Unlearn` (retrain instead), no persistence for the centroid model, and no
-calibration between the two models. The temperature changes confidence, never the cosine ranking.
+### Learning a centroid one document at a time
+
+`CentroidClassifier` is an `IIncrementalTextClassifier`. `Learn(document)` adds the document's
+vector, its document count and its contribution to the corpus mean; `Unlearn(document)` removes
+them and retires a category that loses its last document. The arithmetic is exact with a
+deterministic provider, and learning a corpus one document at a time is indistinguishable from
+`Train` on the whole corpus — the same parity contract `NaiveBayesClassifier` has. The model is
+persisted, sums and global mean included, through `ClassificationModelSerializer`; the embedding
+provider is not stored, exactly as the tokenizer is not, so load it with the same provider.
+
+`CenterOnGlobalMean` subtracts the corpus mean from every centroid and from the query before the
+cosine. It can change the ranking when a large shared direction dominates the raw cosine, and it
+changes the cosine scale, so the temperature and a fused model's weight have to be tuned again.
+It is **off by default and its effect is not measured here**; run `classification-centroid --center`
+with your export before turning it on.
+
+What this still does not do: there are no class priors (a frequent category is not favoured), and
+there is no calibration between the two models. The temperature changes confidence, never the
+cosine ranking.
+## Nearest neighbours: BM25 or cosine
+
+`NearestNeighborClassifier` is the non-parametric option: it stores the labelled documents and
+lets the closest ones vote. The lexical constructor ranks with the same Okapi BM25 formula as the
+search engine; the dense constructor stores one vector per document and ranks by cosine.
+
+```csharp
+var lexical = new NearestNeighborClassifier(options: new NearestNeighborOptions
+{
+    K = 5,
+    Vote = NeighborVote.Score,
+    Bm25 = Bm25Parameters.Balanced,
+});
+lexical.Train(documents);
+
+var dense = new NearestNeighborClassifier(e5, new NearestNeighborOptions
+{
+    K = 10,
+    Vote = NeighborVote.Temperature,
+    Temperature = 0.1,
+});
+dense.Train(documents);
+```
+
+`Vote` decides what a neighbour contributes: `Score` uses its non-negative similarity, `Rank`
+uses `1 / (rank + 1)` and ignores the scale, and `Temperature` applies a softmax to cosine
+similarities. The chosen neighbours are aggregated by category into a normalized distribution;
+excluded categories are filtered **before** the top-k cut, so an excluded neighbour does not
+consume a place. Ties are ordinal. `Learn` adds one document and `Unlearn` removes it by
+`SearchDocument.Id`; duplicate ids are rejected, and unlearning an id the model does not hold is a
+no-op.
+
+Both paths are exact scans: BM25 costs O(N × query terms) per prediction, dense costs O(N × dim),
+and the dense store holds N × dim floats. There is no inverted index, no ANN and no persistence
+for this model in v1; the centroid remains the O(categories × dim) alternative. On the
+subject-only 20 Newsgroups split, BM25 KNN selected `K = 3` on a 15 % validation slice and read
+**0.5073 / 0.4890** on test, against Naive Bayes's **0.5624 / 0.5293**; McNemar says Naive Bayes
+is better (**p = 1.29e-12**, 318 documents KNN fixes against 525 it breaks). The run is pinned in
+`reference/classification-20news-subject-knn.json`, so the loss is reproducible rather than
+hidden. The dense path needs an E5 export and is not measured here.
+
 ## Question trees: classification and corpus division
 
 **Unreleased.** Everything in this section — the tree, the forest, `LinearClassifier`, abstention,
@@ -428,6 +513,21 @@ linear.PredictBest("i cannot connect to the internet");
 linear.TopFeatures("Support", count: 5);
 ```
 
+`Learn(text, category)` folds one labelled document into a correction ledger and returns a token;
+`Unlearn(token)` removes exactly that contribution, without retraining the coefficients. It also
+accepts a category the model never trained on: the category becomes **virtual**, scored with
+`UnseenCategoryBias` (default `0`) plus the ledger mass on features already in the vocabulary. A
+virtual category has no trained coefficient, so `TopFeatures` returns an empty list for it. The
+limit is structural: a category whose terms are all outside the vocabulary cannot be learned
+without a retrain, because there is nothing in the feature space to carry the mass.
+`CorrectionWeight` sets how strongly one `Learn` moves the model; it is separate from
+`LearningRate` (the AdaGrad step of `Train`) and from the per-item sample weight. `Train` clears
+every virtual category and both ledgers. On a subject-only experiment that held five categories
+out of training, virtual learning read **0.2918** on the held-out stream against **0.2884** for a
+retrain every 50 documents, at 21 ms against 2 213 ms; the first occurrence of a new label is still
+never predicted, because the model has not seen it yet. The command and the pin are in
+[Evaluation](evaluation.md#a-category-that-was-never-in-the-training-set).
+
 Two scaling knobs exist and both default off. `IdfWeighting` downweights binary features by
 `log(1 + N/df)`; on 20NG it **loses** — 0.7753 accuracy / 0.7682 macro-F1 against 0.8085 / 0.8027
 without — so it stays off. `TextFeatureSource(emitTermFrequency: true)` makes each term a
@@ -472,18 +572,21 @@ using (var file = File.OpenRead("classifier.lxcl"))
 }
 ```
 
-The format is versioned binary (`LXCL`, version 1) and carries the trained state: the tree's
-questions, the forest's trees, or the linear model's coefficients, plus the vocabulary, the
-prediction options and the correction ledger. `Load` dispatches on the stored kind and returns an
+The format is versioned binary (`LXCL`, version 2) and carries the trained state: the tree's
+questions, the forest's trees, the linear model's coefficients and virtual categories, or the
+centroid's sums, counts and global mean, plus the vocabulary, the prediction options and the
+correction ledger. Version 1 is refused rather than guessed. `Load` dispatches on the stored kind and returns an
 `ITextClassifier`; the typed loaders return the concrete type, so `Explain`, `TopFeatures` and
 `Reinforce` survive the round trip. A version mismatch, the wrong kind, a bad magic or a truncated
 file throws instead of guessing, and the stored feature-space hash is verified against the loaded
 vocabulary.
 
-The one thing the file cannot carry is the tokenizer or the feature source — a delegate is not
-data. Load with the same source configuration you trained with, or the same text maps to different
-features. The hash identifies the vocabulary for your own bookkeeping; it cannot detect a source
-that changed while keeping the same names.
+The one thing the file cannot carry is the tokenizer, the embedding provider or the feature source
+— a delegate is not data. Load with the same source and provider configuration you trained with,
+or the same text maps to different features. The hash identifies the vocabulary for your own
+bookkeeping; it cannot detect a source that changed while keeping the same names. A
+nearest-neighbour model and a blend are not persisted: the first stores its corpus, and the second
+is a graph of models and evidence sources. Save the lanes individually and rebuild the blend.
 
 ### Online updates
 

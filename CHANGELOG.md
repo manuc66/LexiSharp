@@ -20,6 +20,36 @@ workflow.
 
 ### Added
 
+- **A tested predict-then-learn evaluator, for any classifier.** `classification-online` replays an
+  ordered stream, predicts before it learns, buckets rows by whether the text or the category had
+  been seen, reports top-k accuracy, a precision/coverage curve and a block bootstrap interval. It
+  pins the subject-only Naive Bayes run: accuracy@1 **0.6859** [0.6669, 0.7030], accuracy@3
+  **0.8388**, macro-F1 **0.6787**, and **0.873** precision at 0.505 coverage. The three ad-hoc
+  loops in the eval command remain for the existing pins; the new verb is the tested path.
+- **A BM25/dense nearest-neighbour classifier.** `NearestNeighborClassifier` stores documents and
+  ranks them with Okapi BM25 or cosine, with `Score`, `Rank` and `Temperature` votes, exact
+  `Learn`/`Unlearn` by document id, exclusion before the top-k cut, and a bounded top-k buffer.
+  On the subject split it selects `K = 3` on validation and reads **0.5073 / 0.4890** on test,
+  against Naive Bayes's **0.5624 / 0.5293**; McNemar **p = 1.29e-12** in Naive Bayes's favour. The
+  run is pinned in `classification-20news-subject-knn.json`, and the docs publish the loss.
+- **A blend of any number of lanes, with injected evidence.** `BlendTextClassifier` generalizes
+  `FusedTextClassifier` (which is now the two-lane facade) and adds `ICandidateTextSource` for
+  categories no model learned and `ITextPriorSource` for additive log-prior bonuses on categories
+  that are present. The Jira/neighbour/recency implementations stay in the caller; the core only
+  owns the seams.
+- **Centroid `Learn`/`Unlearn` and centring.** `CentroidClassifier` now carries double-precision
+  sums, counts and a global mean, so learning one document is indistinguishable from training on
+  the whole corpus, unlearning is exact with a deterministic provider, and a category that loses
+  its last document is retired. `CenterOnGlobalMean` subtracts the corpus mean before the cosine;
+  it is off by default and its effect is not measured here. The model persists through
+  `ClassificationModelSerializer`; the provider is not stored.
+- **The linear model can learn a category it never trained on.** `Learn` now accepts an unseen
+  label and scores it as a virtual category (ledger mass plus `UnseenCategoryBias`), with
+  `CorrectionWeight` separating the strength of a correction from the training learning rate and
+  the sample weight. `TopFeatures` returns an empty list for a virtual category; a label whose
+  vocabulary is entirely unknown still cannot be learned without a retrain. The model format is
+  **version 2**; version 1 is refused rather than guessed.
+
 - **A centroid classifier reads vectors, and a fused classifier blends it with Naive Bayes.**
   `CentroidClassifier` computes one mean per category from an `IEmbeddingProvider` and ranks by
   cosine; `CentroidClassifier<TItem>` exposes the same model over caller-supplied vectors, so a

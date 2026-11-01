@@ -52,6 +52,7 @@ public sealed class LinearClassifier<TItem>
     private readonly Dictionary<string, Dictionary<string, double>> _reinforcement =
         new(StringComparer.Ordinal);
     private readonly Dictionary<long, LearnedItem> _learned = new();
+    private readonly SortedSet<string> _virtualCategories = new(StringComparer.Ordinal);
     private long _nextToken;
     private bool _trained;
 
@@ -89,6 +90,7 @@ public sealed class LinearClassifier<TItem>
 
         _reinforcement.Clear();
         _learned.Clear();
+        _virtualCategories.Clear();
         ValidateClassWeights();
 
         var (pending, categories, featuresById, documentFrequency) = Materialize(items);
@@ -390,66 +392,86 @@ public sealed class LinearClassifier<TItem>
             return Array.Empty<ClassificationResult>();
 
         IFeatureSet features = _features.FeaturesOf(item);
-        double[] logits = ComputeLogits(features);
+        (double[] logits, string[] categories) = ComputeLogits(features);
 
-        return Rank(logits, excludedCategories, limit);
+        return Rank(logits, categories, excludedCategories, limit);
     }
 
-    private double[] ComputeLogits(IFeatureSet features)
+    private (double[] Logits, string[] Categories) ComputeLogits(IFeatureSet features)
     {
-        int classCount = _categories.Count;
-        var logits = new double[classCount];
-        Array.Copy(_bias, logits, classCount);
+        string[] categories = EffectiveCategories();
+        int trainedCount = _categories.Count;
+        var logits = new double[categories.Length];
+
+        Array.Copy(_bias, logits, trainedCount);
+
+        for (int c = trainedCount; c < logits.Length; c++)
+            logits[c] = _options.UnseenCategoryBias;
 
         foreach (string feature in features.Features)
         {
             if (!_featureIds.TryGetValue(feature, out int id))
                 continue;
 
-            int offset = id * classCount;
+            int offset = id * trainedCount;
             double value = ValueOf(id, feature, features);
 
-            for (int c = 0; c < classCount; c++)
+            for (int c = 0; c < trainedCount; c++)
                 logits[c] += _weights[offset + c] * value;
         }
 
         if (_reinforcement.Count > 0)
-            ApplyReinforcement(features, logits);
+            ApplyReinforcement(features, logits, categories);
 
-        return logits;
+        return (logits, categories);
     }
 
-    private void ApplyReinforcement(IFeatureSet features, double[] logits)
+    private void ApplyReinforcement(IFeatureSet features, double[] logits, string[] categories)
     {
-        int classCount = _categories.Count;
+        var index = new Dictionary<string, int>(categories.Length, StringComparer.Ordinal);
 
-        foreach (string feature in features.Features)
+        for (int c = 0; c < categories.Length; c++)
+            index[categories[c]] = c;
+
+        foreach (var (category, deltas) in _reinforcement)
         {
-            if (!_featureIds.TryGetValue(feature, out int id))
+            if (!index.TryGetValue(category, out int c))
                 continue;
 
-            double value = ValueOf(id, feature, features);
-
-            if (value == 0)
-                continue;
-
-            for (int c = 0; c < classCount; c++)
+            foreach (string feature in features.Features)
             {
-                if (_reinforcement.TryGetValue(_categories[c], out Dictionary<string, double>? deltas)
-                    && deltas.TryGetValue(feature, out double delta))
-                {
+                if (!_featureIds.ContainsKey(feature) || !deltas.TryGetValue(feature, out double delta))
+                    continue;
+
+                double value = ValueOf(_featureIds[feature], feature, features);
+
+                if (value != 0)
                     logits[c] += delta * value;
-                }
             }
         }
     }
 
+    private string[] EffectiveCategories()
+    {
+        if (_virtualCategories.Count == 0)
+            return _categories.ToArray();
+
+        var categories = new string[_categories.Count + _virtualCategories.Count];
+
+        for (int i = 0; i < _categories.Count; i++)
+            categories[i] = _categories[i];
+
+        _virtualCategories.CopyTo(categories, _categories.Count);
+        return categories;
+    }
+
     private IReadOnlyList<ClassificationResult> Rank(
         double[] logits,
+        string[] categories,
         IReadOnlySet<string>? excludedCategories,
         int limit)
     {
-        int classCount = _categories.Count;
+        int classCount = categories.Length;
         var probabilities = new double[classCount];
         Softmax(logits, probabilities);
 
@@ -458,7 +480,7 @@ public sealed class LinearClassifier<TItem>
 
         for (int c = 0; c < classCount; c++)
         {
-            string category = _categories[c];
+            string category = categories[c];
 
             if (excludedCategories?.Contains(category) == true)
                 continue;
@@ -538,13 +560,13 @@ public sealed class LinearClassifier<TItem>
         if (string.IsNullOrEmpty(category))
             throw new ArgumentException("The item has no category.", nameof(item));
 
-        if (!_categoryIndex.ContainsKey(category))
-            throw new ArgumentException("The category was not seen during training.", nameof(item));
-
-        double weight = _weightOf(item);
+        double weight = _weightOf(item) * _options.CorrectionWeight;
 
         if (!double.IsFinite(weight) || weight <= 0)
-            throw new ArgumentException("The sample weight must be finite and positive.", nameof(item));
+            throw new ArgumentException("The effective correction weight must be finite and positive.", nameof(item));
+
+        if (!_categoryIndex.ContainsKey(category))
+            _virtualCategories.Add(category);
 
         IFeatureSet features = _features.FeaturesOf(item);
         var known = features.Features.Where(_featureIds.ContainsKey).ToArray();
@@ -567,6 +589,14 @@ public sealed class LinearClassifier<TItem>
 
         _learned.Remove(token);
         AdjustFeatures(learned.Features, learned.Category, learned.Weight, sign: -1.0);
+
+        if (_virtualCategories.Contains(learned.Category)
+            && !_reinforcement.ContainsKey(learned.Category)
+            && !_learned.Values.Any(item => string.Equals(item.Category, learned.Category, StringComparison.Ordinal)))
+        {
+            _virtualCategories.Remove(learned.Category);
+        }
+
         return true;
     }
 
@@ -631,7 +661,14 @@ public sealed class LinearClassifier<TItem>
             return Array.Empty<LinearFeatureWeight>();
 
         if (!_categoryIndex.TryGetValue(category, out int categoryIndex))
+        {
+            // A category introduced by Learn has correction mass but no trained coefficient;
+            // returning an empty list is more honest than inventing a training explanation.
+            if (_virtualCategories.Contains(category))
+                return Array.Empty<LinearFeatureWeight>();
+
             throw new ArgumentException("The category was not seen during training.", nameof(category));
+        }
 
         int classCount = _categories.Count;
         var ranked = new List<LinearFeatureWeight>(_featuresById.Length);
@@ -714,16 +751,20 @@ public sealed class LinearClassifier<TItem>
 
     internal string FeatureSpaceHash => ModelFormat.Hash(_featuresById);
 
-    internal static (bool IdfWeighting, bool StandardizeNumericFeatures, double MinProbability)
+    internal static (bool IdfWeighting, bool StandardizeNumericFeatures, double MinProbability,
+        double CorrectionWeight, double UnseenCategoryBias)
         ReadPredictionOptions(BinaryReader reader) =>
-        (reader.ReadBoolean(), reader.ReadBoolean(), reader.ReadDouble());
+        (reader.ReadBoolean(), reader.ReadBoolean(), reader.ReadDouble(), reader.ReadDouble(), reader.ReadDouble());
 
     internal void WriteState(BinaryWriter writer)
     {
         writer.Write(_options.IdfWeighting);
         writer.Write(_options.StandardizeNumericFeatures);
         writer.Write(_options.MinProbability);
+        writer.Write(_options.CorrectionWeight);
+        writer.Write(_options.UnseenCategoryBias);
         ModelFormat.WriteStrings(writer, _categories);
+        ModelFormat.WriteStrings(writer, _virtualCategories.ToArray());
         ModelFormat.WriteStrings(writer, _featuresById);
         ModelFormat.WriteDoubles(writer, _weights);
         ModelFormat.WriteDoubles(writer, _bias);
@@ -764,6 +805,17 @@ public sealed class LinearClassifier<TItem>
 
         for (int i = 0; i < _categories.Count; i++)
             _categoryIndex[_categories[i]] = i;
+
+        _virtualCategories.Clear();
+        string[] virtualCategories = ModelFormat.ReadStrings(reader);
+
+        foreach (string category in virtualCategories)
+        {
+            if (string.IsNullOrEmpty(category) || _categoryIndex.ContainsKey(category))
+                throw new InvalidDataException("A virtual category is empty or duplicated in the trained set.");
+
+            _virtualCategories.Add(category);
+        }
 
         _featuresById = ModelFormat.ReadStrings(reader);
         _featureIds = new Dictionary<string, int>(_featuresById.Length, StringComparer.Ordinal);
@@ -948,7 +1000,7 @@ public sealed class LinearClassifier : ITextClassifier
         BinaryReader reader,
         IFeatureSource<SearchDocument>? features)
     {
-        var (idfWeighting, standardizeNumeric, minProbability) =
+        var (idfWeighting, standardizeNumeric, minProbability, correctionWeight, unseenCategoryBias) =
             LinearClassifier<SearchDocument>.ReadPredictionOptions(reader);
         var model = new LinearClassifier(
             features ?? new TextFeatureSource(),
@@ -957,6 +1009,8 @@ public sealed class LinearClassifier : ITextClassifier
                 IdfWeighting = idfWeighting,
                 StandardizeNumericFeatures = standardizeNumeric,
                 MinProbability = minProbability,
+                CorrectionWeight = correctionWeight,
+                UnseenCategoryBias = unseenCategoryBias,
             });
 
         model._inner.ReadBody(reader);

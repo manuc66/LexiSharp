@@ -50,5 +50,19 @@ public sealed record CentroidClassifierOptions
     /// </summary>
     public EmbeddingUse PredictionUse { get; init; } = EmbeddingUse.Query;
 
+    /// <summary>
+    /// Subtract the corpus mean from every centroid and from the query before the cosine.
+    /// Default: <c>false</c>.
+    /// </summary>
+    /// <remarks>
+    /// Centering removes the component every class shares, so the cosine compares what is left
+    /// instead of a large common direction. It changes the cosine scale, which means the
+    /// temperature and the weight of a <see cref="FusedTextClassifier"/> have to be tuned again;
+    /// it is an option rather than the default until that effect is measured. The mean is
+    /// maintained by <see cref="CentroidClassifier{TItem}.Train"/>, <c>Learn</c> and <c>Unlearn</c>,
+    /// so an incremental model stays centered as it grows.
+    /// </remarks>
+    public bool CenterOnGlobalMean { get; init; }
+
     internal bool IsValid => double.IsFinite(Temperature) && Temperature > 0;
 }

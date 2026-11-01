@@ -1402,6 +1402,88 @@ they do on long text. This is the measurement that matters before carrying any 2
 titles or log lines: run the baseline on your labels first. The run is pinned in
 [`reference/classification-20news-subject.json`](https://github.com/manuc66/LexiSharp/blob/main/bench/LexiSharp.Eval/reference/classification-20news-subject.json).
 
+### Predict, then learn: an ordered stream
+
+`classification-online` replays a labelled stream through **any** `ITextClassifier` and enforces
+the order that makes an online figure honest: predict first, score the prediction, learn the
+document afterwards. It buckets by what the model had seen at that moment (the text and the
+category), reports top-k accuracy, a precision/coverage curve, and a percentile bootstrap over
+**blocks** rather than documents, because adjacent rows in a stream are not independent.
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- classification-online \
+  --data bench/LexiSharp.Eval/data --text subject --model nb \
+  --warmup 0.8 --blocks 20 --top-k 3 --seed 7 \
+  --verify bench/LexiSharp.Eval/reference/classification-online-20news-subject.json
+```
+
+The pinned run trains Naive Bayes on 5 262 documents, then streams the remaining 1 315:
+
+| Measure | Value [95 % CI] |
+|---|---:|
+| Accuracy@1 | 0.6859 [0.6669, 0.7030] |
+| Accuracy@3 | 0.8388 [0.8223, 0.8546] |
+| Macro-F1 | 0.6787 [0.6480, 0.7010] |
+| Coverage at 50 % target | 0.505, precision **0.873** |
+
+Every streamed subject is in the `never-seen-text` bucket: the subject split is deduplicated
+globally, so no train subject repeats inside the stream. That is a property of this corpus, not of
+the evaluator; the bucket is meant for streams where a text can reappear, and the CLI labels the
+20NG blocks as synthetic (there are no dates in the corpus). The category bucket is `seen` for the
+same reason — all 20 labels are in the warmup. The evaluator also handles a non-incremental model
+by retraining on a schedule (`--retrain-every`); a non-incremental model without a schedule is
+rejected rather than silently returning the warmup's answers forever.
+
+### Nearest neighbours on the same split
+
+The BM25 nearest-neighbour model is tuned the same way: K over
+`{1, 3, 5, 10, 25, 50}` on a 15 % validation slice of train, then one test run. It selects
+`K = 3`, and on the subject split reads:
+
+| Method | Accuracy [95 % CI] | Macro-F1 [95 % CI] |
+|---|---:|---:|
+| Naive Bayes | **0.5624 [0.5461, 0.5780]** | **0.5293 [0.5106, 0.5461]** |
+| KNN, BM25 (`K = 3`) | 0.5073 [0.4914, 0.5230] | 0.4890 [0.4758, 0.5102] |
+
+McNemar is not close: **p = 1.29e-12**, with 318 documents KNN fixes against 525 it breaks. At a
+50 % coverage target the KNN reaches 0.684 precision on 0.500 coverage. The validation figure was
+0.6670, the test figure 0.5073 — the same date-boundary optimism that makes cross-validation
+inside train look better than the held-out split. The run is pinned in
+[`reference/classification-20news-subject-knn.json`](https://github.com/manuc66/LexiSharp/blob/main/bench/LexiSharp.Eval/reference/classification-20news-subject-knn.json);
+the dense KNN needs an E5 export and is not measured here. The result is published because it is a
+loss: on short text the parametric baseline is still the model to beat.
+
+### A category that was never in the training set
+
+`classification-new-class` holds five categories out of the initial training, then streams their
+test documents in a fixed seed order. The static model can never name them (**0.0000** accuracy);
+a virtual `Learn` folds each streamed document into the ledger, and a retrain every 50 documents
+is the baseline:
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- classification-new-class \
+  --data bench/LexiSharp.Eval/data --text subject \
+  --held-out 5 --correction-weight 20 --retrain-every 50 --seed 7 \
+  --verify bench/LexiSharp.Eval/reference/classification-20news-subject-new-class.json
+```
+
+
+| Strategy | Accuracy | First occurrence | Repeat | Cost |
+|---|---:|---:|---:|---:|
+| Static (no learn) | 0.0000 | — | — | — |
+| Virtual `Learn` | **0.2918** | 0.0000 | 0.2943 | 21 ms |
+| Retrain every 50 | 0.2884 | — | — | 2 213 ms |
+
+The pattern is structural. A new label is never predicted on its first occurrence, because the
+model has not seen it yet; after one `Learn`, the virtual category has enough mass on known terms
+to win a repeat about 29 % of the time. Retraining every 50 documents reaches nearly the same
+accuracy on this stream for about a hundred times the cost; it is the fallback when the label's
+vocabulary is unknown, not a cheaper alternative.
+This is the case the virtual category exists for, and the run is pinned in
+[`reference/classification-20news-subject-new-class.json`](https://github.com/manuc66/LexiSharp/blob/main/bench/LexiSharp.Eval/reference/classification-20news-subject-new-class.json).
+It is not a claim that correction replaces retraining: a label whose terms are all outside the
+vocabulary has no feature to carry the mass, and a retrain is the only way to learn it.
+
 Three limits matter when carrying these figures to another problem:
 
 - **Online updates correct, they do not retrain.** `Learn`/`Unlearn` fold one document into the

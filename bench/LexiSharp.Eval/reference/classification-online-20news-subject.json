@@ -1,0 +1,70 @@
+{
+  "dataset": "20news-bydate-subject",
+  "sourceMd5": "D6E9E45CB8CB77EC5276DFA6DFC14318",
+  "warmupDocuments": 5262,
+  "streamDocuments": 1315,
+  "warmupFraction": 0.8,
+  "blocks": 20,
+  "topK": 3,
+  "seed": 7,
+  "model": "nb",
+  "retrainEvery": 0,
+  "learn": true,
+  "coverageTarget": 0.5,
+  "orderHash": "0DFADC75E8BBEDF6D7828E644304E93987D44BD8FA7174AB5C798AB6FFF02CD8",
+  "accuracyAt1": 0.6859315589353612,
+  "accuracyAtK": 0.8387832699619772,
+  "macroF1": 0.6787301116106976,
+  "accuracyAt1Lower": 0.6669195751138088,
+  "accuracyAt1Upper": 0.7029702970297029,
+  "accuracyAtKLower": 0.8223234624145785,
+  "accuracyAtKUpper": 0.8546423135464232,
+  "macroF1Lower": 0.6480094024824729,
+  "macroF1Upper": 0.7010187972919365,
+  "learnCalls": 1315,
+  "retrainCalls": 0,
+  "textBuckets": [
+    {
+      "bucket": "text:seen",
+      "documents": 0,
+      "accuracy": 0,
+      "macroF1": 0,
+      "accuracyLower": 0,
+      "accuracyUpper": 0,
+      "macroF1Lower": 0,
+      "macroF1Upper": 0
+    },
+    {
+      "bucket": "text:never-seen",
+      "documents": 1315,
+      "accuracy": 0.6859315589353612,
+      "macroF1": 0.6787301116106976,
+      "accuracyLower": 0.6669195751138088,
+      "accuracyUpper": 0.7029702970297029,
+      "macroF1Lower": 0.6480094024824729,
+      "macroF1Upper": 0.7010187972919365
+    }
+  ],
+  "categoryBuckets": [
+    {
+      "bucket": "category:seen",
+      "documents": 1315,
+      "accuracy": 0.6859315589353612,
+      "macroF1": 0.6787301116106976,
+      "accuracyLower": 0.6669195751138088,
+      "accuracyUpper": 0.7029702970297029,
+      "macroF1Lower": 0.6480094024824729,
+      "macroF1Upper": 0.7010187972919365
+    },
+    {
+      "bucket": "category:never-seen",
+      "documents": 0,
+      "accuracy": 0,
+      "macroF1": 0,
+      "accuracyLower": 0,
+      "accuracyUpper": 0,
+      "macroF1Lower": 0,
+      "macroF1Upper": 0
+    }
+  ]
+}
