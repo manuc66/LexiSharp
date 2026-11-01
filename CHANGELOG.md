@@ -27,7 +27,9 @@ workflow.
   `FusedTextClassifier` blends two `ITextClassifier` posteriors by a weight that has to be tuned
   on validation. The eval harness gains `classification-centroid`, which measures both models and
   the blend on 20 Newsgroups with an E5 ONNX export. No model ships; the ONNX provider is the
-  `LexiSharp.Onnx` seam.
+  `LexiSharp.Onnx` seam. Prediction caches each centroid's norm at training time and the query's
+  once per call, so a category costs one dot product; only the returned categories become result
+  objects.
 
 ### Changed
 

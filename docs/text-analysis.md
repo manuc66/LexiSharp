@@ -269,9 +269,9 @@ category name, so the output is deterministic.
 
 ### What the centroids cost and how they read
 
-Training is one pass over the vectors plus the mean; prediction is one dot product and two norms
-per category — no term lookup, no vocabulary. The model holds `categories × dimension` floats, so
-an E5-small model over 20 categories is about 31 KB.
+Training is one pass over the vectors plus the mean and the centroid norms; prediction is one
+dot product per category against those cached norms — no term lookup, no vocabulary. The model
+holds `categories × dimension` floats, so an E5-small model over 20 categories is about 31 KB.
 
 Measured on the **subject-only** split of 20 Newsgroups (6,577 train / 3,761 test after the same
 deduplication the lexical lane uses), with `multilingual-e5-small` from Xenova's ONNX export in
