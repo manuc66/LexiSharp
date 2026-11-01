@@ -69,6 +69,7 @@ public static class Program
             typeof(TextRankBenchmarks),
             typeof(LevenshteinBenchmarks),
             typeof(ClassificationBenchmarks),
+            typeof(CentroidClassificationBenchmarks),
             typeof(StoreWriteBenchmarks),
             typeof(OnnxEncoderBenchmarks),
         });
