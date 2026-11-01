@@ -21,6 +21,26 @@ public enum FeatureState
 }
 
 /// <summary>
+/// What a feature's value means: a binary presence, a term count, or a numeric measurement.
+/// </summary>
+/// <remarks>
+/// The distinction is what lets a linear model apply sublinear TF-IDF to a count and a z-score to a
+/// measurement without applying either to the other. A feature with no value is
+/// <see cref="Binary"/>.
+/// </remarks>
+public enum FeatureKind
+{
+    /// <summary>The feature is present or absent; its value is 1 when present.</summary>
+    Binary,
+
+    /// <summary>The feature carries a count — a term frequency, typically.</summary>
+    Count,
+
+    /// <summary>The feature carries a numeric measurement.</summary>
+    Numeric,
+}
+
+/// <summary>
 /// The features of one item, as a question sees them: a set of names, no domain.
 /// </summary>
 /// <remarks>
@@ -59,6 +79,11 @@ public interface IFeatureSet
 
     /// <summary>The features the source could not determine, in no particular order.</summary>
     IReadOnlyCollection<string> UnknownFeatures { get; }
+
+    /// <summary>What the feature's value means. An absent or unknown feature is <see cref="FeatureKind.Binary"/>.</summary>
+    /// <param name="feature">The feature name to inspect.</param>
+    /// <returns>The feature's kind.</returns>
+    FeatureKind Kind(string feature);
 }
 
 /// <summary>
@@ -78,12 +103,13 @@ public sealed class FeatureSet : IFeatureSet
     private readonly string[]? _small;
     private readonly HashSet<string>? _large;
     private readonly Dictionary<string, double>? _numeric;
+    private readonly Dictionary<string, double>? _counts;
     private readonly HashSet<string>? _unknown;
 
     /// <summary>Creates a binary feature set from names; duplicates collapse.</summary>
     /// <param name="features">The feature names. Each must be non-empty.</param>
     public FeatureSet(IEnumerable<string> features)
-        : this(features, numericValues: null, unknownFeatures: null)
+        : this(features, numericValues: null, unknownFeatures: null, countValues: null)
     {
     }
 
@@ -97,7 +123,7 @@ public sealed class FeatureSet : IFeatureSet
     public FeatureSet(
         IEnumerable<string> features,
         IReadOnlyDictionary<string, double>? numericValues)
-        : this(features, numericValues, unknownFeatures: null)
+        : this(features, numericValues, unknownFeatures: null, countValues: null)
     {
     }
 
@@ -112,32 +138,79 @@ public sealed class FeatureSet : IFeatureSet
         IEnumerable<string> features,
         IReadOnlyDictionary<string, double>? numericValues,
         IEnumerable<string>? unknownFeatures)
+        : this(features, numericValues, unknownFeatures, countValues: null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a feature set from names, numeric values, counts and the features the source could
+    /// not determine. A feature cannot be both present and unknown, nor both numeric and a count.
+    /// </summary>
+    /// <param name="features">The present feature names. Each must be non-empty.</param>
+    /// <param name="numericValues">The numeric values, keyed by feature name; null for none.</param>
+    /// <param name="unknownFeatures">The features whose state is unknown; null when every feature is decided.</param>
+    /// <param name="countValues">The term counts, keyed by feature name; null for none.</param>
+    public FeatureSet(
+        IEnumerable<string> features,
+        IReadOnlyDictionary<string, double>? numericValues,
+        IEnumerable<string>? unknownFeatures,
+        IReadOnlyDictionary<string, double>? countValues)
     {
         ArgumentNullException.ThrowIfNull(features);
 
-        IReadOnlyList<string> buffer = features as IReadOnlyList<string> ?? features.ToList();
+        if (numericValues is not null && countValues is not null)
+        {
+            foreach (string feature in countValues.Keys)
+            {
+                if (numericValues.ContainsKey(feature))
+                    throw new ArgumentException("A feature cannot be both numeric and a count.", nameof(countValues));
+            }
+        }
 
-        if (numericValues is null || numericValues.Count == 0)
+        IReadOnlyList<string> buffer = features as IReadOnlyList<string> ?? features.ToList();
+        int extra = (numericValues?.Count ?? 0) + (countValues?.Count ?? 0);
+
+        if (extra == 0)
         {
             (_small, _large) = BuildNames(buffer, nameof(features));
         }
         else
         {
-            var combined = new string[buffer.Count + numericValues.Count];
+            var combined = new string[buffer.Count + extra];
             int count = 0;
 
             foreach (string feature in buffer)
                 combined[count++] = feature;
 
-            foreach (string feature in numericValues.Keys)
-                combined[count++] = feature;
+            if (numericValues is not null)
+            {
+                foreach (string feature in numericValues.Keys)
+                    combined[count++] = feature;
+            }
+
+            if (countValues is not null)
+            {
+                foreach (string feature in countValues.Keys)
+                    combined[count++] = feature;
+            }
 
             (_small, _large) = BuildNames(combined, nameof(features));
 
-            _numeric = new Dictionary<string, double>(numericValues.Count, StringComparer.Ordinal);
+            if (numericValues is not null)
+            {
+                _numeric = new Dictionary<string, double>(numericValues.Count, StringComparer.Ordinal);
 
-            foreach (var pair in numericValues)
-                _numeric[pair.Key] = pair.Value;
+                foreach (var pair in numericValues)
+                    _numeric[pair.Key] = pair.Value;
+            }
+
+            if (countValues is not null)
+            {
+                _counts = new Dictionary<string, double>(countValues.Count, StringComparer.Ordinal);
+
+                foreach (var pair in countValues)
+                    _counts[pair.Key] = pair.Value;
+            }
         }
 
         if (unknownFeatures is null)
@@ -189,7 +262,23 @@ public sealed class FeatureSet : IFeatureSet
     {
         ArgumentNullException.ThrowIfNull(feature);
 
+        if (_counts is not null && _counts.TryGetValue(feature, out double count))
+            return count;
+
         return _numeric is not null && _numeric.TryGetValue(feature, out double value) ? value : null;
+    }
+
+    /// <inheritdoc />
+    public FeatureKind Kind(string feature)
+    {
+        ArgumentNullException.ThrowIfNull(feature);
+
+        if (_counts is not null && _counts.ContainsKey(feature))
+            return FeatureKind.Count;
+
+        return _numeric is not null && _numeric.ContainsKey(feature)
+            ? FeatureKind.Numeric
+            : FeatureKind.Binary;
     }
 
     /// <inheritdoc />
@@ -285,16 +374,39 @@ public interface IFeatureSource<in TItem>
 public sealed class TextFeatureSource : IFeatureSource<SearchDocument>
 {
     private readonly ITokenizer _tokenizer;
+    private readonly bool _emitTermFrequency;
 
     /// <param name="tokenizer">Tokenizer used to reduce text to terms (default: <see cref="Tokenizer.Default"/>).</param>
-    public TextFeatureSource(ITokenizer? tokenizer = null) => _tokenizer = tokenizer ?? Tokenizer.Default;
+    /// <param name="emitTermFrequency">
+    /// When true, each term carries its count as a <see cref="FeatureKind.Count"/> feature, so a
+    /// linear model can apply sublinear TF-IDF. When false, terms are binary.
+    /// </param>
+    public TextFeatureSource(ITokenizer? tokenizer = null, bool emitTermFrequency = false)
+    {
+        _tokenizer = tokenizer ?? Tokenizer.Default;
+        _emitTermFrequency = emitTermFrequency;
+    }
 
     /// <inheritdoc />
     public IFeatureSet FeaturesOf(SearchDocument item)
     {
         ArgumentNullException.ThrowIfNull(item);
 
-        return new FeatureSet(_tokenizer.Tokenize(item.Text));
+        IReadOnlyList<string> terms = _tokenizer.Tokenize(item.Text);
+
+        if (!_emitTermFrequency)
+            return new FeatureSet(terms);
+
+        var counts = new Dictionary<string, double>(StringComparer.Ordinal);
+
+        foreach (string term in terms)
+            counts[term] = counts.TryGetValue(term, out double count) ? count + 1 : 1;
+
+        return new FeatureSet(
+            counts.Keys,
+            numericValues: null,
+            unknownFeatures: null,
+            countValues: counts);
     }
 }
 
@@ -334,6 +446,7 @@ public sealed class CompositeFeatureSource<TItem> : IFeatureSource<TItem>
         var union = new HashSet<string>(StringComparer.Ordinal);
         var unknown = new HashSet<string>(StringComparer.Ordinal);
         Dictionary<string, double>? numeric = null;
+        Dictionary<string, double>? counts = null;
 
         foreach (var source in _sources)
         {
@@ -343,11 +456,18 @@ public sealed class CompositeFeatureSource<TItem> : IFeatureSource<TItem>
             {
                 union.Add(feature);
 
-                if (features.NumericValue(feature) is not { } value)
-                    continue;
+                FeatureKind kind = features.Kind(feature);
 
-                numeric ??= new Dictionary<string, double>(StringComparer.Ordinal);
-                numeric[feature] = value;
+                if (kind == FeatureKind.Numeric && features.NumericValue(feature) is { } value)
+                {
+                    numeric ??= new Dictionary<string, double>(StringComparer.Ordinal);
+                    numeric[feature] = value;
+                }
+                else if (kind == FeatureKind.Count && features.NumericValue(feature) is { } count)
+                {
+                    counts ??= new Dictionary<string, double>(StringComparer.Ordinal);
+                    counts[feature] = count;
+                }
             }
 
             foreach (string feature in features.UnknownFeatures)
@@ -358,7 +478,7 @@ public sealed class CompositeFeatureSource<TItem> : IFeatureSource<TItem>
         foreach (string feature in union)
             unknown.Remove(feature);
 
-        return new FeatureSet(union, numeric, unknown);
+        return new FeatureSet(union, numeric, unknown, counts);
     }
 }
 
@@ -449,22 +569,30 @@ public sealed class UnknownIndicatorSource<TItem> : IFeatureSource<TItem>
 
         var present = new List<string>(inner.Features.Count + inner.UnknownFeatures.Count);
         Dictionary<string, double>? numeric = null;
+        Dictionary<string, double>? counts = null;
 
         foreach (string feature in inner.Features)
         {
             present.Add(feature);
 
-            if (inner.NumericValue(feature) is not { } value)
-                continue;
+            FeatureKind kind = inner.Kind(feature);
 
-            numeric ??= new Dictionary<string, double>(StringComparer.Ordinal);
-            numeric[feature] = value;
+            if (kind == FeatureKind.Numeric && inner.NumericValue(feature) is { } value)
+            {
+                numeric ??= new Dictionary<string, double>(StringComparer.Ordinal);
+                numeric[feature] = value;
+            }
+            else if (kind == FeatureKind.Count && inner.NumericValue(feature) is { } count)
+            {
+                counts ??= new Dictionary<string, double>(StringComparer.Ordinal);
+                counts[feature] = count;
+            }
         }
 
         foreach (string feature in inner.UnknownFeatures)
             present.Add(_prefix + feature);
 
-        return new FeatureSet(present, numeric);
+        return new FeatureSet(present, numeric, unknownFeatures: null, countValues: counts);
     }
 }
 
