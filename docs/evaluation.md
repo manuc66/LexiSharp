@@ -1283,11 +1283,20 @@ model — the same feature seam, a softmax over every feature at once — is the
 **0.8085**, ahead of Naive Bayes's **0.7573**. The tree and the forest are not the accuracy models;
 the linear model is.
 
-The linear model's calibration lane fits a temperature on the same 15 % validation slice and
-measures the test split before and after: **T = 1.04**, log-loss **0.7741 → 0.7650**, Brier
-**0.2855 → 0.2855**. The softmax was already nearly calibrated on this corpus, so the gain is
-small; the calibrator is generic, and the tree and forest distributions are the ones likely to
-need it, but their calibration is not measured here.
+The calibration lane fits a temperature on the same 15 % validation slice and measures the test
+split before and after:
+
+| Model | T | Log-loss raw → calibrated | Brier raw → calibrated |
+|---|---:|---:|---:|
+| Decision tree | 0.87 | 2.0196 → 2.0351 | 0.6653 → 0.6676 |
+| Random forest | 0.35 | 1.8156 → 1.2785 | 0.6713 → 0.4701 |
+| Linear | 1.04 | 0.7741 → 0.7650 | 0.2855 → 0.2855 |
+
+The tree's one temperature does not transfer: its test loss is slightly **worse**, because a
+leaf's smoothed mix is structurally overconfident, not a one-parameter error. The forest's
+averaged probabilities are underconfident, and a sharpening temperature (0.35) cuts its log-loss
+by **0.54**. The linear softmax was already close. One temperature is not a calibration guarantee;
+it is a measured correction.
 
 The pin stores each model's **per-class F1** and a **SHA-256 of its ordered predictions**, so a
 change that keeps the aggregate but moves an error still fails `--verify`. The paired McNemar

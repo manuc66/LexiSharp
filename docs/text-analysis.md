@@ -379,7 +379,9 @@ branches to a leaf and gets an answer, and no abstention option is offered here.
 A single tree is the explainable model. On sparse text it is not the accurate one: measured on
 20 Newsgroups, one tree reaches **0.446** accuracy against Naive Bayes's **0.757**. The forest is
 the accuracy answer — bootstrap samples and random feature subsets, averaged — and it deliberately
-has no `Explain`, because an ensemble's answer is not one path.
+has no `Explain`, because an ensemble's answer is not one path. It is a **bagged ensemble with a
+global feature subset per tree**, not Breiman's per-split `sqrt(p)` sampling; it has no
+out-of-bag estimate and no feature importance.
 
 ```csharp
 var forest = new RandomForestClassifier(new RandomForestOptions
@@ -433,8 +435,12 @@ positive temperature — and softens or sharpens the confidence. `CalibratedClas
 validation)` wraps a trained classifier with the fitted temperature, so `PredictBest` is unchanged
 and `Predict` reports the calibrated distribution. On 20 Newsgroups the linear model reads
 **T = 1.04**, log-loss **0.7741 → 0.7650**, Brier **0.2855 → 0.2855** — its softmax was already
-close. One parameter cannot repair a model that is systematically wrong, and a temperature fitted
-on one corpus need not transfer to another: measure log-loss on held-out data after applying it.
+close. The forest's averaged probabilities are underconfident: **T = 0.35**, log-loss
+**1.8156 → 1.2785**, Brier **0.6713 → 0.4701**. The tree's **T = 0.87** does not transfer — its
+test loss is slightly worse — because a leaf's smoothed mix is structurally overconfident, not a
+one-parameter error. One parameter cannot repair a model that is systematically wrong, and a
+temperature fitted on one corpus need not transfer to another: measure log-loss on held-out data
+after applying it.
 
 The linear model has the same correction loop as the tree. `Reinforce(text, category, weight)`
 adds signed mass to the item's features for the category, `Unreinforce` removes it exactly,

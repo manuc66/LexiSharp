@@ -251,14 +251,17 @@ internal static class ClassificationEvaluation
     /// calibrated log-loss and Brier of the full-train model on test. The test split is never used
     /// to fit the temperature.
     /// </summary>
-    public static CalibrationMetrics MeasureLinearCalibration(
+    public static CalibrationMetrics MeasureCalibration(
+        string method,
         IReadOnlyList<ClassificationDocument> train,
         IReadOnlyList<ClassificationDocument> test,
-        LinearClassifierOptions options,
-        double validationFraction)
+        double validationFraction,
+        Func<ITextClassifier> factory)
     {
+        ArgumentNullException.ThrowIfNull(factory);
+
         var split = HoldOut(train, validationFraction);
-        var validationModel = new LinearClassifier(options: options);
+        var validationModel = factory();
         validationModel.Train(split.Fit.Select(ToSearchDocument));
 
         var validationSamples = split.Validation
@@ -268,7 +271,7 @@ internal static class ClassificationEvaluation
             .ToList();
         var calibrator = TemperatureCalibrator.Fit(validationSamples);
 
-        var testModel = new LinearClassifier(options: options);
+        var testModel = factory();
         testModel.Train(train.Select(ToSearchDocument));
 
         var testSamples = test
@@ -281,13 +284,25 @@ internal static class ClassificationEvaluation
         var (calibratedLogLoss, calibratedBrier) = CalibrationScore(testSamples, calibrator);
 
         return new CalibrationMetrics(
-            "Linear",
+            method,
             calibrator.Temperature,
             logLoss,
             calibratedLogLoss,
             brier,
             calibratedBrier);
     }
+
+    public static CalibrationMetrics MeasureLinearCalibration(
+        IReadOnlyList<ClassificationDocument> train,
+        IReadOnlyList<ClassificationDocument> test,
+        LinearClassifierOptions options,
+        double validationFraction) =>
+        MeasureCalibration(
+            "Linear",
+            train,
+            test,
+            validationFraction,
+            () => new LinearClassifier(options: options));
 
     internal static (double LogLoss, double Brier) CalibrationScore(
         IReadOnlyList<CalibrationSample> samples,
