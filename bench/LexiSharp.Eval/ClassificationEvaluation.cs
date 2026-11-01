@@ -345,12 +345,15 @@ internal static class ClassificationEvaluation
         return count == 0 ? (0, 0) : (logLoss / count, brier / count);
     }
 
-    public static ClassificationMetrics MeasureLinear(
+    public static ClassificationMetrics MeasureClassifier(
+        string method,
         IReadOnlyList<ClassificationDocument> train,
         IReadOnlyList<ClassificationDocument> test,
-        LinearClassifierOptions options)
+        Func<ITextClassifier> factory)
     {
-        var classifier = new LinearClassifier(options: options);
+        ArgumentNullException.ThrowIfNull(factory);
+
+        var classifier = factory();
 
         var trainTime = Stopwatch.StartNew();
         classifier.Train(train.Select(ToSearchDocument));
@@ -364,8 +367,18 @@ internal static class ClassificationEvaluation
 
         predictTime.Stop();
 
-        return Score("Linear", test, predictions, double.NaN, trainTime.Elapsed, predictTime.Elapsed);
+        return Score(method, test, predictions, double.NaN, trainTime.Elapsed, predictTime.Elapsed);
     }
+
+    public static ClassificationMetrics MeasureLinear(
+        IReadOnlyList<ClassificationDocument> train,
+        IReadOnlyList<ClassificationDocument> test,
+        LinearClassifierOptions options) =>
+        MeasureClassifier(
+            "Linear",
+            train,
+            test,
+            () => new LinearClassifier(options: options));
 
     public static ClassificationMetrics MeasureRandomForest(
         IReadOnlyList<ClassificationDocument> train,

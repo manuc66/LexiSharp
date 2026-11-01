@@ -152,7 +152,8 @@ was designed from:
   and its test loss is slightly worse. The forest is a bagged ensemble with a global feature
   subset per tree, not Breiman's per-split sampling; it has no OOB estimate or feature importance.
   `IdfWeighting` is available and measured a loss on 20NG (**0.7753 / 0.7682** against
-  **0.8085 / 0.8027**), so it is off by default. The command and the pin are in
+  **0.8085 / 0.8027**), and sublinear TF-IDF (`emitTermFrequency: true` plus `IdfWeighting`) lost
+  too (**0.7757 / 0.7676**), so both are off by default. The command and the pin are in
   [Evaluation](evaluation.md#classification-on-20-newsgroups); [Benchmarks](benchmarks.md#classification-classificationbenchmarks)
   reports cost. Measure on your own labels before trusting either. See
   [question trees](text-analysis.md#question-trees-classification-and-corpus-division).

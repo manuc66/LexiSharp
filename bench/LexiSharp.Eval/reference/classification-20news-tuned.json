@@ -16,6 +16,7 @@
   "linearLearningRate": 0.1,
   "linearL2": 0.0001,
   "linearIdf": false,
+  "linearTfIdf": false,
   "calibration": [
     {
       "method": "Decision tree",
