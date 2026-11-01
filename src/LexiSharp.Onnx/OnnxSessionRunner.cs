@@ -15,6 +15,7 @@ internal static class OnnxSessionRunner
         string[] inputNames,
         string[] outputNames,
         TensorElementType inputType,
+        int padTokenId,
         OnnxTokenizedText[] batch,
         CancellationToken cancellationToken,
         CancellationToken disposeToken,
@@ -27,6 +28,7 @@ internal static class OnnxSessionRunner
 
         int elements = batch.Length * sequenceLength;
         long[] ids = new long[elements];
+        Array.Fill(ids, padTokenId);
         long[] mask = new long[elements];
         long[] types = new long[elements];
 

@@ -94,6 +94,14 @@ public sealed class SentencePieceOnnxTokenizerTests
     }
 
     [Fact]
+    public void Fingerprint_ChangesWithTheSpecialTokenOptions()
+    {
+        Assert.NotEqual(
+            Tokenizer().Fingerprint,
+            Tokenizer(new SentencePieceOnnxTokenizerOptions { PrefixId = 0 }).Fingerprint);
+    }
+
+    [Fact]
     public void Fingerprint_IsExposed()
     {
         Assert.False(string.IsNullOrEmpty(Tokenizer().Fingerprint));

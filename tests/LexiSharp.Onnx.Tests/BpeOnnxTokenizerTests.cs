@@ -162,6 +162,14 @@ public sealed class BpeOnnxTokenizerTests
     }
 
     [Fact]
+    public void Fingerprint_ChangesWithTheByteLevelOverride()
+    {
+        Assert.NotEqual(
+            new BpeOnnxTokenizer(Fixture("tiny-bpe.json")).Fingerprint,
+            new BpeOnnxTokenizer(Fixture("tiny-bpe.json"), new BpeOnnxTokenizerOptions { ByteLevel = false }).Fingerprint);
+    }
+
+    [Fact]
     public void Fingerprint_IsExposed()
     {
         Assert.False(string.IsNullOrEmpty(new BpeOnnxTokenizer(Fixture("tiny-bpe.json")).Fingerprint));

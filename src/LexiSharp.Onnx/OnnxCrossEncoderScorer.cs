@@ -50,6 +50,36 @@ public sealed class OnnxCrossEncoderScorer : ICrossEncoderScorer, IDisposable
     /// <exception cref="NotSupportedException">The graph's tensor types or output rank are not supported.</exception>
     public OnnxCrossEncoderScorer(OnnxCrossEncoderOptions options)
     {
+        ValidateOptions(options);
+
+        _options = options;
+        _session = OnnxSessionFactory.Create(
+            options.ModelPath,
+            options.IntraOpNumThreads,
+            options.InterOpNumThreads,
+            options.ConfigureSession);
+
+        try
+        {
+            var input = OnnxGraphMetadata.ReadInputs(
+                _session, options.InputIdsName, options.AttentionMaskName, options.TokenTypeIdsName);
+            _inputType = input.InputType;
+            _inputNames = input.InputNames;
+
+            var output = ReadOutputMetadata(_session, options);
+            _outputType = output.OutputType;
+            _outputRank = output.Rank;
+            _outputNames = [options.OutputName];
+        }
+        catch
+        {
+            _session.Dispose();
+            throw;
+        }
+    }
+
+    private static void ValidateOptions(OnnxCrossEncoderOptions options)
+    {
         ArgumentNullException.ThrowIfNull(options);
 
         if (string.IsNullOrWhiteSpace(options.ModelPath))
@@ -72,56 +102,30 @@ public sealed class OnnxCrossEncoderScorer : ICrossEncoderScorer, IDisposable
         if (options.ScoreIndex < 0)
             throw new ArgumentException("ScoreIndex cannot be negative.", nameof(options));
 
-        _options = options;
-        _session = OnnxSessionFactory.Create(
-            options.ModelPath,
-            options.IntraOpNumThreads,
-            options.InterOpNumThreads,
-            options.ConfigureSession);
+        if (options.PadTokenId < 0)
+            throw new ArgumentException("PadTokenId cannot be negative.", nameof(options));
+    }
 
-        try
-        {
-            if (!_session.InputMetadata.TryGetValue(options.InputIdsName, out NodeMetadata? idsMetadata))
-                throw new ArgumentException($"The model declares no input named '{options.InputIdsName}'.", nameof(options));
+    private static (TensorElementType OutputType, int Rank) ReadOutputMetadata(
+        InferenceSession session,
+        OnnxCrossEncoderOptions options)
+    {
+        if (!session.OutputMetadata.TryGetValue(options.OutputName, out NodeMetadata? output))
+            throw new ArgumentException($"The model declares no output named '{options.OutputName}'.", nameof(options));
 
-            if (!_session.InputMetadata.TryGetValue(options.AttentionMaskName, out NodeMetadata? maskMetadata))
-                throw new ArgumentException($"The model declares no input named '{options.AttentionMaskName}'.", nameof(options));
+        TensorElementType outputType = output.ElementDataType;
 
-            _inputType = idsMetadata.ElementDataType;
+        if (outputType is not (TensorElementType.Float or TensorElementType.Float16))
+            throw new NotSupportedException(
+                $"Output '{options.OutputName}' is {outputType}; only Float and Float16 are supported.");
 
-            if (_inputType is not (TensorElementType.Int64 or TensorElementType.Int32))
-                throw new NotSupportedException(
-                    $"Input '{options.InputIdsName}' is {_inputType}; only Int64 and Int32 token ids are supported.");
+        int rank = output.Dimensions.Length;
 
-            if (maskMetadata.ElementDataType != _inputType)
-                throw new NotSupportedException(
-                    $"Inputs '{options.InputIdsName}' and '{options.AttentionMaskName}' use different element types.");
+        if (rank is not (1 or 2))
+            throw new NotSupportedException(
+                $"Output '{options.OutputName}' has rank {rank}; expected [batch, labels] or [batch].");
 
-            if (!_session.OutputMetadata.TryGetValue(options.OutputName, out NodeMetadata? outputMetadata))
-                throw new ArgumentException($"The model declares no output named '{options.OutputName}'.", nameof(options));
-
-            _outputType = outputMetadata.ElementDataType;
-
-            if (_outputType is not (TensorElementType.Float or TensorElementType.Float16))
-                throw new NotSupportedException(
-                    $"Output '{options.OutputName}' is {_outputType}; only Float and Float16 are supported.");
-
-            _outputRank = outputMetadata.Dimensions.Length;
-
-            if (_outputRank is not (1 or 2))
-                throw new NotSupportedException(
-                    $"Output '{options.OutputName}' has rank {_outputRank}; expected [batch, labels] or [batch].");
-
-            _outputNames = [options.OutputName];
-            _inputNames = options.TokenTypeIdsName is not null && _session.InputMetadata.ContainsKey(options.TokenTypeIdsName)
-                ? [options.InputIdsName, options.AttentionMaskName, options.TokenTypeIdsName]
-                : [options.InputIdsName, options.AttentionMaskName];
-        }
-        catch
-        {
-            _session.Dispose();
-            throw;
-        }
+        return (outputType, rank);
     }
 
     /// <inheritdoc />
@@ -216,6 +220,7 @@ public sealed class OnnxCrossEncoderScorer : ICrossEncoderScorer, IDisposable
             _inputNames,
             _outputNames,
             _inputType,
+            _options.PadTokenId,
             batch,
             cancellationToken,
             _disposeCancellation.Token,
@@ -328,5 +333,4 @@ public sealed class OnnxCrossEncoderScorer : ICrossEncoderScorer, IDisposable
 
         return Math.Exp(output[rowStart + index] - max) / sum;
     }
-
 }

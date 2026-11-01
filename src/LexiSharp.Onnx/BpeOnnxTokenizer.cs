@@ -103,60 +103,16 @@ public sealed class BpeOnnxTokenizer : IOnnxTokenizer
                 $"The tokenizer file is larger than MaxFileBytes ({_options.MaxFileBytes} bytes).");
 
         string json = File.ReadAllText(tokenizerJsonPath);
-        _fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
 
         using JsonDocument document = JsonDocument.Parse(json);
         JsonElement root = document.RootElement;
 
-        if (!root.TryGetProperty("model", out JsonElement model))
-            throw new ArgumentException("The file has no 'model' section.", nameof(tokenizerJsonPath));
-
-        string type = model.TryGetProperty("type", out JsonElement typeElement) ? typeElement.GetString() ?? string.Empty : string.Empty;
-
-        // Older exports (GPT-2's tokenizer.json among them) omit the type and only carry
-        // vocab + merges; treat that shape as BPE rather than rejecting a usable file.
-        if (type.Length > 0 && !string.Equals(type, "BPE", StringComparison.OrdinalIgnoreCase))
-            throw new NotSupportedException($"The tokenizer model is '{type}'; BpeOnnxTokenizer only reads BPE.");
-
-        if (!model.TryGetProperty("vocab", out JsonElement vocabulary))
-            throw new InvalidOperationException("The tokenizer model has no 'vocab' section.");
-
+        JsonElement model = ReadModel(root, tokenizerJsonPath);
+        Dictionary<string, int> tokens = ReadVocabulary(model);
+        List<string> merges = ReadMerges(model);
+        Dictionary<string, int> special = ReadSpecialTokens(root);
+        string? unknown = ReadUnknownToken(model);
         bool byteLevel = _options.ByteLevel ?? InferByteLevel(root);
-
-        Dictionary<string, int> tokens = [];
-
-        foreach (JsonProperty entry in vocabulary.EnumerateObject())
-            tokens[entry.Name] = entry.Value.GetInt32();
-
-        List<string> merges = [];
-
-        if (model.TryGetProperty("merges", out JsonElement mergeElement))
-        {
-            foreach (JsonElement merge in mergeElement.EnumerateArray())
-            {
-                merges.Add(merge.ValueKind == JsonValueKind.String
-                    ? merge.GetString()!
-                    : string.Join(' ', merge.EnumerateArray().Select(part => part.GetString())));
-            }
-        }
-
-        Dictionary<string, int> special = _options.SpecialTokens is null
-            ? []
-            : new Dictionary<string, int>(_options.SpecialTokens);
-
-        if (root.TryGetProperty("added_tokens", out JsonElement added))
-        {
-            foreach (JsonElement token in added.EnumerateArray())
-            {
-                if (token.TryGetProperty("content", out JsonElement content) && token.TryGetProperty("id", out JsonElement id))
-                    special.TryAdd(content.GetString()!, id.GetInt32());
-            }
-        }
-
-        string? unknown = _options.UnknownToken;
-
-        if (unknown is null && model.TryGetProperty("unk_token", out JsonElement unknownElement))
-            unknown = unknownElement.ValueKind == JsonValueKind.String ? unknownElement.GetString() : null;
 
         RejectUnsupportedNormalizer(root);
         RejectUnsupportedPreTokenizer(root);
@@ -166,7 +122,15 @@ public sealed class BpeOnnxTokenizer : IOnnxTokenizer
         _singleTemplate = single;
         _pairTemplate = pair;
 
-        var bpeOptions = new BpeOptions(tokens)
+        string specialHash = string.Join(';', special.OrderBy(pair => pair.Key, StringComparer.Ordinal)
+            .Select(pair => $"{pair.Key}={pair.Value}"));
+        string configuration =
+            $"{json}|{byteLevel}|{_options.ByteLevel}|{_options.UnknownToken}|{_options.ContinuingSubwordPrefix}|" +
+            $"{_options.EndOfWordSuffix}|{_options.BeginningOfSentenceToken}|{_options.EndOfSentenceToken}|" +
+            $"{_options.Normalizer?.GetType().FullName}|{_options.PreTokenizer?.GetType().FullName}|{specialHash}";
+        _fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(configuration)));
+
+        _tokenizer = BpeTokenizer.Create(new BpeOptions(tokens)
         {
             Merges = merges,
             ByteLevel = byteLevel,
@@ -178,9 +142,82 @@ public sealed class BpeOnnxTokenizer : IOnnxTokenizer
             EndOfSentenceToken = _options.EndOfSentenceToken,
             Normalizer = _options.Normalizer,
             PreTokenizer = _options.PreTokenizer ?? (byteLevel ? RobertaPreTokenizer.Instance : null),
-        };
+        });
+    }
 
-        _tokenizer = BpeTokenizer.Create(bpeOptions);
+    private static JsonElement ReadModel(JsonElement root, string path)
+    {
+        if (!root.TryGetProperty("model", out JsonElement model))
+            throw new ArgumentException("The file has no 'model' section.", nameof(path));
+
+        string type = model.TryGetProperty("type", out JsonElement typeElement)
+            ? typeElement.GetString() ?? string.Empty
+            : string.Empty;
+
+        // Older exports (GPT-2's tokenizer.json among them) omit the type and only carry
+        // vocab + merges; treat that shape as BPE rather than rejecting a usable file.
+        if (type.Length > 0 && !string.Equals(type, "BPE", StringComparison.OrdinalIgnoreCase))
+            throw new NotSupportedException($"The tokenizer model is '{type}'; BpeOnnxTokenizer only reads BPE.");
+
+        return model;
+    }
+
+    private static Dictionary<string, int> ReadVocabulary(JsonElement model)
+    {
+        if (!model.TryGetProperty("vocab", out JsonElement vocabulary))
+            throw new InvalidOperationException("The tokenizer model has no 'vocab' section.");
+
+        Dictionary<string, int> tokens = [];
+
+        foreach (JsonProperty entry in vocabulary.EnumerateObject())
+            tokens[entry.Name] = entry.Value.GetInt32();
+
+        return tokens;
+    }
+
+    private static List<string> ReadMerges(JsonElement model)
+    {
+        List<string> merges = [];
+
+        if (!model.TryGetProperty("merges", out JsonElement mergeElement))
+            return merges;
+
+        foreach (JsonElement merge in mergeElement.EnumerateArray())
+        {
+            merges.Add(merge.ValueKind == JsonValueKind.String
+                ? merge.GetString()!
+                : string.Join(' ', merge.EnumerateArray().Select(part => part.GetString())));
+        }
+
+        return merges;
+    }
+
+    private Dictionary<string, int> ReadSpecialTokens(JsonElement root)
+    {
+        Dictionary<string, int> special = _options.SpecialTokens is null
+            ? []
+            : new Dictionary<string, int>(_options.SpecialTokens);
+
+        if (!root.TryGetProperty("added_tokens", out JsonElement added))
+            return special;
+
+        foreach (JsonElement token in added.EnumerateArray())
+        {
+            if (token.TryGetProperty("content", out JsonElement content) && token.TryGetProperty("id", out JsonElement id))
+                special.TryAdd(content.GetString()!, id.GetInt32());
+        }
+
+        return special;
+    }
+
+    private string? ReadUnknownToken(JsonElement model)
+    {
+        if (_options.UnknownToken is not null)
+            return _options.UnknownToken;
+
+        return model.TryGetProperty("unk_token", out JsonElement unknown) && unknown.ValueKind == JsonValueKind.String
+            ? unknown.GetString()
+            : null;
     }
 
     /// <inheritdoc />

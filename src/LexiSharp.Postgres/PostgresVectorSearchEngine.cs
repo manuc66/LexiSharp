@@ -176,69 +176,91 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
 
         // Two processes can create the same table concurrently; the advisory lock serializes the
         // read-then-write of the signature row without needing the row to exist yet.
-        await using NpgsqlTransaction signatureTransaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
-        await using (var lockCommand = connection.CreateCommand())
+        await ExecuteAsync(connection, transaction, "SELECT pg_advisory_xact_lock(hashtext(@key));", cancellationToken, meta).ConfigureAwait(false);
+        await ExecuteAsync(connection, transaction, $"CREATE TABLE IF NOT EXISTS {meta} (key text PRIMARY KEY, value text NOT NULL);", cancellationToken).ConfigureAwait(false);
+
+        string? existing = await ReadSignatureAsync(connection, transaction, meta, cancellationToken).ConfigureAwait(false);
+
+        if (!string.Equals(existing, signature, StringComparison.Ordinal))
         {
-            lockCommand.Transaction = signatureTransaction;
-            lockCommand.CommandText = "SELECT pg_advisory_xact_lock(hashtext(@key));";
-            lockCommand.Parameters.AddWithValue("key", meta);
-            await lockCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        await using (var command = connection.CreateCommand())
-        {
-            command.Transaction = signatureTransaction;
-            command.CommandText = $"CREATE TABLE IF NOT EXISTS {meta} (key text PRIMARY KEY, value text NOT NULL);"; // NOSONAR:S2077
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        string? existing;
-
-        await using (var command = connection.CreateCommand())
-        {
-            command.Transaction = signatureTransaction;
-            command.CommandText = $"SELECT value FROM {meta} WHERE key = 'embedding_signature';"; // NOSONAR:S2077
-            existing = (string?)await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        if (existing is null)
-        {
-            long rows;
-
-            await using (var command = connection.CreateCommand())
+            if (existing is null)
             {
-                command.Transaction = signatureTransaction;
-                command.CommandText = $"SELECT COUNT(*) FROM {_options.QualifiedTableName};"; // NOSONAR:S2077
-                rows = (long)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
-            }
+                long rows = await CountRowsAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
 
-            if (rows > 0 && !_options.AllowSignatureMismatch)
-                throw new InvalidOperationException(
-                    $"The table '{_options.QualifiedTableName}' has {rows} row(s) but no embedding signature. " +
-                    "Its vectors cannot be tied to the current provider; re-embed the corpus, or set " +
-                    "AllowSignatureMismatch to adopt it knowingly.");
-        }
-        else if (!string.Equals(existing, signature, StringComparison.Ordinal))
-        {
-            if (!_options.AllowSignatureMismatch)
+                if (rows > 0 && !_options.AllowSignatureMismatch)
+                    throw new InvalidOperationException(
+                        $"The table '{_options.QualifiedTableName}' has {rows} row(s) but no embedding signature. " +
+                        "Its vectors cannot be tied to the current provider; re-embed the corpus, or set " +
+                        "AllowSignatureMismatch to adopt it knowingly.");
+            }
+            else if (!_options.AllowSignatureMismatch)
+            {
                 throw new InvalidOperationException(
                     $"The table '{_options.QualifiedTableName}' was built with embedding signature '{existing}', " +
                     $"not '{signature}'. Re-embed the corpus, or set AllowSignatureMismatch to adopt it knowingly.");
-        }
-        else
-        {
-            return;
+            }
+
+            await WriteSignatureAsync(connection, transaction, meta, signature, existing is null, cancellationToken).ConfigureAwait(false);
         }
 
-        await using var write = connection.CreateCommand();
-        write.Transaction = signatureTransaction;
-        write.CommandText = existing is null
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task ExecuteAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string sql,
+        CancellationToken cancellationToken,
+        string? key = null)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql; // NOSONAR:S2077 (identifiers are validated and quoted; values are parameters)
+        if (key is not null)
+            command.Parameters.AddWithValue("key", key);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<string?> ReadSignatureAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string meta,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"SELECT value FROM {meta} WHERE key = 'embedding_signature';"; // NOSONAR:S2077
+        return (string?)await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<long> CountRowsAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"SELECT COUNT(*) FROM {_options.QualifiedTableName};"; // NOSONAR:S2077
+        return (long)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
+    }
+
+    private static async Task WriteSignatureAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string meta,
+        string signature,
+        bool insert,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = insert
             ? $"INSERT INTO {meta} (key, value) VALUES ('embedding_signature', @signature) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;" // NOSONAR:S2077
             : $"UPDATE {meta} SET value = @signature WHERE key = 'embedding_signature';"; // NOSONAR:S2077
-        write.Parameters.AddWithValue("signature", signature);
-        await write.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        await signatureTransaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        command.Parameters.AddWithValue("signature", signature);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task CreateIndexAsync(NpgsqlConnection connection, string column, string indexBase, CancellationToken cancellationToken)
@@ -296,49 +318,9 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
             ArgumentNullException.ThrowIfNull(documents[i]);
 
         // Embed before opening the transaction: a model call is the slowest step and holding the
-        // table lock for its duration would block every reader. The vectors are held in memory
-        // (small: one float per dimension) while the tokenizer's per-batch arrays are chunked.
-        List<string>? columns = null;
-        float[][]? singleVectors = null;
-        float[][][]? columnVectors = null;
+        // table lock for its duration would block every reader.
+        EmbeddedCorpus embedded = await EmbedCorpusAsync(documents, cancellationToken).ConfigureAwait(false);
 
-        if (_options.EmbeddingColumns is { Count: > 0 } sources)
-        {
-            columns = sources.Keys.ToList();
-            var perColumn = new float[columns.Count][][];
-
-            for (int c = 0; c < columns.Count; c++)
-            {
-                string[] texts = new string[documents.Count];
-
-                for (int i = 0; i < documents.Count; i++)
-                    texts[i] = EmbeddingSource(documents[i], sources[columns[c]]);
-
-                perColumn[c] = await EmbedTextsAsync(texts, columns[c], cancellationToken).ConfigureAwait(false);
-            }
-
-            columnVectors = new float[documents.Count][][];
-
-            for (int i = 0; i < documents.Count; i++)
-            {
-                columnVectors[i] = new float[columns.Count][];
-
-                for (int c = 0; c < columns.Count; c++)
-                    columnVectors[i][c] = perColumn[c][i];
-            }
-        }
-        else
-        {
-            string[] texts = new string[documents.Count];
-
-            for (int i = 0; i < documents.Count; i++)
-                texts[i] = EmbeddingSource(documents[i], _options.EmbeddingTextField);
-
-            singleVectors = await EmbedTextsAsync(texts, column: null, cancellationToken).ConfigureAwait(false);
-        }
-
-        // Truncate and insert in one short transaction: a failed insert rolls the whole
-        // replacement back, so the previous corpus stays queryable.
         await using NpgsqlConnection connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
@@ -349,18 +331,73 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        if (columns is not null)
+        await InsertEmbeddedAsync(connection, transaction, documents, embedded, cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private sealed record EmbeddedCorpus(
+        List<string>? Columns,
+        float[][]? SingleVectors,
+        float[][][]? ColumnVectors);
+
+    private async Task<EmbeddedCorpus> EmbedCorpusAsync(
+        IReadOnlyList<SearchDocument> documents,
+        CancellationToken cancellationToken)
+    {
+        if (_options.EmbeddingColumns is not { Count: > 0 } sources)
         {
+            string[] texts = new string[documents.Count];
+
             for (int i = 0; i < documents.Count; i++)
-                await InsertMultiAsync(connection, transaction, documents[i], columns, columnVectors![i], cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            for (int i = 0; i < documents.Count; i++)
-                await InsertSingleAsync(connection, transaction, documents[i], singleVectors![i], cancellationToken).ConfigureAwait(false);
+                texts[i] = EmbeddingSource(documents[i], _options.EmbeddingTextField);
+
+            float[][] single = await EmbedTextsAsync(texts, column: null, cancellationToken).ConfigureAwait(false);
+            return new EmbeddedCorpus(Columns: null, single, ColumnVectors: null);
         }
 
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        List<string> columns = sources.Keys.ToList();
+        var perColumn = new float[columns.Count][][];
+
+        for (int c = 0; c < columns.Count; c++)
+        {
+            string[] texts = new string[documents.Count];
+
+            for (int i = 0; i < documents.Count; i++)
+                texts[i] = EmbeddingSource(documents[i], sources[columns[c]]);
+
+            perColumn[c] = await EmbedTextsAsync(texts, columns[c], cancellationToken).ConfigureAwait(false);
+        }
+
+        var columnVectors = new float[documents.Count][][];
+
+        for (int i = 0; i < documents.Count; i++)
+        {
+            columnVectors[i] = new float[columns.Count][];
+
+            for (int c = 0; c < columns.Count; c++)
+                columnVectors[i][c] = perColumn[c][i];
+        }
+
+        return new EmbeddedCorpus(columns, SingleVectors: null, columnVectors);
+    }
+
+    private async Task InsertEmbeddedAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        IReadOnlyList<SearchDocument> documents,
+        EmbeddedCorpus embedded,
+        CancellationToken cancellationToken)
+    {
+        if (embedded.Columns is not null)
+        {
+            for (int i = 0; i < documents.Count; i++)
+                await InsertMultiAsync(connection, transaction, documents[i], embedded.Columns, embedded.ColumnVectors![i], cancellationToken).ConfigureAwait(false);
+
+            return;
+        }
+
+        for (int i = 0; i < documents.Count; i++)
+            await InsertSingleAsync(connection, transaction, documents[i], embedded.SingleVectors![i], cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<float[][]> EmbedTextsAsync(
