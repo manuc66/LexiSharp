@@ -630,9 +630,20 @@ internal static class ClassificationEvaluation
             return new CoverageReport(method, new[] { empty }, empty);
         }
 
-        var outcomes = new (double Probability, bool Correct)[total];
+        var outcomes = CollectOutcomes(test, predict);
+        var points = BuildCurve(outcomes, total);
+        CoveragePoint recommended = Recommend(outcomes, total, minimumCoverage) ?? points[0];
 
-        for (int i = 0; i < total; i++)
+        return new CoverageReport(method, points, recommended);
+    }
+
+    private static (double Probability, bool Correct)[] CollectOutcomes(
+        IReadOnlyList<ClassificationDocument> test,
+        Func<string, IReadOnlyList<ClassificationResult>> predict)
+    {
+        var outcomes = new (double Probability, bool Correct)[test.Count];
+
+        for (int i = 0; i < test.Count; i++)
         {
             IReadOnlyList<ClassificationResult> distribution = predict(test[i].Text);
             double probability = distribution.Count > 0 ? distribution[0].Probability : 0;
@@ -642,35 +653,49 @@ internal static class ClassificationEvaluation
         }
 
         Array.Sort(outcomes, static (left, right) => right.Probability.CompareTo(left.Probability));
+        return outcomes;
+    }
 
+    private static List<CoveragePoint> BuildCurve(
+        (double Probability, bool Correct)[] outcomes,
+        int total)
+    {
         var points = new List<CoveragePoint>(11);
 
         for (int step = 0; step <= 10; step++)
         {
             double threshold = step / 10.0;
-            int gridCovered = 0;
-            int gridCorrect = 0;
+            int covered = 0;
+            int correct = 0;
 
             foreach (var outcome in outcomes)
             {
                 if (outcome.Probability < threshold)
                     continue;
 
-                gridCovered++;
-                gridCorrect += outcome.Correct ? 1 : 0;
+                covered++;
+                correct += outcome.Correct ? 1 : 0;
             }
 
             points.Add(new CoveragePoint(
                 threshold,
-                gridCovered,
+                covered,
                 total,
-                (double)gridCovered / total,
-                gridCovered == 0 ? 0 : (double)gridCorrect / gridCovered));
+                (double)covered / total,
+                covered == 0 ? 0 : (double)correct / covered));
         }
 
+        return points;
+    }
+
+    private static CoveragePoint? Recommend(
+        (double Probability, bool Correct)[] outcomes,
+        int total,
+        double minimumCoverage)
+    {
         CoveragePoint? recommended = null;
         int covered = 0;
-        int correctCovered = 0;
+        int correct = 0;
         int index = 0;
 
         while (index < total)
@@ -681,7 +706,7 @@ internal static class ClassificationEvaluation
             while (next < total && outcomes[next].Probability == probability)
             {
                 covered++;
-                correctCovered += outcomes[next].Correct ? 1 : 0;
+                correct += outcomes[next].Correct ? 1 : 0;
                 next++;
             }
 
@@ -694,7 +719,7 @@ internal static class ClassificationEvaluation
                     covered,
                     total,
                     coverage,
-                    (double)correctCovered / covered);
+                    (double)correct / covered);
 
                 if (recommended is null
                     || point.Precision > recommended.Precision + 1e-12
@@ -708,8 +733,7 @@ internal static class ClassificationEvaluation
             index = next;
         }
 
-        recommended ??= points[0];
-        return new CoverageReport(method, points, recommended);
+        return recommended;
     }
 
     /// <summary>
@@ -824,17 +848,19 @@ internal static class ClassificationEvaluation
     private static double Erfc(double x)
     {
         double z = Math.Abs(x);
-        double t = 1.0 / (1.0 + 0.5 * z);
-        double result = t * Math.Exp(
-            -z * z - 1.26551223
-            + t * (1.00002368
-                + t * (0.37409196
-                    + t * (0.09678418
-                        + t * (-0.18628806
-                            + t * (0.27886807
-                                + t * (-1.13520398
-                                    + t * (1.48851587
-                                        + t * (-0.82215223 + t * 0.17087277)))))))));
+        double t = 1.0 / (1.0 + (0.5 * z));
+
+        // Horner form: one addition per coefficient, and no mixed-operator ambiguity.
+        double polynomial = -0.82215223 + (t * 0.17087277);
+        polynomial = 1.48851587 + (t * polynomial);
+        polynomial = -1.13520398 + (t * polynomial);
+        polynomial = 0.27886807 + (t * polynomial);
+        polynomial = -0.18628806 + (t * polynomial);
+        polynomial = 0.09678418 + (t * polynomial);
+        polynomial = 0.37409196 + (t * polynomial);
+        polynomial = 1.00002368 + (t * polynomial);
+
+        double result = t * Math.Exp(-(z * z) - 1.26551223 + (t * polynomial));
 
         return x >= 0 ? result : 2.0 - result;
     }

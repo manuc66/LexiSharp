@@ -157,64 +157,88 @@ public sealed class FeatureSet : IFeatureSet
         IReadOnlyDictionary<string, double>? countValues)
     {
         ArgumentNullException.ThrowIfNull(features);
-
-        if (numericValues is not null && countValues is not null)
-        {
-            foreach (string feature in countValues.Keys)
-            {
-                if (numericValues.ContainsKey(feature))
-                    throw new ArgumentException("A feature cannot be both numeric and a count.", nameof(countValues));
-            }
-        }
+        ValidateKinds(numericValues, countValues);
 
         IReadOnlyList<string> buffer = features as IReadOnlyList<string> ?? features.ToList();
+        var (small, large, numeric, counts) = Build(buffer, numericValues, countValues);
+
+        _small = small;
+        _large = large;
+        _numeric = numeric;
+        _counts = counts;
+        _unknown = BuildUnknown(unknownFeatures);
+    }
+
+    private static void ValidateKinds(
+        IReadOnlyDictionary<string, double>? numericValues,
+        IReadOnlyDictionary<string, double>? countValues)
+    {
+        if (numericValues is null || countValues is null)
+            return;
+
+        foreach (string feature in countValues.Keys)
+        {
+            if (numericValues.ContainsKey(feature))
+                throw new ArgumentException("A feature cannot be both numeric and a count.", nameof(countValues));
+        }
+    }
+
+    private static (
+        string[]? Small,
+        HashSet<string>? Large,
+        Dictionary<string, double>? Numeric,
+        Dictionary<string, double>? Counts) Build(
+        IReadOnlyList<string> buffer,
+        IReadOnlyDictionary<string, double>? numericValues,
+        IReadOnlyDictionary<string, double>? countValues)
+    {
         int extra = (numericValues?.Count ?? 0) + (countValues?.Count ?? 0);
 
         if (extra == 0)
         {
-            (_small, _large) = BuildNames(buffer, nameof(features));
+            var (small, large) = BuildNames(buffer, "features");
+            return (small, large, null, null);
         }
-        else
+
+        var combined = new string[buffer.Count + extra];
+        int count = 0;
+
+        foreach (string feature in buffer)
+            combined[count++] = feature;
+
+        if (numericValues is not null)
         {
-            var combined = new string[buffer.Count + extra];
-            int count = 0;
-
-            foreach (string feature in buffer)
+            foreach (string feature in numericValues.Keys)
                 combined[count++] = feature;
-
-            if (numericValues is not null)
-            {
-                foreach (string feature in numericValues.Keys)
-                    combined[count++] = feature;
-            }
-
-            if (countValues is not null)
-            {
-                foreach (string feature in countValues.Keys)
-                    combined[count++] = feature;
-            }
-
-            (_small, _large) = BuildNames(combined, nameof(features));
-
-            if (numericValues is not null)
-            {
-                _numeric = new Dictionary<string, double>(numericValues.Count, StringComparer.Ordinal);
-
-                foreach (var pair in numericValues)
-                    _numeric[pair.Key] = pair.Value;
-            }
-
-            if (countValues is not null)
-            {
-                _counts = new Dictionary<string, double>(countValues.Count, StringComparer.Ordinal);
-
-                foreach (var pair in countValues)
-                    _counts[pair.Key] = pair.Value;
-            }
         }
 
+        if (countValues is not null)
+        {
+            foreach (string feature in countValues.Keys)
+                combined[count++] = feature;
+        }
+
+        var (names, set) = BuildNames(combined, "features");
+        return (names, set, Copy(numericValues), Copy(countValues));
+    }
+
+    private static Dictionary<string, double>? Copy(IReadOnlyDictionary<string, double>? values)
+    {
+        if (values is null)
+            return null;
+
+        var copy = new Dictionary<string, double>(values.Count, StringComparer.Ordinal);
+
+        foreach (var pair in values)
+            copy[pair.Key] = pair.Value;
+
+        return copy;
+    }
+
+    private HashSet<string>? BuildUnknown(IEnumerable<string>? unknownFeatures)
+    {
         if (unknownFeatures is null)
-            return;
+            return null;
 
         var unknown = new HashSet<string>(StringComparer.Ordinal);
 
@@ -229,7 +253,7 @@ public sealed class FeatureSet : IFeatureSet
             unknown.Add(feature);
         }
 
-        _unknown = unknown.Count == 0 ? null : unknown;
+        return unknown.Count == 0 ? null : unknown;
     }
 
     /// <summary>An empty feature set.</summary>

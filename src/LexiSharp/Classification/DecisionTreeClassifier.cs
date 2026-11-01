@@ -198,18 +198,72 @@ public sealed class DecisionTreeClassifier<TItem>
 
         _reinforcement.Clear();
         _learned.Clear();
+        ValidateClassWeights();
 
-        if (_options.ClassWeights is { } classWeights)
+        var categories = new SortedSet<string>(StringComparer.Ordinal);
+        List<PendingItem> pending = Materialize(items, categories);
+        _categories = categories.ToArray();
+        _categoryIndex = new Dictionary<string, int>(_categories.Count, StringComparer.Ordinal);
+
+        for (int i = 0; i < _categories.Count; i++)
+            _categoryIndex[_categories[i]] = i;
+
+        if (pending.Count == 0)
         {
-            foreach (var pair in classWeights)
-            {
-                if (!double.IsFinite(pair.Value) || pair.Value < 0)
-                    throw new ArgumentException("Class weights must be finite and non-negative.");
-            }
+            _root = null;
+            _featuresById = Array.Empty<string>();
+            _featureCosts = Array.Empty<double>();
+            return;
         }
 
+        var (featureIds, featuresById, documentFrequency) = BuildVocabulary(pending, featureSubset);
+        _featuresById = featuresById.ToArray();
+        _featureCosts = Array.Empty<double>();
+        ResolveQuestionCosts();
+
+        var candidate = new bool[_featuresById.Length];
+
+        for (int id = 0; id < documentFrequency.Count; id++)
+            candidate[id] = documentFrequency[id] >= _options.MinDocumentFrequency;
+
+        List<TrainingItem> training = BuildTrainingItems(
+            pending,
+            featureIds,
+            candidate,
+            out int[] flat,
+            out double[] flatValues);
+
+        // The build reads the flat ids and the names, so the source's feature sets are no longer
+        // needed once the slices exist.
+        pending.Clear();
+
+        var scratch = new SplitScratch(_featuresById.Length);
+
+        try
+        {
+            _root = Build(training, flat, flatValues, depth: 0, scratch);
+        }
+        finally
+        {
+            scratch.Release();
+        }
+    }
+
+    private void ValidateClassWeights()
+    {
+        if (_options.ClassWeights is not { } classWeights)
+            return;
+
+        foreach (var pair in classWeights)
+        {
+            if (!double.IsFinite(pair.Value) || pair.Value < 0)
+                throw new ArgumentException("Class weights must be finite and non-negative.");
+        }
+    }
+
+    private List<PendingItem> Materialize(IEnumerable<TItem> items, SortedSet<string> categories)
+    {
         var pending = new List<PendingItem>();
-        var categories = new SortedSet<string>(StringComparer.Ordinal);
 
         foreach (var item in items)
         {
@@ -239,20 +293,16 @@ public sealed class DecisionTreeClassifier<TItem>
             pending.Add(new PendingItem(category, _features.FeaturesOf(item), effectiveWeight));
         }
 
-        _categories = categories.ToArray();
-        _categoryIndex = new Dictionary<string, int>(_categories.Count, StringComparer.Ordinal);
+        return pending;
+    }
 
-        for (int i = 0; i < _categories.Count; i++)
-            _categoryIndex[_categories[i]] = i;
-
-        if (pending.Count == 0)
-        {
-            _root = null;
-            _featuresById = Array.Empty<string>();
-            _featureCosts = Array.Empty<double>();
-            return;
-        }
-
+    private static (
+        Dictionary<string, int> Ids,
+        List<string> Features,
+        List<int> Frequency) BuildVocabulary(
+        List<PendingItem> pending,
+        IReadOnlySet<string>? featureSubset)
+    {
         // The corpus vocabulary is assigned an integer id once. The split search then compares
         // ints in its innermost loop instead of hashing feature names per occurrence; the name is
         // recovered only when a split is chosen or a tie is broken.
@@ -279,29 +329,34 @@ public sealed class DecisionTreeClassifier<TItem>
             }
         }
 
-        _featuresById = featuresById.ToArray();
-        _featureCosts = Array.Empty<double>();
+        return (featureIds, featuresById, documentFrequency);
+    }
 
-        if (_options.QuestionCost is { } questionCost)
+    private void ResolveQuestionCosts()
+    {
+        if (_options.QuestionCost is not { } questionCost)
+            return;
+
+        _featureCosts = new double[_featuresById.Length];
+
+        for (int id = 0; id < _featuresById.Length; id++)
         {
-            _featureCosts = new double[_featuresById.Length];
+            double cost = questionCost(_featuresById[id]);
 
-            for (int id = 0; id < _featuresById.Length; id++)
-            {
-                double cost = questionCost(_featuresById[id]);
+            if (!double.IsFinite(cost) || cost <= 0)
+                throw new ArgumentException("Question costs must be finite and positive.");
 
-                if (!double.IsFinite(cost) || cost <= 0)
-                    throw new ArgumentException("Question costs must be finite and positive.");
-
-                _featureCosts[id] = cost;
-            }
+            _featureCosts[id] = cost;
         }
+    }
 
-        var candidate = new bool[_featuresById.Length];
-
-        for (int id = 0; id < documentFrequency.Count; id++)
-            candidate[id] = documentFrequency[id] >= _options.MinDocumentFrequency;
-
+    private List<TrainingItem> BuildTrainingItems(
+        List<PendingItem> pending,
+        Dictionary<string, int> featureIds,
+        bool[] candidate,
+        out int[] flat,
+        out double[] flatValues)
+    {
         // Each document owns a slice of one flat int[]: its candidate feature ids. Two passes
         // (count, then fill) avoid a per-document array object.
         var counts = new int[pending.Count];
@@ -321,8 +376,8 @@ public sealed class DecisionTreeClassifier<TItem>
             total += count;
         }
 
-        var flat = new int[total];
-        var flatValues = new double[total];
+        flat = new int[total];
+        flatValues = new double[total];
         var training = new List<TrainingItem>(pending.Count);
         int offset = 0;
 
@@ -348,20 +403,7 @@ public sealed class DecisionTreeClassifier<TItem>
                 item.Weight));
         }
 
-        // The build reads the flat ids and the names, so the source's feature sets are no longer
-        // needed once the slices exist.
-        pending.Clear();
-
-        var scratch = new SplitScratch(_featuresById.Length);
-
-        try
-        {
-            _root = Build(training, flat, flatValues, depth: 0, scratch);
-        }
-        finally
-        {
-            scratch.Release();
-        }
+        return training;
     }
 
     /// <summary>Predicts the most likely categories for an item, by decreasing probability.</summary>
@@ -518,7 +560,7 @@ public sealed class DecisionTreeClassifier<TItem>
             _reinforcement[leaf] = adjustments;
         }
 
-        double updated = adjustments.GetValueOrDefault(category) + sign * weight;
+        double updated = adjustments.GetValueOrDefault(category) + (sign * weight);
 
         if (Math.Abs(updated) <= 1e-12)
             adjustments.Remove(category);
@@ -690,6 +732,47 @@ public sealed class DecisionTreeClassifier<TItem>
         int version = scratch.NextVersion();
         scratch.ResetNode();
 
+        Dictionary<int, List<NumericPoint>>? numericPoints =
+            AccumulateNode(items, featureIds, featureValues, scratch, version, classCount);
+        double impurityBefore = Impurity(parentCounts, parentWeight);
+        bool gini = _options.Criterion == SplitCriterion.Gini;
+
+        var (best, bestScore) = EvaluatePresence(
+            items,
+            scratch,
+            parentCounts,
+            parentWeight,
+            classCount,
+            impurityBefore,
+            gini,
+            best: null,
+            bestScore: double.NegativeInfinity);
+
+        if (numericPoints is not null)
+        {
+            (best, _) = EvaluateNumeric(
+                numericPoints,
+                items.Count,
+                parentWeight,
+                parentCounts,
+                classCount,
+                impurityBefore,
+                gini,
+                best,
+                bestScore);
+        }
+
+        return best;
+    }
+
+    private static Dictionary<int, List<NumericPoint>>? AccumulateNode(
+        List<TrainingItem> items,
+        int[] featureIds,
+        double[] featureValues,
+        SplitScratch scratch,
+        int version,
+        int classCount)
+    {
         var slotByFeature = scratch.SlotByFeature;
         var slotVersion = scratch.SlotVersion;
         var nodeFeatureIds = scratch.NodeFeatureIds;
@@ -729,7 +812,7 @@ public sealed class DecisionTreeClassifier<TItem>
                 }
 
                 documentCounts[slot]++;
-                scratch.Weights[slot * classCount + item.CategoryIndex] += item.Weight;
+                scratch.Weights[(slot * classCount) + item.CategoryIndex] += item.Weight;
 
                 double value = featureValues[i];
 
@@ -748,50 +831,24 @@ public sealed class DecisionTreeClassifier<TItem>
             }
         }
 
-        double impurityBefore = Impurity(parentCounts, parentWeight);
-        bool gini = _options.Criterion == SplitCriterion.Gini;
-        SplitChoice? best = null;
-        double bestScore = double.NegativeInfinity;
+        return numericPoints;
+    }
 
-        void Consider(
-            int featureId,
-            double threshold,
-            double gain,
-            double ratio,
-            double impurityAfter,
-            int documentsTrue,
-            int documentsFalse,
-            double weightTrue,
-            double weightFalse)
-        {
-            double baseScore = _options.Criterion == SplitCriterion.GainRatio ? ratio : gain;
-            double cost = CostOf(featureId);
-            double score = baseScore / cost;
+    private (SplitChoice? Best, double Score) EvaluatePresence(
+        List<TrainingItem> items,
+        SplitScratch scratch,
+        double[] parentCounts,
+        double parentWeight,
+        int classCount,
+        double impurityBefore,
+        bool gini,
+        SplitChoice? best,
+        double bestScore)
+    {
+        var slotByFeature = scratch.SlotByFeature;
+        var documentCounts = scratch.DocumentCounts;
 
-            bool better = best is null
-                || score > bestScore + SplitFloor
-                || (Math.Abs(score - bestScore) <= SplitFloor
-                    && IsTieBreakBetter(featureId, threshold, best.Value));
-
-            if (!better)
-                return;
-
-            best = new SplitChoice(
-                featureId,
-                threshold,
-                cost,
-                gain,
-                ratio,
-                impurityBefore,
-                impurityAfter,
-                documentsTrue,
-                documentsFalse,
-                weightTrue,
-                weightFalse);
-            bestScore = score;
-        }
-
-        foreach (int featureId in nodeFeatureIds)
+        foreach (int featureId in scratch.NodeFeatureIds)
         {
             int slot = slotByFeature[featureId];
             int documentsTrue = documentCounts[slot];
@@ -819,10 +876,13 @@ public sealed class DecisionTreeClassifier<TItem>
                 continue;
 
             double probability = weightTrue / parentWeight;
-            double splitInfo = -probability * Math.Log2(probability) - (1 - probability) * Math.Log2(1 - probability);
+            double splitInfo = -(probability * Math.Log2(probability)) - ((1 - probability) * Math.Log2(1 - probability));
             double ratio = splitInfo > 0 ? gain / splitInfo : 0;
 
-            Consider(
+            (best, bestScore) = Consider(
+                best,
+                bestScore,
+                impurityBefore,
                 featureId,
                 double.NaN,
                 gain,
@@ -834,80 +894,173 @@ public sealed class DecisionTreeClassifier<TItem>
                 weightFalse);
         }
 
-        if (numericPoints is not null)
+        return (best, bestScore);
+    }
+
+    private (SplitChoice? Best, double Score) EvaluateNumeric(
+        Dictionary<int, List<NumericPoint>> numericPoints,
+        int itemCount,
+        double parentWeight,
+        double[] parentCounts,
+        int classCount,
+        double impurityBefore,
+        bool gini,
+        SplitChoice? best,
+        double bestScore)
+    {
+        foreach (var (featureId, points) in numericPoints)
         {
-            foreach (var (featureId, points) in numericPoints)
+            points.Sort(static (left, right) => left.Value.CompareTo(right.Value));
+
+            var boundaries = new List<double>();
+
+            for (int i = 0; i < points.Count; i++)
             {
-                points.Sort(static (left, right) => left.Value.CompareTo(right.Value));
+                if (i == 0 || points[i].Value != points[i - 1].Value)
+                    boundaries.Add(points[i].Value);
+            }
 
-                var boundaries = new List<double>();
+            int step = Math.Max(
+                1,
+                (boundaries.Count + _options.MaxThresholdsPerFeature - 1)
+                / _options.MaxThresholdsPerFeature);
 
-                for (int i = 0; i < points.Count; i++)
-                {
-                    if (i == 0 || points[i].Value != points[i - 1].Value)
-                        boundaries.Add(points[i].Value);
-                }
+            for (int b = 0; b < boundaries.Count; b += step)
+            {
+                (best, bestScore) = EvaluateNumericThreshold(
+                    featureId,
+                    points,
+                    boundaries[b],
+                    itemCount,
+                    parentWeight,
+                    parentCounts,
+                    classCount,
+                    impurityBefore,
+                    gini,
+                    best,
+                    bestScore);
+            }
 
-                int step = Math.Max(
-                    1,
-                    (boundaries.Count + _options.MaxThresholdsPerFeature - 1)
-                    / _options.MaxThresholdsPerFeature);
-
-                for (int b = 0; b < boundaries.Count; b += step)
-                    EvaluateNumeric(featureId, points, boundaries[b]);
-
-                if (boundaries.Count > 0 && (boundaries.Count - 1) % step != 0)
-                    EvaluateNumeric(featureId, points, boundaries[^1]);
+            if (boundaries.Count > 0 && (boundaries.Count - 1) % step != 0)
+            {
+                (best, bestScore) = EvaluateNumericThreshold(
+                    featureId,
+                    points,
+                    boundaries[^1],
+                    itemCount,
+                    parentWeight,
+                    parentCounts,
+                    classCount,
+                    impurityBefore,
+                    gini,
+                    best,
+                    bestScore);
             }
         }
 
-        void EvaluateNumeric(int featureId, List<NumericPoint> points, double threshold)
+        return (best, bestScore);
+    }
+
+    private (SplitChoice? Best, double Score) EvaluateNumericThreshold(
+        int featureId,
+        List<NumericPoint> points,
+        double threshold,
+        int itemCount,
+        double parentWeight,
+        double[] parentCounts,
+        int classCount,
+        double impurityBefore,
+        bool gini,
+        SplitChoice? best,
+        double bestScore)
+    {
+        int first = LowerBound(points, threshold);
+        int documentsTrue = points.Count - first;
+
+        if (documentsTrue < _options.MinDocumentsPerLeaf
+            || itemCount - documentsTrue < _options.MinDocumentsPerLeaf)
         {
-            int first = LowerBound(points, threshold);
-            int documentsTrue = points.Count - first;
-
-            if (documentsTrue < _options.MinDocumentsPerLeaf
-                || items.Count - documentsTrue < _options.MinDocumentsPerLeaf)
-                return;
-
-            var trueCounts = new double[classCount];
-            double weightTrue = 0;
-
-            for (int i = first; i < points.Count; i++)
-            {
-                trueCounts[points[i].CategoryIndex] += points[i].Weight;
-                weightTrue += points[i].Weight;
-            }
-
-            double weightFalse = parentWeight - weightTrue;
-
-            if (weightTrue <= 0 || weightFalse <= 0)
-                return;
-
-            double impurityAfter = ChildImpurity(
-                parentCounts, trueCounts, 0, weightTrue, weightFalse, gini);
-            double gain = impurityBefore - impurityAfter;
-
-            if (gain <= Math.Max(_options.MinGain, SplitFloor))
-                return;
-
-            double probability = weightTrue / parentWeight;
-            double splitInfo = -probability * Math.Log2(probability) - (1 - probability) * Math.Log2(1 - probability);
-            double ratio = splitInfo > 0 ? gain / splitInfo : 0;
-
-            Consider(
-                featureId,
-                threshold,
-                gain,
-                ratio,
-                impurityAfter,
-                documentsTrue,
-                items.Count - documentsTrue,
-                weightTrue,
-                weightFalse);
+            return (best, bestScore);
         }
 
-        return best;
+        var trueCounts = new double[classCount];
+        double weightTrue = 0;
+
+        for (int i = first; i < points.Count; i++)
+        {
+            trueCounts[points[i].CategoryIndex] += points[i].Weight;
+            weightTrue += points[i].Weight;
+        }
+
+        double weightFalse = parentWeight - weightTrue;
+
+        if (weightTrue <= 0 || weightFalse <= 0)
+            return (best, bestScore);
+
+        double impurityAfter = ChildImpurity(
+            parentCounts, trueCounts, 0, weightTrue, weightFalse, gini);
+        double gain = impurityBefore - impurityAfter;
+
+        if (gain <= Math.Max(_options.MinGain, SplitFloor))
+            return (best, bestScore);
+
+        double probability = weightTrue / parentWeight;
+        double splitInfo = -(probability * Math.Log2(probability)) - ((1 - probability) * Math.Log2(1 - probability));
+        double ratio = splitInfo > 0 ? gain / splitInfo : 0;
+
+        return Consider(
+            best,
+            bestScore,
+            impurityBefore,
+            featureId,
+            threshold,
+            gain,
+            ratio,
+            impurityAfter,
+            documentsTrue,
+            itemCount - documentsTrue,
+            weightTrue,
+            weightFalse);
+    }
+
+    private (SplitChoice? Best, double Score) Consider(
+        SplitChoice? best,
+        double bestScore,
+        double impurityBefore,
+        int featureId,
+        double threshold,
+        double gain,
+        double ratio,
+        double impurityAfter,
+        int documentsTrue,
+        int documentsFalse,
+        double weightTrue,
+        double weightFalse)
+    {
+        double baseScore = _options.Criterion == SplitCriterion.GainRatio ? ratio : gain;
+        double cost = CostOf(featureId);
+        double score = baseScore / cost;
+
+        bool better = best is null
+            || score > bestScore + SplitFloor
+            || (Math.Abs(score - bestScore) <= SplitFloor
+                && IsTieBreakBetter(featureId, threshold, best.Value));
+
+        if (!better)
+            return (best, bestScore);
+
+        return (new SplitChoice(
+            featureId,
+            threshold,
+            cost,
+            gain,
+            ratio,
+            impurityBefore,
+            impurityAfter,
+            documentsTrue,
+            documentsFalse,
+            weightTrue,
+            weightFalse), score);
     }
 
     /// <summary>
@@ -1013,7 +1166,7 @@ public sealed class DecisionTreeClassifier<TItem>
 
         double probabilityTrue = weightTrue / (weightTrue + weightFalse);
 
-        return probabilityTrue * trueImpurity + (1 - probabilityTrue) * falseImpurity;
+        return (probabilityTrue * trueImpurity) + ((1 - probabilityTrue) * falseImpurity);
     }
 
     private double Impurity(double[] counts, double total)
@@ -1058,7 +1211,7 @@ public sealed class DecisionTreeClassifier<TItem>
 
         for (int c = 0; c < classCount; c++)
         {
-            double probability = (counts[c] + _options.Alpha) / (total + _options.Alpha * classCount);
+            double probability = (counts[c] + _options.Alpha) / (total + (_options.Alpha * classCount));
             string category = _categories[c];
             probabilities[category] = probability;
 
