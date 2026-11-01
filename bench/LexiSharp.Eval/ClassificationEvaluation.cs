@@ -13,6 +13,8 @@ internal sealed record ClassificationMetrics(
     int Documents,
     double Accuracy,
     double MacroF1,
+    ConfidenceInterval Accuracy95,
+    ConfidenceInterval MacroF195,
     double AverageQuestions,
     TimeSpan TrainTime,
     TimeSpan PredictTime,
@@ -27,6 +29,15 @@ internal sealed record McNemarResult(
     int BaselineOnly,
     int CandidateOnly,
     double PValue);
+
+/// <summary>Stratified k-fold estimates on the training split.</summary>
+internal sealed record CrossValidationMetrics(
+    string Method,
+    int Folds,
+    double AccuracyMean,
+    double AccuracyStd,
+    double MacroF1Mean,
+    double MacroF1Std);
 
 /// <summary>A stratified fit/validation split of a labelled corpus.</summary>
 internal sealed record ClassificationSplit(
@@ -349,7 +360,8 @@ internal static class ClassificationEvaluation
         string method,
         IReadOnlyList<ClassificationDocument> train,
         IReadOnlyList<ClassificationDocument> test,
-        Func<ITextClassifier> factory)
+        Func<ITextClassifier> factory,
+        bool confidence = true)
     {
         ArgumentNullException.ThrowIfNull(factory);
 
@@ -367,7 +379,14 @@ internal static class ClassificationEvaluation
 
         predictTime.Stop();
 
-        return Score(method, test, predictions, double.NaN, trainTime.Elapsed, predictTime.Elapsed);
+        return Score(
+            method,
+            test,
+            predictions,
+            double.NaN,
+            trainTime.Elapsed,
+            predictTime.Elapsed,
+            confidence);
     }
 
     public static ClassificationMetrics MeasureLinear(
@@ -409,7 +428,8 @@ internal static class ClassificationEvaluation
         IReadOnlyList<string?> predictions,
         double averageQuestions,
         TimeSpan trainTime,
-        TimeSpan predictTime)
+        TimeSpan predictTime,
+        bool confidence = true)
     {
         if (test.Count != predictions.Count)
             throw new ArgumentException("One prediction is required per test document.", nameof(predictions));
@@ -469,11 +489,20 @@ internal static class ClassificationEvaluation
         if (categories.Length > 0)
             macroF1 /= categories.Length;
 
+        double accuracy = test.Count == 0 ? 0 : (double)correct / test.Count;
+        BootstrapIntervals intervals = confidence
+            ? ClassificationStatistics.Bootstrap(test, predictions)
+            : new BootstrapIntervals(
+                new ConfidenceInterval(accuracy, accuracy),
+                new ConfidenceInterval(macroF1, macroF1));
+
         return new ClassificationMetrics(
             method,
             test.Count,
-            test.Count == 0 ? 0 : (double)correct / test.Count,
+            accuracy,
             macroF1,
+            intervals.Accuracy,
+            intervals.MacroF1,
             averageQuestions,
             trainTime,
             predictTime,
@@ -521,6 +550,93 @@ internal static class ClassificationEvaluation
             : Erfc(Math.Sqrt(Math.Pow(Math.Abs(baselineOnly - candidateOnly) - 1, 2) / discordant / 2));
 
         return new McNemarResult(baselineName, candidateName, baselineOnly, candidateOnly, pValue);
+    }
+
+    /// <summary>
+    /// Stratified k-fold cross-validation on the training split. The test split is not an
+    /// argument: the folds estimate what the model would do on unseen data, and the test remains
+    /// the one held-out measurement.
+    /// </summary>
+    public static CrossValidationMetrics CrossValidate(
+        string method,
+        IReadOnlyList<ClassificationDocument> train,
+        int folds,
+        Func<ITextClassifier> factory)
+    {
+        ArgumentNullException.ThrowIfNull(train);
+        ArgumentNullException.ThrowIfNull(factory);
+
+        if (folds < 2)
+            throw new ArgumentOutOfRangeException(nameof(folds), "At least two folds are required.");
+
+        int[] foldOf = AssignFolds(train, folds);
+        var accuracies = new double[folds];
+        var macros = new double[folds];
+
+        for (int fold = 0; fold < folds; fold++)
+        {
+            var fit = new List<ClassificationDocument>();
+            var validation = new List<ClassificationDocument>();
+
+            for (int i = 0; i < train.Count; i++)
+                (foldOf[i] == fold ? validation : fit).Add(train[i]);
+
+            var metrics = MeasureClassifier(method, fit, validation, factory, confidence: false);
+            accuracies[fold] = metrics.Accuracy;
+            macros[fold] = metrics.MacroF1;
+        }
+
+        return new CrossValidationMetrics(
+            method,
+            folds,
+            Mean(accuracies),
+            StandardDeviation(accuracies),
+            Mean(macros),
+            StandardDeviation(macros));
+    }
+
+    private static int[] AssignFolds(IReadOnlyList<ClassificationDocument> train, int folds)
+    {
+        var foldOf = new int[train.Count];
+        var random = new Random(7); // NOSONAR:S2245 (fixed seed: the folds are part of the reproduction)
+
+        foreach (var group in train
+                     .Select((document, index) => (document, index))
+                     .GroupBy(pair => pair.document.Category, StringComparer.Ordinal)
+                     .OrderBy(group => group.Key, StringComparer.Ordinal))
+        {
+            var indices = group
+                .Select(pair => pair.index)
+                .OrderBy(index => train[index].Id, StringComparer.Ordinal)
+                .ToList();
+
+            for (int i = indices.Count - 1; i > 0; i--)
+            {
+                int j = random.Next(i + 1);
+                (indices[i], indices[j]) = (indices[j], indices[i]);
+            }
+
+            for (int i = 0; i < indices.Count; i++)
+                foldOf[indices[i]] = i % folds;
+        }
+
+        return foldOf;
+    }
+
+    private static double Mean(double[] values) => values.Average();
+
+    private static double StandardDeviation(double[] values)
+    {
+        if (values.Length < 2)
+            return 0;
+
+        double mean = values.Average();
+        double sum = 0;
+
+        foreach (double value in values)
+            sum += (value - mean) * (value - mean);
+
+        return Math.Sqrt(sum / (values.Length - 1));
     }
 
     /// <summary>A stable hash of the ordered predictions, for the pin.</summary>
