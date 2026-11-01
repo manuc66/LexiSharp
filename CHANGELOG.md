@@ -54,7 +54,9 @@ workflow.
   `TemperatureCalibrator` fits one temperature on a validation set by minimizing log-loss, and
   `CalibratedClassifier` wraps any `ITextClassifier` with it without changing the top category; on
   the linear model it reads **T = 1.04**, log-loss **0.7741 → 0.7650**, Brier **0.2855 → 0.2855**,
-  so the softmax was already close. `IdfWeighting` and `StandardizeNumericFeatures` are opt-in;
+  so the softmax was already close. The linear model also keeps a correction ledger:
+  `Reinforce`/`Unreinforce` add or remove signed mass on the item's features without retraining,
+  and `Train` clears it. `IdfWeighting` and `StandardizeNumericFeatures` are opt-in;
   IDF measured a loss on 20NG (**0.7753 / 0.7682** against **0.8085 / 0.8027**) and stays off.
   Measured on the standard `20news-bydate` split: the single tree reads **0.4457** accuracy / **0.4945**
   macro-F1, the forest **0.6621** / **0.6584**, Naive Bayes **0.7573** / **0.7289**, and

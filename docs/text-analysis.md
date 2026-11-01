@@ -436,6 +436,12 @@ and `Predict` reports the calibrated distribution. On 20 Newsgroups the linear m
 close. One parameter cannot repair a model that is systematically wrong, and a temperature fitted
 on one corpus need not transfer to another: measure log-loss on held-out data after applying it.
 
+The linear model has the same correction loop as the tree. `Reinforce(text, category, weight)`
+adds signed mass to the item's features for the category, `Unreinforce` removes it exactly,
+`ForgetReinforcement` clears the ledger, and `Train` clears it too. The correction is applied to
+the logit with the same feature value the model uses (IDF or standardized), so it generalizes to
+other items sharing the feature; an item with no feature in the vocabulary has no effect.
+
 ### Unsupervised: dividing a corpus
 
 ```csharp
