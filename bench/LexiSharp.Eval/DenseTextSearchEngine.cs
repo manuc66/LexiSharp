@@ -46,11 +46,14 @@ internal static class DenseEmbedder
 {
     private const int BatchSize = 8;
     private const long PadTokenId = 1;
-    private const int CacheVersion = 3;
+    internal const int CacheVersion = 3;
 
     public static async Task<DenseVectors?> TryBuildAsync(
-        BeirCorpus corpus, string dataDir, string modelCacheDir, int maxSeqLength, CancellationToken ct)
+        BeirCorpus corpus, string dataDir, string modelCacheDir, int maxSeqLength, CancellationToken ct, bool usePackage = false)
     {
+        if (usePackage || Environment.GetEnvironmentVariable("LEXISHARP_EVAL_DENSE_PACKAGE") == "1")
+            return await PackageDenseEmbedder.TryBuildAsync(corpus, dataDir, modelCacheDir, maxSeqLength, ct).ConfigureAwait(false);
+
         int docCount = corpus.Documents.Count;
         int queryCount = corpus.Queries.Count;
 
@@ -103,23 +106,23 @@ internal static class DenseEmbedder
 
         WriteMatrix(docCache, docVectors);
         WriteMatrix(queryCache, queryVectors);
-File.WriteAllText(metaCache, JsonSerializer.Serialize(new
-            {
-                model = DenseModels.ModelId,
-                version = CacheVersion,
-                docCount,
-                queryCount,
-                maxSeqLength,
-                dimension = HiddenDim,
-                elapsed = sw.Elapsed,
-            }));
+        File.WriteAllText(metaCache, JsonSerializer.Serialize(new
+        {
+            model = DenseModels.ModelId,
+            version = CacheVersion,
+            docCount,
+            queryCount,
+            maxSeqLength,
+            dimension = HiddenDim,
+            elapsed = sw.Elapsed,
+        }));
 
         Console.WriteLine($"Embeddings written to {Path.GetFileName(docCache)} and {Path.GetFileName(queryCache)} ({sw.Elapsed.TotalSeconds:0}s).");
 
         return new DenseVectors(docVectors, ToQueryMap(corpus, queryVectors), HiddenDim);
     }
 
-    private const int HiddenDim = 384;
+    internal const int HiddenDim = 384;
 
     private static async Task<float[][]> EncodeAsync(
         IReadOnlyList<string> texts,
@@ -260,7 +263,7 @@ File.WriteAllText(metaCache, JsonSerializer.Serialize(new
     private static int ToCrossrefId(int msId, SentencePieceTokenizer tokenizer) =>
         msId == tokenizer.UnknownId ? 3 : msId + 1;
 
-    private static bool MetaMatches(string metaCache, int docCount, int queryCount, int maxSeqLength)
+    internal static bool MetaMatches(string metaCache, int docCount, int queryCount, int maxSeqLength)
     {
         try
         {
@@ -278,7 +281,7 @@ File.WriteAllText(metaCache, JsonSerializer.Serialize(new
         }
     }
 
-    private static void WriteMatrix(string path, float[][] vectors)
+    internal static void WriteMatrix(string path, float[][] vectors)
     {
         using var writer = new BinaryWriter(File.Create(path));
 
@@ -287,7 +290,7 @@ File.WriteAllText(metaCache, JsonSerializer.Serialize(new
                 writer.Write(value);
     }
 
-    private static float[][] ReadMatrix(string path, int count)
+    internal static float[][] ReadMatrix(string path, int count)
     {
         using BinaryReader reader = new(File.OpenRead(path));
 
@@ -306,13 +309,13 @@ File.WriteAllText(metaCache, JsonSerializer.Serialize(new
         return vectors;
     }
 
-    private static IReadOnlyDictionary<string, float[]> ReadMatrixAsQueryMap(string path, int count, BeirCorpus corpus)
+    internal static IReadOnlyDictionary<string, float[]> ReadMatrixAsQueryMap(string path, int count, BeirCorpus corpus)
     {
         float[][] vectors = ReadMatrix(path, count);
         return ToQueryMap(corpus, vectors);
     }
 
-    private static IReadOnlyDictionary<string, float[]> ToQueryMap(BeirCorpus corpus, float[][] queryVectors)
+    internal static IReadOnlyDictionary<string, float[]> ToQueryMap(BeirCorpus corpus, float[][] queryVectors)
     {
         var map = new Dictionary<string, float[]>(StringComparer.Ordinal);
 
