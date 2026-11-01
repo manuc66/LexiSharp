@@ -213,6 +213,54 @@ public class ModelPersistenceTests
             () => ClassificationModelSerializer.LoadDecisionTree(new MemoryStream(bytes)));
     }
 
+    [Fact]
+    public void DecisionTree_RoundTripsLearnedTokens()
+    {
+        var tree = TrainTree();
+        long token = tree.Learn("alpha", "B");
+        var learned = tree.Predict("alpha");
+
+        using var buffer = new MemoryStream();
+        ClassificationModelSerializer.Save(tree, buffer);
+        buffer.Position = 0;
+
+        var loaded = ClassificationModelSerializer.LoadDecisionTree(buffer);
+
+        Assert.Equal(
+            learned.Select(result => (result.Category, result.Probability)),
+            loaded.Predict("alpha").Select(result => (result.Category, result.Probability)));
+
+        Assert.True(loaded.Unlearn(token));
+        Assert.True(tree.Unlearn(token));
+        Assert.Equal(
+            tree.Predict("alpha").Select(result => (result.Category, result.Probability)),
+            loaded.Predict("alpha").Select(result => (result.Category, result.Probability)));
+    }
+
+    [Fact]
+    public void Linear_RoundTripsLearnedTokens()
+    {
+        var linear = TrainLinear();
+        long token = linear.Learn("alpha", "B");
+        var learned = linear.Predict("alpha");
+
+        using var buffer = new MemoryStream();
+        ClassificationModelSerializer.Save(linear, buffer);
+        buffer.Position = 0;
+
+        var loaded = ClassificationModelSerializer.LoadLinear(buffer);
+
+        Assert.Equal(
+            learned.Select(result => (result.Category, result.Probability)),
+            loaded.Predict("alpha").Select(result => (result.Category, result.Probability)));
+
+        Assert.True(loaded.Unlearn(token));
+        Assert.True(linear.Unlearn(token));
+        Assert.Equal(
+            linear.Predict("alpha").Select(result => (result.Category, result.Probability)),
+            loaded.Predict("alpha").Select(result => (result.Category, result.Probability)));
+    }
+
     private static byte[] Save(DecisionTreeClassifier tree)
     {
         using var buffer = new MemoryStream();

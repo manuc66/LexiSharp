@@ -25,7 +25,9 @@ public sealed record LinearFeatureWeight(string Feature, double Weight);
 /// The price is the path: there is no <c>Explain</c> chain of questions. Use
 /// <see cref="DecisionTreeClassifier{TItem}"/> when the questions are the point and this when the
 /// label is. The model is batch-trained; <see cref="Train"/> replaces the weights and the
-/// vocabulary.
+/// vocabulary. <see cref="Learn(TItem)"/> folds one labelled item into the correction ledger and
+/// returns a token that <see cref="Unlearn(long)"/> removes exactly, without retraining; the
+/// coefficients are not rewound.
 /// </para>
 /// </remarks>
 /// <typeparam name="TItem">The item type being classified.</typeparam>
@@ -49,6 +51,8 @@ public sealed class LinearClassifier<TItem>
     private double[] _numericStandardDeviations = Array.Empty<double>();
     private readonly Dictionary<string, Dictionary<string, double>> _reinforcement =
         new(StringComparer.Ordinal);
+    private readonly Dictionary<long, LearnedItem> _learned = new();
+    private long _nextToken;
     private bool _trained;
 
     /// <param name="features">The feature space the model reads.</param>
@@ -84,6 +88,7 @@ public sealed class LinearClassifier<TItem>
         ArgumentNullException.ThrowIfNull(items);
 
         _reinforcement.Clear();
+        _learned.Clear();
 
         if (_options.ClassWeights is { } classWeights)
         {
@@ -432,6 +437,59 @@ public sealed class LinearClassifier<TItem>
     /// <summary>Clears every correction; the model returns to its training weights.</summary>
     public void ForgetReinforcement() => _reinforcement.Clear();
 
+    /// <summary>
+    /// Folds one labelled item into the model's correction ledger and returns a token for
+    /// <see cref="Unlearn(long)"/>. The coefficients are not retrained: the item adds signed mass
+    /// on its known features for its category.
+    /// </summary>
+    /// <param name="item">The labelled item; its category must have been seen during training.</param>
+    /// <returns>A token that removes exactly this contribution.</returns>
+    /// <exception cref="InvalidOperationException">The model is untrained.</exception>
+    /// <exception cref="ArgumentException">The item has no category, an unseen category, or a non-positive weight.</exception>
+    public long Learn(TItem item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        if (!_trained)
+            throw new InvalidOperationException("The model is untrained.");
+
+        string? category = _categoryOf(item);
+
+        if (string.IsNullOrEmpty(category))
+            throw new ArgumentException("The item has no category.", nameof(item));
+
+        if (!_categoryIndex.ContainsKey(category))
+            throw new ArgumentException("The category was not seen during training.", nameof(item));
+
+        double weight = _weightOf(item);
+
+        if (!double.IsFinite(weight) || weight <= 0)
+            throw new ArgumentException("The sample weight must be finite and positive.", nameof(item));
+
+        IFeatureSet features = _features.FeaturesOf(item);
+        var known = features.Features.Where(_featureIds.ContainsKey).ToArray();
+
+        AdjustFeatures(known, category, weight, sign: 1.0);
+
+        long token = _nextToken++;
+        _learned[token] = new LearnedItem(known, category, weight);
+
+        return token;
+    }
+
+    /// <summary>Removes the exact contribution a previous <see cref="Learn(TItem)"/> added.</summary>
+    /// <param name="token">The token returned by <see cref="Learn(TItem)"/>.</param>
+    /// <returns><c>true</c> when the contribution existed and was removed; <c>false</c> otherwise.</returns>
+    public bool Unlearn(long token)
+    {
+        if (!_learned.TryGetValue(token, out LearnedItem? learned))
+            return false;
+
+        _learned.Remove(token);
+        AdjustFeatures(learned.Features, learned.Category, learned.Weight, sign: -1.0);
+        return true;
+    }
+
     private void AdjustReinforcement(TItem item, string category, double weight, double sign)
     {
         ArgumentNullException.ThrowIfNull(category);
@@ -446,14 +504,22 @@ public sealed class LinearClassifier<TItem>
             throw new ArgumentException("The category was not seen during training.", nameof(category));
 
         IFeatureSet features = _features.FeaturesOf(item);
+        AdjustFeatures(features.Features, category, weight, sign);
+    }
 
+    private void AdjustFeatures(
+        IReadOnlyCollection<string> features,
+        string category,
+        double weight,
+        double sign)
+    {
         if (!_reinforcement.TryGetValue(category, out Dictionary<string, double>? deltas))
         {
             deltas = new Dictionary<string, double>(StringComparer.Ordinal);
             _reinforcement[category] = deltas;
         }
 
-        foreach (string feature in features.Features)
+        foreach (string feature in features)
         {
             if (!_featureIds.ContainsKey(feature))
                 continue;
@@ -598,6 +664,17 @@ public sealed class LinearClassifier<TItem>
                 writer.Write(weight.Value);
             }
         }
+
+        writer.Write(_nextToken);
+        writer.Write(_learned.Count);
+
+        foreach (var pair in _learned.OrderBy(pair => pair.Key))
+        {
+            writer.Write(pair.Key);
+            ModelFormat.WriteStrings(writer, pair.Value.Features);
+            ModelFormat.WriteString(writer, pair.Value.Category);
+            writer.Write(pair.Value.Weight);
+        }
     }
 
     internal void ReadBody(BinaryReader reader)
@@ -641,6 +718,21 @@ public sealed class LinearClassifier<TItem>
             _reinforcement[feature] = weights;
         }
 
+        _nextToken = reader.ReadInt64();
+        int learnedCount = ModelFormat.ReadCount(reader);
+
+        for (int i = 0; i < learnedCount; i++)
+        {
+            long token = reader.ReadInt64();
+            string[] features = ModelFormat.ReadStrings(reader);
+            string category = ModelFormat.ReadString(reader)
+                ?? throw new InvalidDataException("A learned entry has no category.");
+            double weight = reader.ReadDouble();
+
+            _learned[token] = new LearnedItem(features, category, weight);
+            _nextToken = Math.Max(_nextToken, token + 1);
+        }
+
         int expectedWeights = _featuresById.Length * _categories.Count;
 
         if (_weights.Length != expectedWeights
@@ -654,6 +746,8 @@ public sealed class LinearClassifier<TItem>
     }
 
     private sealed record PendingItem(string Category, IFeatureSet Features, double Weight);
+
+    private sealed record LearnedItem(string[] Features, string Category, double Weight);
 
     private sealed record SparseItem(
         int CategoryIndex,
@@ -697,6 +791,23 @@ public sealed class LinearClassifier : ITextClassifier
 
     /// <inheritdoc />
     public void Train(IEnumerable<SearchDocument> documents) => _inner.Train(documents);
+
+    /// <summary>Folds one labelled document into the correction ledger, without retraining.</summary>
+    /// <param name="document">The labelled document.</param>
+    /// <returns>A token that removes exactly this contribution.</returns>
+    public long Learn(SearchDocument document) => _inner.Learn(document);
+
+    /// <summary>Folds one labelled text into the correction ledger, without retraining.</summary>
+    /// <param name="text">The raw text.</param>
+    /// <param name="category">A category seen during training.</param>
+    /// <returns>A token that removes exactly this contribution.</returns>
+    public long Learn(string text, string category) =>
+        _inner.Learn(new SearchDocument(string.Empty, text, Category: category));
+
+    /// <summary>Removes the exact contribution a previous <see cref="Learn(SearchDocument)"/> added.</summary>
+    /// <param name="token">The token returned by <see cref="Learn(SearchDocument)"/>.</param>
+    /// <returns><c>true</c> when the contribution existed and was removed.</returns>
+    public bool Unlearn(long token) => _inner.Unlearn(token);
 
     /// <inheritdoc />
     public IReadOnlyList<ClassificationResult> Predict(
