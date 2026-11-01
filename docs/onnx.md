@@ -147,8 +147,25 @@ Measured on the three public corpora, with multilingual-e5-small:
 | SciFact | 0.655 | 0.681 | 0.686 |
 | ArguAna | 0.313 | 0.349 | 0.350 |
 
-These are the same rows the harness publishes with its own encoder — the vector-parity test and
-the nDCG campaign agree.
+These are the same rows the harness publishes with its own encoder. The corpus-wide vector check
+on NFCorpus reads, over **3,633 documents and 3,237 queries**:
+
+| Pair | Max absolute difference | Minimum cosine | Rows below 0.9999 |
+|---|---:|---:|---:|
+| package vs harness, documents | 2.98e-8 | 0.99999988 | 0 |
+| package vs harness, queries | 2.98e-8 | 0.99999988 | 0 |
+
+The rerank stage is validated the same way. On NFCorpus, with a separate cache per encoder:
+
+| Config | Package reranker | Harness reranker |
+|---|---:|---:|
+| BM25 (top100) + CrossRerank | 0.335 | 0.335 |
+| QL (top100) + CrossRerank | 0.332 | 0.332 |
+| Hybrid RRF (top100) + CrossRerank | 0.341 | 0.341 |
+
+The package and the harness agree exactly. The 0.337/0.346 in the evaluation table come from a
+different run/configuration than this command; both encoders read 0.335/0.341 here, so that gap is
+not a package difference.
 
 ## Signature, warm-up and cancellation
 

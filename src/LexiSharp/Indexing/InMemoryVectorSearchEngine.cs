@@ -351,7 +351,10 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
     /// signature (an older file, or a provider that cannot identify itself) is accepted.
     /// </summary>
     /// <param name="snapshot">The exported entries and signature.</param>
-    /// <param name="allowSignatureMismatch">When true, imports anyway; the caller is asserting the vectors are compatible.</param>
+    /// <param name="allowSignatureMismatch">
+    /// When true, imports anyway; the caller is asserting the vectors are compatible, including
+    /// when the snapshot carries no signature at all.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="snapshot"/> is <see langword="null"/>.</exception>
     /// <exception cref="InvalidOperationException">The signatures differ and <paramref name="allowSignatureMismatch"/> is false.</exception>
     public void ImportSnapshot(VectorIndexSnapshot snapshot, bool allowSignatureMismatch = false)
@@ -360,7 +363,6 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
 
         if (!allowSignatureMismatch
             && EmbeddingSignature is not null
-            && snapshot.EmbeddingSignature is not null
             && !string.Equals(EmbeddingSignature, snapshot.EmbeddingSignature, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(

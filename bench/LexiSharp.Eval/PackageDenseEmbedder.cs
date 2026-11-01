@@ -29,6 +29,20 @@ internal static class PackageDenseEmbedder
             return Task.FromResult<DenseVectors?>(null);
         }
 
+        string documentCache = Path.Combine(dataDir, "e5-small.package.docs.bin");
+        string queryCache = Path.Combine(dataDir, "e5-small.package.queries.bin");
+        string metaCache = Path.Combine(dataDir, "e5-small.package.json");
+
+        if (File.Exists(documentCache) && File.Exists(queryCache) && File.Exists(metaCache)
+            && DenseEmbedder.MetaMatches(metaCache, corpus.Documents.Count, corpus.Queries.Count, maxSeqLength))
+        {
+            Console.WriteLine($"Loading cached package embeddings ({corpus.Documents.Count}+{corpus.Queries.Count} vectors).");
+            return Task.FromResult<DenseVectors?>(new DenseVectors(
+                DenseEmbedder.ReadMatrix(documentCache, corpus.Documents.Count),
+                DenseEmbedder.ReadMatrixAsQueryMap(queryCache, corpus.Queries.Count, corpus),
+                DenseEmbedder.HiddenDim));
+        }
+
         int unknown = new SentencePieceOnnxTokenizer(sentencePiece).UnknownId;
 
         var tokenizer = new SentencePieceOnnxTokenizer(sentencePiece, new SentencePieceOnnxTokenizerOptions
@@ -66,6 +80,18 @@ internal static class PackageDenseEmbedder
 
         for (int i = 0; i < corpus.Queries.Count; i++)
             queryMap.TryAdd(corpus.Queries[i].Text, queryVectors[i]);
+
+        DenseEmbedder.WriteMatrix(documentCache, documentVectors);
+        DenseEmbedder.WriteMatrix(queryCache, queryVectors);
+        File.WriteAllText(metaCache, System.Text.Json.JsonSerializer.Serialize(new
+        {
+            model = DenseModels.ModelId,
+            version = DenseEmbedder.CacheVersion,
+            docCount = corpus.Documents.Count,
+            queryCount = corpus.Queries.Count,
+            maxSeqLength,
+            dimension = encoder.Dimension,
+        }));
 
         return Task.FromResult<DenseVectors?>(new DenseVectors(documentVectors, queryMap, encoder.Dimension));
     }

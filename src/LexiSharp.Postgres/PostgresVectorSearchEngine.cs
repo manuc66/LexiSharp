@@ -174,8 +174,21 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         string signature = signed.EmbeddingSignature;
         string meta = MetaTableName;
 
+        // Two processes can create the same table concurrently; the advisory lock serializes the
+        // read-then-write of the signature row without needing the row to exist yet.
+        await using NpgsqlTransaction signatureTransaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
+        await using (var lockCommand = connection.CreateCommand())
+        {
+            lockCommand.Transaction = signatureTransaction;
+            lockCommand.CommandText = "SELECT pg_advisory_xact_lock(hashtext(@key));";
+            lockCommand.Parameters.AddWithValue("key", meta);
+            await lockCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         await using (var command = connection.CreateCommand())
         {
+            command.Transaction = signatureTransaction;
             command.CommandText = $"CREATE TABLE IF NOT EXISTS {meta} (key text PRIMARY KEY, value text NOT NULL);"; // NOSONAR:S2077
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -184,6 +197,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
 
         await using (var command = connection.CreateCommand())
         {
+            command.Transaction = signatureTransaction;
             command.CommandText = $"SELECT value FROM {meta} WHERE key = 'embedding_signature';"; // NOSONAR:S2077
             existing = (string?)await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -194,6 +208,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
 
             await using (var command = connection.CreateCommand())
             {
+                command.Transaction = signatureTransaction;
                 command.CommandText = $"SELECT COUNT(*) FROM {_options.QualifiedTableName};"; // NOSONAR:S2077
                 rows = (long)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
             }
@@ -217,11 +232,13 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         }
 
         await using var write = connection.CreateCommand();
+        write.Transaction = signatureTransaction;
         write.CommandText = existing is null
             ? $"INSERT INTO {meta} (key, value) VALUES ('embedding_signature', @signature) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;" // NOSONAR:S2077
             : $"UPDATE {meta} SET value = @signature WHERE key = 'embedding_signature';"; // NOSONAR:S2077
         write.Parameters.AddWithValue("signature", signature);
         await write.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        await signatureTransaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task CreateIndexAsync(NpgsqlConnection connection, string column, string indexBase, CancellationToken cancellationToken)

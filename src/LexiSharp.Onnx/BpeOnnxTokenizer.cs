@@ -43,6 +43,13 @@ public sealed class BpeOnnxTokenizerOptions
     public PreTokenizer? PreTokenizer { get; init; }
 
     /// <summary>
+    /// Maximum size of the <c>tokenizer.json</c> this tokenizer will read. Defaults to 64 MiB;
+    /// a corrupt or unexpectedly large file is refused before it is buffered. Set <c>0</c> to
+    /// disable the cap.
+    /// </summary>
+    public long MaxFileBytes { get; init; } = 64L * 1024 * 1024;
+
+    /// <summary>
     /// Id inserted between query and document by <see cref="BpeOnnxTokenizer.EncodePair"/>, or
     /// <see langword="null"/> when the checkpoint has no pair convention. Pair encoding throws
     /// <see cref="NotSupportedException"/> while this is null.
@@ -90,6 +97,10 @@ public sealed class BpeOnnxTokenizer : IOnnxTokenizer
             throw new ArgumentException("tokenizerJsonPath is required.", nameof(tokenizerJsonPath));
 
         _options = options ?? new BpeOnnxTokenizerOptions();
+
+        if (_options.MaxFileBytes > 0 && new FileInfo(tokenizerJsonPath).Length > _options.MaxFileBytes)
+            throw new InvalidOperationException(
+                $"The tokenizer file is larger than MaxFileBytes ({_options.MaxFileBytes} bytes).");
 
         string json = File.ReadAllText(tokenizerJsonPath);
         _fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
@@ -146,6 +157,9 @@ public sealed class BpeOnnxTokenizer : IOnnxTokenizer
 
         if (unknown is null && model.TryGetProperty("unk_token", out JsonElement unknownElement))
             unknown = unknownElement.ValueKind == JsonValueKind.String ? unknownElement.GetString() : null;
+
+        RejectUnsupportedNormalizer(root);
+        RejectUnsupportedPreTokenizer(root);
 
         (TemplateStep[]? single, TemplateStep[]? pair) = ParsePostProcessor(root, special);
 
@@ -246,6 +260,35 @@ public sealed class BpeOnnxTokenizer : IOnnxTokenizer
         }
 
         return new OnnxTokenizedText(ids, types);
+    }
+
+    private void RejectUnsupportedNormalizer(JsonElement root)
+    {
+        if (_options.Normalizer is not null)
+            return;
+
+        if (root.TryGetProperty("normalizer", out JsonElement normalizer) && normalizer.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
+            throw new NotSupportedException(
+                "The tokenizer.json declares a normalizer this package does not interpret. Pass BpeOnnxTokenizerOptions.Normalizer " +
+                "so the normalization matches the checkpoint instead of being silently ignored.");
+    }
+
+    private void RejectUnsupportedPreTokenizer(JsonElement root)
+    {
+        if (_options.PreTokenizer is not null)
+            return;
+
+        if (!root.TryGetProperty("pre_tokenizer", out JsonElement pre) || pre.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return;
+
+        string? type = pre.TryGetProperty("type", out JsonElement typeElement) ? typeElement.GetString() : null;
+
+        if (type is "ByteLevel" or "Whitespace" or "WhitespaceSplit" or "Punctuation" or "Sequence" or "BertPreTokenizer")
+            return;
+
+        throw new NotSupportedException(
+            $"The tokenizer.json declares the pre-tokenizer '{type}', which this package does not interpret. " +
+            "Pass BpeOnnxTokenizerOptions.PreTokenizer explicitly.");
     }
 
     private static bool InferByteLevel(JsonElement root)

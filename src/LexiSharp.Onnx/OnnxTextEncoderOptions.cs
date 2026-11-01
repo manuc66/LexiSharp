@@ -103,6 +103,12 @@ internal static class OnnxSessionFactory
             configure?.Invoke(options);
             return new InferenceSession(modelPath, options);
         }
+        catch (OnnxRuntimeException exception)
+        {
+            throw new InvalidOperationException(
+                $"Could not load the ONNX model '{modelPath}'. Check the path, the file and the runtime identifier " +
+                $"(the native ONNX Runtime asset). {exception.Message}", exception);
+        }
         finally
         {
             options.Dispose();

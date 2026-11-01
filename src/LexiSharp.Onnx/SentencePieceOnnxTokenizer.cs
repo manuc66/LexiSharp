@@ -36,6 +36,12 @@ public sealed class SentencePieceOnnxTokenizerOptions
     public int? SuffixId { get; init; }
 
     /// <summary>
+    /// Maximum size of the SentencePiece model file. Defaults to 64 MiB; a corrupt or unexpectedly
+    /// large file is refused before it is buffered. Set <c>0</c> to disable the cap.
+    /// </summary>
+    public long MaxFileBytes { get; init; } = 64L * 1024 * 1024;
+
+    /// <summary>
     /// Size of the graph's vocabulary, when it is known. When set, <see cref="SentencePieceOnnxTokenizer.Encode"/>
     /// rejects a mapped id outside <c>[0, GraphVocabularySize)</c> instead of handing ONNX Runtime
     /// an index its Gather may resolve to nothing. Leave <see langword="null"/> when the export's
@@ -84,6 +90,10 @@ public sealed class SentencePieceOnnxTokenizer : IOnnxTokenizer
             throw new ArgumentException("modelPath is required.", nameof(modelPath));
 
         _options = options ?? new SentencePieceOnnxTokenizerOptions();
+
+        if (_options.MaxFileBytes > 0 && new FileInfo(modelPath).Length > _options.MaxFileBytes)
+            throw new InvalidOperationException(
+                $"The SentencePiece model is larger than MaxFileBytes ({_options.MaxFileBytes} bytes).");
 
         byte[] model = File.ReadAllBytes(modelPath);
         using var stream = new MemoryStream(model, writable: false);

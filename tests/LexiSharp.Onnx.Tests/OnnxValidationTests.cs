@@ -116,6 +116,19 @@ public sealed class OnnxValidationTests
     }
 
     [Fact]
+    public void Encoder_ReportsAMissingModelWithItsPath()
+    {
+        InvalidOperationException error = Assert.Throws<InvalidOperationException>(
+            () => new OnnxTextEncoder(new OnnxTextEncoderOptions
+            {
+                ModelPath = Path.Combine(Path.GetTempPath(), "lexisharp-missing-model.onnx"),
+                Tokenizer = Tokenizer(),
+            }));
+
+        Assert.Contains("lexisharp-missing-model.onnx", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Encoder_SignatureChangesWithTheModelFile()
     {
         using var first = new OnnxTextEncoder(EncoderVariant("tiny-encoder.onnx"));

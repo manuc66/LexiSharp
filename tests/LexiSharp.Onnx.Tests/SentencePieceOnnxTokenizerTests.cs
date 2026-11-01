@@ -87,6 +87,13 @@ public sealed class SentencePieceOnnxTokenizerTests
     }
 
     [Fact]
+    public void Constructor_RejectsAFileOverTheConfiguredLimit()
+    {
+        Assert.Throws<InvalidOperationException>(
+            () => new SentencePieceOnnxTokenizer(Fixture("tiny-sp.model"), new SentencePieceOnnxTokenizerOptions { MaxFileBytes = 1 }));
+    }
+
+    [Fact]
     public void Fingerprint_IsExposed()
     {
         Assert.False(string.IsNullOrEmpty(Tokenizer().Fingerprint));

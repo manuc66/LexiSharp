@@ -472,18 +472,30 @@ public static class Program
             string rerankCache = Path.Combine(dataBaseDir, "models", "cross-encoder");
             await CrossEncoderModels.EnsureFilesAsync(rerankCache, CancellationToken.None);
 
-            var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
-            options.AppendExecutionProvider_CPU();
-            options.IntraOpNumThreads = 4;
-            options.InterOpNumThreads = 1;
+            if (Environment.GetEnvironmentVariable("LEXISHARP_EVAL_RERANK_PACKAGE") == "1")
+            {
+                reranker = new PackageCrossEncoderReranker(
+                    Path.Combine(rerankCache, "onnx", "model.onnx"),
+                    Path.Combine(rerankCache, "vocab.txt"));
 
-            var session = new Microsoft.ML.OnnxRuntime.InferenceSession(
-                Path.Combine(rerankCache, "onnx", "model.onnx"), options);
+                Console.WriteLine(
+                    $"Cross-encoder reranker enabled through LexiSharp.Onnx ({CrossEncoderModels.ModelId}, {rerankCandidates} candidates/query).");
+            }
+            else
+            {
+                var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
+                options.AppendExecutionProvider_CPU();
+                options.IntraOpNumThreads = 4;
+                options.InterOpNumThreads = 1;
 
-            reranker = new CrossEncoderReranker(new BertTokenizer(Path.Combine(rerankCache, "vocab.txt")), session);
+                var session = new Microsoft.ML.OnnxRuntime.InferenceSession(
+                    Path.Combine(rerankCache, "onnx", "model.onnx"), options);
 
-            Console.WriteLine(
-                $"Cross-encoder reranker enabled ({CrossEncoderModels.ModelId}, {rerankCandidates} candidates/query).");
+                reranker = new CrossEncoderReranker(new BertTokenizer(Path.Combine(rerankCache, "vocab.txt")), session);
+
+                Console.WriteLine(
+                    $"Cross-encoder reranker enabled ({CrossEncoderModels.ModelId}, {rerankCandidates} candidates/query).");
+            }
             Console.WriteLine();
         }
 
@@ -792,21 +804,21 @@ public static class Program
         var learningCorpus = Evaluation.BuildDocuments(corpus);
 
         foreach (double density in expandDensities.Distinct().OrderByDescending(value => value))
-        foreach (var ranking in expandRankings.Distinct())
-        {
-            var options = new PmiTermExpanderOptions { MaxWindowDensity = density, Ranking = ranking };
+            foreach (var ranking in expandRankings.Distinct())
+            {
+                var options = new PmiTermExpanderOptions { MaxWindowDensity = density, Ranking = ranking };
 
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            var learned = PmiTermExpander.LearnFrom(learningCorpus, tokenizer, options);
-            sw.Stop();
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var learned = PmiTermExpander.LearnFrom(learningCorpus, tokenizer, options);
+                sw.Stop();
 
-            string name =
-                $"BM25 + query expansion (density<={density.ToString("0.####", CultureInfo.InvariantCulture)}, {ranking})";
+                string name =
+                    $"BM25 + query expansion (density<={density.ToString("0.####", CultureInfo.InvariantCulture)}, {ranking})";
 
-            Console.WriteLine($"Learned {name} in {sw.Elapsed.TotalSeconds:0.0}s.");
+                Console.WriteLine($"Learned {name} in {sw.Elapsed.TotalSeconds:0.0}s.");
 
-            queryExpansions.Add((name, learned));
-        }
+                queryExpansions.Add((name, learned));
+            }
 
         var (results, tunedDescription, notes, heldOut) = Evaluation.Run(
             corpus, runIndex, topK, limit, tokenizer, excludeQueryDocument, gain, referenceBm25,

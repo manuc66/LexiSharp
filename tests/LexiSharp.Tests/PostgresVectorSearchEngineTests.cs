@@ -79,13 +79,14 @@ public class PostgresVectorSearchEngineTests
         public int Dimension => 2;
 
         public Task<ReadOnlyMemory<float>> GetTextEmbeddingAsync(string text, EmbeddingUse use, CancellationToken cancellationToken = default) =>
-            throw new InvalidOperationException("The engine must batch each column.");
+            Task.FromResult<ReadOnlyMemory<float>>(new[] { 1f, 0f });
 
         public Task<IReadOnlyList<ReadOnlyMemory<float>>> GetTextEmbeddingsAsync(
             IReadOnlyList<string> texts,
             EmbeddingUse use,
             CancellationToken cancellationToken = default) =>
-            throw new InvalidOperationException("The engine must pass the embedding column.");
+            Task.FromResult<IReadOnlyList<ReadOnlyMemory<float>>>(
+                texts.Select(_ => (ReadOnlyMemory<float>)new[] { 1f, 0f }).ToArray());
 
         public Task<IReadOnlyList<ReadOnlyMemory<float>>> GetTextEmbeddingsAsync(
             IReadOnlyList<string> texts,
@@ -97,6 +98,29 @@ public class PostgresVectorSearchEngineTests
             return Task.FromResult<IReadOnlyList<ReadOnlyMemory<float>>>(
                 texts.Select(_ => (ReadOnlyMemory<float>)new[] { 1f, 0f }).ToArray());
         }
+    }
+
+    private sealed class WrongDimensionColumnStub : IColumnAwareBatchEmbeddingProvider
+    {
+        public int Dimension => 2;
+
+        public Task<ReadOnlyMemory<float>> GetTextEmbeddingAsync(string text, EmbeddingUse use, CancellationToken cancellationToken = default) =>
+            Task.FromResult<ReadOnlyMemory<float>>(new[] { 1f, 0f });
+
+        public Task<IReadOnlyList<ReadOnlyMemory<float>>> GetTextEmbeddingsAsync(
+            IReadOnlyList<string> texts,
+            EmbeddingUse use,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<ReadOnlyMemory<float>>>(
+                texts.Select(_ => (ReadOnlyMemory<float>)new[] { 1f, 0f }).ToArray());
+
+        public Task<IReadOnlyList<ReadOnlyMemory<float>>> GetTextEmbeddingsAsync(
+            IReadOnlyList<string> texts,
+            EmbeddingUse use,
+            string column,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<ReadOnlyMemory<float>>>(
+                texts.Select(_ => (ReadOnlyMemory<float>)(column == "body" ? new[] { 1f, 0f, 0f } : new[] { 1f, 0f })).ToArray());
     }
 
     private sealed class BatchStubEmbeddingProvider : IBatchEmbeddingProvider
@@ -185,6 +209,45 @@ public class PostgresVectorSearchEngineTests
     }
 
     private static SearchDocument Doc(string id, string text) => new(id, text);
+
+    [SkippableFact]
+    public void Index_MultiColumnRollsBackWhenAnInsertFails()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        string table = $"rollback_{Guid.NewGuid():N}"[..24];
+        var options = new PostgresVectorOptions
+        {
+            Dimension = 2,
+            Table = table,
+            EmbeddingColumns = new Dictionary<string, string> { ["title"] = "title", ["body"] = "body" },
+        };
+
+        using var good = new PostgresVectorSearchEngine(ConnectionString!, new ColumnAwareBatchStub(), options);
+        using var wrong = new PostgresVectorSearchEngine(ConnectionString!, new WrongDimensionColumnStub(), options);
+
+        try
+        {
+            good.Index(
+            [
+                new SearchDocument("old", "old", TextFields: new Dictionary<string, string> { ["title"] = "old title", ["body"] = "old body" }),
+            ]);
+
+            Assert.ThrowsAny<Exception>(
+                () => wrong.Index(
+                [
+                    new SearchDocument("new", "new", TextFields: new Dictionary<string, string> { ["title"] = "new title", ["body"] = "new body" }),
+                ]));
+
+            IReadOnlyList<SearchResult> results = good.Search("old", new SearchOptions(Limit: 10));
+
+            Assert.Contains(results, result => result.DocumentId == "old");
+        }
+        finally
+        {
+            good.DropSchema();
+        }
+    }
 
     [SkippableFact]
     public void EnsureSchema_RejectsADifferentEmbeddingSignature()
