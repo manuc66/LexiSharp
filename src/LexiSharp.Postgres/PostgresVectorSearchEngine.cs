@@ -298,9 +298,9 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
     }
 
     /// <summary>
-    /// Replaces the table's contents, embedding the whole corpus in one provider call when the
-    /// provider implements <see cref="IBatchEmbeddingProvider"/>. Prefer this over the blocking
-    /// <see cref="Index"/>.
+    /// Replaces the table's contents, embedding the corpus in chunks of
+    /// <see cref="PostgresVectorOptions.EmbeddingBatchSize"/> when the provider implements
+    /// <see cref="IBatchEmbeddingProvider"/>. Prefer this over the blocking <see cref="Index"/>.
     /// </summary>
     /// <param name="documents">The new corpus; the table is truncated first.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
@@ -407,7 +407,10 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
     {
         float[][] vectors = new float[texts.Count][];
 
-        if (_embeddings is IBatchEmbeddingProvider batch)
+        if (_embeddings is IBatchEmbeddingProvider batch
+            && (column is null
+                || _embeddings is IColumnAwareBatchEmbeddingProvider
+                || _embeddings is not IColumnAwareEmbeddingProvider))
         {
             for (int start = 0; start < texts.Count; start += _options.EmbeddingBatchSize)
             {

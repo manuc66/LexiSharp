@@ -197,6 +197,13 @@ public sealed class BpeOnnxTokenizerTests
     }
 
     [Fact]
+    public void Constructor_RejectsAPairTemplateWithoutB()
+    {
+        Assert.Throws<NotSupportedException>(
+            () => new BpeOnnxTokenizer(Fixture("tiny-bpe-pair-no-b.json")));
+    }
+
+    [Fact]
     public void Constructor_RejectsATemplateWithTwoSequences()
     {
         Assert.Throws<NotSupportedException>(

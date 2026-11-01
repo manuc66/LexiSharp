@@ -11,6 +11,8 @@ namespace LexiSharp.Eval;
 /// </summary>
 internal static class PackageDenseEmbedder
 {
+    private const int PackageCacheVersion = 1;
+
     public static Task<DenseVectors?> TryBuildAsync(
         BeirCorpus corpus,
         string dataDir,
@@ -34,7 +36,7 @@ internal static class PackageDenseEmbedder
         string metaCache = Path.Combine(dataDir, "e5-small.package.json");
 
         if (File.Exists(documentCache) && File.Exists(queryCache) && File.Exists(metaCache)
-            && DenseEmbedder.MetaMatches(metaCache, corpus.Documents.Count, corpus.Queries.Count, maxSeqLength))
+            && CacheMatches(metaCache, corpus.Documents.Count, corpus.Queries.Count, maxSeqLength))
         {
             Console.WriteLine($"Loading cached package embeddings ({corpus.Documents.Count}+{corpus.Queries.Count} vectors).");
             return Task.FromResult<DenseVectors?>(new DenseVectors(
@@ -86,7 +88,7 @@ internal static class PackageDenseEmbedder
         File.WriteAllText(metaCache, System.Text.Json.JsonSerializer.Serialize(new
         {
             model = DenseModels.ModelId,
-            version = DenseEmbedder.CacheVersion,
+            packageVersion = PackageCacheVersion,
             docCount = corpus.Documents.Count,
             queryCount = corpus.Queries.Count,
             maxSeqLength,
@@ -94,6 +96,25 @@ internal static class PackageDenseEmbedder
         }));
 
         return Task.FromResult<DenseVectors?>(new DenseVectors(documentVectors, queryMap, encoder.Dimension));
+    }
+
+    internal static bool CacheMatches(string metaPath, int documentCount, int queryCount, int maxSeqLength)
+    {
+        try
+        {
+            using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(metaPath));
+            System.Text.Json.JsonElement root = document.RootElement;
+
+            return root.GetProperty("model").GetString() == DenseModels.ModelId
+                && root.GetProperty("packageVersion").GetInt32() == PackageCacheVersion
+                && root.GetProperty("docCount").GetInt32() == documentCount
+                && root.GetProperty("queryCount").GetInt32() == queryCount
+                && root.GetProperty("maxSeqLength").GetInt32() == maxSeqLength;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
     }
 
     private static string CombineTitleAndText(BeirDocument document) =>

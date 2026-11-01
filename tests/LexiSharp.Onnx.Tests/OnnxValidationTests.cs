@@ -145,6 +145,8 @@ public sealed class OnnxValidationTests
         for (int i = 0; i < left.Length; i++)
             Assert.InRange(Math.Abs(left[i] - right[i]), 0, 1e-6f);
 
+        Assert.NotEqual(zero.EmbeddingSignature, one.EmbeddingSignature);
+
         Assert.Throws<ArgumentException>(() => new OnnxTextEncoder(new OnnxTextEncoderOptions
         {
             ModelPath = Fixture("tiny-encoder.onnx"),

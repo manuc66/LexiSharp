@@ -100,6 +100,28 @@ public class PostgresVectorSearchEngineTests
         }
     }
 
+    private sealed class ColumnAwareSingleStub : IColumnAwareEmbeddingProvider, IBatchEmbeddingProvider
+    {
+        public List<string> Columns { get; } = [];
+
+        public int Dimension => 2;
+
+        public Task<ReadOnlyMemory<float>> GetTextEmbeddingAsync(string text, EmbeddingUse use, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("The engine must pass the embedding column.");
+
+        public Task<ReadOnlyMemory<float>> GetTextEmbeddingAsync(string text, EmbeddingUse use, string column, CancellationToken cancellationToken = default)
+        {
+            Columns.Add(column);
+            return Task.FromResult<ReadOnlyMemory<float>>(new[] { 1f, 0f });
+        }
+
+        public Task<IReadOnlyList<ReadOnlyMemory<float>>> GetTextEmbeddingsAsync(
+            IReadOnlyList<string> texts,
+            EmbeddingUse use,
+            CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("A column-aware provider without the column overload must not be batched.");
+    }
+
     private sealed class WrongDimensionColumnStub : IColumnAwareBatchEmbeddingProvider
     {
         public int Dimension => 2;
@@ -209,6 +231,37 @@ public class PostgresVectorSearchEngineTests
     }
 
     private static SearchDocument Doc(string id, string text) => new(id, text);
+
+    [SkippableFact]
+    public void Index_FallsBackToColumnAwareCallsWhenBatchCannotCarryTheColumn()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        var provider = new ColumnAwareSingleStub();
+        using var engine = NewEngine(provider, new PostgresVectorOptions
+        {
+            Dimension = 2,
+            Table = $"column_{Guid.NewGuid():N}"[..20],
+            EmbeddingColumns = new Dictionary<string, string> { ["title"] = "title", ["body"] = "body" },
+        });
+
+        try
+        {
+            engine.Index(
+            [
+                new SearchDocument("1", "one", TextFields: new Dictionary<string, string> { ["title"] = "t1", ["body"] = "b1" }),
+                new SearchDocument("2", "two", TextFields: new Dictionary<string, string> { ["title"] = "t2", ["body"] = "b2" }),
+            ]);
+
+            Assert.Contains("title", provider.Columns);
+            Assert.Contains("body", provider.Columns);
+            Assert.Equal(4, provider.Columns.Count);
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
 
     [SkippableFact]
     public void Index_MultiColumnRollsBackWhenAnInsertFails()

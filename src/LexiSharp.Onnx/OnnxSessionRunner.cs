@@ -53,9 +53,16 @@ internal static class OnnxSessionRunner
         using var runOptions = new RunOptions();
         using CancellationTokenRegistration registration = linked.Token.Register(() => runOptions.Terminate = true);
 
-        return inputType == TensorElementType.Int32
-            ? RunInt32(session, inputNames, outputNames, runOptions, ids, mask, types, batch.Length, sequenceLength)
-            : RunInt64(session, inputNames, outputNames, runOptions, ids, mask, types, batch.Length, sequenceLength);
+        try
+        {
+            return inputType == TensorElementType.Int32
+                ? RunInt32(session, inputNames, outputNames, runOptions, ids, mask, types, batch.Length, sequenceLength)
+                : RunInt64(session, inputNames, outputNames, runOptions, ids, mask, types, batch.Length, sequenceLength);
+        }
+        catch (OnnxRuntimeException) when (linked.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(linked.Token);
+        }
     }
 
     private static float[] RunInt64(
