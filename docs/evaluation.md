@@ -1350,16 +1350,41 @@ the standalone [benchmark table](benchmarks.md#classification-classificationbenc
 accuracy columns are the measurement. They are indicative in the same sense as the retrieval
 tables: re-run on your hardware before quoting them.
 
+### Short text: the same split, subjects only
+
+The 20 Newsgroups messages are long, so the table above does not say what happens on a short text.
+The same pipeline can drop the body and keep only the `Subject` line (`--text subject`), which
+leaves **6 577 train / 3 761 test** documents after deduplication — subjects repeat, and a subject
+seen in train is removed from test so the model cannot match it verbatim. Same tuning, same seeds,
+same code path:
+
+| Method | Accuracy [95 % CI] | Macro-F1 [95 % CI] |
+|---|---:|---:|
+| Naive Bayes | **0.5624 [0.5461, 0.5780]** | **0.5293 [0.5106, 0.5461]** |
+| Linear | 0.5533 [0.5376, 0.5695] | 0.5295 [0.5113, 0.5455] |
+| Random forest (25 trees, 50 % subset) | 0.3095 [0.2943, 0.3236] | 0.3053 [0.2872, 0.3232] |
+| Decision tree (depth 30, Gini) | 0.2425 [0.2300, 0.2560] | 0.2244 [0.2079, 0.2390] |
+
+The linear model's long-document advantage **does not transfer**. On full messages it is 25 points
+ahead of Naive Bayes; on subjects it is nominally behind, and McNemar cannot separate them
+(**p = 0.16**, 293 documents it fixes against 259 it breaks). The 5-fold CV agrees: Naive Bayes
+**0.6546 ± 0.0107**, linear **0.6626 ± 0.0112**, a gap of less than one point. On short text the
+baseline is already strong and the extra model buys little; the tree and forest lose badly, as
+they do on long text. This is the measurement that matters before carrying any 20NG claim to
+titles or log lines: run the baseline on your labels first. The run is pinned in
+[`reference/classification-20news-subject.json`](https://github.com/manuc66/LexiSharp/blob/main/bench/LexiSharp.Eval/reference/classification-20news-subject.json).
+
 Three limits matter when carrying these figures to another problem:
 
 - **No online learning.** `Train` rebuilds the model; `Reinforce`/`Unreinforce` correct a trained
   tree or linear model without retraining, but there is no `Learn`/`Unlearn` that folds one
   document into the counts. At a few thousand examples retraining per synchronization is
   plausibly affordable, and that has not been measured here.
-- **Long documents.** 20 Newsgroups messages are long and topical. Short texts — a window title,
-  a log line — have far fewer features per item, and the classifier's share of the total accuracy
-  can be much smaller than a context feature's. Measure on your own labels and compare against the
-  baseline you already have; a gain over Naive Bayes on 20NG is not a promise about short text.
+- **Long documents.** 20 Newsgroups messages are long and topical. The subject-only run above is
+  the evidence that this matters: the linear model's lead disappears on short text. A short text
+  has far fewer features per item, and the classifier's share of the total accuracy can be much
+  smaller than a context feature's. Measure on your own labels and compare against the baseline
+  you already have.
 - **No persistence.** The models are in-memory and have no versioned serialization; the intended
   workflow is to replay the history and retrain. A saved model would also need a feature-space
   version, which is not designed here.

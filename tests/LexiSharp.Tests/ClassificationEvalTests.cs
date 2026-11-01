@@ -43,6 +43,26 @@ public class ClassificationEvalTests
     }
 
     [Fact]
+    public void ParseMessage_SubjectOnly_DropsTheBody()
+    {
+        const string raw = "Subject: Re: the subject\n\nA long body that must not reach the model.\n";
+
+        Assert.Equal(
+            "Re: the subject",
+            TwentyNewsgroups.ParseMessage(raw, ClassificationTextMode.SubjectOnly));
+    }
+
+    [Fact]
+    public void ParseMessage_SubjectOnly_WithoutSubject_IsEmpty()
+    {
+        const string raw = "From: someone@example.com\n\nBody only\n";
+
+        Assert.Equal(
+            string.Empty,
+            TwentyNewsgroups.ParseMessage(raw, ClassificationTextMode.SubjectOnly));
+    }
+
+    [Fact]
     public void Extract_WritesTheArchiveEntries()
     {
         string root = Path.Combine(Path.GetTempPath(), "lexisharp-20ng-" + Guid.NewGuid().ToString("N"));
