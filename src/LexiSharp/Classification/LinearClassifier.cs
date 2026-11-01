@@ -47,6 +47,8 @@ public sealed class LinearClassifier<TItem>
     private double[] _idf = Array.Empty<double>();
     private double[] _numericMeans = Array.Empty<double>();
     private double[] _numericStandardDeviations = Array.Empty<double>();
+    private readonly Dictionary<string, Dictionary<string, double>> _reinforcement =
+        new(StringComparer.Ordinal);
     private bool _trained;
 
     /// <param name="features">The feature space the model reads.</param>
@@ -80,6 +82,8 @@ public sealed class LinearClassifier<TItem>
     public void Train(IEnumerable<TItem> items)
     {
         ArgumentNullException.ThrowIfNull(items);
+
+        _reinforcement.Clear();
 
         if (_options.ClassWeights is { } classWeights)
         {
@@ -332,6 +336,29 @@ public sealed class LinearClassifier<TItem>
                 logits[c] += _weights[offset + c] * value;
         }
 
+        if (_reinforcement.Count > 0)
+        {
+            foreach (string feature in features.Features)
+            {
+                if (!_featureIds.TryGetValue(feature, out int id))
+                    continue;
+
+                double value = ValueOf(id, features.NumericValue(feature));
+
+                if (value == 0)
+                    continue;
+
+                for (int c = 0; c < classCount; c++)
+                {
+                    if (_reinforcement.TryGetValue(_categories[c], out Dictionary<string, double>? deltas)
+                        && deltas.TryGetValue(feature, out double delta))
+                    {
+                        logits[c] += delta * value;
+                    }
+                }
+            }
+        }
+
         var probabilities = new double[classCount];
         Softmax(logits, probabilities);
 
@@ -380,6 +407,61 @@ public sealed class LinearClassifier<TItem>
         var results = Predict(item, limit: 1, excludedCategories);
 
         return results.Count > 0 ? results[0].Category : null;
+    }
+
+    /// <summary>Records a signed correction on an item's features for a category, without retraining.</summary>
+    /// <param name="item">The item whose features are corrected.</param>
+    /// <param name="category">A category seen during training.</param>
+    /// <param name="weight">The positive mass to add. Default: <c>1</c>.</param>
+    public void Reinforce(TItem item, string category, double weight = 1.0) =>
+        AdjustReinforcement(item, category, weight, sign: 1.0);
+
+    /// <summary>Removes a correction previously added with <see cref="Reinforce"/>.</summary>
+    /// <param name="item">The item whose features are corrected.</param>
+    /// <param name="category">The corrected category.</param>
+    /// <param name="weight">The positive mass to remove. Default: <c>1</c>.</param>
+    public void Unreinforce(TItem item, string category, double weight = 1.0) =>
+        AdjustReinforcement(item, category, weight, sign: -1.0);
+
+    /// <summary>Clears every correction; the model returns to its training weights.</summary>
+    public void ForgetReinforcement() => _reinforcement.Clear();
+
+    private void AdjustReinforcement(TItem item, string category, double weight, double sign)
+    {
+        ArgumentNullException.ThrowIfNull(category);
+
+        if (!_trained)
+            throw new InvalidOperationException("The model is untrained.");
+
+        if (!double.IsFinite(weight) || weight <= 0)
+            throw new ArgumentException("The reinforcement weight must be finite and positive.", nameof(weight));
+
+        if (!_categoryIndex.ContainsKey(category))
+            throw new ArgumentException("The category was not seen during training.", nameof(category));
+
+        IFeatureSet features = _features.FeaturesOf(item);
+
+        if (!_reinforcement.TryGetValue(category, out Dictionary<string, double>? deltas))
+        {
+            deltas = new Dictionary<string, double>(StringComparer.Ordinal);
+            _reinforcement[category] = deltas;
+        }
+
+        foreach (string feature in features.Features)
+        {
+            if (!_featureIds.ContainsKey(feature))
+                continue;
+
+            double updated = deltas.GetValueOrDefault(feature) + sign * weight;
+
+            if (Math.Abs(updated) <= 1e-12)
+                deltas.Remove(feature);
+            else
+                deltas[feature] = updated;
+        }
+
+        if (deltas.Count == 0)
+            _reinforcement.Remove(category);
     }
 
     /// <summary>Returns the features with the largest coefficient for a category.</summary>
@@ -522,6 +604,31 @@ public sealed class LinearClassifier : ITextClassifier
 
         return _inner.PredictBest(new SearchDocument(string.Empty, text), excludedCategories);
     }
+
+    /// <summary>Records a correction on a text's features for a category, without retraining.</summary>
+    /// <param name="text">Raw text; tokenized internally with this model's tokenizer.</param>
+    /// <param name="category">A category seen during training.</param>
+    /// <param name="weight">The positive mass to add. Default: <c>1</c>.</param>
+    public void Reinforce(string text, string category, double weight = 1.0)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        _inner.Reinforce(new SearchDocument(string.Empty, text), category, weight);
+    }
+
+    /// <summary>Removes a correction previously added with <see cref="Reinforce"/>.</summary>
+    /// <param name="text">Raw text; tokenized internally with this model's tokenizer.</param>
+    /// <param name="category">The corrected category.</param>
+    /// <param name="weight">The positive mass to remove. Default: <c>1</c>.</param>
+    public void Unreinforce(string text, string category, double weight = 1.0)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        _inner.Unreinforce(new SearchDocument(string.Empty, text), category, weight);
+    }
+
+    /// <summary>Clears every correction; the model returns to its training weights.</summary>
+    public void ForgetReinforcement() => _inner.ForgetReinforcement();
 
     /// <summary>Returns the features with the largest coefficient for a category.</summary>
     /// <param name="category">A category seen during training.</param>
