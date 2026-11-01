@@ -85,6 +85,19 @@ public class CalibrationTests
     }
 
     [Fact]
+    public void Fit_WithAFlatZeroLoss_KeepsTheIdentity()
+    {
+        var samples = new[]
+        {
+            new CalibrationSample(Distribution(("A", 1.0)), "A"),
+        };
+
+        var calibrator = TemperatureCalibrator.Fit(samples);
+
+        Assert.Equal(1.0, calibrator.Temperature, precision: 12);
+    }
+
+    [Fact]
     public void Fit_WithNoSamples_Throws()
     {
         Assert.Throws<ArgumentException>(
@@ -104,6 +117,19 @@ public class CalibrationTests
         Assert.True(results[0].Probability < 0.9);
         Assert.Equal("A", results[0].Category);
         Assert.Equal(1.0, results.Sum(result => result.Probability), precision: 10);
+    }
+
+    [Fact]
+    public void CalibratedClassifier_SortsAnUnsortedInnerDistribution()
+    {
+        var inner = new FixedClassifier(
+            new ClassificationResult("B", 0.1),
+            new ClassificationResult("A", 0.9));
+        var classifier = new CalibratedClassifier(inner, new TemperatureCalibrator(1.0));
+
+        var results = classifier.Predict("x", limit: 1);
+
+        Assert.Equal("A", results[0].Category);
     }
 
     [Fact]

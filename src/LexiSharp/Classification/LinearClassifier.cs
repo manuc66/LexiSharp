@@ -464,7 +464,10 @@ public sealed class LinearClassifier<TItem>
             _reinforcement.Remove(category);
     }
 
-    /// <summary>Returns the features with the largest coefficient for a category.</summary>
+    /// <summary>
+    /// Returns the features with the largest training coefficient for a category. The reinforcement
+    /// ledger is not included: this is what the corpus taught the model, not what feedback added.
+    /// </summary>
     /// <param name="category">A category seen during training.</param>
     /// <param name="count">Maximum number of features to return.</param>
     /// <returns>The features, by decreasing coefficient then ordinal name.</returns>

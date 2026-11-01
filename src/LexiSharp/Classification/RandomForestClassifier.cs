@@ -107,13 +107,17 @@ public sealed class RandomForestClassifier<TItem>
         _categories = categories.ToArray();
         _trees.Clear();
 
-        if (materialized.Count == 0 || vocabulary.Count == 0)
+        if (materialized.Count == 0)
             return;
 
-        int subsetSize = Math.Clamp(
-            (int)Math.Ceiling(vocabulary.Count * _options.FeatureSubsetFraction),
-            1,
-            vocabulary.Count);
+        // A corpus with no features is not a corpus with no labels: each tree becomes a leaf that
+        // reports the prior, which is what the single tree and the linear model already do.
+        int subsetSize = vocabulary.Count == 0
+            ? 0
+            : Math.Clamp(
+                (int)Math.Ceiling(vocabulary.Count * _options.FeatureSubsetFraction),
+                1,
+                vocabulary.Count);
         Item[] itemArray = materialized.ToArray();
         var weights = new double[itemArray.Length];
         var indices = new int[vocabulary.Count];
@@ -132,7 +136,7 @@ public sealed class RandomForestClassifier<TItem>
 
             HashSet<string>? allowed = null;
 
-            if (subsetSize < vocabulary.Count)
+            if (subsetSize > 0 && subsetSize < vocabulary.Count)
             {
                 // A partial Fisher-Yates over a permutation reused across trees: the prefix is a
                 // uniform draw without replacement, and the suffix is still a permutation. The

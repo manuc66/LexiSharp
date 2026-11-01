@@ -39,7 +39,8 @@ public interface IFeatureSet
     /// <summary>
     /// The numeric value attached to <paramref name="feature"/>, or null when the feature is
     /// absent or carries no value. A <see cref="double.NaN"/> value is treated as missing by the
-    /// threshold question.
+    /// threshold question, but a numeric key with NaN is still present for a presence question:
+    /// report the feature as <see cref="FeatureState.Unknown"/> instead of encoding it as NaN.
     /// </summary>
     /// <param name="feature">The feature name to read.</param>
     /// <returns>The value, or null.</returns>
@@ -118,7 +119,7 @@ public sealed class FeatureSet : IFeatureSet
 
         if (numericValues is null || numericValues.Count == 0)
         {
-            (_small, _large) = BuildNames(buffer);
+            (_small, _large) = BuildNames(buffer, nameof(features));
         }
         else
         {
@@ -131,7 +132,7 @@ public sealed class FeatureSet : IFeatureSet
             foreach (string feature in numericValues.Keys)
                 combined[count++] = feature;
 
-            (_small, _large) = BuildNames(combined);
+            (_small, _large) = BuildNames(combined, nameof(features));
 
             _numeric = new Dictionary<string, double>(numericValues.Count, StringComparer.Ordinal);
 
@@ -208,7 +209,9 @@ public sealed class FeatureSet : IFeatureSet
     public IReadOnlyCollection<string> UnknownFeatures =>
         _unknown is not null ? (IReadOnlyCollection<string>)_unknown : Array.Empty<string>();
 
-    private static (string[]? Small, HashSet<string>? Large) BuildNames(IReadOnlyList<string> names)
+    private static (string[]? Small, HashSet<string>? Large) BuildNames(
+        IReadOnlyList<string> names,
+        string paramName)
     {
         if (names.Count <= SmallSetThreshold)
         {
@@ -218,7 +221,7 @@ public sealed class FeatureSet : IFeatureSet
             foreach (string feature in names)
             {
                 if (string.IsNullOrEmpty(feature))
-                    throw new ArgumentException("Feature names must be non-empty strings.", nameof(names));
+                    throw new ArgumentException("Feature names must be non-empty strings.", paramName);
 
                 bool duplicate = false;
 
@@ -243,7 +246,7 @@ public sealed class FeatureSet : IFeatureSet
         foreach (string feature in names)
         {
             if (string.IsNullOrEmpty(feature))
-                throw new ArgumentException("Feature names must be non-empty strings.", nameof(names));
+                throw new ArgumentException("Feature names must be non-empty strings.", paramName);
 
             large.Add(feature);
         }
