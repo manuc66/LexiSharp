@@ -3,8 +3,8 @@ using LexiSharp.Core;
 namespace LexiSharp.Classification;
 
 /// <summary>
-/// Tunable knobs for <see cref="CentroidClassifier"/> and
-/// <see cref="CentroidClassifier{TItem}"/>.
+/// Tunable knobs for the nearest-centroid classifiers: the softmax temperature, and the embedding
+/// role the text wrapper uses on each side.
 /// </summary>
 /// <remarks>
 /// <para>

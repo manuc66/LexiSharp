@@ -1,5 +1,6 @@
 using LexiSharp.Classification;
 using LexiSharp.Core;
+using LexiSharp.Embeddings;
 using Xunit;
 
 namespace LexiSharp.Tests;
@@ -166,6 +167,31 @@ public class FusedTextClassifierTests
         var classifier = new FusedTextClassifier(new FixedClassifier(), new FixedClassifier(), 0.25);
 
         Assert.Equal(0.25, classifier.SecondWeight);
+    }
+
+    [Fact]
+    public void ABlendOfNaiveBayesAndHashingCentroids_ClassifiesEndToEnd()
+    {
+        var documents = new[]
+        {
+            new SearchDocument("1", "invoice payment statement", Category: "Billing"),
+            new SearchDocument("2", "refund and invoice question", Category: "Billing"),
+            new SearchDocument("3", "server outage database error", Category: "Operations"),
+            new SearchDocument("4", "database backup and outage", Category: "Operations"),
+        };
+
+        var classifier = new FusedTextClassifier(
+            new NaiveBayesClassifier(),
+            new CentroidClassifier(new HashingEmbeddingProvider(dimension: 1024)),
+            secondWeight: 0.5);
+
+        classifier.Train(documents);
+
+        Assert.Equal("Billing", classifier.PredictBest("invoice"));
+        Assert.Equal("Operations", classifier.PredictBest("database"));
+
+        var results = classifier.Predict("invoice", limit: 2);
+        Assert.Equal(1.0, results.Sum(result => result.Probability), precision: 10);
     }
 
     private sealed class FixedClassifier : ITextClassifier

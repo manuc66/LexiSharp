@@ -96,6 +96,10 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-
 # Learned sparse over vectors produced outside the harness — see "Learned sparse":
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
   --ndcg-gain linear --sparse bench/LexiSharp.Eval/data/sparse-vectors
+
+# Naive Bayes, E5 centroids and their blend on 20 Newsgroups (needs an E5 ONNX export):
+dotnet run --project bench/LexiSharp.Eval -c Release -- classification-centroid \
+  --data /path/to/data --model /path/to/e5-export
 ```
 
 - Datasets live under `bench/LexiSharp.Eval/data/<name>/` (gitignored).
