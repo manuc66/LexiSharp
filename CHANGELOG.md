@@ -60,7 +60,9 @@ workflow.
   sampling, and has no OOB estimate or feature importance. The linear model also keeps a correction ledger:
   `Reinforce`/`Unreinforce` add or remove signed mass on the item's features without retraining,
   and `Train` clears it. `IdfWeighting` and `StandardizeNumericFeatures` are opt-in;
-  IDF measured a loss on 20NG (**0.7753 / 0.7682** against **0.8085 / 0.8027**) and stays off.
+  IDF measured a loss on 20NG (**0.7753 / 0.7682** against **0.8085 / 0.8027**), and sublinear
+  TF-IDF — `emitTermFrequency: true` plus `IdfWeighting` — lost too (**0.7757 / 0.7676**); both
+  stay off.
   The classification pin stores per-class F1 and a SHA-256 of the ordered predictions, and the
   eval prints McNemar against Naive Bayes: the linear model fixes 905 documents and breaks 520
   (p = 2.6e-24), while the forest and the tree lose significantly.

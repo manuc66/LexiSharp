@@ -1304,7 +1304,12 @@ comparison against Naive Bayes reads: linear **p = 2.6e-24** (905 documents it f
 breaks), forest **p = 4.6e-51** (776 vs 1,493), tree **p < 1e-12** (616 vs 2,961).
 
 `IdfWeighting` was measured on the same split and lost: **0.7753** accuracy / **0.7682** macro-F1
-against **0.8085** / **0.8027** without, with a raw log-loss of **1.5790**. It stays off by default;
+against **0.8085** / **0.8027** without, with a raw log-loss of **1.5790**. Sublinear TF-IDF —
+`TextFeatureSource(emitTermFrequency: true)` with `IdfWeighting`, which applies
+`(1 + log(tf)) * idf` — also lost: **0.7757** / **0.7676**, raw log-loss **1.8999**. Binary
+presence is the strongest representation here; both reweightings stay off by default, and the
+TF-IDF run is pinned in
+[`reference/classification-20news-tfidf.json`](https://github.com/manuc66/LexiSharp/blob/main/bench/LexiSharp.Eval/reference/classification-20news-tfidf.json).
 `StandardizeNumericFeatures` is available, but 20NG has no numeric features to measure it on.
 
 The figures are pinned in

@@ -32,7 +32,10 @@ public sealed record LinearClassifierOptions
 
     /// <summary>
     /// Weight binary features by <c>log(1 + N / df)</c>, so a term present in every document stops
-    /// dominating the coefficients. Numeric features keep their own value. Default: <c>false</c>.
+    /// dominating the coefficients. A <see cref="FeatureKind.Count"/> feature is weighted by
+    /// <c>(1 + log(tf)) * idf</c> instead, which is sublinear TF-IDF; use
+    /// <see cref="TextFeatureSource"/> with <c>emitTermFrequency: true</c> to get counts. Numeric
+    /// features keep their own value. Default: <c>false</c>.
     /// </summary>
     public bool IdfWeighting { get; init; }
 

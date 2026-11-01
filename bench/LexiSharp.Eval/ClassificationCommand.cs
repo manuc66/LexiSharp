@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using LexiSharp.Classification;
+using LexiSharp.Core;
 
 namespace LexiSharp.Eval;
 
@@ -44,6 +45,7 @@ internal sealed record ClassificationPin(
     double LinearLearningRate,
     double LinearL2,
     bool LinearIdf,
+    bool LinearTfIdf,
     IReadOnlyList<CalibrationPinRow> Calibration,
     IReadOnlyList<ClassificationPinRow> Rows);
 
@@ -71,6 +73,7 @@ internal static class ClassificationCommand
         int forestSeed = 7;
         bool tune = false;
         bool linearIdf = false;
+        bool linearTfIdf = false;
         double validationFraction = 0.15;
         string? verifyPath = null;
         string? writePath = null;
@@ -152,6 +155,9 @@ internal static class ClassificationCommand
                     break;
                 case "--linear-idf":
                     linearIdf = true;
+                    break;
+                case "--linear-tfidf":
+                    linearTfIdf = true;
                     break;
                 case "--validation" when i + 1 < args.Length:
                     if (!TryReadFraction(args[++i], out validationFraction))
@@ -242,18 +248,24 @@ internal static class ClassificationCommand
         var linearOptions = new LinearClassifierOptions
         {
             MinDocumentFrequency = minDocumentFrequency,
-            IdfWeighting = linearIdf,
+            IdfWeighting = linearIdf || linearTfIdf,
         };
+
+        Func<ITextClassifier> linearFactory = linearTfIdf
+            ? () => new LinearClassifier(new TextFeatureSource(emitTermFrequency: true), linearOptions)
+            : () => new LinearClassifier(options: linearOptions);
 
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
             $"Linear: epochs={linearOptions.Epochs}, rate={linearOptions.LearningRate:F2}, " +
-            $"l2={linearOptions.L2}, min df={linearOptions.MinDocumentFrequency}, idf={linearIdf}"));
+            $"l2={linearOptions.L2}, min df={linearOptions.MinDocumentFrequency}, " +
+            $"idf={linearOptions.IdfWeighting}, tfidf={linearTfIdf}"));
 
         var naiveBayes = ClassificationEvaluation.MeasureNaiveBayes(corpus.Train, corpus.Test);
         var tree = ClassificationEvaluation.MeasureDecisionTree(corpus.Train, corpus.Test, options);
         var forest = ClassificationEvaluation.MeasureRandomForest(corpus.Train, corpus.Test, forestOptions);
-        var linear = ClassificationEvaluation.MeasureLinear(corpus.Train, corpus.Test, linearOptions);
+        var linear = ClassificationEvaluation.MeasureClassifier(
+            "Linear", corpus.Train, corpus.Test, linearFactory);
 
         Print(naiveBayes);
         Print(tree);
@@ -296,7 +308,7 @@ internal static class ClassificationCommand
                 corpus.Train,
                 corpus.Test,
                 validationFraction,
-                () => new LinearClassifier(options: linearOptions)),
+                linearFactory),
         };
 
         foreach (var calibration in calibrations)
@@ -325,7 +337,8 @@ internal static class ClassificationCommand
             linearOptions.Epochs,
             linearOptions.LearningRate,
             linearOptions.L2,
-            linearOptions.IdfWeighting,
+            linearIdf,
+            linearTfIdf,
             calibrations
                 .Select(calibration => new CalibrationPinRow(
                     calibration.Method,
@@ -403,7 +416,8 @@ internal static class ClassificationCommand
             || expected.LinearEpochs != actual.LinearEpochs
             || Math.Abs(expected.LinearLearningRate - actual.LinearLearningRate) > 1e-12
             || Math.Abs(expected.LinearL2 - actual.LinearL2) > 1e-12
-            || expected.LinearIdf != actual.LinearIdf)
+            || expected.LinearIdf != actual.LinearIdf
+            || expected.LinearTfIdf != actual.LinearTfIdf)
         {
             Console.Error.WriteLine("classification: the pin describes a different dataset or configuration.");
             return 1;
