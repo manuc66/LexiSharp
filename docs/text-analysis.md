@@ -22,7 +22,9 @@ better.
 - **Classification** (`LexiSharp.Classification`) — multinomial Naive Bayes with Laplace
   smoothing, or Complement Naive Bayes for imbalanced labels, behind a dedicated
   `ITextClassifier` interface, with incremental `Learn`/`Unlearn` for labelled documents that
-  arrive over time.
+  arrive over time. A nearest-centroid classifier reads vectors from an `IEmbeddingProvider`
+  (E5, MiniLM, an HTTP endpoint — LexiSharp never runs the model), and
+  `FusedTextClassifier` blends the lexical and semantic posteriors.
 
 ## Lexical similarity and keyword extraction
 
@@ -189,3 +191,116 @@ The bare failure counts are erratic because a race only sometimes lands, and the
 reproduce on other hardware; the qualitative result will. Read-path cost of the lock came out at
 0.986x / 1.051x / 1.057x / 0.975x / 1.043x across five runs — straddling 1.0, so the uncontended
 read lock is not measurably expensive here, though it is not free either.
+
+## Centroids over embeddings
+
+Naive Bayes classifies on terms. A **centroid classifier** classifies on vectors: one mean per
+category, ranked by cosine similarity, with a softmax over the cosines as the posterior. It shares
+no token with the input, so it can recognise a paraphrase the lexical model never saw — and it is
+weaker on rare identifiers and exact spellings, which is why the two are available together.
+
+The text wrapper takes an `IEmbeddingProvider`; LexiSharp does not run the model. With the
+`LexiSharp.Onnx` package, an E5 export is the intended path:
+
+```csharp
+using LexiSharp.Classification;
+using LexiSharp.Core;
+using LexiSharp.Onnx;
+
+int unknown = new SentencePieceOnnxTokenizer("e5/sentencepiece.bpe.model").UnknownId;
+
+var tokenizer = new SentencePieceOnnxTokenizer("e5/sentencepiece.bpe.model", new()
+{
+    IdMap = id => id == unknown ? 3 : id + 1, // the Xenova E5 export's own mapping
+    PrefixId = 0,
+    SuffixId = 2,
+});
+
+using var e5 = new OnnxTextEncoder(new OnnxTextEncoderOptions
+{
+    ModelPath = "e5/model.onnx",
+    Tokenizer = tokenizer,
+    Pooling = OnnxPooling.Mean,
+    Normalize = true,
+    QueryPrefix = "query: ",
+    PassagePrefix = "passage: ",
+});
+
+var classifier = new CentroidClassifier(e5);
+classifier.Train(trainingDocuments);          // requires a non-null SearchDocument.Category
+var category = classifier.PredictBest("the package never arrived");
+```
+
+Centroid classification is **symmetric** — the labelled examples and the text being classified
+play the same role — so the default is `EmbeddingUse.Query` on both sides; E5's model card
+recommends its query prefix for symmetric tasks. Set `CentroidClassifierOptions.TrainingUse` and
+`PredictionUse` to `Passage` when your model expects its passage convention on the examples
+instead. Train and predict on the same side: mixing the two embeds the centroids and the input in
+different spaces.
+
+The generic `CentroidClassifier<TItem>` takes a vector and a label from the caller, so the same
+model classifies a window title, a time bucket or an image descriptor:
+
+```csharp
+var generic = new CentroidClassifier<Observation>(
+    observation => observation.Vector,
+    observation => observation.Category);
+```
+
+### Blending it with Naive Bayes
+
+`FusedTextClassifier` trains both models and blends their posteriors:
+`(1 - w) · P(lexical) + w · P(centroid)`. `w` is the centroid model's weight and must be tuned on
+a validation split; the class blends probabilities, it does not calibrate them.
+
+```csharp
+var fused = new FusedTextClassifier(
+    new NaiveBayesClassifier(),
+    new CentroidClassifier(e5),
+    secondWeight: 0.95); // measured on short 20 Newsgroups subjects; tune on your validation split
+
+fused.Train(trainingDocuments);
+var category = fused.PredictBest("the package never arrived");
+```
+
+The two models need not know the same categories: a category only one of them holds enters the
+blend with a zero contribution from the other, and the result is renormalized. Ties are ordered by
+category name, so the output is deterministic.
+
+### What the centroids cost and how they read
+
+Training is one pass over the vectors plus the mean and the centroid norms; prediction is one
+dot product per category against those cached norms — no term lookup, no vocabulary. The model
+holds `categories × dimension` floats, so an E5-small model over 20 categories is about 31 KB.
+
+Measured on the **subject-only** split of 20 Newsgroups (6,577 train / 3,761 test after the same
+deduplication the lexical lane uses), with `multilingual-e5-small` from Xenova's ONNX export in
+its int8 form (384 dimensions, 64 tokens, query prefix on both sides), temperature `0.1`, and the
+blend weight selected on 987 held-out training documents:
+
+| Method | Accuracy | Macro-F1 |
+|---|---:|---:|
+| Naive Bayes | 0.5624 | 0.5293 |
+| Centroid (E5) | 0.5621 | 0.5413 |
+| Fusion (`w = 0.95`) | **0.6240** | **0.5942** |
+
+The lexical baseline reproduces the subject-only figure published for the lexical lane, so the
+split is the same one. The interesting part is where the weight lands: `0.95` means the centroid
+makes the decision and Naive Bayes breaks its near-ties. The blend is not a 50/50 average — at
+`w = 0.75` it reads 0.5807 / 0.5481, at `w = 0.50` 0.5674 / 0.5337 — because the centroid's
+softmax at temperature `0.1` is sharp, and a small lexical term is enough to move a
+close second place without letting the lexical model's own errors dominate. Reproduce with:
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- classification-centroid \
+  --data /path/to/data --model /path/to/e5-export --text subject --max-seq 64
+```
+
+The model is external: the command reads `onnx/model.onnx` (or `model.onnx`) and
+`sentencepiece.bpe.model` under `--model`. This is one corpus, one split, one seed and one
+temperature; `--text full` runs the long-message configuration, where the lexical model is at its
+strongest and the blend's gain is not claimed here.
+
+What this does not do: there are no class priors (a frequent category is not favoured), no
+incremental `Learn`/`Unlearn` (retrain instead), no persistence for the centroid model, and no
+calibration between the two models. The temperature changes confidence, never the cosine ranking.
