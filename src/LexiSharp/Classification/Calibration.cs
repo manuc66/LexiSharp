@@ -69,8 +69,11 @@ public sealed class TemperatureCalibrator
                 nameof(samples));
         }
 
+        // Start at the identity, not at the first grid point: a flat log-loss (a perfectly
+        // predicted single-class sample, say) has no temperature to choose and must leave the
+        // distribution alone rather than pick the most extreme sharpening on the grid.
         double bestTemperature = 1.0;
-        double bestLoss = double.PositiveInfinity;
+        double bestLoss = MeanLogLoss(valid, 1.0);
 
         for (int i = 0; i <= GridSteps; i++)
         {
@@ -95,8 +98,22 @@ public sealed class TemperatureCalibrator
     {
         ArgumentNullException.ThrowIfNull(distribution);
 
-        if (distribution.Count == 0 || Math.Abs(Temperature - 1.0) <= 1e-12)
+        if (distribution.Count == 0)
             return distribution;
+
+        if (Math.Abs(Temperature - 1.0) <= 1e-12)
+        {
+            var identity = new List<ClassificationResult>(distribution);
+
+            identity.Sort(static (left, right) =>
+            {
+                int byProbability = right.Probability.CompareTo(left.Probability);
+
+                return byProbability != 0 ? byProbability : string.CompareOrdinal(left.Category, right.Category);
+            });
+
+            return identity;
+        }
 
         var logits = new double[distribution.Count];
         double max = double.NegativeInfinity;
