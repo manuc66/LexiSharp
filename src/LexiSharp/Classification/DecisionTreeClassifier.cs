@@ -122,8 +122,10 @@ public sealed record DecisionExplanation(IReadOnlyList<QuestionAnswer> Path, Dec
 /// option here: the library sees a number, not a clock.
 /// </para>
 /// <para>
-/// The model is batch-trained. There is no incremental unlearn: call
-/// <see cref="Train(IEnumerable{TItem})"/> again on the new corpus. Concurrent <see cref="Predict(TItem, int, IReadOnlySet{string})"/> calls are
+/// The model is batch-trained. <see cref="Learn(TItem)"/> folds one labelled item into the leaf it
+/// reaches and returns a token that <see cref="Unlearn(long)"/> removes exactly, without rebuilding
+/// the structure; <see cref="Train(IEnumerable{TItem})"/> rebuilds and clears both ledgers. Concurrent
+/// <see cref="Predict(TItem, int, IReadOnlySet{string})"/> calls are
 /// safe once training has finished; training must not overlap a prediction.
 /// </para>
 /// </remarks>
@@ -149,6 +151,8 @@ public sealed class DecisionTreeClassifier<TItem>
 
     private readonly Dictionary<DecisionLeaf, Dictionary<string, double>> _reinforcement =
         new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<long, LearnedItem> _learned = new();
+    private long _nextToken;
 
     /// <summary>Creates a classifier over a feature space.</summary>
     /// <param name="features">The feature space the tree reads.</param>
@@ -193,6 +197,7 @@ public sealed class DecisionTreeClassifier<TItem>
         ArgumentNullException.ThrowIfNull(items);
 
         _reinforcement.Clear();
+        _learned.Clear();
 
         if (_options.ClassWeights is { } classWeights)
         {
@@ -438,6 +443,57 @@ public sealed class DecisionTreeClassifier<TItem>
     /// <summary>Clears every correction; the tree returns to its training distribution.</summary>
     public void ForgetReinforcement() => _reinforcement.Clear();
 
+    /// <summary>
+    /// Folds one labelled item into the leaf it reaches and returns a token for
+    /// <see cref="Unlearn(long)"/>. The tree structure is not rebuilt: the item changes the
+    /// reached leaf's distribution only.
+    /// </summary>
+    /// <param name="item">The labelled item; its category must have been seen during training.</param>
+    /// <returns>A token that removes exactly this contribution.</returns>
+    /// <exception cref="InvalidOperationException">The model is untrained.</exception>
+    /// <exception cref="ArgumentException">The item has no category, an unseen category, or a non-positive weight.</exception>
+    public long Learn(TItem item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        if (_root is null)
+            throw new InvalidOperationException("The model is untrained.");
+
+        string? category = _categoryOf(item);
+
+        if (string.IsNullOrEmpty(category))
+            throw new ArgumentException("The item has no category.", nameof(item));
+
+        if (!_categoryIndex.ContainsKey(category))
+            throw new ArgumentException("The category was not seen during training.", nameof(item));
+
+        double weight = _weightOf(item);
+
+        if (!double.IsFinite(weight) || weight <= 0)
+            throw new ArgumentException("The sample weight must be finite and positive.", nameof(item));
+
+        DecisionLeaf leaf = WalkWithPath(item, out bool[] path);
+        AdjustLeaf(leaf, category, weight, sign: 1.0);
+
+        long token = _nextToken++;
+        _learned[token] = new LearnedItem(leaf, path, category, weight);
+
+        return token;
+    }
+
+    /// <summary>Removes the exact contribution a previous <see cref="Learn(TItem)"/> added.</summary>
+    /// <param name="token">The token returned by <see cref="Learn(TItem)"/>.</param>
+    /// <returns><c>true</c> when the contribution existed and was removed; <c>false</c> otherwise.</returns>
+    public bool Unlearn(long token)
+    {
+        if (!_learned.TryGetValue(token, out LearnedItem? learned))
+            return false;
+
+        _learned.Remove(token);
+        AdjustLeaf(learned.Leaf, learned.Category, learned.Weight, sign: -1.0);
+        return true;
+    }
+
     private void AdjustReinforcement(TItem item, string category, double weight, double sign)
     {
         ArgumentNullException.ThrowIfNull(category);
@@ -451,8 +507,11 @@ public sealed class DecisionTreeClassifier<TItem>
         if (!_categoryIndex.ContainsKey(category))
             throw new ArgumentException("The category was not seen during training.", nameof(category));
 
-        DecisionLeaf leaf = Walk(item);
+        AdjustLeaf(Walk(item), category, weight, sign);
+    }
 
+    private void AdjustLeaf(DecisionLeaf leaf, string category, double weight, double sign)
+    {
         if (!_reinforcement.TryGetValue(leaf, out Dictionary<string, double>? adjustments))
         {
             adjustments = new Dictionary<string, double>(StringComparer.Ordinal);
@@ -1034,6 +1093,29 @@ public sealed class DecisionTreeClassifier<TItem>
         return (DecisionLeaf)node;
     }
 
+    private DecisionLeaf WalkWithPath(TItem item, out bool[] path)
+    {
+        IFeatureSet features = _features.FeaturesOf(item);
+        DecisionTreeNode node = _root!;
+        var answers = new List<bool>();
+
+        while (node is DecisionBranch branch)
+        {
+            bool answer = branch.Question.Matches(features);
+            answers.Add(answer);
+            node = answer ? branch.TrueBranch : branch.FalseBranch;
+        }
+
+        path = answers.ToArray();
+        return (DecisionLeaf)node;
+    }
+
+    private sealed record LearnedItem(
+        DecisionLeaf Leaf,
+        bool[] Path,
+        string Category,
+        double Weight);
+
     private sealed record PendingItem(string Category, IFeatureSet Features, double Weight);
 
     private sealed record TrainingItem(
@@ -1059,7 +1141,7 @@ public sealed class DecisionTreeClassifier<TItem>
         ModelFormat.WriteNode(writer, _root);
 
         var entries = new List<(bool[] Path, string Category, double Weight)>();
-        var visited = new HashSet<DecisionLeaf>();
+        var visited = new HashSet<DecisionLeaf>(ReferenceEqualityComparer.Instance);
 
         if (_root is not null && _reinforcement.Count > 0)
             CollectReinforcement(_root, new List<bool>(), visited, entries);
@@ -1068,13 +1150,20 @@ public sealed class DecisionTreeClassifier<TItem>
 
         foreach (var entry in entries)
         {
-            writer.Write(entry.Path.Length);
-
-            foreach (bool answer in entry.Path)
-                writer.Write((byte)(answer ? 1 : 0));
-
+            ModelFormat.WritePath(writer, entry.Path);
             ModelFormat.WriteString(writer, entry.Category);
             writer.Write(entry.Weight);
+        }
+
+        writer.Write(_nextToken);
+        writer.Write(_learned.Count);
+
+        foreach (var pair in _learned.OrderBy(pair => pair.Key))
+        {
+            writer.Write(pair.Key);
+            ModelFormat.WritePath(writer, pair.Value.Path);
+            ModelFormat.WriteString(writer, pair.Value.Category);
+            writer.Write(pair.Value.Weight);
         }
     }
 
@@ -1090,28 +1179,13 @@ public sealed class DecisionTreeClassifier<TItem>
         _featureCosts = Array.Empty<double>();
         _root = ModelFormat.ReadNode(reader);
         _reinforcement.Clear();
+        _learned.Clear();
 
         int entries = ModelFormat.ReadCount(reader);
 
         for (int i = 0; i < entries; i++)
         {
-            int length = ModelFormat.ReadCount(reader);
-
-            if (length > 4096)
-                throw new InvalidDataException("A reinforcement path is too long.");
-
-            var path = new bool[length];
-
-            for (int step = 0; step < length; step++)
-            {
-                byte answer = reader.ReadByte();
-
-                if (answer > 1)
-                    throw new InvalidDataException("A reinforcement path is not a bit sequence.");
-
-                path[step] = answer == 1;
-            }
-
+            bool[] path = ModelFormat.ReadPath(reader);
             string category = ModelFormat.ReadString(reader)
                 ?? throw new InvalidDataException("A reinforcement entry has no category.");
             double weight = reader.ReadDouble();
@@ -1125,6 +1199,23 @@ public sealed class DecisionTreeClassifier<TItem>
             }
 
             weights[category] = weight;
+        }
+
+        _nextToken = reader.ReadInt64();
+        int learnedCount = ModelFormat.ReadCount(reader);
+
+        for (int i = 0; i < learnedCount; i++)
+        {
+            long token = reader.ReadInt64();
+            bool[] path = ModelFormat.ReadPath(reader);
+            string category = ModelFormat.ReadString(reader)
+                ?? throw new InvalidDataException("A learned entry has no category.");
+            double weight = reader.ReadDouble();
+            DecisionLeaf leaf = LeafAt(path)
+                ?? throw new InvalidDataException("A learned path does not reach a leaf.");
+
+            _learned[token] = new LearnedItem(leaf, path, category, weight);
+            _nextToken = Math.Max(_nextToken, token + 1);
         }
     }
 
@@ -1297,6 +1388,23 @@ public sealed class DecisionTreeClassifier : ITextClassifier
 
     /// <inheritdoc />
     public void Train(IEnumerable<SearchDocument> documents) => _inner.Train(documents);
+
+    /// <summary>Folds one labelled document into the leaf it reaches, without rebuilding the tree.</summary>
+    /// <param name="document">The labelled document.</param>
+    /// <returns>A token that removes exactly this contribution.</returns>
+    public long Learn(SearchDocument document) => _inner.Learn(document);
+
+    /// <summary>Folds one labelled text into the leaf it reaches, without rebuilding the tree.</summary>
+    /// <param name="text">The raw text.</param>
+    /// <param name="category">A category seen during training.</param>
+    /// <returns>A token that removes exactly this contribution.</returns>
+    public long Learn(string text, string category) =>
+        _inner.Learn(new SearchDocument(string.Empty, text, Category: category));
+
+    /// <summary>Removes the exact contribution a previous <see cref="Learn(SearchDocument)"/> added.</summary>
+    /// <param name="token">The token returned by <see cref="Learn(SearchDocument)"/>.</param>
+    /// <returns><c>true</c> when the contribution existed and was removed.</returns>
+    public bool Unlearn(long token) => _inner.Unlearn(token);
 
     /// <inheritdoc />
     public IReadOnlyList<ClassificationResult> Predict(

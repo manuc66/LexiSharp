@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using LexiSharp.Classification;
@@ -79,6 +80,7 @@ internal static class ClassificationCommand
         bool linearIdf = false;
         bool linearTfIdf = false;
         bool crossValidate = false;
+        bool online = false;
         var textMode = ClassificationTextMode.SubjectAndBody;
         double validationFraction = 0.15;
         string? verifyPath = null;
@@ -167,6 +169,9 @@ internal static class ClassificationCommand
                     break;
                 case "--cv":
                     crossValidate = true;
+                    break;
+                case "--online":
+                    online = true;
                     break;
                 case "--text" when i + 1 < args.Length:
                     textMode = args[++i] switch
@@ -330,6 +335,22 @@ internal static class ClassificationCommand
             }
         }
 
+        if (online)
+        {
+            var shuffled = Shuffle(corpus.Train);
+            int split = shuffled.Count * 4 / 5;
+            var prefix = shuffled.Take(split).ToList();
+            var rest = shuffled.Skip(split).ToList();
+
+            MeasureOnline(
+                "Decision tree",
+                () => new DecisionTreeClassifier(options: options),
+                prefix,
+                rest,
+                corpus.Train);
+            MeasureOnline("Linear", linearFactory, prefix, rest, corpus.Train);
+        }
+
         var calibrations = new[]
         {
             ClassificationEvaluation.MeasureCalibration(
@@ -398,6 +419,73 @@ internal static class ClassificationCommand
         }
 
         return verifyPath is null ? 0 : Verify(pin, verifyPath);
+    }
+
+    private static void MeasureOnline(
+        string name,
+        Func<ITextClassifier> factory,
+        IReadOnlyList<ClassificationDocument> prefix,
+        IReadOnlyList<ClassificationDocument> rest,
+        IReadOnlyList<ClassificationDocument> full)
+    {
+        var model = factory();
+        model.Train(prefix.Select(ToDocument));
+
+        var tokens = new List<long>(rest.Count);
+        var learn = Stopwatch.StartNew();
+
+        foreach (var document in rest)
+        {
+            tokens.Add(model switch
+            {
+                DecisionTreeClassifier tree => tree.Learn(document.Text, document.Category),
+                LinearClassifier linear => linear.Learn(document.Text, document.Category),
+                _ => throw new NotSupportedException($"No Learn for {model.GetType().Name}."),
+            });
+        }
+
+        learn.Stop();
+
+        var unlearn = Stopwatch.StartNew();
+
+        foreach (long token in tokens)
+        {
+            _ = model switch
+            {
+                DecisionTreeClassifier tree => tree.Unlearn(token),
+                LinearClassifier linear => linear.Unlearn(token),
+                _ => false,
+            };
+        }
+
+        unlearn.Stop();
+
+        var retrain = Stopwatch.StartNew();
+        factory().Train(full.Select(ToDocument));
+        retrain.Stop();
+
+        Console.WriteLine(string.Create(
+            CultureInfo.InvariantCulture,
+            $"Online {name}: learn {rest.Count} docs={learn.Elapsed.TotalMilliseconds:F1} ms, " +
+            $"unlearn={unlearn.Elapsed.TotalMilliseconds:F1} ms, " +
+            $"retrain {full.Count}={retrain.Elapsed.TotalMilliseconds:F1} ms (correction, not a retrain)"));
+    }
+
+    private static SearchDocument ToDocument(ClassificationDocument document) =>
+        new(document.Id, document.Text, Category: document.Category);
+
+    private static List<ClassificationDocument> Shuffle(IReadOnlyList<ClassificationDocument> documents)
+    {
+        var shuffled = new List<ClassificationDocument>(documents);
+        var random = new Random(7); // NOSONAR:S2245 (fixed seed: the split is reproducible)
+
+        for (int i = shuffled.Count - 1; i > 0; i--)
+        {
+            int j = random.Next(i + 1);
+            (shuffled[i], shuffled[j]) = (shuffled[j], shuffled[i]);
+        }
+
+        return shuffled;
     }
 
     private static void Print(ClassificationMetrics metrics)

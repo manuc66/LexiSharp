@@ -1376,10 +1376,11 @@ titles or log lines: run the baseline on your labels first. The run is pinned in
 
 Three limits matter when carrying these figures to another problem:
 
-- **No online learning.** `Train` rebuilds the model; `Reinforce`/`Unreinforce` correct a trained
-  tree or linear model without retraining, but there is no `Learn`/`Unlearn` that folds one
-  document into the counts. At a few thousand examples retraining per synchronization is
-  plausibly affordable, and that has not been measured here.
+- **Online updates correct, they do not retrain.** `Learn`/`Unlearn` fold one document into the
+  reached leaf or the feature logits and remove it exactly, but the tree structure and the
+  coefficients are frozen. At 11 300 documents, a Learn pass over 2 260 took **0.43 s** (tree) /
+  **0.63 s** (linear) against **14.1 s** / **25.7 s** for a full retrain in the same run. A few
+  thousand documents is affordable either way, but the two are not equivalent.
 - **Long documents.** 20 Newsgroups messages are long and topical. The subject-only run above is
   the evidence that this matters: the linear model's lead disappears on short text. A short text
   has far fewer features per item, and the classifier's share of the total accuracy can be much
