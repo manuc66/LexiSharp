@@ -16,11 +16,32 @@
   "linearLearningRate": 0.1,
   "linearL2": 0.0001,
   "linearIdf": false,
-  "linearTemperature": 1.045,
-  "linearLogLoss": 0.7740559415160659,
-  "linearCalibratedLogLoss": 0.7650408331195445,
-  "linearBrier": 0.28545204335574337,
-  "linearCalibratedBrier": 0.285549590074848,
+  "calibration": [
+    {
+      "method": "Decision tree",
+      "temperature": 0.870875,
+      "logLoss": 2.019576036109342,
+      "calibratedLogLoss": 2.0350916116691415,
+      "brier": 0.6652775341818414,
+      "calibratedBrier": 0.6675633671564262
+    },
+    {
+      "method": "Random forest",
+      "temperature": 0.423125,
+      "logLoss": 1.7288144614386753,
+      "calibratedLogLoss": 1.3705639532321543,
+      "brier": 0.6288395484586682,
+      "calibratedBrier": 0.505615323520217
+    },
+    {
+      "method": "Linear",
+      "temperature": 1.045,
+      "logLoss": 0.7740559415160659,
+      "calibratedLogLoss": 0.7650408331195445,
+      "brier": 0.28545204335574337,
+      "calibratedBrier": 0.285549590074848
+    }
+  ],
   "rows": [
     {
       "method": "Naive Bayes",

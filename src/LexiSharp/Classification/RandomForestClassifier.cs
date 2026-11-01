@@ -9,6 +9,11 @@ namespace LexiSharp.Classification;
 /// </summary>
 /// <remarks>
 /// <para>
+/// This is a bagged ensemble with a **global** feature subset per tree, not Breiman's per-split
+/// <c>sqrt(p)</c> sampling; it has no out-of-bag estimate and no feature importance. The name is
+/// the familiar one, and the algorithm is the one documented here.
+/// </para>
+/// <para>
 /// This is the accuracy companion to the single tree, not a replacement for it. A greedy tree on
 /// sparse binary text plateaus below a linear model — measured on 20 Newsgroups, a single tree
 /// reaches roughly 0.34 accuracy against Naive Bayes's 0.58 — because one axis-aligned path cannot

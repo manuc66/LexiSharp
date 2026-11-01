@@ -54,7 +54,10 @@ workflow.
   `TemperatureCalibrator` fits one temperature on a validation set by minimizing log-loss, and
   `CalibratedClassifier` wraps any `ITextClassifier` with it without changing the top category; on
   the linear model it reads **T = 1.04**, log-loss **0.7741 → 0.7650**, Brier **0.2855 → 0.2855**,
-  so the softmax was already close. The linear model also keeps a correction ledger:
+  so the softmax was already close. The forest's averaged probabilities are underconfident
+  (**T = 0.35**, log-loss **1.8156 → 1.2785**), while the tree's **T = 0.87** does not transfer.
+  The forest is a bagged ensemble with a global feature subset per tree, not Breiman's per-split
+  sampling, and has no OOB estimate or feature importance. The linear model also keeps a correction ledger:
   `Reinforce`/`Unreinforce` add or remove signed mass on the item's features without retraining,
   and `Train` clears it. `IdfWeighting` and `StandardizeNumericFeatures` are opt-in;
   IDF measured a loss on 20NG (**0.7753 / 0.7682** against **0.8085 / 0.8027**) and stays off.
