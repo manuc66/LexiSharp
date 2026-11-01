@@ -42,6 +42,20 @@ public sealed record PostgresVectorOptions
     /// <summary>Embedding length, controlled by the <see cref="Core.IEmbeddingProvider"/> (default: <c>384</c>).</summary>
     public int Dimension { get; init; } = 384;
 
+    /// <summary>
+    /// When false (the default), <see cref="PostgresVectorSearchEngine.EnsureSchema"/> refuses a
+    /// table whose stored embedding signature differs from the current provider's, and refuses a
+    /// non-empty table that has no signature at all. Set true to adopt an existing table knowingly.
+    /// </summary>
+    public bool AllowSignatureMismatch { get; init; }
+
+    /// <summary>
+    /// Maximum number of texts handed to an <see cref="Core.IBatchEmbeddingProvider"/> in one
+    /// call during <see cref="PostgresVectorSearchEngine.Index"/>. Bounds the tokenizer and tensor
+    /// memory a large corpus can allocate at once. Default <c>128</c>.
+    /// </summary>
+    public int EmbeddingBatchSize { get; init; } = 128;
+
     /// <summary>ANN access method (default: <see cref="VectorIndexMethod.Hnsw"/>).</summary>
     public VectorIndexMethod IndexMethod { get; init; } = VectorIndexMethod.Hnsw;
 

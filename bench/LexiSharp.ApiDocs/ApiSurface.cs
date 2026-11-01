@@ -369,6 +369,7 @@ internal static class ApiSurface
         "LexiSharp.AspNetCore" => "getting-started.md",
         "LexiSharp.MessagePack" => "reference.md",
         "LexiSharp.Postgres" or "LexiSharp.ParadeDB" => "backends.md",
+        "LexiSharp.Onnx" => "onnx.md",
         _ => "",
     };
 

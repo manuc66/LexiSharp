@@ -154,6 +154,7 @@ tokenize identically, so a demo figure is not a harness figure — compare by ru
 ```
 LexiSharp                core: index, scorers, fusion, reranking, metrics, traces — no dependencies
 ├── LexiSharp.Postgres   tsvector · pgvector · sparsevec · pg_trgm · pg_search (Tantivy) BM25
+├── LexiSharp.Onnx       local ONNX embeddings and cross-encoder reranking (no model shipped)
 ├── LexiSharp.MessagePack    binary persistence for the in-memory index
 ├── LexiSharp.AspNetCore     a GET /search minimal-API endpoint over LexiSharpIndex<T>
 └── LexiSharp.Cli            a dotnet tool: search a directory, build a store, benchmark a config

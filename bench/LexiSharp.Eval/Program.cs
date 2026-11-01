@@ -18,6 +18,8 @@ public static class Program
         int? limit = null;
         int denseSeq = 256;
         bool dense = false;
+        bool densePackage = false;
+        bool rerankPackage = false;
         bool tuned = true;
         bool rerank = false;
         int rerankCandidates = 100;
@@ -131,6 +133,12 @@ public static class Program
                     break;
                 case "--dense":
                     dense = true;
+                    break;
+                case "--dense-package":
+                    densePackage = true;
+                    break;
+                case "--rerank-package":
+                    rerankPackage = true;
                     break;
                 case "--no-tuned":
                     tuned = false;
@@ -472,18 +480,30 @@ public static class Program
             string rerankCache = Path.Combine(dataBaseDir, "models", "cross-encoder");
             await CrossEncoderModels.EnsureFilesAsync(rerankCache, CancellationToken.None);
 
-            var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
-            options.AppendExecutionProvider_CPU();
-            options.IntraOpNumThreads = 4;
-            options.InterOpNumThreads = 1;
+            if (rerankPackage || Environment.GetEnvironmentVariable("LEXISHARP_EVAL_RERANK_PACKAGE") == "1")
+            {
+                reranker = new PackageCrossEncoderReranker(
+                    Path.Combine(rerankCache, "onnx", "model.onnx"),
+                    Path.Combine(rerankCache, "vocab.txt"));
 
-            var session = new Microsoft.ML.OnnxRuntime.InferenceSession(
-                Path.Combine(rerankCache, "onnx", "model.onnx"), options);
+                Console.WriteLine(
+                    $"Cross-encoder reranker enabled through LexiSharp.Onnx ({CrossEncoderModels.ModelId}, {rerankCandidates} candidates/query).");
+            }
+            else
+            {
+                var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
+                options.AppendExecutionProvider_CPU();
+                options.IntraOpNumThreads = 4;
+                options.InterOpNumThreads = 1;
 
-            reranker = new CrossEncoderReranker(new BertTokenizer(Path.Combine(rerankCache, "vocab.txt")), session);
+                var session = new Microsoft.ML.OnnxRuntime.InferenceSession(
+                    Path.Combine(rerankCache, "onnx", "model.onnx"), options);
 
-            Console.WriteLine(
-                $"Cross-encoder reranker enabled ({CrossEncoderModels.ModelId}, {rerankCandidates} candidates/query).");
+                reranker = new CrossEncoderReranker(new BertTokenizer(Path.Combine(rerankCache, "vocab.txt")), session);
+
+                Console.WriteLine(
+                    $"Cross-encoder reranker enabled ({CrossEncoderModels.ModelId}, {rerankCandidates} candidates/query).");
+            }
             Console.WriteLine();
         }
 
@@ -543,7 +563,7 @@ public static class Program
             await RunDatasetAsync(
                 dataset, dataBaseDir, topK, limit, tokenizer, tokenizerOptions, analysisDescription, gain,
                 excludeQueryDocument, fingerprintOnly, referenceBm25, queryFrequency, scoreRounding,
-                saturationConstant, singlePrecision, dense, denseSeq,
+                saturationConstant, singlePrecision, dense, densePackage, denseSeq,
                 tuned, reranker, rerankCandidates, runPath, jobs, indexCache, parseQuerySyntax,
                 querySyntaxReference, segment, tuneBm25F, tuneSearchOptions,
                 analyzePath, analyzeBaseline, analyzeCandidate,
@@ -672,7 +692,7 @@ public static class Program
         BeirDataset dataset, string dataBaseDir, int topK, int? limit, ITokenizer tokenizer, TokenizerOptions tokenizerOptions,
         string analysisDescription, NdcgGain gain, bool excludeQueryDocument, bool fingerprintOnly,
         Bm25Parameters? referenceBm25, bool queryFrequency, bool scoreRounding, bool saturationConstant,
-        bool singlePrecision, bool dense, int denseSeq, bool tuned,
+        bool singlePrecision, bool dense, bool densePackage, int denseSeq, bool tuned,
         IReranker? reranker, int rerankCandidates, string? runPath, int jobs, string? indexCache,
         bool parseQuerySyntax, bool referenceIndexStatistics, bool segment, bool tuneBm25F,
         bool tuneSearchOptions,
@@ -751,7 +771,7 @@ public static class Program
         if (dense)
         {
             denseVectors = await DenseEmbedder.TryBuildAsync(
-                corpus, Path.Combine(dataBaseDir, dataset.Name), Path.Combine(dataBaseDir, "models"), denseSeq, CancellationToken.None);
+                corpus, Path.Combine(dataBaseDir, dataset.Name), Path.Combine(dataBaseDir, "models"), denseSeq, CancellationToken.None, densePackage);
 
             Console.WriteLine("Dense configs enabled (multilingual-e5-small, Xenova ONNX export — MIT, weights from intfloat/multilingual-e5-small).");
         }
@@ -792,21 +812,21 @@ public static class Program
         var learningCorpus = Evaluation.BuildDocuments(corpus);
 
         foreach (double density in expandDensities.Distinct().OrderByDescending(value => value))
-        foreach (var ranking in expandRankings.Distinct())
-        {
-            var options = new PmiTermExpanderOptions { MaxWindowDensity = density, Ranking = ranking };
+            foreach (var ranking in expandRankings.Distinct())
+            {
+                var options = new PmiTermExpanderOptions { MaxWindowDensity = density, Ranking = ranking };
 
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            var learned = PmiTermExpander.LearnFrom(learningCorpus, tokenizer, options);
-            sw.Stop();
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var learned = PmiTermExpander.LearnFrom(learningCorpus, tokenizer, options);
+                sw.Stop();
 
-            string name =
-                $"BM25 + query expansion (density<={density.ToString("0.####", CultureInfo.InvariantCulture)}, {ranking})";
+                string name =
+                    $"BM25 + query expansion (density<={density.ToString("0.####", CultureInfo.InvariantCulture)}, {ranking})";
 
-            Console.WriteLine($"Learned {name} in {sw.Elapsed.TotalSeconds:0.0}s.");
+                Console.WriteLine($"Learned {name} in {sw.Elapsed.TotalSeconds:0.0}s.");
 
-            queryExpansions.Add((name, learned));
-        }
+                queryExpansions.Add((name, learned));
+            }
 
         var (results, tunedDescription, notes, heldOut) = Evaluation.Run(
             corpus, runIndex, topK, limit, tokenizer, excludeQueryDocument, gain, referenceBm25,

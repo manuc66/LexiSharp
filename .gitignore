@@ -19,3 +19,6 @@ cocoindex/*.sqlite
 /.cocoindex_code/
 # Serena MCP working directory
 /.serena/
+
+# Opt-in ONNX compatibility fixtures (downloaded by fetch-minilm.sh)
+tests/LexiSharp.Onnx.Tests/.model-cache/

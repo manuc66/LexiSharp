@@ -56,6 +56,9 @@ jobs:
       - name: Pack LexiSharp.Postgres
         run: dotnet pack src/LexiSharp.Postgres/LexiSharp.Postgres.csproj -c Release -o nupkgs /p:Version=${{ steps.ver.outputs.version }}
 
+      - name: Pack LexiSharp.Onnx
+        run: dotnet pack src/LexiSharp.Onnx/LexiSharp.Onnx.csproj -c Release -o nupkgs /p:Version=${{ steps.ver.outputs.version }}
+
       - name: Pack LexiSharp.Cli
         run: dotnet pack bench/LexiSharp.Cli/LexiSharp.Cli.csproj -c Release -o nupkgs /p:Version=${{ steps.ver.outputs.version }}
 

@@ -1,0 +1,59 @@
+name: ONNX compatibility
+
+# The offline unit suite gates every push in CI. This workflow is the other half: it runs the
+# opt-in tests against real exports (MiniLM, multilingual E5, GPT-2's tokenizer.json) so a change
+# in ORT, in a tokenizer or in the tensor validation cannot pass unnoticed. The models are
+# hundreds of megabytes, which is why they are cached and why this is not part of every PR.
+
+on:
+  schedule:
+    - cron: '23 4 * * 1'   # Mondays, before the pinned-reference replay
+  workflow_dispatch:
+  push:
+    paths:
+      - 'src/LexiSharp.Onnx/**'
+      - 'tests/LexiSharp.Onnx.Tests/**'
+      - '.github/workflows/onnx-compatibility.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  real-models:
+    name: Real exports (linux-x64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+      # No dotnet-version: global.json is the single source of the SDK.
+
+      - name: Cache the checkpoints
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .model-cache
+          key: onnx-real-models-minilm-e5-gpt2-v1
+
+      - name: Fetch the exports
+        run: |
+          test -f .model-cache/minilm/model.onnx || tests/LexiSharp.Onnx.Tests/fixtures/fetch-minilm.sh .model-cache/minilm
+          test -f .model-cache/e5/model.onnx || tests/LexiSharp.Onnx.Tests/fixtures/fetch-e5.sh .model-cache/e5
+          test -f .model-cache/gpt2/tokenizer.json || tests/LexiSharp.Onnx.Tests/fixtures/fetch-gpt2-tokenizer.sh .model-cache/gpt2
+
+      - name: Harness layout for the parity test
+        run: |
+          mkdir -p .model-cache/e5-harness/onnx
+          ln -sf "${{ github.workspace }}/.model-cache/e5/model.onnx" .model-cache/e5-harness/onnx/model.onnx
+          ln -sf "${{ github.workspace }}/.model-cache/e5/sentencepiece.bpe.model" .model-cache/e5-harness/sentencepiece.bpe.model
+
+      - name: Harness parity (dense encoder)
+        env:
+          LEXISHARP_ONNX_E5_HARNESS_DIR: ${{ github.workspace }}/.model-cache/e5-harness
+        run: dotnet test tests/LexiSharp.Tests -c Release --filter "FullyQualifiedName~HarnessParityTests"
+
+      - name: Test against real exports
+        env:
+          LEXISHARP_ONNX_MODEL_DIR: ${{ github.workspace }}/.model-cache/minilm
+          LEXISHARP_ONNX_E5_DIR: ${{ github.workspace }}/.model-cache/e5
+          LEXISHARP_ONNX_GPT2_TOKENIZER: ${{ github.workspace }}/.model-cache/gpt2/tokenizer.json
+        run: dotnet test tests/LexiSharp.Onnx.Tests -c Release

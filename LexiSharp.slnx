@@ -10,6 +10,7 @@
     <Project Path="src/LexiSharp/LexiSharp.csproj" />
     <Project Path="src/LexiSharp.AspNetCore/LexiSharp.AspNetCore.csproj" />
     <Project Path="src/LexiSharp.MessagePack/LexiSharp.MessagePack.csproj" />
+    <Project Path="src/LexiSharp.Onnx/LexiSharp.Onnx.csproj" />
     <Project Path="src/LexiSharp.Postgres/LexiSharp.Postgres.csproj" />
   </Folder>
   <Folder Name="/samples/">
@@ -17,6 +18,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/LexiSharp.AotSmoke/LexiSharp.AotSmoke.csproj" />
+    <Project Path="tests/LexiSharp.Onnx.Tests/LexiSharp.Onnx.Tests.csproj" />
     <Project Path="tests/LexiSharp.Tests/LexiSharp.Tests.csproj" />
   </Folder>
 </Solution>

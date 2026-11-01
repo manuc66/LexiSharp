@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/LexiSharp/LexiSharp.csproj" />
+    <ProjectReference Include="../../src/LexiSharp.Onnx/LexiSharp.Onnx.csproj" />
     <!-- The BEIR corpora are the only real documents this repository has to hand, and the harness
          already loads them (download, checksum, jsonl, qrels). A second jsonl reader here would be
          a copy free to drift from the one the measured-quality numbers come from, so the cursor
