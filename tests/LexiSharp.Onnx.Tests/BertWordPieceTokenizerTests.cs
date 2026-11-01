@@ -93,6 +93,42 @@ public sealed class BertWordPieceTokenizerTests
     }
 
     [Fact]
+    public void EncodePair_RejectsCapsThatCannotHoldTheQuery()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => Tokenizer().EncodePair("hello", "world", 8, 0));
+    }
+
+    [Fact]
+    public void EncodePair_TruncatesTheQuery()
+    {
+        OnnxTokenizedText encoded = Tokenizer().EncodePair("hello world hello", "engine", 6, 2);
+
+        Assert.Equal(6, encoded.Length);
+    }
+
+    [Fact]
+    public void EncodePair_ClearsTheDocumentWhenTheQueryFillsTheSequence()
+    {
+        OnnxTokenizedText encoded = Tokenizer().EncodePair("hello world", "engine", 4, 5);
+
+        Assert.Equal(4, encoded.Length);
+        Assert.Equal(2, encoded.Ids.Span[0]);
+        Assert.Equal(3, encoded.Ids.Span[^1]);
+    }
+
+    [Fact]
+    public void WordPiece_MarksAnUnknownContinuation()
+    {
+        Assert.Contains(1, Tokenizer().WordPieceIds("searchxyz"));
+    }
+
+    [Fact]
+    public void WordPiece_SplitsPunctuationAsItsOwnToken()
+    {
+        Assert.Equal(new[] { 4, 1, 5 }, Tokenizer().WordPieceIds("hello,world"));
+    }
+
+    [Fact]
     public void Constructor_RejectsAnEmptyVocabulary()
     {
         Assert.Throws<ArgumentException>(() => new BertWordPieceTokenizer(Array.Empty<string>()));

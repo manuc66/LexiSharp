@@ -120,6 +120,15 @@ public sealed class SentencePieceOnnxTokenizerTests
     }
 
     [Fact]
+    public void EncodePair_RejectsCapsThatCannotHoldTheSeparatorOrQuery()
+    {
+        var tokenizer = Tokenizer(new SentencePieceOnnxTokenizerOptions { PairSeparatorId = 3 });
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => tokenizer.EncodePair("hello", "world", 1, 1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => tokenizer.EncodePair("hello", "world", 8, 0));
+    }
+
+    [Fact]
     public void EncodePair_WithoutASeparatorSaysSo()
     {
         Assert.Throws<NotSupportedException>(() => Tokenizer().EncodePair("hello", "world", 16, 8));

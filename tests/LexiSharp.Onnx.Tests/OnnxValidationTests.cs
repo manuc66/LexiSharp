@@ -1,5 +1,7 @@
 using LexiSharp.Core;
 using LexiSharp.Onnx;
+using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.Tensors;
 using Xunit;
 
 namespace LexiSharp.Onnx.Tests;
@@ -164,6 +166,63 @@ public sealed class OnnxValidationTests
         using var second = new OnnxTextEncoder(EncoderVariant("tiny-encoder-known.onnx"));
 
         Assert.NotEqual(first.EmbeddingSignature, second.EmbeddingSignature);
+    }
+
+    [Fact]
+    public void VerifyOutput_RejectsTheTwoMismatchedShapes()
+    {
+        Assert.Throws<InvalidOperationException>(() => OnnxTextEncoder.VerifyOutput([1f, 2f], 1, 1, pooled: true, dimension: 3));
+        Assert.Throws<InvalidOperationException>(() => OnnxTextEncoder.VerifyOutput([1f, 2f], 1, 2, pooled: false, dimension: 2));
+
+        OnnxTextEncoder.VerifyOutput([1f, 2f], 1, 1, pooled: true, dimension: 2);
+        OnnxTextEncoder.VerifyOutput([1f, 2f, 3f, 4f], 1, 2, pooled: false, dimension: 2);
+    }
+
+    [Fact]
+    public void ResolveDimensionFromOutput_HandlesPooledAndTokenLevelShapes()
+    {
+        Assert.Equal(4, OnnxTextEncoder.ResolveDimensionFromOutput([1f, 2f, 3f, 4f], 2, pooled: true));
+        Assert.Equal(2, OnnxTextEncoder.ResolveDimensionFromOutput([1f, 2f, 3f, 4f], 2, pooled: false));
+        Assert.Throws<ArgumentException>(() => OnnxTextEncoder.ResolveDimensionFromOutput([1f, 2f, 3f], 2, pooled: false));
+    }
+
+    [Fact]
+    public void Normalize_LeavesAZeroVectorAlone()
+    {
+        float[] zero = [0f, 0f];
+        OnnxTextEncoder.Normalize(zero);
+
+        Assert.Equal([0f, 0f], zero);
+    }
+
+    [Fact]
+    public void VerifyScoreShape_RejectsBothMalformedShapes()
+    {
+        Assert.Throws<InvalidOperationException>(() => OnnxCrossEncoderScorer.VerifyScoreShape(2, 3, rank: 1));
+        Assert.Throws<InvalidOperationException>(() => OnnxCrossEncoderScorer.VerifyScoreShape(5, 2, rank: 2));
+
+        Assert.Equal(1, OnnxCrossEncoderScorer.VerifyScoreShape(3, 3, rank: 1));
+        Assert.Equal(3, OnnxCrossEncoderScorer.VerifyScoreShape(6, 2, rank: 2));
+    }
+
+    [Fact]
+    public void SessionRunner_TranslatesTerminationToCancellation()
+    {
+        using var session = new InferenceSession(Fixture("tiny-encoder.onnx"), new SessionOptions());
+        OnnxTokenizedText tokenized = Tokenizer().Encode("hello", 8);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() => OnnxSessionRunner.Run(
+            session,
+            ["input_ids", "attention_mask"],
+            ["last_hidden_state"],
+            TensorElementType.Int64,
+            padTokenId: 0,
+            [tokenized],
+            cancellation.Token,
+            CancellationToken.None,
+            out _));
     }
 
     [Fact]

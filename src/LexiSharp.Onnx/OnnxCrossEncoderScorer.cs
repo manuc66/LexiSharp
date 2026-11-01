@@ -269,16 +269,34 @@ public sealed class OnnxCrossEncoderScorer : ICrossEncoderScorer, IDisposable
                 parameter);
     }
 
+    internal static int VerifyScoreShape(int outputLength, int count, int rank)
+    {
+        if (rank == 1)
+        {
+            if (outputLength != count)
+                throw new InvalidOperationException(
+                    $"The model returned {outputLength} scores for {count} pairs.");
+
+            return 1;
+        }
+
+        int labels = outputLength / count;
+
+        if (labels < 1 || outputLength != count * labels)
+            throw new InvalidOperationException(
+                $"The model returned {outputLength} values for {count} pairs, which is not a rectangular score matrix.");
+
+        return labels;
+    }
+
     private double[] ExtractScores(float[] output, int count)
     {
         double[] scores = new double[count];
 
+        int labels = VerifyScoreShape(output.Length, count, _outputRank);
+
         if (_outputRank == 1)
         {
-            if (output.Length != count)
-                throw new InvalidOperationException(
-                    $"The model returned {output.Length} scores for {count} pairs.");
-
             if (_options.ScoreIndex != 0)
                 throw new InvalidOperationException("ScoreIndex must be 0 when the model returns one score per pair.");
 
@@ -290,12 +308,6 @@ public sealed class OnnxCrossEncoderScorer : ICrossEncoderScorer, IDisposable
 
             return scores;
         }
-
-        int labels = output.Length / count;
-
-        if (labels < 1 || output.Length != count * labels)
-            throw new InvalidOperationException(
-                $"The model returned {output.Length} values for {count} pairs, which is not a rectangular score matrix.");
 
         if (_options.ScoreIndex >= labels)
             throw new InvalidOperationException(
