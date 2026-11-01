@@ -148,6 +148,30 @@ public sealed class RealModelTests
     }
 
     [SkippableFact]
+    public void MiniLm_TerminationIsAnOperationCanceledException()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(ModelDirectory), "LEXISHARP_ONNX_MODEL_DIR is not set.");
+
+        string model = Path.Combine(ModelDirectory!, "model.onnx");
+        string vocabulary = Path.Combine(ModelDirectory!, "vocab.txt");
+        Skip.If(!File.Exists(model) || !File.Exists(vocabulary), "The MiniLM export is incomplete.");
+
+        using var encoder = new OnnxTextEncoder(new OnnxTextEncoderOptions
+        {
+            ModelPath = model,
+            Tokenizer = new BertWordPieceTokenizer(vocabulary),
+            Pooling = OnnxPooling.Mean,
+            MaxSequenceLength = 512,
+        });
+
+        string text = string.Join(' ', Enumerable.Repeat("the search engine ranks documents by relevance", 100));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(1));
+
+        Assert.Throws<OperationCanceledException>(
+            () => encoder.GetTextEmbedding(text, EmbeddingUse.Passage, cancellation.Token));
+    }
+
+    [SkippableFact]
     public void Gpt2_TokenizerJsonMatchesTheReferenceIds()
     {
         string? path = Environment.GetEnvironmentVariable("LEXISHARP_ONNX_GPT2_TOKENIZER");

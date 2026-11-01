@@ -377,9 +377,10 @@ public sealed class BpeOnnxTokenizer : IOnnxTokenizer
                 first++;
         }
 
-        if (first > 1 || second > 1 || (second > 0 && !allowSecond))
+        if (first != 1 || second != (allowSecond ? 1 : 0))
             throw new NotSupportedException(
-                $"The post-processor's {name} template uses a sequence it cannot represent (A: {first}, B: {second}).");
+                $"The post-processor's {name} template must use one A sequence" +
+                $"{(allowSecond ? " and one B sequence" : string.Empty)} (A: {first}, B: {second}).");
 
         return template;
     }

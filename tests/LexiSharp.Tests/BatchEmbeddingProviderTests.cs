@@ -150,6 +150,25 @@ public sealed class BatchEmbeddingProviderTests
     }
 
     [Fact]
+    public void Index_LeavesThePreviousCorpusIntactWhenEnumerationFails()
+    {
+        var provider = new SwitchableBatchProvider();
+        var engine = new InMemoryVectorSearchEngine(provider);
+
+        engine.Index([new SearchDocument("old", "old document")]);
+
+        Assert.Throws<InvalidOperationException>(() => engine.Index(Failing()));
+
+        Assert.Contains(engine.Search("old"), result => result.DocumentId == "old");
+
+        static IEnumerable<SearchDocument> Failing()
+        {
+            yield return new SearchDocument("new", "new document");
+            throw new InvalidOperationException("enumeration failed");
+        }
+    }
+
+    [Fact]
     public void IndexAsync_LeavesThePreviousCorpusIntactWhenEmbeddingFails()
     {
         var provider = new SwitchableBatchProvider();

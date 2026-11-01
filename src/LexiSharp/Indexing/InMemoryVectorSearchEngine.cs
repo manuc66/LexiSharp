@@ -169,10 +169,15 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
     }
 
     /// <summary>
-    /// Replaces the corpus, embedding the whole batch in one provider call when the provider
-    /// implements <see cref="IBatchEmbeddingProvider"/>. Prefer this over the blocking
-    /// <see cref="Index"/>.
+    /// Replaces the corpus, embedding it in chunks of <see cref="InMemoryVectorSearchOptions.EmbeddingBatchSize"/>
+    /// when the provider implements <see cref="IBatchEmbeddingProvider"/>. Prefer this over the
+    /// blocking <see cref="Index"/>.
     /// </summary>
+    /// <remarks>
+    /// The input is materialized before the live corpus is cleared, so a failed embedding leaves
+    /// the previous corpus searchable. A lazy or very large sequence therefore costs its full
+    /// materialization up front; pass a list when the source is expensive to re-enumerate.
+    /// </remarks>
     /// <param name="documents">The new corpus; the current one is cleared first.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <exception cref="ArgumentNullException"><paramref name="documents"/> is <see langword="null"/>.</exception>

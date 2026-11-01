@@ -158,7 +158,7 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
 
         string configuration =
             $"{_options.Pooling}|{_options.Normalize}|{_options.MaxSequenceLength}|" +
-            $"{_options.QueryPrefix}|{_options.PassagePrefix}|" +
+            $"{_options.QueryPrefix}|{_options.PassagePrefix}|{_options.PadTokenId}|" +
             $"{_options.Tokenizer.Fingerprint ?? _options.Tokenizer.GetType().FullName}";
 
         hash.AppendData(Encoding.UTF8.GetBytes(configuration));
