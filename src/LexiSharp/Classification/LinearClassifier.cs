@@ -213,8 +213,11 @@ public sealed class LinearClassifier<TItem>
                 if (counts[id] == 0)
                     continue;
 
-                double mean = sums[id] / counts[id];
-                double variance = sumSquares[id] / counts[id] - mean * mean;
+                // Every item is in the denominator, not only the items that carried a value: an
+                // absent numeric feature is a zero in the vector, and a z-score that ignores those
+                // zeros is not centered on the data the model actually sees.
+                double mean = sums[id] / pending.Count;
+                double variance = sumSquares[id] / pending.Count - mean * mean;
                 _numericMeans[id] = mean;
                 _numericStandardDeviations[id] = variance > 0 ? Math.Sqrt(variance) : 0;
             }
