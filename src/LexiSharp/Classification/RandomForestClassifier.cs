@@ -254,6 +254,51 @@ public sealed class RandomForestClassifier<TItem>
         return results.Count > 0 ? results[0].Category : null;
     }
 
+    internal string FeatureSpaceHash => ModelFormat.Hash(
+        _trees
+            .SelectMany(tree => tree.FeatureNames)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(feature => feature, StringComparer.Ordinal)
+            .ToArray());
+
+    internal static double ReadPredictionOptions(BinaryReader reader) => reader.ReadDouble();
+
+    internal void WriteState(BinaryWriter writer)
+    {
+        writer.Write(_options.MinProbability);
+        ModelFormat.WriteStrings(writer, _categories);
+        writer.Write(_trees.Count);
+
+        foreach (var tree in _trees)
+            tree.WriteState(writer);
+    }
+
+    internal void ReadBody(BinaryReader reader)
+    {
+        _categories = ModelFormat.ReadStrings(reader);
+        _trees.Clear();
+
+        int count = ModelFormat.ReadCount(reader);
+
+        for (int i = 0; i < count; i++)
+        {
+            var (minLeafProbability, minLeafSupport) =
+                DecisionTreeClassifier<Item>.ReadPredictionOptions(reader);
+            var tree = new DecisionTreeClassifier<Item>(
+                new CachedFeatureSource(),
+                item => item.Category,
+                weightOf: null,
+                new DecisionTreeOptions
+                {
+                    MinLeafProbability = minLeafProbability,
+                    MinLeafSupport = minLeafSupport,
+                });
+
+            tree.ReadBody(reader);
+            _trees.Add(tree);
+        }
+    }
+
     private sealed class Item
     {
         public Item(string category, IFeatureSet features, double weight)
@@ -336,5 +381,22 @@ public sealed class RandomForestClassifier : ITextClassifier
         ArgumentNullException.ThrowIfNull(text);
 
         return _inner.PredictBest(new SearchDocument(string.Empty, text), excludedCategories);
+    }
+
+    internal string FeatureSpaceHash => _inner.FeatureSpaceHash;
+
+    internal void WriteState(BinaryWriter writer) => _inner.WriteState(writer);
+
+    internal static RandomForestClassifier ReadState(
+        BinaryReader reader,
+        IFeatureSource<SearchDocument>? features)
+    {
+        double minProbability = RandomForestClassifier<SearchDocument>.ReadPredictionOptions(reader);
+        var model = new RandomForestClassifier(
+            features ?? new TextFeatureSource(),
+            new RandomForestOptions { MinProbability = minProbability });
+
+        model._inner.ReadBody(reader);
+        return model;
     }
 }

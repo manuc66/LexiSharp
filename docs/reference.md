@@ -159,8 +159,11 @@ was designed from:
   `IdfWeighting` is available and measured a loss on 20NG (**0.7753 / 0.7682** against
   **0.8085 / 0.8027**), and sublinear TF-IDF (`emitTermFrequency: true` plus `IdfWeighting`) lost
   too (**0.7757 / 0.7676**), so both are off by default. None of the models learns online: `Train`
-  rebuilds, `Reinforce`/`Unreinforce` correct, and the persistence story is to replay the history
-  and retrain. The long-document figures do not transfer to short text: with only the `Subject`
+  rebuilds and `Reinforce`/`Unreinforce` correct. `ClassificationModelSerializer` saves and loads a
+  trained tree, forest, linear model or calibrated wrapper in a versioned binary (`LXCL`, version
+  1) that carries the vocabulary, the prediction options and the ledger; the tokenizer is not
+  stored, so load with the same feature source. The long-document figures do not transfer to short
+  text: with only the `Subject`
   line the linear model reads **0.5533 / 0.5295** and Naive Bayes **0.5624 / 0.5293**, with no
   significant difference (McNemar p = 0.16), so run the baseline on your own short texts first.
   The command and the pin are in

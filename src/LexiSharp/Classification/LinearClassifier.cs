@@ -566,6 +566,93 @@ public sealed class LinearClassifier<TItem>
             probabilities[i] /= sum;
     }
 
+    internal string FeatureSpaceHash => ModelFormat.Hash(_featuresById);
+
+    internal static (bool IdfWeighting, bool StandardizeNumericFeatures, double MinProbability)
+        ReadPredictionOptions(BinaryReader reader) =>
+        (reader.ReadBoolean(), reader.ReadBoolean(), reader.ReadDouble());
+
+    internal void WriteState(BinaryWriter writer)
+    {
+        writer.Write(_options.IdfWeighting);
+        writer.Write(_options.StandardizeNumericFeatures);
+        writer.Write(_options.MinProbability);
+        ModelFormat.WriteStrings(writer, _categories);
+        ModelFormat.WriteStrings(writer, _featuresById);
+        ModelFormat.WriteDoubles(writer, _weights);
+        ModelFormat.WriteDoubles(writer, _bias);
+        ModelFormat.WriteDoubles(writer, _idf);
+        ModelFormat.WriteDoubles(writer, _numericMeans);
+        ModelFormat.WriteDoubles(writer, _numericStandardDeviations);
+        writer.Write(_trained);
+        writer.Write(_reinforcement.Count);
+
+        foreach (var pair in _reinforcement.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        {
+            ModelFormat.WriteString(writer, pair.Key);
+            writer.Write(pair.Value.Count);
+
+            foreach (var weight in pair.Value.OrderBy(entry => entry.Key, StringComparer.Ordinal))
+            {
+                ModelFormat.WriteString(writer, weight.Key);
+                writer.Write(weight.Value);
+            }
+        }
+    }
+
+    internal void ReadBody(BinaryReader reader)
+    {
+        _categories = ModelFormat.ReadStrings(reader);
+        _categoryIndex = new Dictionary<string, int>(_categories.Count, StringComparer.Ordinal);
+
+        for (int i = 0; i < _categories.Count; i++)
+            _categoryIndex[_categories[i]] = i;
+
+        _featuresById = ModelFormat.ReadStrings(reader);
+        _featureIds = new Dictionary<string, int>(_featuresById.Length, StringComparer.Ordinal);
+
+        for (int i = 0; i < _featuresById.Length; i++)
+            _featureIds[_featuresById[i]] = i;
+
+        _weights = ModelFormat.ReadDoubles(reader);
+        _bias = ModelFormat.ReadDoubles(reader);
+        _idf = ModelFormat.ReadDoubles(reader);
+        _numericMeans = ModelFormat.ReadDoubles(reader);
+        _numericStandardDeviations = ModelFormat.ReadDoubles(reader);
+        _trained = reader.ReadBoolean();
+        _reinforcement.Clear();
+
+        int reinforcedFeatures = ModelFormat.ReadCount(reader);
+
+        for (int i = 0; i < reinforcedFeatures; i++)
+        {
+            string feature = ModelFormat.ReadString(reader)
+                ?? throw new InvalidDataException("A reinforcement entry has no feature.");
+            int categories = ModelFormat.ReadCount(reader);
+            var weights = new Dictionary<string, double>(categories, StringComparer.Ordinal);
+
+            for (int c = 0; c < categories; c++)
+            {
+                string category = ModelFormat.ReadString(reader)
+                    ?? throw new InvalidDataException("A reinforcement entry has no category.");
+                weights[category] = reader.ReadDouble();
+            }
+
+            _reinforcement[feature] = weights;
+        }
+
+        int expectedWeights = _featuresById.Length * _categories.Count;
+
+        if (_weights.Length != expectedWeights
+            || _bias.Length != _categories.Count
+            || _idf.Length != _featuresById.Length
+            || _numericMeans.Length != _featuresById.Length
+            || _numericStandardDeviations.Length != _featuresById.Length)
+        {
+            throw new InvalidDataException("The linear model's arrays do not match its vocabulary.");
+        }
+    }
+
     private sealed record PendingItem(string Category, IFeatureSet Features, double Weight);
 
     private sealed record SparseItem(
@@ -661,4 +748,27 @@ public sealed class LinearClassifier : ITextClassifier
     /// <returns>The features, by decreasing coefficient then ordinal name.</returns>
     public IReadOnlyList<LinearFeatureWeight> TopFeatures(string category, int count = 10) =>
         _inner.TopFeatures(category, count);
+
+    internal string FeatureSpaceHash => _inner.FeatureSpaceHash;
+
+    internal void WriteState(BinaryWriter writer) => _inner.WriteState(writer);
+
+    internal static LinearClassifier ReadState(
+        BinaryReader reader,
+        IFeatureSource<SearchDocument>? features)
+    {
+        var (idfWeighting, standardizeNumeric, minProbability) =
+            LinearClassifier<SearchDocument>.ReadPredictionOptions(reader);
+        var model = new LinearClassifier(
+            features ?? new TextFeatureSource(),
+            new LinearClassifierOptions
+            {
+                IdfWeighting = idfWeighting,
+                StandardizeNumericFeatures = standardizeNumeric,
+                MinProbability = minProbability,
+            });
+
+        model._inner.ReadBody(reader);
+        return model;
+    }
 }

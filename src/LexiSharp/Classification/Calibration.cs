@@ -206,6 +206,11 @@ public sealed class CalibratedClassifier : ITextClassifier
         _calibrator = calibrator;
     }
 
+    /// <summary>The temperature applied to the inner model's log-probabilities.</summary>
+    public double Temperature => _calibrator.Temperature;
+
+    internal ITextClassifier Inner => _inner;
+
     /// <summary>Fits a temperature on validation documents and wraps the classifier with it.</summary>
     /// <param name="classifier">A trained classifier.</param>
     /// <param name="validation">Labelled documents the classifier did not train on.</param>
