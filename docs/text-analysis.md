@@ -306,6 +306,10 @@ incremental `Learn`/`Unlearn` (retrain instead), no persistence for the centroid
 calibration between the two models. The temperature changes confidence, never the cosine ranking.
 ## Question trees: classification and corpus division
 
+**Unreleased.** Everything in this section — the tree, the forest, `LinearClassifier`, abstention,
+calibration, `Learn`/`Unlearn` and model persistence — is on `main` and not in 0.8.0. It ships in
+the next minor version.
+
 `NaiveBayesClassifier` is a linear model over terms. Two question-tree builders sit beside it, and
 neither knows what a term is: both read an `IFeatureSource<TItem>`, so the same tree can classify on
 text, on bucketed time, on transitions, on derived flags — or on all of them at once through

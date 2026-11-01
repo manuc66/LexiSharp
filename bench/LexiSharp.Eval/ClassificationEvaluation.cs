@@ -39,6 +39,20 @@ internal sealed record CrossValidationMetrics(
     double MacroF1Mean,
     double MacroF1Std);
 
+/// <summary>One winning-probability threshold: what it covers and how precise it is there.</summary>
+internal sealed record CoveragePoint(
+    double Threshold,
+    int Covered,
+    int Total,
+    double Coverage,
+    double Precision);
+
+/// <summary>A precision-at-coverage curve and the threshold recommended for a coverage target.</summary>
+internal sealed record CoverageReport(
+    string Method,
+    IReadOnlyList<CoveragePoint> Points,
+    CoveragePoint Recommended);
+
 /// <summary>A stratified fit/validation split of a labelled corpus.</summary>
 internal sealed record ClassificationSplit(
     IReadOnlyList<ClassificationDocument> Fit,
@@ -550,6 +564,152 @@ internal static class ClassificationEvaluation
             : Erfc(Math.Sqrt(Math.Pow(Math.Abs(baselineOnly - candidateOnly) - 1, 2) / discordant / 2));
 
         return new McNemarResult(baselineName, candidateName, baselineOnly, candidateOnly, pValue);
+    }
+
+    /// <summary>
+    /// Sweeps the winning probability and reports precision over the documents each threshold
+    /// covers. The recommended threshold is the one with the highest precision among thresholds
+    /// that still cover at least <paramref name="minimumCoverage"/> of the test split; ties go to
+    /// the wider coverage.
+    /// </summary>
+    /// <param name="method">The model name, for the report.</param>
+    /// <param name="train">The training split; the model is fitted on it.</param>
+    /// <param name="test">The held-out split.</param>
+    /// <param name="factory">Builds the model to measure.</param>
+    /// <param name="minimumCoverage">The share of documents the recommendation must cover, in (0, 1].</param>
+    /// <returns>The curve and the recommendation.</returns>
+    public static CoverageReport MeasureCoverage(
+        string method,
+        IReadOnlyList<ClassificationDocument> train,
+        IReadOnlyList<ClassificationDocument> test,
+        Func<ITextClassifier> factory,
+        double minimumCoverage = 0.5)
+    {
+        ArgumentNullException.ThrowIfNull(factory);
+
+        var model = factory();
+        model.Train(train.Select(ToSearchDocument));
+
+        return MeasureCoverage(
+            method,
+            test,
+            text => model.Predict(text, limit: int.MaxValue),
+            minimumCoverage);
+    }
+
+    /// <summary>
+    /// Sweeps the winning probability over already-computed distributions. Exposed separately so a
+    /// caller can feed calibrated distributions without retraining.
+    /// </summary>
+    /// <param name="method">The model name, for the report.</param>
+    /// <param name="test">The held-out split.</param>
+    /// <param name="predict">Returns the full distribution for a text.</param>
+    /// <param name="minimumCoverage">The share of documents the recommendation must cover, in (0, 1].</param>
+    /// <returns>The curve and the recommendation.</returns>
+    public static CoverageReport MeasureCoverage(
+        string method,
+        IReadOnlyList<ClassificationDocument> test,
+        Func<string, IReadOnlyList<ClassificationResult>> predict,
+        double minimumCoverage = 0.5)
+    {
+        ArgumentNullException.ThrowIfNull(test);
+        ArgumentNullException.ThrowIfNull(predict);
+
+        if (!double.IsFinite(minimumCoverage) || minimumCoverage <= 0 || minimumCoverage > 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(minimumCoverage),
+                "The coverage target must be greater than 0 and at most 1.");
+        }
+
+        int total = test.Count;
+
+        if (total == 0)
+        {
+            var empty = new CoveragePoint(1, 0, 0, 0, 0);
+            return new CoverageReport(method, new[] { empty }, empty);
+        }
+
+        var outcomes = new (double Probability, bool Correct)[total];
+
+        for (int i = 0; i < total; i++)
+        {
+            IReadOnlyList<ClassificationResult> distribution = predict(test[i].Text);
+            double probability = distribution.Count > 0 ? distribution[0].Probability : 0;
+            bool correct = distribution.Count > 0
+                && string.Equals(distribution[0].Category, test[i].Category, StringComparison.Ordinal);
+            outcomes[i] = (probability, correct);
+        }
+
+        Array.Sort(outcomes, static (left, right) => right.Probability.CompareTo(left.Probability));
+
+        var points = new List<CoveragePoint>(11);
+
+        for (int step = 0; step <= 10; step++)
+        {
+            double threshold = step / 10.0;
+            int gridCovered = 0;
+            int gridCorrect = 0;
+
+            foreach (var outcome in outcomes)
+            {
+                if (outcome.Probability < threshold)
+                    continue;
+
+                gridCovered++;
+                gridCorrect += outcome.Correct ? 1 : 0;
+            }
+
+            points.Add(new CoveragePoint(
+                threshold,
+                gridCovered,
+                total,
+                (double)gridCovered / total,
+                gridCovered == 0 ? 0 : (double)gridCorrect / gridCovered));
+        }
+
+        CoveragePoint? recommended = null;
+        int covered = 0;
+        int correctCovered = 0;
+        int index = 0;
+
+        while (index < total)
+        {
+            double probability = outcomes[index].Probability;
+            int next = index;
+
+            while (next < total && outcomes[next].Probability == probability)
+            {
+                covered++;
+                correctCovered += outcomes[next].Correct ? 1 : 0;
+                next++;
+            }
+
+            double coverage = (double)covered / total;
+
+            if (coverage + 1e-12 >= minimumCoverage)
+            {
+                var point = new CoveragePoint(
+                    probability,
+                    covered,
+                    total,
+                    coverage,
+                    (double)correctCovered / covered);
+
+                if (recommended is null
+                    || point.Precision > recommended.Precision + 1e-12
+                    || (Math.Abs(point.Precision - recommended.Precision) <= 1e-12
+                        && point.Coverage > recommended.Coverage))
+                {
+                    recommended = point;
+                }
+            }
+
+            index = next;
+        }
+
+        recommended ??= points[0];
+        return new CoverageReport(method, points, recommended);
     }
 
     /// <summary>

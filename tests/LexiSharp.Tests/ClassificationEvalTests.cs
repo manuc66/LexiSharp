@@ -2,6 +2,7 @@ using System.Formats.Tar;
 using System.IO.Compression;
 using System.Text;
 using LexiSharp.Classification;
+using LexiSharp.Core;
 using LexiSharp.Eval;
 using Xunit;
 
@@ -308,6 +309,96 @@ public class ClassificationEvalTests
 
         Assert.Throws<ArgumentOutOfRangeException>(() => ClassificationEvaluation.CrossValidate(
             "Naive Bayes", train, 1, () => new NaiveBayesClassifier()));
+    }
+
+    [Fact]
+    public void Coverage_RecommendsThePrecisionLeaderWithinTheTarget()
+    {
+        var test = new List<ClassificationDocument>();
+        var probabilities = new Dictionary<string, double>(StringComparer.Ordinal);
+
+        for (int i = 0; i < 8; i++)
+        {
+            test.Add(new ClassificationDocument($"c{i}", $"c{i}", "A"));
+            probabilities[$"c{i}"] = 0.9;
+        }
+
+        test.Add(new ClassificationDocument("c8", "c8", "A"));
+        probabilities["c8"] = 0.4;
+        test.Add(new ClassificationDocument("w", "w", "A"));
+        probabilities["w"] = 0.4;
+
+        IReadOnlyList<ClassificationResult> Predict(string text) =>
+            new[] { new ClassificationResult(text == "w" ? "B" : "A", probabilities[text]) };
+
+        var report = ClassificationEvaluation.MeasureCoverage(
+            "test", test, Predict, minimumCoverage: 0.5);
+
+        Assert.Equal(0.9, report.Recommended.Threshold, precision: 12);
+        Assert.Equal(0.8, report.Recommended.Coverage, precision: 12);
+        Assert.Equal(1.0, report.Recommended.Precision, precision: 12);
+        Assert.Equal(11, report.Points.Count);
+
+        CoveragePoint atNine = report.Points.Single(point => point.Threshold == 0.9);
+        Assert.Equal(0.8, atNine.Coverage, precision: 12);
+        Assert.Equal(1.0, atNine.Precision, precision: 12);
+
+        CoveragePoint atFour = report.Points.Single(point => point.Threshold == 0.4);
+        Assert.Equal(1.0, atFour.Coverage, precision: 12);
+        Assert.Equal(0.9, atFour.Precision, precision: 12);
+
+        for (int i = 1; i < report.Points.Count; i++)
+            Assert.True(report.Points[i].Coverage <= report.Points[i - 1].Coverage);
+    }
+
+    [Fact]
+    public void Coverage_WithAHigherTarget_TakesTheWiderThreshold()
+    {
+        var test = new List<ClassificationDocument>();
+        var probabilities = new Dictionary<string, double>(StringComparer.Ordinal);
+
+        for (int i = 0; i < 8; i++)
+        {
+            test.Add(new ClassificationDocument($"c{i}", $"c{i}", "A"));
+            probabilities[$"c{i}"] = 0.9;
+        }
+
+        test.Add(new ClassificationDocument("c8", "c8", "A"));
+        probabilities["c8"] = 0.4;
+        test.Add(new ClassificationDocument("w", "w", "A"));
+        probabilities["w"] = 0.4;
+
+        IReadOnlyList<ClassificationResult> Predict(string text) =>
+            new[] { new ClassificationResult(text == "w" ? "B" : "A", probabilities[text]) };
+
+        var report = ClassificationEvaluation.MeasureCoverage(
+            "test", test, Predict, minimumCoverage: 0.85);
+
+        Assert.Equal(0.4, report.Recommended.Threshold, precision: 12);
+        Assert.Equal(1.0, report.Recommended.Coverage, precision: 12);
+        Assert.Equal(0.9, report.Recommended.Precision, precision: 12);
+    }
+
+    [Fact]
+    public void Coverage_WithAnEmptySplit_ReturnsAnEmptyPoint()
+    {
+        var report = ClassificationEvaluation.MeasureCoverage(
+            "test",
+            Array.Empty<ClassificationDocument>(),
+            _ => Array.Empty<ClassificationResult>());
+
+        Assert.Equal(0, report.Recommended.Total);
+        Assert.Equal(0, report.Recommended.Covered);
+    }
+
+    [Fact]
+    public void Coverage_WithAnInvalidTarget_Throws()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => ClassificationEvaluation.MeasureCoverage(
+            "test",
+            Array.Empty<ClassificationDocument>(),
+            _ => Array.Empty<ClassificationResult>(),
+            minimumCoverage: 1.5));
     }
 
     [Fact]
