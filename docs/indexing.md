@@ -207,6 +207,24 @@ var tokenizer = new Tokenizer(new TokenizerOptions
 });
 ```
 
+`WordJoiners` keeps a configured character inside a word when a word character sits on both
+sides, so an identifier like `foo-bar` stays one term instead of becoming `foo` and `bar`. It is
+off by default and takes the characters themselves:
+
+```csharp
+var tokenizer = new Tokenizer(new TokenizerOptions
+{
+    WordJoiners = "-_.",   // foo-bar, snake_case and data.worldbank.org stay single terms
+});
+```
+
+A trailing separator still ends the word (`hello.` tokenizes to `hello`). Use it for identifiers,
+version strings and file names. When whether a character joins depends on its neighbours — a comma
+joining digits but not letters, a colon the opposite — use `WordSegmentation` instead; `WordJoiners`
+is the flat form. The option has been available since **0.7.0** and its cost is not measured: the
+boundary scan can no longer take the bulk ASCII skip, so measure throughput if you enable it on a
+large index.
+
 `PorterStemmer` implements the frozen Porter algorithm (Porter, 1980) in the core package, with
 no dependency: it stems only English, and only the ASCII lowercase terms the tokenizer produces.
 It is **opt-in** — `Stemmer` stays `null` by default — because it is English-only (a default
@@ -230,7 +248,7 @@ for every config are in
 `dotnet run --project bench/LexiSharp.Eval -- --stem porter`. For another language, implement
 `IStemmer` (or take Snowball) and pass it the same way — or use `FrenchStemmer`, below.
 
-### French stemming and stop words
+### French stemming and stop words (unreleased)
 
 `FrenchStemmer` is the other stemmer shipped in the core, and it takes the same slot:
 

@@ -161,7 +161,8 @@ LexiSharp                core: index, scorers, fusion, reranking, metrics, trace
 ```
 
 `LexiSharp` also carries text analysis next to the search box: lexical similarity, keyword
-extraction and a Naive Bayes classifier — [text analysis](https://github.com/manuc66/LexiSharp/blob/main/docs/text-analysis.md).
+extraction, a Naive Bayes classifier, an explainable decision tree, a bagged tree ensemble and a
+linear classifier over any feature space — [text analysis](https://github.com/manuc66/LexiSharp/blob/main/docs/text-analysis.md).
 
 ## What it does not do
 

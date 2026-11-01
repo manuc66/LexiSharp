@@ -1251,3 +1251,171 @@ one that travels is **allocation** (counted in bytes, host-independent); wall-cl
 from a shared or contended machine are not publishable, and none are quoted from CI.
 What *does* gate a build is deterministic and clock-free: `lexisharp verify`, which replays
 the reference corpus against a committed baseline.
+
+## Classification on 20 Newsgroups (unreleased)
+
+The classifiers have their own corpus and their own verb, because accuracy is not nDCG and a
+labelled document is not a query. The run downloads the standard `20news-bydate` split (11 314
+train / 7 532 test, 20 categories, md5 `D6E9E45C…`), strips every header except `Subject` — in
+particular `Newsgroups`, which would leak the label — removes messages whose text already appeared
+in either half, and scores the test split. That leaves 11 300 train and 7 525 test documents.
+
+The forest is tuned on a 15 % validation slice of the **train** split, retrained on the full train
+split, and scored once on test. The test split is never an argument to the tuner: the grid is
+`depth × subset × min-leaf` over five points, and `--validation` controls the slice. The single
+tree and Naive Bayes are scored on the same split; only the forest has a grid to select.
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- classification \
+    --tune --validation 0.15 --trees 25 --min-df 2 --criterion Gini
+```
+
+| Method | Accuracy [95 % CI] | Macro-F1 [95 % CI] | Avg. questions | Train | Predict |
+|---|---|---:|---:|---:|---:|
+| Naive Bayes | 0.7573 [0.7470, 0.7669] | 0.7289 [0.7190, 0.7375] | — | 3.16 s | 1.336 ms/doc |
+| Decision tree (depth 30, Gini) | 0.4457 [0.4339, 0.4563] | 0.4945 [0.4823, 0.5048] | 25.7 | 5.05 s | 0.052 ms/doc |
+| Random forest (25 trees, 30 % subset) | 0.6621 [0.6512, 0.6724] | 0.6584 [0.6467, 0.6691] | — | 18.68 s | 0.184 ms/doc |
+| Linear (logistic, AdaGrad) | **0.8085 [0.7992, 0.8174]** | **0.8027 [0.7927, 0.8114]** | — | 12.79 s | 0.108 ms/doc |
+
+The intervals are a percentile bootstrap over the 7 525 test documents (1 000 resamples, fixed
+seed): they resample the paired document/prediction rows, so they reflect the test set's size and
+the model's actual errors rather than a normal approximation. Macro-F1 is averaged over the
+classes present in each resample, because a class the resample never drew carries no evidence
+about itself. The linear model's lower bound stays above Naive Bayes's upper bound, which is the
+same conclusion McNemar reaches below from the paired counts.
+
+A stratified **5-fold cross-validation on the train split** (`--cv`, five folds, fixed seed)
+estimates what each model does on unseen data drawn from the same distribution:
+
+| Method | Accuracy, mean ± std | Macro-F1, mean ± std |
+|---|---:|---:|
+| Naive Bayes | 0.8190 ± 0.0063 | 0.7976 ± 0.0085 |
+| Linear | **0.8918 ± 0.0070** | **0.8907 ± 0.0072** |
+
+These are **higher** than the held-out test figures, and the gap is the measurement, not noise:
+`20news-bydate`'s train and test halves are disjoint date windows, so cross-validation inside
+train measures generalization within the train period, not across the period boundary. It is
+published as an honest limit: the CV estimate is optimistic for the test split by about eight
+points, and the held-out number is the one to quote for this corpus. The folds stratify by
+category and every seed is fixed, so the table is reproducible.
+
+### Precision at a chosen coverage
+
+Abstention is only useful if you know what it costs. `--coverage` retrains each model, sweeps the
+winning probability, and reports the precision over the documents each threshold covers:
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- classification \
+    --tune --validation 0.15 --trees 25 --criterion Gini \
+    --coverage --coverage-target 0.5
+```
+
+The recommendation is the highest precision among thresholds that still cover at least the target;
+ties go to the wider coverage. On 20NG, at a 50 % target:
+
+| Model | Threshold | Coverage | Precision on covered |
+|---|---:|---:|---:|
+| Naive Bayes | 1.00 | 0.500 | 0.914 |
+| Decision tree | 0.21 | 0.506 | 0.775 |
+| Random forest | 0.21 | 0.500 | 0.868 |
+| Linear | 0.97 | 0.501 | **0.964** |
+
+The linear model's curve shows the trade-off the table hides: covering everything reads **0.809**
+precision, 70 % coverage reads **0.909**, and the recommended 50 % reads **0.964**. The threshold
+is on the model's own probabilities, so calibration changes its scale, not the ranking; pass
+calibrated distributions to `ClassificationEvaluation.MeasureCoverage` if you want the curve on
+the calibrated scale. The command prints the full curve; the figures above are one run on one
+machine, like the rest of this section.
+
+The tree is the explainable model, not the accuracy model: one greedy path over binary term
+presence plateaus at **0.446**. The forest recovers most of that gap at **0.662**, and the linear
+model — the same feature seam, a softmax over every feature at once — is the accuracy leader at
+**0.8085**, ahead of Naive Bayes's **0.7573**. The tree and the forest are not the accuracy models;
+the linear model is.
+
+The calibration lane fits a temperature on the same 15 % validation slice and measures the test
+split before and after:
+
+| Model | T | Log-loss raw → calibrated | Brier raw → calibrated |
+|---|---:|---:|---:|
+| Decision tree | 0.87 | 2.0196 → 2.0351 | 0.6653 → 0.6676 |
+| Random forest | 0.35 | 1.8156 → 1.2785 | 0.6713 → 0.4701 |
+| Linear | 1.04 | 0.7741 → 0.7650 | 0.2855 → 0.2855 |
+
+The tree's one temperature does not transfer: its test loss is slightly **worse**, because a
+leaf's smoothed mix is structurally overconfident, not a one-parameter error. The forest's
+averaged probabilities are underconfident, and a sharpening temperature (0.35) cuts its log-loss
+by **0.54**. The linear softmax was already close. One temperature is not a calibration guarantee;
+it is a measured correction.
+
+The pin stores each model's **per-class F1** and a **SHA-256 of its ordered predictions**, so a
+change that keeps the aggregate but moves an error still fails `--verify`. The paired McNemar
+comparison against Naive Bayes reads: linear **p = 2.6e-24** (905 documents it fixes, 520 it
+breaks), forest **p = 4.6e-51** (776 vs 1,493), tree **p < 1e-12** (616 vs 2,961).
+
+`IdfWeighting` was measured on the same split and lost: **0.7753** accuracy / **0.7682** macro-F1
+against **0.8085** / **0.8027** without, with a raw log-loss of **1.5790**. Sublinear TF-IDF —
+`TextFeatureSource(emitTermFrequency: true)` with `IdfWeighting`, which applies
+`(1 + log(tf)) * idf` — also lost: **0.7757** / **0.7676**, raw log-loss **1.8999**. Binary
+presence is the strongest representation here; both reweightings stay off by default, and the
+TF-IDF run is pinned in
+[`reference/classification-20news-tfidf.json`](https://github.com/manuc66/LexiSharp/blob/main/bench/LexiSharp.Eval/reference/classification-20news-tfidf.json).
+`StandardizeNumericFeatures` is available, but 20NG has no numeric features to measure it on.
+
+The figures are pinned in
+[`reference/classification-20news-tuned.json`](https://github.com/manuc66/LexiSharp/blob/main/bench/LexiSharp.Eval/reference/classification-20news-tuned.json)
+and replayed by the same command with `--verify`:
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- classification \
+    --tune --validation 0.15 --trees 25 --min-df 2 --criterion Gini \
+    --verify bench/LexiSharp.Eval/reference/classification-20news-tuned.json
+```
+
+The numbers are one machine, one run, and the default tokenizer (no stemming, no stop-word list).
+The train times are from the tuning run, so they include a warm process and are not comparable to
+the standalone [benchmark table](benchmarks.md#classification-classificationbenchmarks); the
+accuracy columns are the measurement. They are indicative in the same sense as the retrieval
+tables: re-run on your hardware before quoting them.
+
+### Short text: the same split, subjects only
+
+The 20 Newsgroups messages are long, so the table above does not say what happens on a short text.
+The same pipeline can drop the body and keep only the `Subject` line (`--text subject`), which
+leaves **6 577 train / 3 761 test** documents after deduplication — subjects repeat, and a subject
+seen in train is removed from test so the model cannot match it verbatim. Same tuning, same seeds,
+same code path:
+
+| Method | Accuracy [95 % CI] | Macro-F1 [95 % CI] |
+|---|---:|---:|
+| Naive Bayes | **0.5624 [0.5461, 0.5780]** | **0.5293 [0.5106, 0.5461]** |
+| Linear | 0.5533 [0.5376, 0.5695] | 0.5295 [0.5113, 0.5455] |
+| Random forest (25 trees, 50 % subset) | 0.3095 [0.2943, 0.3236] | 0.3053 [0.2872, 0.3232] |
+| Decision tree (depth 30, Gini) | 0.2425 [0.2300, 0.2560] | 0.2244 [0.2079, 0.2390] |
+
+The linear model's long-document advantage **does not transfer**. On full messages it is 25 points
+ahead of Naive Bayes; on subjects it is nominally behind, and McNemar cannot separate them
+(**p = 0.16**, 293 documents it fixes against 259 it breaks). The 5-fold CV agrees: Naive Bayes
+**0.6546 ± 0.0107**, linear **0.6626 ± 0.0112**, a gap of less than one point. On short text the
+baseline is already strong and the extra model buys little; the tree and forest lose badly, as
+they do on long text. This is the measurement that matters before carrying any 20NG claim to
+titles or log lines: run the baseline on your labels first. The run is pinned in
+[`reference/classification-20news-subject.json`](https://github.com/manuc66/LexiSharp/blob/main/bench/LexiSharp.Eval/reference/classification-20news-subject.json).
+
+Three limits matter when carrying these figures to another problem:
+
+- **Online updates correct, they do not retrain.** `Learn`/`Unlearn` fold one document into the
+  reached leaf or the feature logits and remove it exactly, but the tree structure and the
+  coefficients are frozen. At 11 300 documents, a Learn pass over 2 260 took **0.43 s** (tree) /
+  **0.63 s** (linear) against **14.1 s** / **25.7 s** for a full retrain in the same run. A few
+  thousand documents is affordable either way, but the two are not equivalent.
+- **Long documents.** 20 Newsgroups messages are long and topical. The subject-only run above is
+  the evidence that this matters: the linear model's lead disappears on short text. A short text
+  has far fewer features per item, and the classifier's share of the total accuracy can be much
+  smaller than a context feature's. Measure on your own labels and compare against the baseline
+  you already have.
+- **Persistence is versioned, not portable across tokenizers.** `ClassificationModelSerializer`
+  saves the trained state (structure or coefficients, vocabulary, ledger) in a versioned binary
+  with a feature-space hash, but it cannot store the tokenizer or the feature source — a delegate
+  is not data. Load with the same source configuration, or the same text maps to different
+  features.
