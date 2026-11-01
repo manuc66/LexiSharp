@@ -324,6 +324,9 @@ public sealed class CentroidClassifier : ITextClassifier
     /// <summary>Number of categories in the model, or <c>0</c> before training.</summary>
     public int CategoryCount => _inner.CategoryCount;
 
+    /// <summary>The softmax temperature applied to cosine similarities.</summary>
+    public double Temperature => _inner.Temperature;
+
     /// <inheritdoc />
     public void Train(IEnumerable<SearchDocument> documents) =>
         TrainAsync(documents).GetAwaiter().GetResult();
