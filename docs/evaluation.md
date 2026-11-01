@@ -1270,12 +1270,34 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- classification \
     --tune --validation 0.15 --trees 25 --min-df 2 --criterion Gini
 ```
 
-| Method | Accuracy | Macro-F1 | Avg. questions | Train | Predict |
-|---|---:|---:|---:|---:|---:|
-| Naive Bayes | 0.7573 | 0.7289 | — | 3.16 s | 1.336 ms/doc |
-| Decision tree (depth 30, Gini) | 0.4457 | 0.4945 | 25.7 | 5.05 s | 0.052 ms/doc |
-| Random forest (25 trees, 30 % subset) | 0.6621 | 0.6584 | — | 18.68 s | 0.184 ms/doc |
-| Linear (logistic, AdaGrad) | **0.8085** | **0.8027** | — | 12.79 s | 0.108 ms/doc |
+| Method | Accuracy [95 % CI] | Macro-F1 [95 % CI] | Avg. questions | Train | Predict |
+|---|---|---:|---:|---:|---:|
+| Naive Bayes | 0.7573 [0.7470, 0.7669] | 0.7289 [0.7190, 0.7375] | — | 3.16 s | 1.336 ms/doc |
+| Decision tree (depth 30, Gini) | 0.4457 [0.4339, 0.4563] | 0.4945 [0.4823, 0.5048] | 25.7 | 5.05 s | 0.052 ms/doc |
+| Random forest (25 trees, 30 % subset) | 0.6621 [0.6512, 0.6724] | 0.6584 [0.6467, 0.6691] | — | 18.68 s | 0.184 ms/doc |
+| Linear (logistic, AdaGrad) | **0.8085 [0.7992, 0.8174]** | **0.8027 [0.7927, 0.8114]** | — | 12.79 s | 0.108 ms/doc |
+
+The intervals are a percentile bootstrap over the 7 525 test documents (1 000 resamples, fixed
+seed): they resample the paired document/prediction rows, so they reflect the test set's size and
+the model's actual errors rather than a normal approximation. Macro-F1 is averaged over the
+classes present in each resample, because a class the resample never drew carries no evidence
+about itself. The linear model's lower bound stays above Naive Bayes's upper bound, which is the
+same conclusion McNemar reaches below from the paired counts.
+
+A stratified **5-fold cross-validation on the train split** (`--cv`, five folds, fixed seed)
+estimates what each model does on unseen data drawn from the same distribution:
+
+| Method | Accuracy, mean ± std | Macro-F1, mean ± std |
+|---|---:|---:|
+| Naive Bayes | 0.8190 ± 0.0063 | 0.7976 ± 0.0085 |
+| Linear | **0.8918 ± 0.0070** | **0.8907 ± 0.0072** |
+
+These are **higher** than the held-out test figures, and the gap is the measurement, not noise:
+`20news-bydate`'s train and test halves are disjoint date windows, so cross-validation inside
+train measures generalization within the train period, not across the period boundary. It is
+published as an honest limit: the CV estimate is optimistic for the test split by about eight
+points, and the held-out number is the one to quote for this corpus. The folds stratify by
+category and every seed is fixed, so the table is reproducible.
 
 The tree is the explainable model, not the accuracy model: one greedy path over binary term
 presence plateaus at **0.446**. The forest recovers most of that gap at **0.662**, and the linear
@@ -1327,3 +1349,17 @@ The train times are from the tuning run, so they include a warm process and are 
 the standalone [benchmark table](benchmarks.md#classification-classificationbenchmarks); the
 accuracy columns are the measurement. They are indicative in the same sense as the retrieval
 tables: re-run on your hardware before quoting them.
+
+Three limits matter when carrying these figures to another problem:
+
+- **No online learning.** `Train` rebuilds the model; `Reinforce`/`Unreinforce` correct a trained
+  tree or linear model without retraining, but there is no `Learn`/`Unlearn` that folds one
+  document into the counts. At a few thousand examples retraining per synchronization is
+  plausibly affordable, and that has not been measured here.
+- **Long documents.** 20 Newsgroups messages are long and topical. Short texts — a window title,
+  a log line — have far fewer features per item, and the classifier's share of the total accuracy
+  can be much smaller than a context feature's. Measure on your own labels and compare against the
+  baseline you already have; a gain over Naive Bayes on 20NG is not a promise about short text.
+- **No persistence.** The models are in-memory and have no versioned serialization; the intended
+  workflow is to replay the history and retrain. A saved model would also need a feature-space
+  version, which is not designed here.

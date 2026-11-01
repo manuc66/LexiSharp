@@ -63,13 +63,21 @@ workflow.
   IDF measured a loss on 20NG (**0.7753 / 0.7682** against **0.8085 / 0.8027**), and sublinear
   TF-IDF — `emitTermFrequency: true` plus `IdfWeighting` — lost too (**0.7757 / 0.7676**); both
   stay off.
-  The classification pin stores per-class F1 and a SHA-256 of the ordered predictions, and the
-  eval prints McNemar against Naive Bayes: the linear model fixes 905 documents and breaks 520
-  (p = 2.6e-24), while the forest and the tree lose significantly.
+  The classification pin stores per-class F1, a SHA-256 of the ordered predictions, and each
+  metric's percentile-bootstrap 95 % interval over the test split; the eval prints McNemar
+  against Naive Bayes: the linear model fixes 905 documents and breaks 520
+  (p = 2.6e-24), while the forest and the tree lose significantly. `--cv` runs a stratified
+  5-fold cross-validation on the train split, fixed seed: the linear model reads
+  **0.8918 ± 0.0070** and Naive Bayes **0.8190 ± 0.0063**, about eight points above the held-out
+  figures because `20news-bydate`'s halves are disjoint date windows — the held-out number is the
+  one to quote, and the CV table is published with that limit. A CI job replays the tuned pin.
+  None of the models learns online — `Train` rebuilds, `Reinforce`/`Unreinforce` correct — and none
+  persists a model; replaying the history is the intended path. The evidence is long 20 Newsgroups
+  messages, so short-text transfer is unproven and context features may carry most of the gain.
   Measured on the standard `20news-bydate` split: the single tree reads **0.4457** accuracy / **0.4945**
   macro-F1, the forest **0.6621** / **0.6584**, Naive Bayes **0.7573** / **0.7289**, and
   `LinearClassifier` **0.8085** / **0.8027** — the tree and forest are explainability/ensemble
-  options, the linear model is the accuracy one, and none of the distributions is calibrated. See
+  options, the linear model is the accuracy one. See
   [evaluation](docs/evaluation.md#classification-on-20-newsgroups) and
   [text analysis](docs/text-analysis.md#question-trees-classification-and-corpus-division).
 

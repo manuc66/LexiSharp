@@ -48,6 +48,10 @@
       "method": "Naive Bayes",
       "accuracy": 0.7573421926910299,
       "macroF1": 0.7288962907578111,
+      "accuracyLower": 0.7469767441860465,
+      "accuracyUpper": 0.7669102990033223,
+      "macroF1Lower": 0.7190387995330835,
+      "macroF1Upper": 0.7374771277999357,
       "averageQuestions": null,
       "predictionHash": "C8503DD603AF44AD4B2ACEDCAB328D3069C418FCED69FBB7FF12114E5F9A8CC9",
       "perClassF1": {
@@ -77,6 +81,10 @@
       "method": "Decision tree",
       "accuracy": 0.44571428571428573,
       "macroF1": 0.4944912150573752,
+      "accuracyLower": 0.43388704318936877,
+      "accuracyUpper": 0.4563455149501661,
+      "macroF1Lower": 0.4822808108355984,
+      "macroF1Upper": 0.5047740199819228,
       "averageQuestions": 25.728504983388703,
       "predictionHash": "67DA26C773F2F30A11E6D29D67387462204A37B33587E32DAA3EA3EB3DA19C8D",
       "perClassF1": {
@@ -106,6 +114,10 @@
       "method": "Random forest",
       "accuracy": 0.6620598006644518,
       "macroF1": 0.6583519872474559,
+      "accuracyLower": 0.6511627906976745,
+      "accuracyUpper": 0.6724252491694352,
+      "macroF1Lower": 0.6466544231592832,
+      "macroF1Upper": 0.6690641374418608,
       "averageQuestions": null,
       "predictionHash": "B203240BEB4B8ACEE18F8848D1AE7207E7DB165FBF5B8CBCADBE1587C30823A9",
       "perClassF1": {
@@ -135,6 +147,10 @@
       "method": "Linear",
       "accuracy": 0.8085049833887044,
       "macroF1": 0.8027443794644749,
+      "accuracyLower": 0.7992026578073089,
+      "accuracyUpper": 0.8174086378737542,
+      "macroF1Lower": 0.7926870321697495,
+      "macroF1Upper": 0.8113869287483917,
       "averageQuestions": null,
       "predictionHash": "9A6A7C41643ACB3E3670641588D6482EC2FBDDDB21A82F1EB4C07C19D4E8D313",
       "perClassF1": {
