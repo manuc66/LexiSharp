@@ -44,8 +44,9 @@ workflow.
   to answer: `MinLeafProbability` and `MinLeafSupport` withhold a prediction whose leaf is too
   flat or too small, and `Explain` still shows the path. `ClassWeights` multiplies a category's
   sample weight, so a majority class no longer dominates the impurity and the leaves; a weight of
-  zero removes the class. A feature can be present, absent or unknown, and `MaskedFeatureSource`
-  suppresses the inner dimensions when an item is generic or excluded. The tree keeps a correction
+  zero removes the class. A feature can be present, absent or unknown; `UnknownIndicatorSource`
+  turns the unknown into an explicit `unknown:<name>` feature, and `MaskedFeatureSource` suppresses
+  the inner dimensions when an item is generic or excluded. The tree keeps a correction
   ledger: `Reinforce`/`Unreinforce` add or remove signed mass at the leaf an item reaches without
   retraining, `Explain` shows the adjusted leaf, and `Train` clears it. `LinearClassifier` is the
   accuracy companion: multinomial logistic regression over the same feature seam, AdaGrad, a

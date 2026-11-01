@@ -343,9 +343,12 @@ option is passed to every tree in the forest.
 
 A feature can be present, absent, or unknown. `FeatureSet.State` reports which; the binary
 questions answer no for both absent and unknown, so the tree never silently reads a missing value
-as a known false. When an item's other dimensions must not be trusted — the « generic » or
-« excluded » case — `MaskedFeatureSource` suppresses the inner source and reports only the mask's
-features, so the tree learns a separate branch instead of mixing the flag with the text.
+as a known false. `UnknownIndicatorSource` turns each unknown feature into an explicit
+`unknown:<name>` feature, so a model that only asks binary questions can learn the difference
+between "absent" and "could not tell"; the models stay binary. When an item's other dimensions
+must not be trusted — the « generic » or « excluded » case — `MaskedFeatureSource` suppresses the
+inner source and reports only the mask's features, so the tree learns a separate branch instead of
+mixing the flag with the text.
 
 The tree keeps a correction ledger. `Reinforce(text, category, weight)` adds signed mass to the
 leaf the text reaches, `Unreinforce` removes it exactly, and `ForgetReinforcement` clears the
