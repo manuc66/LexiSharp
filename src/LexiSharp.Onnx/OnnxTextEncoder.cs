@@ -51,6 +51,7 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
     private int _disposeStarted;
     private readonly Lazy<string> _signature;
     private readonly OnnxInferenceScheduler _scheduler;
+    private readonly OnnxEmbeddingCache _cache;
     private bool _disposed;
 
     /// <summary>Loads the model, validates its tensors and resolves its output dimension.</summary>
@@ -86,6 +87,7 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
             _scheduler = new OnnxInferenceScheduler(
                 options.MaxConcurrentInference,
                 options.InferenceQueueCapacity);
+            _cache = new OnnxEmbeddingCache(options.EmbeddingCacheCapacity);
         }
         catch
         {
@@ -117,6 +119,9 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
 
         if (options.InferenceQueueCapacity < 1)
             throw new ArgumentException("InferenceQueueCapacity must be at least 1.", nameof(options));
+
+        if (options.EmbeddingCacheCapacity < 0)
+            throw new ArgumentException("EmbeddingCacheCapacity cannot be negative.", nameof(options));
 
         if (options.PadTokenId < 0)
             throw new ArgumentException("PadTokenId cannot be negative.", nameof(options));
@@ -189,6 +194,9 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
     {
         ArgumentNullException.ThrowIfNull(text);
 
+        if (_cache.TryGet(text, use, out ReadOnlyMemory<float> cached))
+            return cached;
+
         _gate.EnterReadLock();
 
         try
@@ -199,9 +207,12 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
             OnnxTokenizedText tokenized = Encode(text, use);
             float[] output = RunBatch([tokenized], cancellationToken, out int sequenceLength);
 
-            return _pooledOutput
+            ReadOnlyMemory<float> vector = _pooledOutput
                 ? ReadPooled(output, 0)
                 : PoolTokenLevel(output, 0, sequenceLength, tokenized.Length);
+
+            _cache.Set(text, use, vector);
+            return vector;
         }
         finally
         {
@@ -342,6 +353,10 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
         CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (_cache.TryGet(text, use, out ReadOnlyMemory<float> cached))
+            return Task.FromResult(cached);
+
         return _scheduler.EnqueueAsync(() => GetTextEmbedding(text, use, cancellationToken), cancellationToken);
     }
 
@@ -379,6 +394,7 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
         try
         {
             _disposed = true;
+            _cache.Clear();
             _session.Dispose();
             _disposeCancellation.Dispose();
         }

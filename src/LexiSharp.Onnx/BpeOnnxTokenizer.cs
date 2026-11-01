@@ -157,7 +157,9 @@ public sealed class BpeOnnxTokenizer : IOnnxTokenizer
         // Older exports (GPT-2's tokenizer.json among them) omit the type and only carry
         // vocab + merges; treat that shape as BPE rather than rejecting a usable file.
         if (type.Length > 0 && !string.Equals(type, "BPE", StringComparison.OrdinalIgnoreCase))
-            throw new NotSupportedException($"The tokenizer model is '{type}'; BpeOnnxTokenizer only reads BPE.");
+            throw new NotSupportedException(
+                $"The tokenizer model is '{type}'; BpeOnnxTokenizer only reads BPE. " +
+                "For a Unigram export such as E5, pass the checkpoint's sentencepiece.bpe.model to SentencePieceOnnxTokenizer.");
 
         return model;
     }

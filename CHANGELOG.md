@@ -137,6 +137,15 @@ workflow.
 
 ### Added
 
+- **`OnnxTextEncoder` caches query embeddings and batches 8 texts by default.** The cache keeps
+  256 text → vector entries keyed by query/passage role (`EmbeddingCacheCapacity`, `0` disables);
+  only the single-text methods use it. The batch default moved from 32 to 8 after the medium
+  benchmark put batch 8 ahead of both one-at-a-time and batch 32 on CPU.
+
+- **E5's Unigram `tokenizer.json` is deliberately not accepted by `BpeOnnxTokenizer`.** The
+  exception now names the file to use instead: the checkpoint's `sentencepiece.bpe.model` with
+  `SentencePieceOnnxTokenizer`.
+
 - **`OnnxTextEncoder` asynchronous methods run on bounded workers.** `MaxConcurrentInference`
   (default `1`) and `InferenceQueueCapacity` (default `64`) move the session call off the caller's
   thread and provide backpressure; the synchronous overloads are unchanged.
