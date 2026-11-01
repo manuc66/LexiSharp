@@ -268,7 +268,9 @@ internal static class NewClassClassificationCommand
         for (int i = 0; i < args.Length; i++)
         {
             bool? handled = TryParseData(args, ref i, options)
-                ?? TryParseExperiment(args, ref i, options)
+                ?? TryParseHeldOut(args, ref i, options)
+                ?? TryParseCorrection(args, ref i, options)
+                ?? TryParseSchedule(args, ref i, options)
                 ?? TryParseOutput(args, ref i, options);
 
             if (handled is null)
@@ -314,7 +316,7 @@ internal static class NewClassClassificationCommand
         }
     }
 
-    private static bool? TryParseExperiment(string[] args, ref int i, CommandOptions options)
+    private static bool? TryParseHeldOut(string[] args, ref int i, CommandOptions options)
     {
         switch (args[i])
         {
@@ -327,6 +329,15 @@ internal static class NewClassClassificationCommand
 
                 options.HeldOutCategories = heldOut;
                 return true;
+            default:
+                return null;
+        }
+    }
+
+    private static bool? TryParseCorrection(string[] args, ref int i, CommandOptions options)
+    {
+        switch (args[i])
+        {
             case "--correction-weight" when i + 1 < args.Length:
                 if (!CommandParsing.TryPositiveDouble(args[++i], out double weight))
                 {
@@ -345,6 +356,15 @@ internal static class NewClassClassificationCommand
 
                 options.UnseenCategoryBias = bias;
                 return true;
+            default:
+                return null;
+        }
+    }
+
+    private static bool? TryParseSchedule(string[] args, ref int i, CommandOptions options)
+    {
+        switch (args[i])
+        {
             case "--retrain-every" when i + 1 < args.Length:
                 if (!CommandParsing.TryPositiveInt(args[++i], out int every))
                 {
