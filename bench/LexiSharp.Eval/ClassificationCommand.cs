@@ -13,6 +13,15 @@ internal sealed record ClassificationPinRow(
     string PredictionHash,
     IReadOnlyDictionary<string, double> PerClassF1);
 
+/// <summary>One model's pinned calibration figures.</summary>
+internal sealed record CalibrationPinRow(
+    string Method,
+    double Temperature,
+    double LogLoss,
+    double CalibratedLogLoss,
+    double Brier,
+    double CalibratedBrier);
+
 /// <summary>
 /// The pinned outcome of a classification run: the dataset identity, the split sizes, the tree
 /// options, and the figures. A pin that does not name its configuration cannot be replayed.
@@ -35,11 +44,7 @@ internal sealed record ClassificationPin(
     double LinearLearningRate,
     double LinearL2,
     bool LinearIdf,
-    double LinearTemperature,
-    double LinearLogLoss,
-    double LinearCalibratedLogLoss,
-    double LinearBrier,
-    double LinearCalibratedBrier,
+    IReadOnlyList<CalibrationPinRow> Calibration,
     IReadOnlyList<ClassificationPinRow> Rows);
 
 /// <summary>
@@ -272,17 +277,36 @@ internal static class ClassificationCommand
                 $"p={result.PValue:G4}"));
         }
 
-        var calibration = ClassificationEvaluation.MeasureLinearCalibration(
-            corpus.Train,
-            corpus.Test,
-            linearOptions,
-            validationFraction);
+        var calibrations = new[]
+        {
+            ClassificationEvaluation.MeasureCalibration(
+                "Decision tree",
+                corpus.Train,
+                corpus.Test,
+                validationFraction,
+                () => new DecisionTreeClassifier(options: options)),
+            ClassificationEvaluation.MeasureCalibration(
+                "Random forest",
+                corpus.Train,
+                corpus.Test,
+                validationFraction,
+                () => new RandomForestClassifier(options: forestOptions)),
+            ClassificationEvaluation.MeasureCalibration(
+                "Linear",
+                corpus.Train,
+                corpus.Test,
+                validationFraction,
+                () => new LinearClassifier(options: linearOptions)),
+        };
 
-        Console.WriteLine(string.Create(
-            CultureInfo.InvariantCulture,
-            $"Linear calibration: T={calibration.Temperature:F2}, " +
-            $"log-loss {calibration.LogLoss:F4} -> {calibration.CalibratedLogLoss:F4}, " +
-            $"Brier {calibration.Brier:F4} -> {calibration.CalibratedBrier:F4}"));
+        foreach (var calibration in calibrations)
+        {
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"Calibration {calibration.Method}: T={calibration.Temperature:F2}, " +
+                $"log-loss {calibration.LogLoss:F4} -> {calibration.CalibratedLogLoss:F4}, " +
+                $"Brier {calibration.Brier:F4} -> {calibration.CalibratedBrier:F4}"));
+        }
 
         var pin = new ClassificationPin(
             corpus.Name,
@@ -302,11 +326,15 @@ internal static class ClassificationCommand
             linearOptions.LearningRate,
             linearOptions.L2,
             linearOptions.IdfWeighting,
-            calibration.Temperature,
-            calibration.LogLoss,
-            calibration.CalibratedLogLoss,
-            calibration.Brier,
-            calibration.CalibratedBrier,
+            calibrations
+                .Select(calibration => new CalibrationPinRow(
+                    calibration.Method,
+                    calibration.Temperature,
+                    calibration.LogLoss,
+                    calibration.CalibratedLogLoss,
+                    calibration.Brier,
+                    calibration.CalibratedBrier))
+                .ToArray(),
             [ToRow(naiveBayes), ToRow(tree), ToRow(forest), ToRow(linear)]);
 
         if (writePath is not null)
@@ -375,18 +403,36 @@ internal static class ClassificationCommand
             || expected.LinearEpochs != actual.LinearEpochs
             || Math.Abs(expected.LinearLearningRate - actual.LinearLearningRate) > 1e-12
             || Math.Abs(expected.LinearL2 - actual.LinearL2) > 1e-12
-            || expected.LinearIdf != actual.LinearIdf
-            || Math.Abs(expected.LinearTemperature - actual.LinearTemperature) > 1e-9
-            || Math.Abs(expected.LinearLogLoss - actual.LinearLogLoss) > 1e-9
-            || Math.Abs(expected.LinearCalibratedLogLoss - actual.LinearCalibratedLogLoss) > 1e-9
-            || Math.Abs(expected.LinearBrier - actual.LinearBrier) > 1e-9
-            || Math.Abs(expected.LinearCalibratedBrier - actual.LinearCalibratedBrier) > 1e-9)
+            || expected.LinearIdf != actual.LinearIdf)
         {
             Console.Error.WriteLine("classification: the pin describes a different dataset or configuration.");
             return 1;
         }
 
         bool matches = true;
+
+        foreach (var row in actual.Calibration)
+        {
+            CalibrationPinRow? pinned = expected.Calibration?.FirstOrDefault(
+                candidate => candidate.Method == row.Method);
+
+            if (pinned is null)
+            {
+                Console.Error.WriteLine($"classification: no pinned calibration row for {row.Method}.");
+                matches = false;
+                continue;
+            }
+
+            if (Math.Abs(pinned.Temperature - row.Temperature) > 1e-9
+                || Math.Abs(pinned.LogLoss - row.LogLoss) > 1e-9
+                || Math.Abs(pinned.CalibratedLogLoss - row.CalibratedLogLoss) > 1e-9
+                || Math.Abs(pinned.Brier - row.Brier) > 1e-9
+                || Math.Abs(pinned.CalibratedBrier - row.CalibratedBrier) > 1e-9)
+            {
+                Console.Error.WriteLine($"classification: calibration drifted for {row.Method}.");
+                matches = false;
+            }
+        }
 
         foreach (var row in actual.Rows)
         {
