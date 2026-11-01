@@ -161,7 +161,10 @@ was designed from:
   too (**0.7757 / 0.7676**), so both are off by default. `Learn`/`Unlearn` fold one labelled
   document into a trained tree or linear model and remove it exactly, without rebuilding the
   structure or the coefficients; `--online` measures the cost (0.43 s / 0.63 s for 2 260 documents
-  against 14.1 s / 25.7 s for a full retrain in the same run). `ClassificationModelSerializer`
+  against 14.1 s / 25.7 s for a full retrain in the same run). `--coverage` sweeps the winning
+  probability and recommends a threshold for a coverage target; at 50 % on 20NG the linear model
+  reads **0.964** precision, the forest **0.868**, Naive Bayes **0.914** and the tree **0.775**.
+  `ClassificationModelSerializer`
   saves and loads a trained tree, forest, linear model or calibrated wrapper in a versioned binary
   (`LXCL`, version 1) that carries the vocabulary, the prediction options and the ledger; the
   tokenizer is not stored, so load with the same feature source. The long-document figures do not
