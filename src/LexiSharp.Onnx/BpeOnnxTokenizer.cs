@@ -462,7 +462,6 @@ public sealed class BpeOnnxTokenizer : IOnnxTokenizer
                     types[at] = step.TypeId;
                     at++;
                 }
-
             }
             else
             {
@@ -472,7 +471,6 @@ public sealed class BpeOnnxTokenizer : IOnnxTokenizer
                     types[at] = step.TypeId;
                     at++;
                 }
-
             }
         }
 
