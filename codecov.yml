@@ -1,0 +1,17 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 70%
+        threshold: 1%
+    patch:
+      default:
+        target: 80%
+        threshold: 0%
+
+# Benchmarks, the evaluation harness and samples run only with downloaded corpora/models or
+# inside a benchmark host. They are not shipped library code; the packages and their tests are.
+ignore:
+  - "bench/**"
+  - "samples/**"
+  - "tests/**"
