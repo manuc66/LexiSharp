@@ -246,7 +246,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      POSTGRES_TEST_CONNECTION: Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp  # NOSONAR:S2068 (dummy password for ephemeral CI container)
+      POSTGRES_TEST_CONNECTION: Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp;Timeout=60;Command Timeout=60;Maximum Pool Size=20  # NOSONAR:S2068 (dummy password for ephemeral CI container)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -289,7 +289,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      POSTGRES_TEST_CONNECTION: Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp  # NOSONAR:S2068 (dummy password for ephemeral CI container)
+      POSTGRES_TEST_CONNECTION: Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp;Timeout=60;Command Timeout=60;Maximum Pool Size=20  # NOSONAR:S2068 (dummy password for ephemeral CI container)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -323,7 +323,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      POSTGRES_TEST_CONNECTION: Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp  # NOSONAR:S2068 (dummy password for ephemeral CI container)
+      POSTGRES_TEST_CONNECTION: Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp;Timeout=60;Command Timeout=60;Maximum Pool Size=20  # NOSONAR:S2068 (dummy password for ephemeral CI container)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
