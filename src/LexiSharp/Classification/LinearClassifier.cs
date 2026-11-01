@@ -196,6 +196,9 @@ public sealed class LinearClassifier<TItem>
                     if (!_featureIds.TryGetValue(feature, out int id))
                         continue;
 
+                    if (item.Features.Kind(feature) != FeatureKind.Numeric)
+                        continue;
+
                     if (item.Features.NumericValue(feature) is not { } value || double.IsNaN(value))
                         continue;
 
@@ -230,7 +233,7 @@ public sealed class LinearClassifier<TItem>
                     continue;
 
                 ids.Add(id);
-                values.Add(ValueOf(id, item.Features.NumericValue(feature)));
+                values.Add(ValueOf(id, feature, item.Features));
             }
 
             sparse.Add(new SparseItem(
@@ -330,7 +333,7 @@ public sealed class LinearClassifier<TItem>
                 continue;
 
             int offset = id * classCount;
-            double value = ValueOf(id, features.NumericValue(feature));
+            double value = ValueOf(id, feature, features);
 
             for (int c = 0; c < classCount; c++)
                 logits[c] += _weights[offset + c] * value;
@@ -343,7 +346,7 @@ public sealed class LinearClassifier<TItem>
                 if (!_featureIds.TryGetValue(feature, out int id))
                     continue;
 
-                double value = ValueOf(id, features.NumericValue(feature));
+                double value = ValueOf(id, feature, features);
 
                 if (value == 0)
                     continue;
@@ -508,20 +511,36 @@ public sealed class LinearClassifier<TItem>
         return ranked;
     }
 
-    private double ValueOf(int featureId, double? numeric)
+    private double ValueOf(int featureId, string feature, IFeatureSet features)
     {
-        if (numeric is not { } value)
-            return _idf[featureId];
+        double? numeric = features.NumericValue(feature);
+        FeatureKind kind = features.Kind(feature);
 
-        if (double.IsNaN(value))
-            return 0;
+        if (kind == FeatureKind.Numeric)
+        {
+            if (numeric is not { } value || double.IsNaN(value))
+                return 0;
 
-        if (!_options.StandardizeNumericFeatures)
-            return value;
+            if (!_options.StandardizeNumericFeatures)
+                return value;
 
-        double deviation = _numericStandardDeviations[featureId];
+            double deviation = _numericStandardDeviations[featureId];
 
-        return deviation > 0 ? (value - _numericMeans[featureId]) / deviation : 0;
+            return deviation > 0 ? (value - _numericMeans[featureId]) / deviation : 0;
+        }
+
+        double idf = _options.IdfWeighting ? _idf[featureId] : 1.0;
+
+        if (kind == FeatureKind.Count)
+        {
+            double count = numeric is { } countValue && !double.IsNaN(countValue)
+                ? Math.Max(countValue, 1)
+                : 1;
+
+            return (1 + Math.Log(count)) * idf;
+        }
+
+        return idf;
     }
 
     private static void Softmax(double[] logits, double[] probabilities)

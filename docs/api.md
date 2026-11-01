@@ -145,6 +145,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `DivisionLeaf` | record | `DivisionNode` | A terminal region of the corpus. |
 | `DivisionNode` | record | — | A node of a corpus division: either a question or a cluster. |
 | `DivisionSplitMetrics` | record | — | The measurements behind one chosen corpus split. |
+| `FeatureKind` | enum | — | What a feature's value means: a binary presence, a term count, or a numeric measurement. |
 | `FeaturePresenceQuestion` | record | `FeatureQuestion` | True when the item carries a given feature — the only question the built-in builders ask. |
 | `FeatureQuestion` | record | — | A yes/no question asked of an item's features — the unit a question tree is built from. |
 | `FeatureSet` | class | `IFeatureSet` | The default IFeatureSet: a set of names with ordinal comparison, optionally with a numeric value attached to some of them. |
