@@ -91,6 +91,9 @@ var e5Tokenizer = new SentencePieceOnnxTokenizer("model/sentencepiece.bpe.model"
   mismatch instead of comparing vectors from another model.
 - **Warm-up and cancellation** — `Warmup()` pays the first-call cost explicitly, and the batch
   APIs map a `CancellationToken` to ONNX Runtime's terminate flag between and during calls.
+- **Off-thread async calls** — `GetTextEmbeddingAsync`/`GetTextEmbeddingsAsync` run on
+  `MaxConcurrentInference` workers with a bounded `InferenceQueueCapacity`, so the caller's thread
+  is not held for the inference.
 - **Execution providers** through `ConfigureSession`, which runs on the `SessionOptions` before
   the session is created (CUDA, DirectML, CoreML, graph optimization, arenas).
 - **Input caps** — `MaxInputCharacters` refuses a text before the tokenizer allocates a piece per
