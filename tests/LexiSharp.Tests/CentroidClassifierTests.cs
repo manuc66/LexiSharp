@@ -1,0 +1,530 @@
+using LexiSharp.Classification;
+using LexiSharp.Core;
+using LexiSharp.Embeddings;
+using Xunit;
+
+namespace LexiSharp.Tests;
+
+public class CentroidClassifierTests
+{
+    private static readonly float[] Left = { 1f, 0f };
+    private static readonly float[] Right = { 0f, 1f };
+
+    private static FakeEmbeddings TwoClasses() =>
+        new FakeEmbeddings(dimension: 2)
+            .Add("A one", Left)
+            .Add("A two", new[] { 0.9f, 0.1f })
+            .Add("B one", Right)
+            .Add("B two", new[] { 0.1f, 0.9f });
+
+    private static readonly SearchDocument[] TwoClassCorpus =
+    {
+        new("1", "A one", Category: "A"),
+        new("2", "A two", Category: "A"),
+        new("3", "B one", Category: "B"),
+        new("4", "B two", Category: "B"),
+    };
+
+    [Fact]
+    public void Predict_AssignsToTheNearestCentroid()
+    {
+        var classifier = new CentroidClassifier(TwoClasses());
+        classifier.Train(TwoClassCorpus);
+
+        Assert.Equal("A", classifier.PredictBest("A one"));
+        Assert.Equal("B", classifier.PredictBest("B one"));
+    }
+
+    [Fact]
+    public void Predict_ReturnsProbabilitiesThatSumToOne()
+    {
+        var classifier = new CentroidClassifier(TwoClasses());
+        classifier.Train(TwoClassCorpus);
+
+        var results = classifier.Predict("A one", limit: 2);
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal("A", results[0].Category);
+        Assert.Equal(1.0, results.Sum(result => result.Probability), precision: 10);
+    }
+
+    [Fact]
+    public void Predict_OrdersEqualScoresByCategoryName()
+    {
+        var classifier = new CentroidClassifier(new FakeEmbeddings(dimension: 2)
+            .Add("a", Left)
+            .Add("b", Right)
+            .Add("tie", new[] { 1f, 1f }));
+        classifier.Train(new[]
+        {
+            new SearchDocument("1", "b", Category: "B"),
+            new SearchDocument("2", "a", Category: "A"),
+        });
+
+        var results = classifier.Predict("tie", limit: 2);
+
+        Assert.Equal(new[] { "A", "B" }, results.Select(result => result.Category));
+        Assert.Equal(0.5, results[0].Probability, precision: 10);
+    }
+
+    [Fact]
+    public void Predict_ReturnsEmpty_BeforeTraining()
+    {
+        var embeddings = TwoClasses();
+        var classifier = new CentroidClassifier(embeddings);
+
+        Assert.Empty(classifier.Predict("A one"));
+        Assert.Null(classifier.PredictBest("A one"));
+        Assert.Empty(embeddings.SingleCalls);
+    }
+
+    [Fact]
+    public void Predict_ReturnsEmpty_ForNonPositiveLimit()
+    {
+        var classifier = new CentroidClassifier(TwoClasses());
+        classifier.Train(TwoClassCorpus);
+
+        Assert.Empty(classifier.Predict("A one", limit: 0));
+        Assert.Null(classifier.PredictBest("A one", new HashSet<string>(StringComparer.Ordinal) { "A", "B" }));
+    }
+
+    [Fact]
+    public void Predict_RespectsExcludedCategories_AndRenormalizes()
+    {
+        var classifier = new CentroidClassifier(TwoClasses());
+        classifier.Train(TwoClassCorpus);
+
+        var results = classifier.Predict(
+            "A one",
+            limit: 2,
+            excludedCategories: new HashSet<string>(StringComparer.Ordinal) { "A" });
+
+        Assert.Single(results);
+        Assert.Equal("B", results[0].Category);
+        Assert.Equal(1.0, results[0].Probability, precision: 10);
+    }
+
+    [Fact]
+    public void Predict_RespectsLimit()
+    {
+        var classifier = new CentroidClassifier(new FakeEmbeddings(dimension: 2)
+            .Add("a", Left)
+            .Add("b", Right)
+            .Add("c", new[] { 0f, -1f }));
+        classifier.Train(new[]
+        {
+            new SearchDocument("1", "a", Category: "A"),
+            new SearchDocument("2", "b", Category: "B"),
+            new SearchDocument("3", "c", Category: "C"),
+        });
+
+        Assert.Single(classifier.Predict("a", limit: 1));
+        Assert.Equal(2, classifier.Predict("a", limit: 2).Count);
+    }
+
+    [Fact]
+    public void Train_ComputesTheMeanOfEachCategory()
+    {
+        var classifier = new CentroidClassifier(new FakeEmbeddings(dimension: 2)
+            .Add("first", new[] { 2f, 0f })
+            .Add("second", new[] { 0f, 4f }));
+        classifier.Train(new[]
+        {
+            new SearchDocument("1", "first", Category: "A"),
+            new SearchDocument("2", "second", Category: "A"),
+        });
+
+        var centroid = classifier.Centroids["A"].Span;
+
+        Assert.Equal(1f, centroid[0], precision: 6);
+        Assert.Equal(2f, centroid[1], precision: 6);
+        Assert.Equal(2, classifier.Dimension);
+        Assert.Equal(1, classifier.CategoryCount);
+    }
+
+    [Fact]
+    public void Train_IgnoresDocumentsWithoutCategory()
+    {
+        var embeddings = TwoClasses()
+            .Add("unlabelled", new[] { 0.5f, 0.5f });
+        var classifier = new CentroidClassifier(embeddings);
+        classifier.Train(new[]
+        {
+            new SearchDocument("1", "unlabelled"),
+            new SearchDocument("2", "A one", Category: "A"),
+        });
+
+        Assert.Single(classifier.Centroids);
+        Assert.Equal("A", classifier.PredictBest("A one"));
+
+        var batch = Assert.Single(embeddings.BatchCalls);
+        Assert.Equal(new[] { "A one" }, batch.Texts);
+    }
+
+    [Fact]
+    public void Train_ReplacesThePreviousModel()
+    {
+        var classifier = new CentroidClassifier(TwoClasses());
+        classifier.Train(TwoClassCorpus);
+        classifier.Train(new[] { new SearchDocument("9", "A one", Category: "X") });
+
+        Assert.Equal(new[] { "X" }, classifier.Centroids.Keys);
+        Assert.Equal("X", classifier.PredictBest("A one"));
+    }
+
+    [Fact]
+    public void Train_UsesTheBatchProviderOnce()
+    {
+        var embeddings = TwoClasses();
+        var classifier = new CentroidClassifier(embeddings);
+
+        classifier.Train(TwoClassCorpus);
+
+        var batch = Assert.Single(embeddings.BatchCalls);
+        Assert.Equal(EmbeddingUse.Query, batch.Use);
+        Assert.Equal(TwoClassCorpus.Length, batch.Texts.Count);
+        Assert.Empty(embeddings.SingleCalls);
+    }
+
+    [Fact]
+    public void TrainingAndPredictionForwardTheirEmbeddingUse()
+    {
+        var embeddings = TwoClasses();
+        var classifier = new CentroidClassifier(embeddings, new CentroidClassifierOptions
+        {
+            TrainingUse = EmbeddingUse.Passage,
+            PredictionUse = EmbeddingUse.Query,
+        });
+
+        classifier.Train(TwoClassCorpus);
+        classifier.Predict("A one");
+
+        Assert.Equal(EmbeddingUse.Passage, Assert.Single(embeddings.BatchCalls).Use);
+        Assert.Equal(EmbeddingUse.Query, Assert.Single(embeddings.SingleCalls).Use);
+    }
+
+    [Fact]
+    public void Train_FallsBackToOneCallPerDocument()
+    {
+        var embeddings = TwoClasses();
+        IEmbeddingProvider single = new SingleOnlyEmbeddings(embeddings);
+        var classifier = new CentroidClassifier(single);
+
+        classifier.Train(TwoClassCorpus);
+
+        Assert.Equal(TwoClassCorpus.Length, embeddings.SingleCalls.Count);
+    }
+
+    [Fact]
+    public void TemperatureSharpensThePosterior_WithoutChangingTheRanking()
+    {
+        static CentroidClassifier Trained(double temperature)
+        {
+            var classifier = new CentroidClassifier(
+                new FakeEmbeddings(dimension: 2)
+                    .Add("a", Left)
+                    .Add("b", Right)
+                    .Add("mid", new[] { 0.9f, 0.1f }),
+                new CentroidClassifierOptions { Temperature = temperature });
+
+            classifier.Train(new[]
+            {
+                new SearchDocument("1", "a", Category: "A"),
+                new SearchDocument("2", "b", Category: "B"),
+            });
+
+            return classifier;
+        }
+
+        var flat = Trained(1.0).Predict("mid", limit: 2);
+        var sharp = Trained(0.01).Predict("mid", limit: 2);
+
+        Assert.Equal("A", flat[0].Category);
+        Assert.Equal("A", sharp[0].Category);
+        Assert.True(sharp[0].Probability > flat[0].Probability);
+    }
+
+    [Fact]
+    public void AQueryOrthogonalToEveryCentroid_ReturnsAUniformPosterior()
+    {
+        var classifier = new CentroidClassifier(new FakeEmbeddings(dimension: 2)
+            .Add("a", Left)
+            .Add("b", Right)
+            .Add("zero-query", new[] { 0f, 0f }));
+        classifier.Train(new[]
+        {
+            new SearchDocument("1", "a", Category: "B"),
+            new SearchDocument("2", "b", Category: "A"),
+        });
+
+        var results = classifier.Predict("zero-query", limit: 2);
+
+        Assert.Equal(new[] { "A", "B" }, results.Select(result => result.Category));
+        Assert.All(results, result => Assert.Equal(0.5, result.Probability, precision: 10));
+    }
+
+    [Fact]
+    public void AClassOfZeroVectors_KeepsAZeroCentroid()
+    {
+        var classifier = new CentroidClassifier(new FakeEmbeddings(dimension: 2)
+            .Add("zero", new[] { 0f, 0f })
+            .Add("left", Left)
+            .Add("left-query", Left));
+        classifier.Train(new[]
+        {
+            new SearchDocument("1", "zero", Category: "Zero"),
+            new SearchDocument("2", "left", Category: "Left"),
+        });
+
+        Assert.Equal(0f, classifier.Centroids["Zero"].Span[0]);
+        Assert.Equal("Left", classifier.PredictBest("left-query"));
+    }
+
+    [Fact]
+    public void Train_RejectsVectorsOfDifferentLengths()
+    {
+        var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category);
+
+        var exception = Assert.Throws<ArgumentException>(() => classifier.Train(new[]
+        {
+            ("A", Left),
+            ("B", new[] { 0f, 1f, 0f }),
+        }));
+
+        Assert.Contains("same length", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Train_RejectsNonFiniteVectors()
+    {
+        var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => classifier.Train(new[]
+        {
+            ("A", new[] { float.NaN, 0f }),
+        }));
+    }
+
+    [Fact]
+    public void TheTextWrapper_RejectsAProviderThatReturnsNonFiniteValues()
+    {
+        var classifier = new CentroidClassifier(new FakeEmbeddings(dimension: 2)
+            .Add("bad", new[] { float.NaN, 0f }));
+
+        Assert.Throws<InvalidOperationException>(() => classifier.Train(new[]
+        {
+            new SearchDocument("1", "bad", Category: "A"),
+        }));
+    }
+
+    [Fact]
+    public void Predict_RejectsAQueryOfAnotherDimension()
+    {
+        var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category);
+        classifier.Train(new[] { ("A", Left), ("B", Right) });
+
+        Assert.Throws<ArgumentException>(() => classifier.Predict(new[] { 1f, 0f, 0f }));
+    }
+
+    [Fact]
+    public void Predict_RejectsANonFiniteQuery()
+    {
+        var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category);
+        classifier.Train(new[] { ("A", Left), ("B", Right) });
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => classifier.Predict(new[] { float.PositiveInfinity, 0f }));
+    }
+
+    [Fact]
+    public void Train_RejectsAProviderThatBreaksItsDeclaredDimension()
+    {
+        var classifier = new CentroidClassifier(new FakeEmbeddings(dimension: 2)
+            .Add("a", new[] { 1f, 0f, 0f }));
+
+        var exception = Assert.Throws<InvalidOperationException>(() => classifier.Train(new[]
+        {
+            new SearchDocument("1", "a", Category: "A"),
+        }));
+
+        Assert.Contains("Dimension=2", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Train_RejectsAProviderThatBreaksItsBatchContract()
+    {
+        var classifier = new CentroidClassifier(new ShortBatchEmbeddings());
+
+        var exception = Assert.Throws<InvalidOperationException>(() => classifier.Train(new[]
+        {
+            new SearchDocument("1", "a", Category: "A"),
+            new SearchDocument("2", "b", Category: "B"),
+        }));
+
+        Assert.Contains("1 embeddings for 2 documents", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AsyncMethods_MatchTheBlockingOnes()
+    {
+        var sync = new CentroidClassifier(TwoClasses());
+        sync.Train(TwoClassCorpus);
+
+        var asynchronous = new CentroidClassifier(TwoClasses());
+        await asynchronous.TrainAsync(TwoClassCorpus);
+
+        var expected = sync.Predict("A one", limit: 2);
+        var actual = await asynchronous.PredictAsync("A one", limit: 2);
+
+        Assert.Equal(expected.Count, actual.Count);
+        for (int i = 0; i < expected.Count; i++)
+        {
+            Assert.Equal(expected[i].Category, actual[i].Category);
+            Assert.Equal(expected[i].Probability, actual[i].Probability, precision: 10);
+        }
+    }
+
+    [Fact]
+    public void TheGenericClassifier_ClassifiesItemsThatAreNotText()
+    {
+        var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category);
+
+        classifier.Train(new[]
+        {
+            ("Morning", new[] { 1f, 0f }),
+            ("Night", new[] { 0f, 1f }),
+        });
+
+        Assert.Equal("Morning", classifier.PredictBest(new[] { 1f, 0.1f }));
+        Assert.Equal("Night", classifier.PredictBest(new[] { 0.1f, 1f }));
+    }
+
+    [Fact]
+    public void TheGenericClassifier_ExposesItsTemperature()
+    {
+        var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category,
+            new CentroidClassifierOptions { Temperature = 0.25 });
+
+        Assert.Equal(0.25, classifier.Temperature);
+    }
+
+    [Fact]
+    public void TheTemperatureMustBePositiveAndFinite()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            new CentroidClassifier(new FakeEmbeddings(dimension: 2), new CentroidClassifierOptions { Temperature = 0 }));
+        Assert.Throws<ArgumentException>(() =>
+            new CentroidClassifier(new FakeEmbeddings(dimension: 2), new CentroidClassifierOptions { Temperature = double.NaN }));
+        Assert.Throws<ArgumentException>(() =>
+            new CentroidClassifier(new FakeEmbeddings(dimension: 2), new CentroidClassifierOptions { Temperature = double.PositiveInfinity }));
+    }
+
+    [Fact]
+    public void HashingEmbeddings_ExerciseTheNonBatchPathEndToEnd()
+    {
+        var classifier = new CentroidClassifier(new HashingEmbeddingProvider(dimension: 1024));
+        classifier.Train(new[]
+        {
+            new SearchDocument("1", "invoice payment statement", Category: "Billing"),
+            new SearchDocument("2", "server outage database error", Category: "Operations"),
+        });
+
+        Assert.Equal("Billing", classifier.PredictBest("invoice"));
+        Assert.Equal("Operations", classifier.PredictBest("database"));
+    }
+
+    private sealed class FakeEmbeddings : IEmbeddingProvider, IBatchEmbeddingProvider
+    {
+        private readonly Dictionary<string, (float[] Query, float[] Passage)> _vectors =
+            new(StringComparer.Ordinal);
+
+        public FakeEmbeddings(int dimension) => Dimension = dimension;
+
+        public int Dimension { get; }
+
+        public List<(IReadOnlyList<string> Texts, EmbeddingUse Use)> BatchCalls { get; } = new();
+
+        public List<(string Text, EmbeddingUse Use)> SingleCalls { get; } = new();
+
+        public FakeEmbeddings Add(string text, float[] query, float[]? passage = null)
+        {
+            _vectors[text] = (query, passage ?? query);
+            return this;
+        }
+
+        public Task<ReadOnlyMemory<float>> GetTextEmbeddingAsync(
+            string text,
+            EmbeddingUse use,
+            CancellationToken cancellationToken = default)
+        {
+            SingleCalls.Add((text, use));
+            return Task.FromResult<ReadOnlyMemory<float>>(Vector(text, use));
+        }
+
+        public Task<IReadOnlyList<ReadOnlyMemory<float>>> GetTextEmbeddingsAsync(
+            IReadOnlyList<string> texts,
+            EmbeddingUse use,
+            CancellationToken cancellationToken = default)
+        {
+            BatchCalls.Add((texts.ToArray(), use));
+
+            IReadOnlyList<ReadOnlyMemory<float>> vectors = texts
+                .Select(text => (ReadOnlyMemory<float>)Vector(text, use))
+                .ToArray();
+
+            return Task.FromResult(vectors);
+        }
+
+        private float[] Vector(string text, EmbeddingUse use)
+        {
+            var vector = _vectors[text];
+            return use == EmbeddingUse.Query ? vector.Query : vector.Passage;
+        }
+    }
+
+    private sealed class SingleOnlyEmbeddings : IEmbeddingProvider
+    {
+        private readonly FakeEmbeddings _inner;
+
+        public SingleOnlyEmbeddings(FakeEmbeddings inner) => _inner = inner;
+
+        public int Dimension => _inner.Dimension;
+
+        public Task<ReadOnlyMemory<float>> GetTextEmbeddingAsync(
+            string text,
+            EmbeddingUse use,
+            CancellationToken cancellationToken = default) =>
+            _inner.GetTextEmbeddingAsync(text, use, cancellationToken);
+    }
+
+    private sealed class ShortBatchEmbeddings : IEmbeddingProvider, IBatchEmbeddingProvider
+    {
+        public int Dimension => 2;
+
+        public Task<ReadOnlyMemory<float>> GetTextEmbeddingAsync(
+            string text,
+            EmbeddingUse use,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<ReadOnlyMemory<float>>(new[] { 1f, 0f });
+
+        public Task<IReadOnlyList<ReadOnlyMemory<float>>> GetTextEmbeddingsAsync(
+            IReadOnlyList<string> texts,
+            EmbeddingUse use,
+            CancellationToken cancellationToken = default)
+        {
+            IReadOnlyList<ReadOnlyMemory<float>> one = new[] { (ReadOnlyMemory<float>)new[] { 1f, 0f } };
+            return Task.FromResult(one);
+        }
+    }
+}
