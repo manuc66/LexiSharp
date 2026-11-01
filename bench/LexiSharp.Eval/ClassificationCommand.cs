@@ -32,6 +32,11 @@ internal sealed record ClassificationPin(
     int LinearEpochs,
     double LinearLearningRate,
     double LinearL2,
+    double LinearTemperature,
+    double LinearLogLoss,
+    double LinearCalibratedLogLoss,
+    double LinearBrier,
+    double LinearCalibratedBrier,
     IReadOnlyList<ClassificationPinRow> Rows);
 
 /// <summary>
@@ -242,6 +247,18 @@ internal static class ClassificationCommand
         Print(forest);
         Print(linear);
 
+        var calibration = ClassificationEvaluation.MeasureLinearCalibration(
+            corpus.Train,
+            corpus.Test,
+            linearOptions,
+            validationFraction);
+
+        Console.WriteLine(string.Create(
+            CultureInfo.InvariantCulture,
+            $"Linear calibration: T={calibration.Temperature:F2}, " +
+            $"log-loss {calibration.LogLoss:F4} -> {calibration.CalibratedLogLoss:F4}, " +
+            $"Brier {calibration.Brier:F4} -> {calibration.CalibratedBrier:F4}"));
+
         var pin = new ClassificationPin(
             corpus.Name,
             corpus.SourceMd5,
@@ -255,10 +272,15 @@ internal static class ClassificationCommand
             forestTrees,
             forestSubset,
             forestSeed,
-            tune ? validationFraction : 0,
+            validationFraction,
             linearOptions.Epochs,
             linearOptions.LearningRate,
             linearOptions.L2,
+            calibration.Temperature,
+            calibration.LogLoss,
+            calibration.CalibratedLogLoss,
+            calibration.Brier,
+            calibration.CalibratedBrier,
             [ToRow(naiveBayes), ToRow(tree), ToRow(forest), ToRow(linear)]);
 
         if (writePath is not null)
@@ -324,7 +346,12 @@ internal static class ClassificationCommand
             || Math.Abs(expected.ValidationFraction - actual.ValidationFraction) > 1e-12
             || expected.LinearEpochs != actual.LinearEpochs
             || Math.Abs(expected.LinearLearningRate - actual.LinearLearningRate) > 1e-12
-            || Math.Abs(expected.LinearL2 - actual.LinearL2) > 1e-12)
+            || Math.Abs(expected.LinearL2 - actual.LinearL2) > 1e-12
+            || Math.Abs(expected.LinearTemperature - actual.LinearTemperature) > 1e-9
+            || Math.Abs(expected.LinearLogLoss - actual.LinearLogLoss) > 1e-9
+            || Math.Abs(expected.LinearCalibratedLogLoss - actual.LinearCalibratedLogLoss) > 1e-9
+            || Math.Abs(expected.LinearBrier - actual.LinearBrier) > 1e-9
+            || Math.Abs(expected.LinearCalibratedBrier - actual.LinearCalibratedBrier) > 1e-9)
         {
             Console.Error.WriteLine("classification: the pin describes a different dataset or configuration.");
             return 1;

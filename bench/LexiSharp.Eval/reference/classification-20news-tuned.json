@@ -15,6 +15,11 @@
   "linearEpochs": 20,
   "linearLearningRate": 0.1,
   "linearL2": 0.0001,
+  "linearTemperature": 1.045,
+  "linearLogLoss": 0.7740559415160659,
+  "linearCalibratedLogLoss": 0.7650408331195445,
+  "linearBrier": 0.28545204335574337,
+  "linearCalibratedBrier": 0.285549590074848,
   "rows": [
     {
       "method": "Naive Bayes",

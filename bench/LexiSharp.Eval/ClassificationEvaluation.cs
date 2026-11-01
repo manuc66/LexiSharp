@@ -20,6 +20,15 @@ internal sealed record ClassificationSplit(
     IReadOnlyList<ClassificationDocument> Fit,
     IReadOnlyList<ClassificationDocument> Validation);
 
+/// <summary>The calibration lane's figures for the linear model.</summary>
+internal sealed record CalibrationMetrics(
+    string Method,
+    double Temperature,
+    double LogLoss,
+    double CalibratedLogLoss,
+    double Brier,
+    double CalibratedBrier);
+
 /// <summary>One point of the forest's tuning grid.</summary>
 internal sealed record ForestCandidate(int MaxDepth, double FeatureSubset, int MinDocumentsPerLeaf);
 
@@ -222,6 +231,90 @@ internal static class ClassificationEvaluation
             averageQuestions,
             trainTime.Elapsed,
             predictTime.Elapsed);
+    }
+
+    /// <summary>
+    /// Fits a temperature on a validation slice of the train split, then measures the raw and
+    /// calibrated log-loss and Brier of the full-train model on test. The test split is never used
+    /// to fit the temperature.
+    /// </summary>
+    public static CalibrationMetrics MeasureLinearCalibration(
+        IReadOnlyList<ClassificationDocument> train,
+        IReadOnlyList<ClassificationDocument> test,
+        LinearClassifierOptions options,
+        double validationFraction)
+    {
+        var split = HoldOut(train, validationFraction);
+        var validationModel = new LinearClassifier(options: options);
+        validationModel.Train(split.Fit.Select(ToSearchDocument));
+
+        var validationSamples = split.Validation
+            .Select(document => new CalibrationSample(
+                validationModel.Predict(document.Text, limit: int.MaxValue),
+                document.Category))
+            .ToList();
+        var calibrator = TemperatureCalibrator.Fit(validationSamples);
+
+        var testModel = new LinearClassifier(options: options);
+        testModel.Train(train.Select(ToSearchDocument));
+
+        var testSamples = test
+            .Select(document => new CalibrationSample(
+                testModel.Predict(document.Text, limit: int.MaxValue),
+                document.Category))
+            .ToList();
+
+        var (logLoss, brier) = CalibrationScore(testSamples, calibrator: null);
+        var (calibratedLogLoss, calibratedBrier) = CalibrationScore(testSamples, calibrator);
+
+        return new CalibrationMetrics(
+            "Linear",
+            calibrator.Temperature,
+            logLoss,
+            calibratedLogLoss,
+            brier,
+            calibratedBrier);
+    }
+
+    internal static (double LogLoss, double Brier) CalibrationScore(
+        IReadOnlyList<CalibrationSample> samples,
+        TemperatureCalibrator? calibrator)
+    {
+        double logLoss = 0;
+        double brier = 0;
+        int count = 0;
+
+        foreach (var sample in samples)
+        {
+            IReadOnlyList<ClassificationResult> distribution = calibrator is null
+                ? sample.Distribution
+                : calibrator.Calibrate(sample.Distribution);
+
+            double actual = 0;
+            double brierSum = 0;
+
+            foreach (var result in distribution)
+            {
+                double probability = Math.Max(result.Probability, 1e-12);
+                bool isActual = result.Category == sample.Actual;
+
+                if (isActual)
+                    actual = probability;
+
+                double target = isActual ? 1 : 0;
+                double difference = probability - target;
+                brierSum += difference * difference;
+            }
+
+            if (actual <= 0)
+                continue;
+
+            logLoss -= Math.Log(actual);
+            brier += brierSum;
+            count++;
+        }
+
+        return count == 0 ? (0, 0) : (logLoss / count, brier / count);
     }
 
     public static ClassificationMetrics MeasureLinear(
