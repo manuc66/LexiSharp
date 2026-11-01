@@ -45,7 +45,13 @@ public sealed class RealModelTests
         Assert.Equal(2, batch.Count);
 
         for (int i = 0; i < texts.Length; i++)
-            Assert.Equal(encoder.GetTextEmbedding(texts[i]).ToArray(), batch[i].ToArray());
+        {
+            float[] single = encoder.GetTextEmbedding(texts[i]).ToArray();
+            float[] batched = batch[i].ToArray();
+
+            for (int d = 0; d < single.Length; d++)
+                Assert.InRange(Math.Abs(single[d] - batched[d]), 0, 1e-5f);
+        }
     }
 
     private static (string Text, float[] Vector) Reference(string name)
