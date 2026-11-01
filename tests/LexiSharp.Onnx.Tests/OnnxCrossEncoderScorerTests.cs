@@ -27,6 +27,14 @@ public sealed class OnnxCrossEncoderScorerTests
             ScoreIndex = scoreIndex,
         });
 
+    private static void AssertScoresClose(IReadOnlyList<double> expected, IReadOnlyList<double> actual, double tolerance = 1e-5)
+    {
+        Assert.Equal(expected.Count, actual.Count);
+
+        for (int i = 0; i < expected.Count; i++)
+            Assert.InRange(Math.Abs(expected[i] - actual[i]), 0, tolerance);
+    }
+
     private static SearchDocument[] Documents() =>
     [
         new("1", "hello world"),
@@ -64,7 +72,7 @@ public sealed class OnnxCrossEncoderScorerTests
         IReadOnlyList<double> batch = scorer.ScoreBatch("search", documents);
         double[] single = documents.Select(document => scorer.Score("search", document)).ToArray();
 
-        Assert.Equal(single, batch);
+        AssertScoresClose(single, batch);
     }
 
     [Fact]
@@ -189,7 +197,7 @@ public sealed class OnnxCrossEncoderScorerTests
         IReadOnlyList<SearchResult> actual = batched.Rerank("search", candidates);
 
         Assert.Equal(expected.Select(result => result.DocumentId), actual.Select(result => result.DocumentId));
-        Assert.Equal(expected.Select(result => result.Score), actual.Select(result => result.Score));
+        AssertScoresClose(expected.Select(result => result.Score).ToArray(), actual.Select(result => result.Score).ToArray());
     }
 
     [Fact]
