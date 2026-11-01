@@ -444,6 +444,30 @@ jobs:
           artifact-name: sbom.spdx.json
           format: spdx-json
 
+  classification-pin:
+    # The classification numbers in docs/ are only claims unless a run can reproduce them. This
+    # replays the tuned 20 Newsgroups configuration and fails on any drift in accuracy, macro-F1,
+    # the bootstrap intervals, the per-class F1, the prediction hash, the calibration temperatures
+    # or the McNemar counts. It downloads the dataset (checksum-verified) and is deterministic:
+    # every seed and the fold assignment are fixed.
+    name: Classification pin (20 Newsgroups must not drift)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+      # No dotnet-version here on purpose: setup-dotnet installs the version it is
+      # given *as well as* the one in global.json, so naming one leaves the float.
+
+      - name: Classification reference (tuned, verify)
+        run: >
+          dotnet run --project bench/LexiSharp.Eval -c Release --
+          classification
+          --data bench/LexiSharp.Eval/data
+          --tune --validation 0.15 --trees 25 --criterion Gini
+          --cv
+          --verify bench/LexiSharp.Eval/reference/classification-20news-tuned.json
+
   bench-smoke:
     # Does not measure performance: only proves the benchmarks build and run
     # end-to-end (regressions in the bench harness fail CI just like tests).

@@ -10,6 +10,10 @@ internal sealed record ClassificationPinRow(
     string Method,
     double Accuracy,
     double MacroF1,
+    double AccuracyLower,
+    double AccuracyUpper,
+    double MacroF1Lower,
+    double MacroF1Upper,
     double? AverageQuestions,
     string PredictionHash,
     IReadOnlyDictionary<string, double> PerClassF1);
@@ -74,6 +78,7 @@ internal static class ClassificationCommand
         bool tune = false;
         bool linearIdf = false;
         bool linearTfIdf = false;
+        bool crossValidate = false;
         double validationFraction = 0.15;
         string? verifyPath = null;
         string? writePath = null;
@@ -158,6 +163,9 @@ internal static class ClassificationCommand
                     break;
                 case "--linear-tfidf":
                     linearTfIdf = true;
+                    break;
+                case "--cv":
+                    crossValidate = true;
                     break;
                 case "--validation" when i + 1 < args.Length:
                     if (!TryReadFraction(args[++i], out validationFraction))
@@ -289,6 +297,23 @@ internal static class ClassificationCommand
                 $"p={result.PValue:G4}"));
         }
 
+        if (crossValidate)
+        {
+            foreach (var cv in new[]
+            {
+                ClassificationEvaluation.CrossValidate(
+                    "Naive Bayes", corpus.Train, 5, () => new NaiveBayesClassifier()),
+                ClassificationEvaluation.CrossValidate(
+                    "Linear", corpus.Train, 5, linearFactory),
+            })
+            {
+                Console.WriteLine(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"5-fold CV {cv.Method}: accuracy {cv.AccuracyMean:F4} ± {cv.AccuracyStd:F4}, " +
+                    $"macro-F1 {cv.MacroF1Mean:F4} ± {cv.MacroF1Std:F4}"));
+            }
+        }
+
         var calibrations = new[]
         {
             ClassificationEvaluation.MeasureCalibration(
@@ -371,7 +396,9 @@ internal static class ClassificationCommand
 
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
-            $"{metrics.Method,-16} accuracy={metrics.Accuracy:F4} macro-F1={metrics.MacroF1:F4} " +
+            $"{metrics.Method,-16} accuracy={metrics.Accuracy:F4} " +
+            $"[{metrics.Accuracy95.Lower:F4},{metrics.Accuracy95.Upper:F4}] " +
+            $"macro-F1={metrics.MacroF1:F4} [{metrics.MacroF195.Lower:F4},{metrics.MacroF195.Upper:F4}] " +
             $"questions={questions} train={metrics.TrainTime.TotalSeconds:F2}s predict={predict} ms/doc"));
     }
 
@@ -380,6 +407,10 @@ internal static class ClassificationCommand
             metrics.Method,
             metrics.Accuracy,
             metrics.MacroF1,
+            metrics.Accuracy95.Lower,
+            metrics.Accuracy95.Upper,
+            metrics.MacroF195.Lower,
+            metrics.MacroF195.Upper,
             double.IsNaN(metrics.AverageQuestions) ? null : metrics.AverageQuestions,
             metrics.PredictionHash,
             metrics.PerClassF1);
@@ -460,12 +491,17 @@ internal static class ClassificationCommand
             }
 
             if (Math.Abs(pinned.Accuracy - row.Accuracy) > 1e-6
-                || Math.Abs(pinned.MacroF1 - row.MacroF1) > 1e-6)
+                || Math.Abs(pinned.MacroF1 - row.MacroF1) > 1e-6
+                || Math.Abs(pinned.AccuracyLower - row.AccuracyLower) > 1e-9
+                || Math.Abs(pinned.AccuracyUpper - row.AccuracyUpper) > 1e-9
+                || Math.Abs(pinned.MacroF1Lower - row.MacroF1Lower) > 1e-9
+                || Math.Abs(pinned.MacroF1Upper - row.MacroF1Upper) > 1e-9)
             {
                 Console.Error.WriteLine(string.Create(
                     CultureInfo.InvariantCulture,
                     $"classification: {row.Method} drifted: accuracy {pinned.Accuracy:F4} -> {row.Accuracy:F4}, " +
-                    $"macro-F1 {pinned.MacroF1:F4} -> {row.MacroF1:F4}."));
+                    $"macro-F1 {pinned.MacroF1:F4} -> {row.MacroF1:F4}, " +
+                    $"or its bootstrap interval moved."));
                 matches = false;
             }
 

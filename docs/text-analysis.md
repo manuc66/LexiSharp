@@ -452,6 +452,13 @@ the logit with the same feature value the model uses (IDF or standardized), so i
 other items sharing the feature; an item with no feature in the vocabulary has no effect.
 `TopFeatures` reports the training coefficients, not the ledger.
 
+There is no online learning. `Train` rebuilds the model from the documents it is given, and
+`Reinforce`/`Unreinforce` are corrections on top of a trained model — there is no `Learn`/`Unlearn`
+that folds a document into the counts the way Naive Bayes does. For a corpus of a few thousand
+examples, retraining on every synchronization is likely cheap enough, but that cost has not been
+measured here, so treat it as an assumption to check on your data. No model serializes either:
+the intended persistence is to replay the history and retrain.
+
 ### Unsupervised: dividing a corpus
 
 ```csharp

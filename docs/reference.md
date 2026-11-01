@@ -144,7 +144,12 @@ was designed from:
   is generic or excluded. On the standard `20news-bydate` split the single
   tree reads **0.4457** accuracy / **0.4945** macro-F1, the forest **0.6621** / **0.6584**, Naive
   Bayes **0.7573** / **0.7289**, and `LinearClassifier` **0.8085** / **0.8027**: the tree and forest
-  are explainability/ensemble options and the linear model is the accuracy one. A temperature
+  are explainability/ensemble options and the linear model is the accuracy one. Every figure
+  carries a percentile-bootstrap 95 % interval over the test split, and a stratified 5-fold
+  cross-validation on the train split reads **0.8918 ± 0.0070** for the linear model and
+  **0.8190 ± 0.0063** for Naive Bayes — about eight points above the held-out figures, because
+  `20news-bydate`'s halves are disjoint date windows. The held-out number is the one to quote;
+  the CV table is published with that limit. A temperature
   calibrator exists (`TemperatureCalibrator` / `CalibratedClassifier`); on 20NG the linear model
   reads **T = 1.04**, log-loss **0.7741 → 0.7650**, Brier **0.2855 → 0.2855**, so its softmax was
   already close. The forest's averaged probabilities are underconfident (**T = 0.35**, log-loss
@@ -153,7 +158,11 @@ was designed from:
   subset per tree, not Breiman's per-split sampling; it has no OOB estimate or feature importance.
   `IdfWeighting` is available and measured a loss on 20NG (**0.7753 / 0.7682** against
   **0.8085 / 0.8027**), and sublinear TF-IDF (`emitTermFrequency: true` plus `IdfWeighting`) lost
-  too (**0.7757 / 0.7676**), so both are off by default. The command and the pin are in
+  too (**0.7757 / 0.7676**), so both are off by default. None of the models learns online: `Train`
+  rebuilds, `Reinforce`/`Unreinforce` correct, and the persistence story is to replay the history
+  and retrain. The evidence comes from long 20 Newsgroups messages, so transfer to short text is
+  unproven; on a short-text problem the context features can carry most of the gain. The command
+  and the pin are in
   [Evaluation](evaluation.md#classification-on-20-newsgroups); [Benchmarks](benchmarks.md#classification-classificationbenchmarks)
   reports cost. Measure on your own labels before trusting either. See
   [question trees](text-analysis.md#question-trees-classification-and-corpus-division).
