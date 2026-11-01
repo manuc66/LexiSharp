@@ -14,7 +14,8 @@ public class ClassificationQualityTests
         Assert.Equal(2, set.Features.Count);
         Assert.True(set.Contains("a"));
         Assert.True(set.Contains("b"));
-        Assert.Throws<ArgumentException>(() => new FeatureSet(new[] { "a", string.Empty }));
+        var exception = Assert.Throws<ArgumentException>(() => new FeatureSet(new[] { "a", string.Empty }));
+        Assert.Equal("features", exception.ParamName);
     }
 
     [Fact]

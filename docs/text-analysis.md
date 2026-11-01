@@ -441,6 +441,7 @@ adds signed mass to the item's features for the category, `Unreinforce` removes 
 `ForgetReinforcement` clears the ledger, and `Train` clears it too. The correction is applied to
 the logit with the same feature value the model uses (IDF or standardized), so it generalizes to
 other items sharing the feature; an item with no feature in the vocabulary has no effect.
+`TopFeatures` reports the training coefficients, not the ledger.
 
 ### Unsupervised: dividing a corpus
 
