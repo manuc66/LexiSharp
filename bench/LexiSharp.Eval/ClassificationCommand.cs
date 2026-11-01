@@ -81,6 +81,8 @@ internal static class ClassificationCommand
         bool linearTfIdf = false;
         bool crossValidate = false;
         bool online = false;
+        bool coverage = false;
+        double coverageTarget = 0.5;
         var textMode = ClassificationTextMode.SubjectAndBody;
         double validationFraction = 0.15;
         string? verifyPath = null;
@@ -172,6 +174,24 @@ internal static class ClassificationCommand
                     break;
                 case "--online":
                     online = true;
+                    break;
+                case "--coverage":
+                    coverage = true;
+                    break;
+                case "--coverage-target" when i + 1 < args.Length:
+                    if (!double.TryParse(
+                            args[++i],
+                            NumberStyles.Float,
+                            CultureInfo.InvariantCulture,
+                            out coverageTarget)
+                        || !double.IsFinite(coverageTarget)
+                        || coverageTarget <= 0
+                        || coverageTarget > 1)
+                    {
+                        Console.Error.WriteLine("classification: --coverage-target expects a number in (0, 1].");
+                        return 2;
+                    }
+
                     break;
                 case "--text" when i + 1 < args.Length:
                     textMode = args[++i] switch
@@ -316,6 +336,37 @@ internal static class ClassificationCommand
                 $"McNemar {result.Candidate} vs {result.Baseline}: " +
                 $"baseline-only={result.BaselineOnly}, candidate-only={result.CandidateOnly}, " +
                 $"p={result.PValue:G4}"));
+        }
+
+        if (coverage)
+        {
+            foreach (var report in new[]
+            {
+                ClassificationEvaluation.MeasureCoverage(
+                    "Naive Bayes", corpus.Train, corpus.Test, () => new NaiveBayesClassifier(), coverageTarget),
+                ClassificationEvaluation.MeasureCoverage(
+                    "Decision tree", corpus.Train, corpus.Test, () => new DecisionTreeClassifier(options: options), coverageTarget),
+                ClassificationEvaluation.MeasureCoverage(
+                    "Random forest", corpus.Train, corpus.Test, () => new RandomForestClassifier(options: forestOptions), coverageTarget),
+                ClassificationEvaluation.MeasureCoverage(
+                    "Linear", corpus.Train, corpus.Test, linearFactory, coverageTarget),
+            })
+            {
+                Console.WriteLine(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"Coverage {report.Method}: target={coverageTarget:F2} " +
+                    $"threshold={report.Recommended.Threshold:F2} " +
+                    $"coverage={report.Recommended.Coverage:F3} " +
+                    $"precision={report.Recommended.Precision:F3}"));
+
+                foreach (var point in report.Points)
+                {
+                    Console.WriteLine(string.Create(
+                        CultureInfo.InvariantCulture,
+                        $"  threshold={point.Threshold:F1} coverage={point.Coverage:F3} " +
+                        $"precision={point.Precision:F3} covered={point.Covered}/{point.Total}"));
+                }
+            }
         }
 
         if (crossValidate)

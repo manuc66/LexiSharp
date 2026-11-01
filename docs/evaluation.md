@@ -1252,7 +1252,7 @@ from a shared or contended machine are not publishable, and none are quoted from
 What *does* gate a build is deterministic and clock-free: `lexisharp verify`, which replays
 the reference corpus against a committed baseline.
 
-## Classification on 20 Newsgroups
+## Classification on 20 Newsgroups (unreleased)
 
 The classifiers have their own corpus and their own verb, because accuracy is not nDCG and a
 labelled document is not a query. The run downloads the standard `20news-bydate` split (11 314
@@ -1298,6 +1298,34 @@ train measures generalization within the train period, not across the period bou
 published as an honest limit: the CV estimate is optimistic for the test split by about eight
 points, and the held-out number is the one to quote for this corpus. The folds stratify by
 category and every seed is fixed, so the table is reproducible.
+
+### Precision at a chosen coverage
+
+Abstention is only useful if you know what it costs. `--coverage` retrains each model, sweeps the
+winning probability, and reports the precision over the documents each threshold covers:
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- classification \
+    --tune --validation 0.15 --trees 25 --criterion Gini \
+    --coverage --coverage-target 0.5
+```
+
+The recommendation is the highest precision among thresholds that still cover at least the target;
+ties go to the wider coverage. On 20NG, at a 50 % target:
+
+| Model | Threshold | Coverage | Precision on covered |
+|---|---:|---:|---:|
+| Naive Bayes | 1.00 | 0.500 | 0.914 |
+| Decision tree | 0.21 | 0.506 | 0.775 |
+| Random forest | 0.21 | 0.500 | 0.868 |
+| Linear | 0.97 | 0.501 | **0.964** |
+
+The linear model's curve shows the trade-off the table hides: covering everything reads **0.809**
+precision, 70 % coverage reads **0.909**, and the recommended 50 % reads **0.964**. The threshold
+is on the model's own probabilities, so calibration changes its scale, not the ranking; pass
+calibrated distributions to `ClassificationEvaluation.MeasureCoverage` if you want the curve on
+the calibrated scale. The command prints the full curve; the figures above are one run on one
+machine, like the rest of this section.
 
 The tree is the explainable model, not the accuracy model: one greedy path over binary term
 presence plateaus at **0.446**. The forest recovers most of that gap at **0.662**, and the linear
