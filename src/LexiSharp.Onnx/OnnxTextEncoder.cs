@@ -267,21 +267,15 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
 
         float[] output = RunBatch(batch, cancellationToken, out int sequenceLength);
 
+        VerifyOutput(output, count, sequenceLength, _pooledOutput, Dimension);
+
         if (_pooledOutput)
         {
-            if (output.Length != count * Dimension)
-                throw new InvalidOperationException(
-                    $"The model returned {output.Length} values, not {count} pooled vectors of {Dimension} dimensions.");
-
             for (int i = 0; i < count; i++)
                 vectors[items[i].Index] = ReadPooled(output, i);
 
             return;
         }
-
-        if (output.Length != count * sequenceLength * Dimension)
-            throw new InvalidOperationException(
-                $"The model returned {output.Length} values, not {count} sequences of {sequenceLength} positions of {Dimension} dimensions.");
 
         for (int i = 0; i < count; i++)
             vectors[items[i].Index] = PoolTokenLevel(output, i, sequenceLength, batch[i].Length);
@@ -417,16 +411,37 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
         OnnxTokenizedText probe = _options.Tokenizer.Encode("probe", _options.MaxSequenceLength);
         float[] output = RunBatch([probe], CancellationToken.None, out int sequenceLength);
 
-        if (_pooledOutput)
+        return ResolveDimensionFromOutput(output, sequenceLength, _pooledOutput);
+    }
+
+    internal static void VerifyOutput(float[] output, int count, int sequenceLength, bool pooled, int dimension)
+    {
+        if (pooled)
+        {
+            if (output.Length != count * dimension)
+                throw new InvalidOperationException(
+                    $"The model returned {output.Length} values, not {count} pooled vectors of {dimension} dimensions.");
+
+            return;
+        }
+
+        if (output.Length != count * sequenceLength * dimension)
+            throw new InvalidOperationException(
+                $"The model returned {output.Length} values, not {count} sequences of {sequenceLength} positions of {dimension} dimensions.");
+    }
+
+    internal static int ResolveDimensionFromOutput(float[] output, int sequenceLength, bool pooled)
+    {
+        if (pooled)
             return output.Length;
 
         if (output.Length % Math.Max(1, sequenceLength) != 0)
-            throw new ArgumentException("The model output has no token dimension the encoder can pool.", nameof(_options));
+            throw new ArgumentException("The model output has no token dimension the encoder can pool.");
 
         return output.Length / Math.Max(1, sequenceLength);
     }
 
-    private static void Normalize(float[] vector)
+    internal static void Normalize(float[] vector)
     {
         double sum = 0;
 

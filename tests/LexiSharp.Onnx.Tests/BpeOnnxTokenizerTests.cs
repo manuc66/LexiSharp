@@ -225,6 +225,67 @@ public sealed class BpeOnnxTokenizerTests
     }
 
     [Fact]
+    public void Constructor_RejectsAFileWithoutAModelSection()
+    {
+        Assert.Throws<ArgumentException>(() => new BpeOnnxTokenizer(Fixture("tiny-bpe-no-model.json")));
+    }
+
+    [Fact]
+    public void Constructor_AcceptsAFileWithoutMergesOrAddedTokens()
+    {
+        Assert.True(new BpeOnnxTokenizer(Fixture("tiny-bpe-no-merges.json")).Encode("hello", 8).Length > 0);
+        Assert.True(new BpeOnnxTokenizer(Fixture("tiny-bpe-no-added.json")).Encode("hello", 8).Length > 0);
+        Assert.True(new BpeOnnxTokenizer(
+            Fixture("tiny-bpe.json"),
+            new BpeOnnxTokenizerOptions { UnknownToken = "<|endoftext|>" }).Encode("hello", 8).Length > 0);
+    }
+
+    [Fact]
+    public void Encode_RejectsCapsBelowTheMinimum()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new BpeOnnxTokenizer(Fixture("tiny-bpe.json")).Encode("hello", 0));
+
+        var pair = new BpeOnnxTokenizer(Fixture("tiny-bpe.json"), new BpeOnnxTokenizerOptions { PairSeparatorId = 221 });
+        Assert.Throws<ArgumentOutOfRangeException>(() => pair.EncodePair("hello", "world", 1, 1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => pair.EncodePair("hello", "world", 8, 0));
+    }
+
+    [Fact]
+    public void Encode_HandlesAnEmptyTemplateAndAByteLevelPostProcessor()
+    {
+        Assert.True(new BpeOnnxTokenizer(Fixture("tiny-bpe-empty-template.json")).Encode("hello", 8).Length > 0);
+        Assert.True(new BpeOnnxTokenizer(Fixture("tiny-bpe-bytelevel-post.json")).Encode("hello", 8).Length > 0);
+    }
+
+    [Fact]
+    public void Constructor_RejectsAMissingSpecialTokenAndAnUnknownSequence()
+    {
+        Assert.Throws<InvalidOperationException>(() => new BpeOnnxTokenizer(Fixture("tiny-bpe-missing-special.json")));
+        Assert.Throws<NotSupportedException>(() => new BpeOnnxTokenizer(Fixture("tiny-bpe-unknown-sequence.json")));
+    }
+
+    [Fact]
+    public void Constructor_RejectsASequencePreTokenizerWithoutItsArray()
+    {
+        Assert.Throws<InvalidOperationException>(() => new BpeOnnxTokenizer(Fixture("tiny-bpe-sequence-no-array.json")));
+    }
+
+    [Fact]
+    public void Constructor_InfersNonByteLevelWithoutAPreTokenizerOrMarker()
+    {
+        Assert.True(new BpeOnnxTokenizer(Fixture("tiny-bpe-no-pre-no-marker.json")).Encode("hello world", 8).Length > 0);
+    }
+
+    [Fact]
+    public void Constructor_AcceptsAnExplicitPreTokenizer()
+    {
+        Assert.True(new BpeOnnxTokenizer(
+            Fixture("tiny-bpe.json"),
+            new BpeOnnxTokenizerOptions { PreTokenizer = Microsoft.ML.Tokenizers.RobertaPreTokenizer.Instance })
+            .Encode("hello world", 8).Length > 0);
+    }
+
+    [Fact]
     public void Constructor_RejectsANonBpeModel()
     {
         Assert.Throws<NotSupportedException>(() => new BpeOnnxTokenizer(Fixture("tiny-wordpiece-tokenizer.json")));

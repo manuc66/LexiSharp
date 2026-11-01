@@ -177,6 +177,20 @@ public sealed class OnnxTextEncoderTests
     }
 
     [Fact]
+    public void Encoder_BatchesAnAlreadyPooledOutput()
+    {
+        using var encoder = new OnnxTextEncoder(Options("tiny-encoder-pooled.onnx"));
+        string[] texts = ["hello world", "search engine"];
+
+        IReadOnlyList<ReadOnlyMemory<float>> batch = encoder.GetTextEmbeddings(texts);
+
+        Assert.Equal(2, batch.Count);
+
+        for (int i = 0; i < texts.Length; i++)
+            AssertClose(encoder.GetTextEmbedding(texts[i]).Span, batch[i].Span);
+    }
+
+    [Fact]
     public void Encoder_AcceptsAnAlreadyPooledOutput()
     {
         using var encoder = new OnnxTextEncoder(Options("tiny-encoder-pooled.onnx"));
