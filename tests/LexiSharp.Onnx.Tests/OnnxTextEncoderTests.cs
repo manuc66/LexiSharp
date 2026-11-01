@@ -19,6 +19,15 @@ public sealed class OnnxTextEncoderTests
             Tokenizer = Tokenizer(),
         };
 
+    private sealed class ThrowingTokenizer : IOnnxTokenizer
+    {
+        public OnnxTokenizedText Encode(string text, int maxSequenceLength) =>
+            text == "probe" ? new OnnxTokenizedText([4, 5]) : throw new InvalidOperationException("tokenizer failed");
+
+        public OnnxTokenizedText EncodePair(string query, string document, int maxSequenceLength, int maxQueryTokens) =>
+            new([2, 4, 5, 3]);
+    }
+
     private sealed class BlockingTokenizer : IOnnxTokenizer
     {
         public ManualResetEventSlim Gate { get; } = new(initialState: false);
@@ -150,6 +159,40 @@ public sealed class OnnxTextEncoderTests
 
         tokenizer.Gate.Set();
         Assert.Equal(8, (await task).Length);
+    }
+
+    [Fact]
+    public async Task Encoder_AsyncObservesAPreCanceledToken()
+    {
+        using var encoder = new OnnxTextEncoder(Options());
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => encoder.GetTextEmbeddingAsync("hello", EmbeddingUse.Passage, cancellation.Token));
+    }
+
+    [Fact]
+    public async Task Encoder_AsyncPropagatesATokenizerFailure()
+    {
+        using var encoder = new OnnxTextEncoder(new OnnxTextEncoderOptions
+        {
+            ModelPath = Fixture("tiny-encoder.onnx"),
+            Tokenizer = new ThrowingTokenizer(),
+        });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => encoder.GetTextEmbeddingAsync("boom", EmbeddingUse.Passage));
+    }
+
+    [Fact]
+    public async Task Scheduler_RejectsWorkAfterDispose()
+    {
+        var scheduler = new OnnxInferenceScheduler(1, 1);
+        scheduler.Dispose();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(
+            () => scheduler.EnqueueAsync(() => 1, CancellationToken.None));
     }
 
     [Fact]
