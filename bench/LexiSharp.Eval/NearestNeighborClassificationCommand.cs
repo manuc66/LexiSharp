@@ -173,137 +173,167 @@ internal static class NearestNeighborClassificationCommand
     {
         for (int i = 0; i < args.Length; i++)
         {
-            switch (args[i])
+            bool? handled = TryParseData(args, ref i, options)
+                ?? TryParseNeighbours(args, ref i, options)
+                ?? TryParseBm25(args, ref i, options)
+                ?? TryParseOutput(args, ref i, options);
+
+            if (handled is null)
             {
-                case "--data" when i + 1 < args.Length:
-                    options.DataBaseDir = args[++i];
-                    break;
-                case "--limit" when i + 1 < args.Length:
-                    if (!int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out int limit)
-                        || limit <= 0)
-                    {
-                        Console.Error.WriteLine("classification-knn: --limit expects a positive integer.");
-                        return false;
-                    }
-
-                    options.Limit = limit;
-                    break;
-                case "--text" when i + 1 < args.Length:
-                    string text = args[++i];
-
-                    if (text == "full")
-                        options.TextMode = ClassificationTextMode.SubjectAndBody;
-                    else if (text == "subject")
-                        options.TextMode = ClassificationTextMode.SubjectOnly;
-                    else
-                    {
-                        Console.Error.WriteLine("classification-knn: --text expects 'full' or 'subject'.");
-                        return false;
-                    }
-
-                    break;
-                case "--validation" when i + 1 < args.Length:
-                    if (!double.TryParse(args[++i], NumberStyles.Float, CultureInfo.InvariantCulture, out double validation)
-                        || !double.IsFinite(validation) || validation <= 0 || validation >= 1)
-                    {
-                        Console.Error.WriteLine("classification-knn: --validation expects a number in (0, 1).");
-                        return false;
-                    }
-
-                    options.ValidationFraction = validation;
-                    break;
-                case "--seed" when i + 1 < args.Length:
-                    if (!int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out int seed)
-                        || seed < 0)
-                    {
-                        Console.Error.WriteLine("classification-knn: --seed expects a non-negative integer.");
-                        return false;
-                    }
-
-                    options.Seed = seed;
-                    break;
-                case "--k" when i + 1 < args.Length:
-                    if (!TryParseKValues(args[++i], out int[] values))
-                    {
-                        Console.Error.WriteLine("classification-knn: --k expects a comma-separated list of positive integers.");
-                        return false;
-                    }
-
-                    options.KValues = values;
-                    break;
-                case "--vote" when i + 1 < args.Length:
-                    if (!Enum.TryParse(args[++i], ignoreCase: true, out NeighborVote vote)
-                        || !Enum.IsDefined(vote))
-                    {
-                        Console.Error.WriteLine("classification-knn: --vote expects Score, Rank or Temperature.");
-                        return false;
-                    }
-
-                    options.Vote = vote;
-                    break;
-                case "--temperature" when i + 1 < args.Length:
-                    if (!double.TryParse(args[++i], NumberStyles.Float, CultureInfo.InvariantCulture, out double temperature)
-                        || !double.IsFinite(temperature) || temperature <= 0)
-                    {
-                        Console.Error.WriteLine("classification-knn: --temperature expects a finite number greater than 0.");
-                        return false;
-                    }
-
-                    options.Temperature = temperature;
-                    break;
-                case "--bm25-k1" when i + 1 < args.Length:
-                    if (!double.TryParse(args[++i], NumberStyles.Float, CultureInfo.InvariantCulture, out double k1)
-                        || !double.IsFinite(k1) || k1 < 0)
-                    {
-                        Console.Error.WriteLine("classification-knn: --bm25-k1 expects a non-negative number.");
-                        return false;
-                    }
-
-                    options.Bm25 = options.Bm25 with { K1 = k1 };
-                    break;
-                case "--bm25-b" when i + 1 < args.Length:
-                    if (!double.TryParse(args[++i], NumberStyles.Float, CultureInfo.InvariantCulture, out double b)
-                        || !double.IsFinite(b) || b < 0 || b > 1)
-                    {
-                        Console.Error.WriteLine("classification-knn: --bm25-b expects a number in [0, 1].");
-                        return false;
-                    }
-
-                    options.Bm25 = options.Bm25 with { B = b };
-                    break;
-                case "--min-probability" when i + 1 < args.Length:
-                    if (!double.TryParse(args[++i], NumberStyles.Float, CultureInfo.InvariantCulture, out double minimum)
-                        || !double.IsFinite(minimum) || minimum < 0 || minimum > 1)
-                    {
-                        Console.Error.WriteLine("classification-knn: --min-probability expects a number in [0, 1].");
-                        return false;
-                    }
-
-                    options.MinProbability = minimum;
-                    break;
-                case "--coverage-target" when i + 1 < args.Length:
-                    if (!double.TryParse(args[++i], NumberStyles.Float, CultureInfo.InvariantCulture, out double target)
-                        || !double.IsFinite(target) || target <= 0 || target > 1)
-                    {
-                        Console.Error.WriteLine("classification-knn: --coverage-target expects a number in (0, 1].");
-                        return false;
-                    }
-
-                    options.CoverageTarget = target;
-                    break;
-                case "--write" when i + 1 < args.Length:
-                    options.WritePath = args[++i];
-                    break;
-                case "--verify" when i + 1 < args.Length:
-                    options.VerifyPath = args[++i];
-                    break;
-                default:
-                    Console.Error.WriteLine($"classification-knn: unknown argument '{args[i]}'.");
-                    return false;
+                Console.Error.WriteLine($"classification-knn: unknown argument '{args[i]}'.");
+                return false;
             }
+
+            if (handled == false)
+                return false;
         }
 
         return true;
+    }
+
+    private static bool? TryParseData(string[] args, ref int i, CommandOptions options)
+    {
+        switch (args[i])
+        {
+            case "--data" when i + 1 < args.Length:
+                options.DataBaseDir = args[++i];
+                return true;
+            case "--limit" when i + 1 < args.Length:
+                if (!CommandParsing.TryPositiveInt(args[++i], out int limit))
+                {
+                    Console.Error.WriteLine("classification-knn: --limit expects a positive integer.");
+                    return false;
+                }
+
+                options.Limit = limit;
+                return true;
+            case "--text" when i + 1 < args.Length:
+                if (!CommandParsing.TryTextMode(args[++i], out ClassificationTextMode mode))
+                {
+                    Console.Error.WriteLine("classification-knn: --text expects 'full' or 'subject'.");
+                    return false;
+                }
+
+                options.TextMode = mode;
+                return true;
+            case "--validation" when i + 1 < args.Length:
+                if (!CommandParsing.TryFraction(args[++i], out double validation))
+                {
+                    Console.Error.WriteLine("classification-knn: --validation expects a number in (0, 1).");
+                    return false;
+                }
+
+                options.ValidationFraction = validation;
+                return true;
+            case "--seed" when i + 1 < args.Length:
+                if (!CommandParsing.TryNonNegativeInt(args[++i], out int seed))
+                {
+                    Console.Error.WriteLine("classification-knn: --seed expects a non-negative integer.");
+                    return false;
+                }
+
+                options.Seed = seed;
+                return true;
+            default:
+                return null;
+        }
+    }
+
+    private static bool? TryParseNeighbours(string[] args, ref int i, CommandOptions options)
+    {
+        switch (args[i])
+        {
+            case "--k" when i + 1 < args.Length:
+                if (!TryParseKValues(args[++i], out int[] values))
+                {
+                    Console.Error.WriteLine("classification-knn: --k expects a comma-separated list of positive integers.");
+                    return false;
+                }
+
+                options.KValues = values;
+                return true;
+            case "--vote" when i + 1 < args.Length:
+                if (!Enum.TryParse(args[++i], ignoreCase: true, out NeighborVote vote)
+                    || !Enum.IsDefined(vote))
+                {
+                    Console.Error.WriteLine("classification-knn: --vote expects Score, Rank or Temperature.");
+                    return false;
+                }
+
+                options.Vote = vote;
+                return true;
+            case "--temperature" when i + 1 < args.Length:
+                if (!CommandParsing.TryPositiveDouble(args[++i], out double temperature))
+                {
+                    Console.Error.WriteLine("classification-knn: --temperature expects a finite number greater than 0.");
+                    return false;
+                }
+
+                options.Temperature = temperature;
+                return true;
+            case "--min-probability" when i + 1 < args.Length:
+                if (!CommandParsing.TryUnitInterval(args[++i], out double minimum))
+                {
+                    Console.Error.WriteLine("classification-knn: --min-probability expects a number in [0, 1].");
+                    return false;
+                }
+
+                options.MinProbability = minimum;
+                return true;
+            default:
+                return null;
+        }
+    }
+
+    private static bool? TryParseBm25(string[] args, ref int i, CommandOptions options)
+    {
+        switch (args[i])
+        {
+            case "--bm25-k1" when i + 1 < args.Length:
+                if (!CommandParsing.TryFiniteDouble(args[++i], out double k1) || k1 < 0)
+                {
+                    Console.Error.WriteLine("classification-knn: --bm25-k1 expects a non-negative number.");
+                    return false;
+                }
+
+                options.Bm25 = options.Bm25 with { K1 = k1 };
+                return true;
+            case "--bm25-b" when i + 1 < args.Length:
+                if (!CommandParsing.TryUnitInterval(args[++i], out double b))
+                {
+                    Console.Error.WriteLine("classification-knn: --bm25-b expects a number in [0, 1].");
+                    return false;
+                }
+
+                options.Bm25 = options.Bm25 with { B = b };
+                return true;
+            default:
+                return null;
+        }
+    }
+
+    private static bool? TryParseOutput(string[] args, ref int i, CommandOptions options)
+    {
+        switch (args[i])
+        {
+            case "--coverage-target" when i + 1 < args.Length:
+                if (!CommandParsing.TryUnitInterval(args[++i], out double target) || target <= 0)
+                {
+                    Console.Error.WriteLine("classification-knn: --coverage-target expects a number in (0, 1].");
+                    return false;
+                }
+
+                options.CoverageTarget = target;
+                return true;
+            case "--write" when i + 1 < args.Length:
+                options.WritePath = args[++i];
+                return true;
+            case "--verify" when i + 1 < args.Length:
+                options.VerifyPath = args[++i];
+                return true;
+            default:
+                return null;
+        }
     }
 
     private static bool TryParseKValues(string value, out int[] values)

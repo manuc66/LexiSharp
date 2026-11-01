@@ -267,8 +267,11 @@ public class OnlineClassificationEvaluationTests
                     .Take(limit).ToArray();
         }
 
-        public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null) =>
-            Predict(text, limit: 1).FirstOrDefault()?.Category;
+        public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null)
+        {
+            IReadOnlyList<ClassificationResult> results = Predict(text, limit: 1);
+            return results.Count > 0 ? results[0].Category : null;
+        }
     }
 
     private sealed class CategoryClassifier(string initial) : ITextClassifier, IIncrementalTextClassifier
@@ -326,7 +329,10 @@ public class OnlineClassificationEvaluationTests
             }.Take(limit).ToArray();
         }
 
-        public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null) =>
-            Predict(text, limit: 1).FirstOrDefault()?.Category;
+        public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null)
+        {
+            IReadOnlyList<ClassificationResult> results = Predict(text, limit: 1);
+            return results.Count > 0 ? results[0].Category : null;
+        }
     }
 }
