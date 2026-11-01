@@ -78,6 +78,35 @@ public sealed class RandomForestClassifier<TItem>
     {
         ArgumentNullException.ThrowIfNull(items);
 
+        var (materialized, categories, vocabulary) = Materialize(items);
+        _categories = categories;
+        _trees.Clear();
+
+        if (materialized.Count == 0)
+            return;
+
+        // A corpus with no features is not a corpus with no labels: each tree becomes a leaf that
+        // reports the prior, which is what the single tree and the linear model already do.
+        int subsetSize = vocabulary.Count == 0
+            ? 0
+            : Math.Clamp(
+                (int)Math.Ceiling(vocabulary.Count * _options.FeatureSubsetFraction),
+                1,
+                vocabulary.Count);
+        Item[] itemArray = materialized.ToArray();
+        var weights = new double[itemArray.Length];
+        var indices = new int[vocabulary.Count];
+
+        for (int i = 0; i < indices.Length; i++)
+            indices[i] = i;
+
+        for (int treeIndex = 0; treeIndex < _options.Trees; treeIndex++)
+            _trees.Add(BuildTree(itemArray, weights, indices, vocabulary, subsetSize, treeIndex));
+    }
+
+    private (List<Item> Items, string[] Categories, List<string> Vocabulary) Materialize(
+        IEnumerable<TItem> items)
+    {
         var materialized = new List<Item>();
         var categories = new SortedSet<string>(StringComparer.Ordinal);
         var vocabulary = new List<string>();
@@ -109,76 +138,71 @@ public sealed class RandomForestClassifier<TItem>
             }
         }
 
-        _categories = categories.ToArray();
-        _trees.Clear();
+        return (materialized, categories.ToArray(), vocabulary);
+    }
 
-        if (materialized.Count == 0)
-            return;
+    private DecisionTreeClassifier<Item> BuildTree(
+        Item[] itemArray,
+        double[] weights,
+        int[] indices,
+        List<string> vocabulary,
+        int subsetSize,
+        int treeIndex)
+    {
+        var random = new Random(_options.Seed + treeIndex); // NOSONAR:S2245 (fixed seed: the forest is reproducible)
 
-        // A corpus with no features is not a corpus with no labels: each tree becomes a leaf that
-        // reports the prior, which is what the single tree and the linear model already do.
-        int subsetSize = vocabulary.Count == 0
-            ? 0
-            : Math.Clamp(
-                (int)Math.Ceiling(vocabulary.Count * _options.FeatureSubsetFraction),
-                1,
-                vocabulary.Count);
-        Item[] itemArray = materialized.ToArray();
-        var weights = new double[itemArray.Length];
-        var indices = new int[vocabulary.Count];
+        Array.Clear(weights, 0, weights.Length);
 
-        for (int i = 0; i < indices.Length; i++)
-            indices[i] = i;
+        for (int i = 0; i < itemArray.Length; i++)
+            weights[random.Next(itemArray.Length)]++;
 
-        for (int treeIndex = 0; treeIndex < _options.Trees; treeIndex++)
-        {
-            var random = new Random(_options.Seed + treeIndex); // NOSONAR:S2245 (fixed seed: the forest is reproducible)
+        HashSet<string>? allowed = SelectFeatures(random, indices, vocabulary, subsetSize);
 
-            Array.Clear(weights, 0, weights.Length);
+        for (int i = 0; i < itemArray.Length; i++)
+            itemArray[i].Weight = itemArray[i].BaseWeight * weights[i];
 
-            for (int i = 0; i < itemArray.Length; i++)
-                weights[random.Next(itemArray.Length)]++;
-
-            HashSet<string>? allowed = null;
-
-            if (subsetSize > 0 && subsetSize < vocabulary.Count)
+        var tree = new DecisionTreeClassifier<Item>(
+            new CachedFeatureSource(),
+            item => item.Category,
+            item => item.Weight,
+            new DecisionTreeOptions
             {
-                // A partial Fisher-Yates over a permutation reused across trees: the prefix is a
-                // uniform draw without replacement, and the suffix is still a permutation. The
-                // coupon-collector loop this replaces was O(V log V) per tree.
-                for (int i = 0; i < subsetSize; i++)
-                {
-                    int j = random.Next(i, indices.Length);
-                    (indices[i], indices[j]) = (indices[j], indices[i]);
-                }
+                MaxDepth = _options.MaxDepth,
+                MinDocumentsPerLeaf = _options.MinDocumentsPerLeaf,
+                MinDocumentFrequency = _options.MinDocumentFrequency,
+                Criterion = _options.Criterion,
+                Alpha = _options.Alpha,
+                QuestionCost = _options.QuestionCost,
+                ClassWeights = _options.ClassWeights,
+            });
 
-                allowed = new HashSet<string>(subsetSize, StringComparer.Ordinal);
+        tree.Train(itemArray, allowed);
+        return tree;
+    }
 
-                for (int i = 0; i < subsetSize; i++)
-                    allowed.Add(vocabulary[indices[i]]);
-            }
+    private static HashSet<string>? SelectFeatures(
+        Random random,
+        int[] indices,
+        List<string> vocabulary,
+        int subsetSize)
+    {
+        if (subsetSize <= 0 || subsetSize >= vocabulary.Count)
+            return null;
 
-            for (int i = 0; i < itemArray.Length; i++)
-                itemArray[i].Weight = itemArray[i].BaseWeight * weights[i];
-
-            var tree = new DecisionTreeClassifier<Item>(
-                new CachedFeatureSource(),
-                item => item.Category,
-                item => item.Weight,
-                new DecisionTreeOptions
-                {
-                    MaxDepth = _options.MaxDepth,
-                    MinDocumentsPerLeaf = _options.MinDocumentsPerLeaf,
-                    MinDocumentFrequency = _options.MinDocumentFrequency,
-                    Criterion = _options.Criterion,
-                    Alpha = _options.Alpha,
-                    QuestionCost = _options.QuestionCost,
-                    ClassWeights = _options.ClassWeights,
-                });
-
-            tree.Train(itemArray, allowed);
-            _trees.Add(tree);
+        // A partial Fisher-Yates over a permutation reused across trees: the prefix is a
+        // uniform draw without replacement, and the suffix is still a permutation.
+        for (int i = 0; i < subsetSize; i++)
+        {
+            int j = random.Next(i, indices.Length);
+            (indices[i], indices[j]) = (indices[j], indices[i]);
         }
+
+        var allowed = new HashSet<string>(subsetSize, StringComparer.Ordinal);
+
+        for (int i = 0; i < subsetSize; i++)
+            allowed.Add(vocabulary[indices[i]]);
+
+        return allowed;
     }
 
     /// <summary>Predicts the most likely categories for an item, by decreasing probability.</summary>

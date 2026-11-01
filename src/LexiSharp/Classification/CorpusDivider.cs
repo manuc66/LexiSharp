@@ -229,7 +229,7 @@ public sealed class CorpusDivider<TItem>
         var idf = new Dictionary<string, double>(StringComparer.Ordinal);
 
         foreach (var (feature, frequency) in documentFrequency)
-            idf[feature] = Math.Log(1 + (double)documents.Count / frequency);
+            idf[feature] = Math.Log(1 + ((double)documents.Count / frequency));
 
         var clusters = new List<CorpusCluster>();
         DivisionNode? root = Build(
@@ -262,16 +262,7 @@ public sealed class CorpusDivider<TItem>
                 nodeFrequency[feature] = nodeFrequency.TryGetValue(feature, out int count) ? count + 1 : 1;
         }
 
-        // The profile is local to the node. A global vocabulary would dilute a deep node with
-        // features it does not contain, and would make its score depend on the cap rather than on
-        // what is actually being separated here.
-        string[] profileFeatures = nodeFrequency
-            .Where(pair => pair.Value >= _options.MinDocumentFrequency)
-            .OrderByDescending(pair => pair.Value)
-            .ThenBy(pair => pair.Key, StringComparer.Ordinal)
-            .Take(_options.MaxVocabularyTerms)
-            .Select(pair => pair.Key)
-            .ToArray();
+        string[] profileFeatures = ProfileFeatures(nodeFrequency);
 
         if (profileFeatures.Length < 2)
             return MakeLeaf(documents, depth, idf, clusters);
@@ -281,116 +272,21 @@ public sealed class CorpusDivider<TItem>
         for (int i = 0; i < profileFeatures.Length; i++)
             profileIndex[profileFeatures[i]] = i;
 
-        var candidates = profileFeatures
-            .Where(feature => !used.Contains(feature)
-                && nodeFrequency[feature] >= _options.MinDocumentsPerLeaf
-                && documentCount - nodeFrequency[feature] >= _options.MinDocumentsPerLeaf)
-            .Take(_options.MaxCandidateTerms)
-            .ToList();
+        List<string> candidates = CandidateFeatures(profileFeatures, nodeFrequency, used, documentCount);
 
         if (candidates.Count == 0)
             return MakeLeaf(documents, depth, idf, clusters);
 
-        var totalWeights = new double[profileFeatures.Length];
-        double nodeWeight = 0;
-
-        foreach (var document in documents)
-        {
-            nodeWeight += document.Weight;
-
-            foreach (string feature in document.Features.Features)
-            {
-                if (profileIndex.TryGetValue(feature, out int index))
-                    totalWeights[index] += document.Weight;
-            }
-        }
-
-        var candidateSet = candidates.ToHashSet(StringComparer.Ordinal);
-        var postings = new Dictionary<string, List<int>>(StringComparer.Ordinal);
-
-        for (int i = 0; i < documents.Count; i++)
-        {
-            foreach (string feature in documents[i].Features.Features)
-            {
-                if (!candidateSet.Contains(feature))
-                    continue;
-
-                if (!postings.TryGetValue(feature, out List<int>? indices))
-                {
-                    indices = new List<int>();
-                    postings[feature] = indices;
-                }
-
-                indices.Add(i);
-            }
-        }
-
-        SplitChoice? best = null;
-        double bestSeparation = double.NegativeInfinity;
-        var trueWeights = new double[profileFeatures.Length];
-
-        foreach (string feature in candidates)
-        {
-            List<int> indices = postings[feature];
-            Array.Clear(trueWeights, 0, trueWeights.Length);
-            double weightTrue = 0;
-
-            foreach (int index in indices)
-            {
-                var document = documents[index];
-                weightTrue += document.Weight;
-
-                foreach (string present in document.Features.Features)
-                {
-                    if (profileIndex.TryGetValue(present, out int profile))
-                        trueWeights[profile] += document.Weight;
-                }
-            }
-
-            double weightFalse = nodeWeight - weightTrue;
-
-            if (weightTrue <= 0 || weightFalse <= 0)
-                continue;
-
-            // The candidate's own profile is 1 against 0 on every split; counting it would add
-            // the same constant to every score and make MinSeparation depend on it.
-            int candidateIndex = profileIndex[feature];
-            double sumSquared = 0;
-
-            for (int i = 0; i < profileFeatures.Length; i++)
-            {
-                if (i == candidateIndex)
-                    continue;
-
-                double probabilityTrue = trueWeights[i] / weightTrue;
-                double probabilityFalse = (totalWeights[i] - trueWeights[i]) / weightFalse;
-                double difference = probabilityTrue - probabilityFalse;
-                sumSquared += difference * difference;
-            }
-
-            int compared = profileFeatures.Length - 1;
-            double probability = weightTrue / nodeWeight;
-            double balance = probability * (1 - probability);
-            double separation = compared == 0 ? 0 : balance * sumSquared / compared;
-
-            bool better = best is null
-                || separation > bestSeparation + SplitFloor
-                || (Math.Abs(separation - bestSeparation) <= SplitFloor
-                    && string.CompareOrdinal(feature, best.Value.Feature) < 0);
-
-            if (!better)
-                continue;
-
-            best = new SplitChoice(
-                feature,
-                separation,
-                balance,
-                indices.Count,
-                documentCount - indices.Count,
-                weightTrue,
-                weightFalse);
-            bestSeparation = separation;
-        }
+        double[] totalWeights = TotalWeights(documents, profileIndex, out double nodeWeight);
+        Dictionary<string, List<int>> postings = BuildPostings(documents, candidates);
+        var (best, bestSeparation) = FindBestSplit(
+            candidates,
+            postings,
+            documents,
+            profileFeatures,
+            profileIndex,
+            totalWeights,
+            nodeWeight);
 
         // A zero-separation split asks a question that changes nothing; MinSeparation = 0 must not
         // turn that into a split.
@@ -421,6 +317,194 @@ public sealed class CorpusDivider<TItem>
             Build(falseDocuments, depth + 1, usedFalse, idf, clusters),
             metrics);
     }
+
+    private string[] ProfileFeatures(Dictionary<string, int> nodeFrequency) =>
+        // The profile is local to the node. A global vocabulary would dilute a deep node with
+        // features it does not contain, and would make its score depend on the cap rather than on
+        // what is actually being separated here.
+        nodeFrequency
+            .Where(pair => pair.Value >= _options.MinDocumentFrequency)
+            .OrderByDescending(pair => pair.Value)
+            .ThenBy(pair => pair.Key, StringComparer.Ordinal)
+            .Take(_options.MaxVocabularyTerms)
+            .Select(pair => pair.Key)
+            .ToArray();
+
+    private List<string> CandidateFeatures(
+        string[] profileFeatures,
+        Dictionary<string, int> nodeFrequency,
+        HashSet<string> used,
+        int documentCount) =>
+        profileFeatures
+            .Where(feature => !used.Contains(feature)
+                && nodeFrequency[feature] >= _options.MinDocumentsPerLeaf
+                && documentCount - nodeFrequency[feature] >= _options.MinDocumentsPerLeaf)
+            .Take(_options.MaxCandidateTerms)
+            .ToList();
+
+    private static double[] TotalWeights(
+        List<CorpusItem> documents,
+        Dictionary<string, int> profileIndex,
+        out double nodeWeight)
+    {
+        var totalWeights = new double[profileIndex.Count];
+        nodeWeight = 0;
+
+        foreach (var document in documents)
+        {
+            nodeWeight += document.Weight;
+
+            foreach (string feature in document.Features.Features)
+            {
+                if (profileIndex.TryGetValue(feature, out int index))
+                    totalWeights[index] += document.Weight;
+            }
+        }
+
+        return totalWeights;
+    }
+
+    private static Dictionary<string, List<int>> BuildPostings(
+        List<CorpusItem> documents,
+        List<string> candidates)
+    {
+        var candidateSet = candidates.ToHashSet(StringComparer.Ordinal);
+        var postings = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+
+        for (int i = 0; i < documents.Count; i++)
+        {
+            foreach (string feature in documents[i].Features.Features)
+            {
+                if (!candidateSet.Contains(feature))
+                    continue;
+
+                if (!postings.TryGetValue(feature, out List<int>? indices))
+                {
+                    indices = new List<int>();
+                    postings[feature] = indices;
+                }
+
+                indices.Add(i);
+            }
+        }
+
+        return postings;
+    }
+
+    private (SplitChoice? Best, double Separation) FindBestSplit(
+        List<string> candidates,
+        Dictionary<string, List<int>> postings,
+        List<CorpusItem> documents,
+        string[] profileFeatures,
+        Dictionary<string, int> profileIndex,
+        double[] totalWeights,
+        double nodeWeight)
+    {
+        SplitChoice? best = null;
+        double bestSeparation = double.NegativeInfinity;
+
+        foreach (string feature in candidates)
+        {
+            var scored = ScoreCandidate(
+                feature,
+                postings[feature],
+                documents,
+                profileFeatures,
+                profileIndex,
+                totalWeights,
+                nodeWeight);
+
+            if (scored is not { } candidate)
+                continue;
+
+            bool better = best is null
+                || candidate.Separation > bestSeparation + SplitFloor
+                || (Math.Abs(candidate.Separation - bestSeparation) <= SplitFloor
+                    && string.CompareOrdinal(feature, best.Value.Feature) < 0);
+
+            if (!better)
+                continue;
+
+            best = new SplitChoice(
+                feature,
+                candidate.Separation,
+                candidate.Balance,
+                candidate.DocumentsTrue,
+                candidate.DocumentsFalse,
+                candidate.WeightTrue,
+                candidate.WeightFalse);
+            bestSeparation = candidate.Separation;
+        }
+
+        return (best, bestSeparation);
+    }
+
+    private static CandidateScore? ScoreCandidate(
+        string feature,
+        List<int> indices,
+        List<CorpusItem> documents,
+        string[] profileFeatures,
+        Dictionary<string, int> profileIndex,
+        double[] totalWeights,
+        double nodeWeight)
+    {
+        var trueWeights = new double[profileFeatures.Length];
+        double weightTrue = 0;
+
+        foreach (int index in indices)
+        {
+            var document = documents[index];
+            weightTrue += document.Weight;
+
+            foreach (string present in document.Features.Features)
+            {
+                if (profileIndex.TryGetValue(present, out int profile))
+                    trueWeights[profile] += document.Weight;
+            }
+        }
+
+        double weightFalse = nodeWeight - weightTrue;
+
+        if (weightTrue <= 0 || weightFalse <= 0)
+            return null;
+
+        // The candidate's own profile is 1 against 0 on every split; counting it would add
+        // the same constant to every score and make MinSeparation depend on it.
+        int candidateIndex = profileIndex[feature];
+        double sumSquared = 0;
+
+        for (int i = 0; i < profileFeatures.Length; i++)
+        {
+            if (i == candidateIndex)
+                continue;
+
+            double probabilityTrue = trueWeights[i] / weightTrue;
+            double probabilityFalse = (totalWeights[i] - trueWeights[i]) / weightFalse;
+            double difference = probabilityTrue - probabilityFalse;
+            sumSquared += difference * difference;
+        }
+
+        int compared = profileFeatures.Length - 1;
+        double probability = weightTrue / nodeWeight;
+        double balance = probability * (1 - probability);
+        double separation = compared == 0 ? 0 : balance * sumSquared / compared;
+
+        return new CandidateScore(
+            separation,
+            balance,
+            indices.Count,
+            documents.Count - indices.Count,
+            weightTrue,
+            weightFalse);
+    }
+
+    private readonly record struct CandidateScore(
+        double Separation,
+        double Balance,
+        int DocumentsTrue,
+        int DocumentsFalse,
+        double WeightTrue,
+        double WeightFalse);
 
     private DivisionLeaf MakeLeaf(
         List<CorpusItem> documents,

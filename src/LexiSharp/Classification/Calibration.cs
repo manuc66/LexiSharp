@@ -78,7 +78,7 @@ public sealed class TemperatureCalibrator
         for (int i = 0; i <= GridSteps; i++)
         {
             double temperature = MinimumTemperature
-                + (MaximumTemperature - MinimumTemperature) * i / GridSteps;
+                + (((MaximumTemperature - MinimumTemperature) * i) / GridSteps);
             double loss = MeanLogLoss(valid, temperature);
 
             if (loss < bestLoss - 1e-12)
@@ -266,6 +266,10 @@ public sealed class CalibratedClassifier : ITextClassifier
     }
 
     /// <inheritdoc />
-    public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null) =>
-        Predict(text, limit: 1, excludedCategories).FirstOrDefault()?.Category;
+    public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null)
+    {
+        IReadOnlyList<ClassificationResult> results = Predict(text, limit: 1, excludedCategories);
+
+        return results.Count > 0 ? results[0].Category : null;
+    }
 }

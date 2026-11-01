@@ -67,168 +67,223 @@ internal static class ClassificationCommand
 
     public static async Task<int> RunAsync(string[] args)
     {
-        string dataBaseDir = Path.Combine(AppContext.BaseDirectory, "../../../data");
-        int? limit = null;
-        int maxDepth = 12;
-        int minDocumentsPerLeaf = 5;
-        int minDocumentFrequency = 2;
-        var criterion = SplitCriterion.InformationGain;
-        int forestTrees = 40;
-        double forestSubset = 0.3;
-        int forestSeed = 7;
-        bool tune = false;
-        bool linearIdf = false;
-        bool linearTfIdf = false;
-        bool crossValidate = false;
-        bool online = false;
-        bool coverage = false;
-        double coverageTarget = 0.5;
-        var textMode = ClassificationTextMode.SubjectAndBody;
-        double validationFraction = 0.15;
-        string? verifyPath = null;
-        string? writePath = null;
+        var options = new CommandOptions();
 
+        if (!TryParse(args, options))
+            return 2;
+
+        return await RunAsync(options);
+    }
+
+    private static bool TryParse(string[] args, CommandOptions options)
+    {
         for (int i = 0; i < args.Length; i++)
         {
-            switch (args[i])
+            bool? parsed = ParseDataFlag(args, ref i, options);
+
+            if (parsed is null)
+                parsed = ParseForestFlag(args, ref i, options);
+
+            if (parsed is null)
+                parsed = ParseEvaluationFlag(args, ref i, options);
+
+            if (parsed is null)
+                parsed = ParseOutputFlag(args, ref i, options);
+
+            if (parsed is null)
             {
-                case "--data" when i + 1 < args.Length:
-                    dataBaseDir = args[++i];
-                    break;
-                case "--limit" when i + 1 < args.Length:
-                    if (!TryReadPositive(args[++i], out int parsedLimit))
-                    {
-                        Console.Error.WriteLine("classification: --limit expects a positive integer.");
-                        return 2;
-                    }
-
-                    limit = parsedLimit;
-                    break;
-                case "--depth" when i + 1 < args.Length:
-                    if (!TryReadNonNegative(args[++i], out maxDepth))
-                    {
-                        Console.Error.WriteLine("classification: --depth expects a non-negative integer.");
-                        return 2;
-                    }
-
-                    break;
-                case "--min-leaf" when i + 1 < args.Length:
-                    if (!TryReadPositive(args[++i], out minDocumentsPerLeaf))
-                    {
-                        Console.Error.WriteLine("classification: --min-leaf expects a positive integer.");
-                        return 2;
-                    }
-
-                    break;
-                case "--min-df" when i + 1 < args.Length:
-                    if (!TryReadPositive(args[++i], out minDocumentFrequency))
-                    {
-                        Console.Error.WriteLine("classification: --min-df expects a positive integer.");
-                        return 2;
-                    }
-
-                    break;
-                case "--criterion" when i + 1 < args.Length:
-                    if (!Enum.TryParse(args[++i], ignoreCase: true, out criterion))
-                    {
-                        Console.Error.WriteLine("classification: --criterion expects InformationGain, GainRatio or Gini.");
-                        return 2;
-                    }
-
-                    break;
-                case "--trees" when i + 1 < args.Length:
-                    if (!TryReadPositive(args[++i], out forestTrees))
-                    {
-                        Console.Error.WriteLine("classification: --trees expects a positive integer.");
-                        return 2;
-                    }
-
-                    break;
-                case "--subset" when i + 1 < args.Length:
-                    if (!TryReadFraction(args[++i], out forestSubset))
-                    {
-                        Console.Error.WriteLine("classification: --subset expects a number in (0, 1].");
-                        return 2;
-                    }
-
-                    break;
-                case "--seed" when i + 1 < args.Length:
-                    if (!TryReadNonNegative(args[++i], out forestSeed))
-                    {
-                        Console.Error.WriteLine("classification: --seed expects a non-negative integer.");
-                        return 2;
-                    }
-
-                    break;
-                case "--tune":
-                    tune = true;
-                    break;
-                case "--linear-idf":
-                    linearIdf = true;
-                    break;
-                case "--linear-tfidf":
-                    linearTfIdf = true;
-                    break;
-                case "--cv":
-                    crossValidate = true;
-                    break;
-                case "--online":
-                    online = true;
-                    break;
-                case "--coverage":
-                    coverage = true;
-                    break;
-                case "--coverage-target" when i + 1 < args.Length:
-                    if (!double.TryParse(
-                            args[++i],
-                            NumberStyles.Float,
-                            CultureInfo.InvariantCulture,
-                            out coverageTarget)
-                        || !double.IsFinite(coverageTarget)
-                        || coverageTarget <= 0
-                        || coverageTarget > 1)
-                    {
-                        Console.Error.WriteLine("classification: --coverage-target expects a number in (0, 1].");
-                        return 2;
-                    }
-
-                    break;
-                case "--text" when i + 1 < args.Length:
-                    textMode = args[++i] switch
-                    {
-                        "full" => ClassificationTextMode.SubjectAndBody,
-                        "subject" => ClassificationTextMode.SubjectOnly,
-                        _ => (ClassificationTextMode)(-1),
-                    };
-
-                    if (!Enum.IsDefined(textMode))
-                    {
-                        Console.Error.WriteLine("classification: --text expects 'full' or 'subject'.");
-                        return 2;
-                    }
-
-                    break;
-                case "--validation" when i + 1 < args.Length:
-                    if (!TryReadFraction(args[++i], out validationFraction))
-                    {
-                        Console.Error.WriteLine("classification: --validation expects a number in (0, 1).");
-                        return 2;
-                    }
-
-                    break;
-                case "--verify" when i + 1 < args.Length:
-                    verifyPath = args[++i];
-                    break;
-                case "--write" when i + 1 < args.Length:
-                    writePath = args[++i];
-                    break;
-                default:
-                    Console.Error.WriteLine($"classification: unknown argument '{args[i]}'.");
-                    return 2;
+                Console.Error.WriteLine($"classification: unknown argument '{args[i]}'.");
+                return false;
             }
+
+            if (parsed == false)
+                return false;
         }
 
-        var corpus = await TwentyNewsgroups.LoadOrDownloadAsync(dataBaseDir, limit, textMode);
+        return true;
+    }
+
+    private static bool? ParseDataFlag(string[] args, ref int i, CommandOptions options)
+    {
+        switch (args[i])
+        {
+            case "--data" when i + 1 < args.Length:
+                options.DataBaseDir = args[++i];
+                return true;
+            case "--limit" when i + 1 < args.Length:
+                if (!TryReadPositive(args[++i], out int limit))
+                {
+                    Console.Error.WriteLine("classification: --limit expects a positive integer.");
+                    return false;
+                }
+
+                options.Limit = limit;
+                return true;
+            case "--depth" when i + 1 < args.Length:
+                if (!TryReadNonNegative(args[++i], out int depth))
+                {
+                    Console.Error.WriteLine("classification: --depth expects a non-negative integer.");
+                    return false;
+                }
+
+                options.MaxDepth = depth;
+                return true;
+            case "--min-leaf" when i + 1 < args.Length:
+                if (!TryReadPositive(args[++i], out int minLeaf))
+                {
+                    Console.Error.WriteLine("classification: --min-leaf expects a positive integer.");
+                    return false;
+                }
+
+                options.MinDocumentsPerLeaf = minLeaf;
+                return true;
+            case "--min-df" when i + 1 < args.Length:
+                if (!TryReadPositive(args[++i], out int minDf))
+                {
+                    Console.Error.WriteLine("classification: --min-df expects a positive integer.");
+                    return false;
+                }
+
+                options.MinDocumentFrequency = minDf;
+                return true;
+            case "--criterion" when i + 1 < args.Length:
+                if (!Enum.TryParse(args[++i], ignoreCase: true, out SplitCriterion criterion))
+                {
+                    Console.Error.WriteLine("classification: --criterion expects InformationGain, GainRatio or Gini.");
+                    return false;
+                }
+
+                options.Criterion = criterion;
+                return true;
+            default:
+                return null;
+        }
+    }
+
+    private static bool? ParseForestFlag(string[] args, ref int i, CommandOptions options)
+    {
+        switch (args[i])
+        {
+            case "--trees" when i + 1 < args.Length:
+                if (!TryReadPositive(args[++i], out int trees))
+                {
+                    Console.Error.WriteLine("classification: --trees expects a positive integer.");
+                    return false;
+                }
+
+                options.ForestTrees = trees;
+                return true;
+            case "--subset" when i + 1 < args.Length:
+                if (!TryReadFraction(args[++i], out double subset))
+                {
+                    Console.Error.WriteLine("classification: --subset expects a number in (0, 1].");
+                    return false;
+                }
+
+                options.ForestSubset = subset;
+                return true;
+            case "--seed" when i + 1 < args.Length:
+                if (!TryReadNonNegative(args[++i], out int seed))
+                {
+                    Console.Error.WriteLine("classification: --seed expects a non-negative integer.");
+                    return false;
+                }
+
+                options.ForestSeed = seed;
+                return true;
+            case "--tune":
+                options.Tune = true;
+                return true;
+            default:
+                return null;
+        }
+    }
+
+    private static bool? ParseEvaluationFlag(string[] args, ref int i, CommandOptions options)
+    {
+        switch (args[i])
+        {
+            case "--cv":
+                options.CrossValidate = true;
+                return true;
+            case "--online":
+                options.Online = true;
+                return true;
+            case "--coverage":
+                options.Coverage = true;
+                return true;
+            case "--coverage-target" when i + 1 < args.Length:
+                if (!double.TryParse(
+                        args[++i],
+                        NumberStyles.Float,
+                        CultureInfo.InvariantCulture,
+                        out double coverageTarget)
+                    || !double.IsFinite(coverageTarget)
+                    || coverageTarget <= 0
+                    || coverageTarget > 1)
+                {
+                    Console.Error.WriteLine("classification: --coverage-target expects a number in (0, 1].");
+                    return false;
+                }
+
+                options.CoverageTarget = coverageTarget;
+                return true;
+            case "--validation" when i + 1 < args.Length:
+                if (!TryReadFraction(args[++i], out double validation))
+                {
+                    Console.Error.WriteLine("classification: --validation expects a number in (0, 1).");
+                    return false;
+                }
+
+                options.ValidationFraction = validation;
+                return true;
+            default:
+                return null;
+        }
+    }
+
+    private static bool? ParseOutputFlag(string[] args, ref int i, CommandOptions options)
+    {
+        switch (args[i])
+        {
+            case "--linear-idf":
+                options.LinearIdf = true;
+                return true;
+            case "--linear-tfidf":
+                options.LinearTfIdf = true;
+                return true;
+            case "--text" when i + 1 < args.Length:
+                options.TextMode = args[++i] switch
+                {
+                    "full" => ClassificationTextMode.SubjectAndBody,
+                    "subject" => ClassificationTextMode.SubjectOnly,
+                    _ => (ClassificationTextMode)(-1),
+                };
+
+                if (!Enum.IsDefined(options.TextMode))
+                {
+                    Console.Error.WriteLine("classification: --text expects 'full' or 'subject'.");
+                    return false;
+                }
+
+                return true;
+            case "--verify" when i + 1 < args.Length:
+                options.VerifyPath = args[++i];
+                return true;
+            case "--write" when i + 1 < args.Length:
+                options.WritePath = args[++i];
+                return true;
+            default:
+                return null;
+        }
+    }
+
+    private static async Task<int> RunAsync(CommandOptions options)
+    {
+        var corpus = await TwentyNewsgroups.LoadOrDownloadAsync(
+            options.DataBaseDir,
+            options.Limit,
+            options.TextMode);
 
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
@@ -237,70 +292,42 @@ internal static class ClassificationCommand
 
         var forestOptions = new RandomForestOptions
         {
-            Trees = forestTrees,
-            MaxDepth = maxDepth,
-            MinDocumentsPerLeaf = minDocumentsPerLeaf,
-            MinDocumentFrequency = minDocumentFrequency,
-            FeatureSubsetFraction = forestSubset,
-            Criterion = criterion,
-            Seed = forestSeed,
+            Trees = options.ForestTrees,
+            MaxDepth = options.MaxDepth,
+            MinDocumentsPerLeaf = options.MinDocumentsPerLeaf,
+            MinDocumentFrequency = options.MinDocumentFrequency,
+            FeatureSubsetFraction = options.ForestSubset,
+            Criterion = options.Criterion,
+            Seed = options.ForestSeed,
         };
 
-        if (tune)
-        {
-            var split = ClassificationEvaluation.HoldOut(corpus.Train, validationFraction);
-            var candidates = new[]
-            {
-                new ForestCandidate(12, 0.3, 2),
-                new ForestCandidate(20, 0.5, 2),
-                new ForestCandidate(30, 0.5, 2),
-                new ForestCandidate(30, 0.3, 2),
-                new ForestCandidate(20, 0.5, 5),
-            };
-
-            var tuned = ClassificationEvaluation.TuneForest(split.Fit, split.Validation, candidates, forestOptions);
-
-            Console.WriteLine(string.Create(
-                CultureInfo.InvariantCulture,
-                $"Tuning on validation ({split.Fit.Count} fit / {split.Validation.Count} validation): " +
-                $"depth={tuned.Candidate.MaxDepth}, subset={tuned.Candidate.FeatureSubset:F2}, " +
-                $"min leaf={tuned.Candidate.MinDocumentsPerLeaf} " +
-                $"(accuracy={tuned.ValidationAccuracy:F4}, macro-F1={tuned.ValidationMacroF1:F4})"));
-
-            maxDepth = tuned.Candidate.MaxDepth;
-            minDocumentsPerLeaf = tuned.Candidate.MinDocumentsPerLeaf;
-            forestSubset = tuned.Candidate.FeatureSubset;
-            forestOptions = forestOptions with
-            {
-                MaxDepth = maxDepth,
-                MinDocumentsPerLeaf = minDocumentsPerLeaf,
-                FeatureSubsetFraction = forestSubset,
-            };
-        }
+        if (options.Tune)
+            forestOptions = Tune(corpus, options, forestOptions);
 
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
-            $"Decision tree: depth={maxDepth}, min leaf={minDocumentsPerLeaf}, " +
-            $"min df={minDocumentFrequency}, criterion={criterion}"));
+            $"Decision tree: depth={options.MaxDepth}, min leaf={options.MinDocumentsPerLeaf}, " +
+            $"min df={options.MinDocumentFrequency}, criterion={options.Criterion}"));
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
-            $"Random forest: trees={forestTrees}, subset={forestSubset:F2}, seed={forestSeed}"));
+            $"Random forest: trees={options.ForestTrees}, subset={options.ForestSubset:F2}, " +
+            $"seed={options.ForestSeed}"));
 
-        var options = new DecisionTreeOptions
+        var treeOptions = new DecisionTreeOptions
         {
-            MaxDepth = maxDepth,
-            MinDocumentsPerLeaf = minDocumentsPerLeaf,
-            MinDocumentFrequency = minDocumentFrequency,
-            Criterion = criterion,
+            MaxDepth = options.MaxDepth,
+            MinDocumentsPerLeaf = options.MinDocumentsPerLeaf,
+            MinDocumentFrequency = options.MinDocumentFrequency,
+            Criterion = options.Criterion,
         };
 
         var linearOptions = new LinearClassifierOptions
         {
-            MinDocumentFrequency = minDocumentFrequency,
-            IdfWeighting = linearIdf || linearTfIdf,
+            MinDocumentFrequency = options.MinDocumentFrequency,
+            IdfWeighting = options.LinearIdf || options.LinearTfIdf,
         };
 
-        Func<ITextClassifier> linearFactory = linearTfIdf
+        Func<ITextClassifier> linearFactory = options.LinearTfIdf
             ? () => new LinearClassifier(new TextFeatureSource(emitTermFrequency: true), linearOptions)
             : () => new LinearClassifier(options: linearOptions);
 
@@ -308,10 +335,10 @@ internal static class ClassificationCommand
             CultureInfo.InvariantCulture,
             $"Linear: epochs={linearOptions.Epochs}, rate={linearOptions.LearningRate:F2}, " +
             $"l2={linearOptions.L2}, min df={linearOptions.MinDocumentFrequency}, " +
-            $"idf={linearOptions.IdfWeighting}, tfidf={linearTfIdf}"));
+            $"idf={linearOptions.IdfWeighting}, tfidf={options.LinearTfIdf}"));
 
         var naiveBayes = ClassificationEvaluation.MeasureNaiveBayes(corpus.Train, corpus.Test);
-        var tree = ClassificationEvaluation.MeasureDecisionTree(corpus.Train, corpus.Test, options);
+        var tree = ClassificationEvaluation.MeasureDecisionTree(corpus.Train, corpus.Test, treeOptions);
         var forest = ClassificationEvaluation.MeasureRandomForest(corpus.Train, corpus.Test, forestOptions);
         var linear = ClassificationEvaluation.MeasureClassifier(
             "Linear", corpus.Train, corpus.Test, linearFactory);
@@ -321,6 +348,92 @@ internal static class ClassificationCommand
         Print(forest);
         Print(linear);
 
+        PrintMcNemar(corpus, naiveBayes, tree, forest, linear);
+
+        if (options.Coverage)
+        {
+            RunCoverage(corpus, options, treeOptions, forestOptions, linearFactory);
+        }
+
+        if (options.CrossValidate)
+            RunCrossValidation(corpus, linearFactory);
+
+        if (options.Online)
+            RunOnline(corpus, treeOptions, linearFactory);
+
+        CalibrationPinRow[] calibrations = RunCalibration(
+            corpus,
+            options,
+            treeOptions,
+            forestOptions,
+            linearFactory);
+
+        var pin = BuildPin(
+            corpus,
+            options,
+            treeOptions,
+            forestOptions,
+            linearOptions,
+            calibrations,
+            naiveBayes,
+            tree,
+            forest,
+            linear);
+
+        if (options.WritePath is not null)
+        {
+            File.WriteAllText(
+                options.WritePath,
+                JsonSerializer.Serialize(pin, JsonOptions) + Environment.NewLine);
+            Console.WriteLine($"Wrote {options.WritePath}");
+        }
+
+        return options.VerifyPath is null ? 0 : Verify(pin, options.VerifyPath);
+    }
+
+    private static RandomForestOptions Tune(
+        ClassificationCorpus corpus,
+        CommandOptions options,
+        RandomForestOptions forestOptions)
+    {
+        var split = ClassificationEvaluation.HoldOut(corpus.Train, options.ValidationFraction);
+        var candidates = new[]
+        {
+            new ForestCandidate(12, 0.3, 2),
+            new ForestCandidate(20, 0.5, 2),
+            new ForestCandidate(30, 0.5, 2),
+            new ForestCandidate(30, 0.3, 2),
+            new ForestCandidate(20, 0.5, 5),
+        };
+
+        var tuned = ClassificationEvaluation.TuneForest(split.Fit, split.Validation, candidates, forestOptions);
+
+        Console.WriteLine(string.Create(
+            CultureInfo.InvariantCulture,
+            $"Tuning on validation ({split.Fit.Count} fit / {split.Validation.Count} validation): " +
+            $"depth={tuned.Candidate.MaxDepth}, subset={tuned.Candidate.FeatureSubset:F2}, " +
+            $"min leaf={tuned.Candidate.MinDocumentsPerLeaf} " +
+            $"(accuracy={tuned.ValidationAccuracy:F4}, macro-F1={tuned.ValidationMacroF1:F4})"));
+
+        options.MaxDepth = tuned.Candidate.MaxDepth;
+        options.MinDocumentsPerLeaf = tuned.Candidate.MinDocumentsPerLeaf;
+        options.ForestSubset = tuned.Candidate.FeatureSubset;
+
+        return forestOptions with
+        {
+            MaxDepth = options.MaxDepth,
+            MinDocumentsPerLeaf = options.MinDocumentsPerLeaf,
+            FeatureSubsetFraction = options.ForestSubset,
+        };
+    }
+
+    private static void PrintMcNemar(
+        ClassificationCorpus corpus,
+        ClassificationMetrics naiveBayes,
+        ClassificationMetrics tree,
+        ClassificationMetrics forest,
+        ClassificationMetrics linear)
+    {
         foreach (var result in new[]
         {
             ClassificationEvaluation.McNemar(
@@ -337,90 +450,108 @@ internal static class ClassificationCommand
                 $"baseline-only={result.BaselineOnly}, candidate-only={result.CandidateOnly}, " +
                 $"p={result.PValue:G4}"));
         }
+    }
 
-        if (coverage)
+    private static void RunCoverage(
+        ClassificationCorpus corpus,
+        CommandOptions options,
+        DecisionTreeOptions treeOptions,
+        RandomForestOptions forestOptions,
+        Func<ITextClassifier> linearFactory)
+    {
+        foreach (var report in new[]
         {
-            foreach (var report in new[]
-            {
-                ClassificationEvaluation.MeasureCoverage(
-                    "Naive Bayes", corpus.Train, corpus.Test, () => new NaiveBayesClassifier(), coverageTarget),
-                ClassificationEvaluation.MeasureCoverage(
-                    "Decision tree", corpus.Train, corpus.Test, () => new DecisionTreeClassifier(options: options), coverageTarget),
-                ClassificationEvaluation.MeasureCoverage(
-                    "Random forest", corpus.Train, corpus.Test, () => new RandomForestClassifier(options: forestOptions), coverageTarget),
-                ClassificationEvaluation.MeasureCoverage(
-                    "Linear", corpus.Train, corpus.Test, linearFactory, coverageTarget),
-            })
+            ClassificationEvaluation.MeasureCoverage(
+                "Naive Bayes", corpus.Train, corpus.Test, () => new NaiveBayesClassifier(), options.CoverageTarget),
+            ClassificationEvaluation.MeasureCoverage(
+                "Decision tree", corpus.Train, corpus.Test, () => new DecisionTreeClassifier(options: treeOptions), options.CoverageTarget),
+            ClassificationEvaluation.MeasureCoverage(
+                "Random forest", corpus.Train, corpus.Test, () => new RandomForestClassifier(options: forestOptions), options.CoverageTarget),
+            ClassificationEvaluation.MeasureCoverage(
+                "Linear", corpus.Train, corpus.Test, linearFactory, options.CoverageTarget),
+        })
+        {
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"Coverage {report.Method}: target={options.CoverageTarget:F2} " +
+                $"threshold={report.Recommended.Threshold:F2} " +
+                $"coverage={report.Recommended.Coverage:F3} " +
+                $"precision={report.Recommended.Precision:F3}"));
+
+            foreach (var point in report.Points)
             {
                 Console.WriteLine(string.Create(
                     CultureInfo.InvariantCulture,
-                    $"Coverage {report.Method}: target={coverageTarget:F2} " +
-                    $"threshold={report.Recommended.Threshold:F2} " +
-                    $"coverage={report.Recommended.Coverage:F3} " +
-                    $"precision={report.Recommended.Precision:F3}"));
-
-                foreach (var point in report.Points)
-                {
-                    Console.WriteLine(string.Create(
-                        CultureInfo.InvariantCulture,
-                        $"  threshold={point.Threshold:F1} coverage={point.Coverage:F3} " +
-                        $"precision={point.Precision:F3} covered={point.Covered}/{point.Total}"));
-                }
+                    $"  threshold={point.Threshold:F1} coverage={point.Coverage:F3} " +
+                    $"precision={point.Precision:F3} covered={point.Covered}/{point.Total}"));
             }
         }
+    }
 
-        if (crossValidate)
+    private static void RunCrossValidation(
+        ClassificationCorpus corpus,
+        Func<ITextClassifier> linearFactory)
+    {
+        foreach (var cv in new[]
         {
-            foreach (var cv in new[]
-            {
-                ClassificationEvaluation.CrossValidate(
-                    "Naive Bayes", corpus.Train, 5, () => new NaiveBayesClassifier()),
-                ClassificationEvaluation.CrossValidate(
-                    "Linear", corpus.Train, 5, linearFactory),
-            })
-            {
-                Console.WriteLine(string.Create(
-                    CultureInfo.InvariantCulture,
-                    $"5-fold CV {cv.Method}: accuracy {cv.AccuracyMean:F4} ± {cv.AccuracyStd:F4}, " +
-                    $"macro-F1 {cv.MacroF1Mean:F4} ± {cv.MacroF1Std:F4}"));
-            }
-        }
-
-        if (online)
+            ClassificationEvaluation.CrossValidate(
+                "Naive Bayes", corpus.Train, 5, () => new NaiveBayesClassifier()),
+            ClassificationEvaluation.CrossValidate(
+                "Linear", corpus.Train, 5, linearFactory),
+        })
         {
-            var shuffled = Shuffle(corpus.Train);
-            int split = shuffled.Count * 4 / 5;
-            var prefix = shuffled.Take(split).ToList();
-            var rest = shuffled.Skip(split).ToList();
-
-            MeasureOnline(
-                "Decision tree",
-                () => new DecisionTreeClassifier(options: options),
-                prefix,
-                rest,
-                corpus.Train);
-            MeasureOnline("Linear", linearFactory, prefix, rest, corpus.Train);
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"5-fold CV {cv.Method}: accuracy {cv.AccuracyMean:F4} ± {cv.AccuracyStd:F4}, " +
+                $"macro-F1 {cv.MacroF1Mean:F4} ± {cv.MacroF1Std:F4}"));
         }
+    }
 
+    private static void RunOnline(
+        ClassificationCorpus corpus,
+        DecisionTreeOptions treeOptions,
+        Func<ITextClassifier> linearFactory)
+    {
+        var shuffled = Shuffle(corpus.Train);
+        int split = shuffled.Count * 4 / 5;
+        var prefix = shuffled.Take(split).ToList();
+        var rest = shuffled.Skip(split).ToList();
+
+        MeasureOnline(
+            "Decision tree",
+            () => new DecisionTreeClassifier(options: treeOptions),
+            prefix,
+            rest,
+            corpus.Train);
+        MeasureOnline("Linear", linearFactory, prefix, rest, corpus.Train);
+    }
+
+    private static CalibrationPinRow[] RunCalibration(
+        ClassificationCorpus corpus,
+        CommandOptions options,
+        DecisionTreeOptions treeOptions,
+        RandomForestOptions forestOptions,
+        Func<ITextClassifier> linearFactory)
+    {
         var calibrations = new[]
         {
             ClassificationEvaluation.MeasureCalibration(
                 "Decision tree",
                 corpus.Train,
                 corpus.Test,
-                validationFraction,
-                () => new DecisionTreeClassifier(options: options)),
+                options.ValidationFraction,
+                () => new DecisionTreeClassifier(options: treeOptions)),
             ClassificationEvaluation.MeasureCalibration(
                 "Random forest",
                 corpus.Train,
                 corpus.Test,
-                validationFraction,
+                options.ValidationFraction,
                 () => new RandomForestClassifier(options: forestOptions)),
             ClassificationEvaluation.MeasureCalibration(
                 "Linear",
                 corpus.Train,
                 corpus.Test,
-                validationFraction,
+                options.ValidationFraction,
                 linearFactory),
         };
 
@@ -433,43 +564,92 @@ internal static class ClassificationCommand
                 $"Brier {calibration.Brier:F4} -> {calibration.CalibratedBrier:F4}"));
         }
 
-        var pin = new ClassificationPin(
+        return calibrations
+            .Select(calibration => new CalibrationPinRow(
+                calibration.Method,
+                calibration.Temperature,
+                calibration.LogLoss,
+                calibration.CalibratedLogLoss,
+                calibration.Brier,
+                calibration.CalibratedBrier))
+            .ToArray();
+    }
+
+    private static ClassificationPin BuildPin(
+        ClassificationCorpus corpus,
+        CommandOptions options,
+        DecisionTreeOptions treeOptions,
+        RandomForestOptions forestOptions,
+        LinearClassifierOptions linearOptions,
+        IReadOnlyList<CalibrationPinRow> calibrations,
+        ClassificationMetrics naiveBayes,
+        ClassificationMetrics tree,
+        ClassificationMetrics forest,
+        ClassificationMetrics linear) =>
+        new(
             corpus.Name,
             corpus.SourceMd5,
             corpus.Train.Count,
             corpus.Test.Count,
             corpus.Categories.Count,
-            maxDepth,
-            minDocumentsPerLeaf,
-            minDocumentFrequency,
-            criterion.ToString(),
-            forestTrees,
-            forestSubset,
-            forestSeed,
-            validationFraction,
+            treeOptions.MaxDepth,
+            treeOptions.MinDocumentsPerLeaf,
+            treeOptions.MinDocumentFrequency,
+            treeOptions.Criterion.ToString(),
+            forestOptions.Trees,
+            forestOptions.FeatureSubsetFraction,
+            forestOptions.Seed,
+            options.ValidationFraction,
             linearOptions.Epochs,
             linearOptions.LearningRate,
             linearOptions.L2,
-            linearIdf,
-            linearTfIdf,
-            calibrations
-                .Select(calibration => new CalibrationPinRow(
-                    calibration.Method,
-                    calibration.Temperature,
-                    calibration.LogLoss,
-                    calibration.CalibratedLogLoss,
-                    calibration.Brier,
-                    calibration.CalibratedBrier))
-                .ToArray(),
+            options.LinearIdf,
+            options.LinearTfIdf,
+            calibrations,
             [ToRow(naiveBayes), ToRow(tree), ToRow(forest), ToRow(linear)]);
 
-        if (writePath is not null)
-        {
-            File.WriteAllText(writePath, JsonSerializer.Serialize(pin, JsonOptions) + Environment.NewLine);
-            Console.WriteLine($"Wrote {writePath}");
-        }
+    private sealed class CommandOptions
+    {
+        public string DataBaseDir { get; set; } =
+            Path.Combine(AppContext.BaseDirectory, "../../../data");
 
-        return verifyPath is null ? 0 : Verify(pin, verifyPath);
+        public int? Limit { get; set; }
+
+        public int MaxDepth { get; set; } = 12;
+
+        public int MinDocumentsPerLeaf { get; set; } = 5;
+
+        public int MinDocumentFrequency { get; set; } = 2;
+
+        public SplitCriterion Criterion { get; set; } = SplitCriterion.InformationGain;
+
+        public int ForestTrees { get; set; } = 40;
+
+        public double ForestSubset { get; set; } = 0.3;
+
+        public int ForestSeed { get; set; } = 7;
+
+        public bool Tune { get; set; }
+
+        public bool LinearIdf { get; set; }
+
+        public bool LinearTfIdf { get; set; }
+
+        public bool CrossValidate { get; set; }
+
+        public bool Online { get; set; }
+
+        public bool Coverage { get; set; }
+
+        public double CoverageTarget { get; set; } = 0.5;
+
+        public ClassificationTextMode TextMode { get; set; } = ClassificationTextMode.SubjectAndBody;
+
+        public double ValidationFraction { get; set; } = 0.15;
+
+        public string? VerifyPath { get; set; }
+
+        public string? WritePath { get; set; }
     }
 
     private static void MeasureOnline(
@@ -572,43 +752,83 @@ internal static class ClassificationCommand
 
     private static int Verify(ClassificationPin actual, string path)
     {
+        if (!TryLoadPin(path, out ClassificationPin expected))
+            return 2;
+
+        if (!HeaderMatches(expected, actual))
+            return 1;
+
+        bool matches = VerifyCalibration(expected, actual);
+        matches &= VerifyRows(expected, actual);
+        matches &= VerifyNoMissingRows(expected, actual);
+
+        Console.WriteLine(matches ? "classification: pin matches." : "classification: pin drifted.");
+        return matches ? 0 : 1;
+    }
+
+    private static bool TryLoadPin(string path, out ClassificationPin pin)
+    {
+        pin = null!;
+
         if (!File.Exists(path))
         {
             Console.Error.WriteLine($"classification: pin not found: {path}");
-            return 2;
+            return false;
         }
 
-        ClassificationPin? expected = JsonSerializer.Deserialize<ClassificationPin>(File.ReadAllText(path), JsonOptions);
+        ClassificationPin? expected = JsonSerializer.Deserialize<ClassificationPin>(
+            File.ReadAllText(path),
+            JsonOptions);
 
         if (expected is null)
         {
             Console.Error.WriteLine("classification: pin is empty.");
-            return 2;
+            return false;
         }
 
-        if (!string.Equals(expected.Dataset, actual.Dataset, StringComparison.Ordinal)
-            || !string.Equals(expected.SourceMd5, actual.SourceMd5, StringComparison.Ordinal)
-            || expected.TrainDocuments != actual.TrainDocuments
-            || expected.TestDocuments != actual.TestDocuments
-            || expected.Categories != actual.Categories
-            || expected.MaxDepth != actual.MaxDepth
-            || expected.MinDocumentsPerLeaf != actual.MinDocumentsPerLeaf
-            || expected.MinDocumentFrequency != actual.MinDocumentFrequency
-            || !string.Equals(expected.Criterion, actual.Criterion, StringComparison.Ordinal)
-            || expected.ForestTrees != actual.ForestTrees
-            || Math.Abs(expected.ForestFeatureSubset - actual.ForestFeatureSubset) > 1e-12
-            || expected.ForestSeed != actual.ForestSeed
-            || Math.Abs(expected.ValidationFraction - actual.ValidationFraction) > 1e-12
-            || expected.LinearEpochs != actual.LinearEpochs
-            || Math.Abs(expected.LinearLearningRate - actual.LinearLearningRate) > 1e-12
-            || Math.Abs(expected.LinearL2 - actual.LinearL2) > 1e-12
-            || expected.LinearIdf != actual.LinearIdf
-            || expected.LinearTfIdf != actual.LinearTfIdf)
+        pin = expected;
+        return true;
+    }
+
+    private static bool HeaderMatches(ClassificationPin expected, ClassificationPin actual)
+    {
+        var mismatches = new List<string>();
+
+        void Check(bool matches, string field)
         {
-            Console.Error.WriteLine("classification: the pin describes a different dataset or configuration.");
-            return 1;
+            if (!matches)
+                mismatches.Add(field);
         }
 
+        Check(string.Equals(expected.Dataset, actual.Dataset, StringComparison.Ordinal), "dataset");
+        Check(string.Equals(expected.SourceMd5, actual.SourceMd5, StringComparison.Ordinal), "source md5");
+        Check(expected.TrainDocuments == actual.TrainDocuments, "train documents");
+        Check(expected.TestDocuments == actual.TestDocuments, "test documents");
+        Check(expected.Categories == actual.Categories, "categories");
+        Check(expected.MaxDepth == actual.MaxDepth, "max depth");
+        Check(expected.MinDocumentsPerLeaf == actual.MinDocumentsPerLeaf, "min leaf");
+        Check(expected.MinDocumentFrequency == actual.MinDocumentFrequency, "min df");
+        Check(string.Equals(expected.Criterion, actual.Criterion, StringComparison.Ordinal), "criterion");
+        Check(expected.ForestTrees == actual.ForestTrees, "forest trees");
+        Check(Math.Abs(expected.ForestFeatureSubset - actual.ForestFeatureSubset) <= 1e-12, "forest subset");
+        Check(expected.ForestSeed == actual.ForestSeed, "forest seed");
+        Check(Math.Abs(expected.ValidationFraction - actual.ValidationFraction) <= 1e-12, "validation");
+        Check(expected.LinearEpochs == actual.LinearEpochs, "linear epochs");
+        Check(Math.Abs(expected.LinearLearningRate - actual.LinearLearningRate) <= 1e-12, "linear rate");
+        Check(Math.Abs(expected.LinearL2 - actual.LinearL2) <= 1e-12, "linear L2");
+        Check(expected.LinearIdf == actual.LinearIdf, "linear idf");
+        Check(expected.LinearTfIdf == actual.LinearTfIdf, "linear tfidf");
+
+        if (mismatches.Count == 0)
+            return true;
+
+        Console.Error.WriteLine(
+            $"classification: the pin describes a different dataset or configuration ({string.Join(", ", mismatches)}).");
+        return false;
+    }
+
+    private static bool VerifyCalibration(ClassificationPin expected, ClassificationPin actual)
+    {
         bool matches = true;
 
         foreach (var row in actual.Calibration)
@@ -634,9 +854,17 @@ internal static class ClassificationCommand
             }
         }
 
+        return matches;
+    }
+
+    private static bool VerifyRows(ClassificationPin expected, ClassificationPin actual)
+    {
+        bool matches = true;
+
         foreach (var row in actual.Rows)
         {
-            ClassificationPinRow? pinned = expected.Rows.FirstOrDefault(candidate => candidate.Method == row.Method);
+            ClassificationPinRow? pinned = expected.Rows.FirstOrDefault(
+                candidate => candidate.Method == row.Method);
 
             if (pinned is null)
             {
@@ -666,16 +894,36 @@ internal static class ClassificationCommand
                 matches = false;
             }
 
-            foreach (var (category, f1) in row.PerClassF1)
+            if (!PerClassMatches(pinned, row))
             {
-                if (!pinned.PerClassF1.TryGetValue(category, out double pinnedF1)
-                    || Math.Abs(pinnedF1 - f1) > 1e-9)
-                {
-                    Console.Error.WriteLine($"classification: {row.Method} per-class F1 drifted for {category}.");
-                    matches = false;
-                }
+                matches = false;
             }
         }
+
+        return matches;
+    }
+
+    private static bool PerClassMatches(ClassificationPinRow pinned, ClassificationPinRow row)
+    {
+        bool matches = true;
+
+        foreach (var (category, f1) in row.PerClassF1)
+        {
+            if (!pinned.PerClassF1.TryGetValue(category, out double pinnedF1)
+                || Math.Abs(pinnedF1 - f1) > 1e-9)
+            {
+                Console.Error.WriteLine(
+                    $"classification: {row.Method} per-class F1 drifted for {category}.");
+                matches = false;
+            }
+        }
+
+        return matches;
+    }
+
+    private static bool VerifyNoMissingRows(ClassificationPin expected, ClassificationPin actual)
+    {
+        bool matches = true;
 
         foreach (var pinned in expected.Rows)
         {
@@ -686,8 +934,7 @@ internal static class ClassificationCommand
             matches = false;
         }
 
-        Console.WriteLine(matches ? "classification: pin matches." : "classification: pin drifted.");
-        return matches ? 0 : 1;
+        return matches;
     }
 
     private static bool TryReadPositive(string value, out int result) =>

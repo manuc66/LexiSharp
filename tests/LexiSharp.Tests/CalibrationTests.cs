@@ -174,7 +174,11 @@ public class CalibrationTests
                 .Take(limit)
                 .ToList();
 
-        public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null) =>
-            Predict(text, 1, excludedCategories).FirstOrDefault()?.Category;
+        public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null)
+        {
+            IReadOnlyList<ClassificationResult> results = Predict(text, 1, excludedCategories);
+
+            return results.Count > 0 ? results[0].Category : null;
+        }
     }
 }
