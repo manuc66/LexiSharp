@@ -71,44 +71,85 @@ internal static class OnlineClassificationCommand
             options.Limit,
             options.TextMode);
 
+        PrintCorpus(corpus);
+
+        if (!TrySplit(corpus, options, out SearchDocument[] warmup, out OnlineExample[] stream))
+            return 2;
+
+        Func<int, bool>? retrainWhen = options.Learn && options.RetrainEvery > 0
+            ? count => count % options.RetrainEvery == 0
+            : null;
+
+        Func<ITextClassifier>? factory = CreateFactory(options.Model);
+
+        if (factory is null)
+        {
+            Console.Error.WriteLine($"classification-online: unknown model '{options.Model}'.");
+            return 2;
+        }
+
+        if (!ValidateLearnMode(options, retrainWhen))
+            return 2;
+
+        var evaluation = new OnlineEvaluationOptions(
+            factory,
+            warmup,
+            stream,
+            options.TopK,
+            retrainWhen,
+            BootstrapResamples: 1000,
+            Seed: options.Seed,
+            CoverageTarget: options.CoverageTarget,
+            Learn: options.Learn,
+            Method: options.Model);
+
+        OnlineReport report = OnlineClassificationEvaluation.Run(evaluation);
+        PrintReport(options, report, warmup.Length, stream.Length);
+
+        var pin = ToPin(corpus, options, warmup.Length, stream.Length, options.RetrainEvery, report);
+        return WriteOrVerify(options, pin);
+    }
+
+    private static void PrintCorpus(ClassificationCorpus corpus) =>
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
             $"20 Newsgroups ({corpus.Name}): {corpus.Train.Count} train, {corpus.Categories.Count} categories, " +
             $"md5 {corpus.SourceMd5}"));
 
+    private static bool TrySplit(
+        ClassificationCorpus corpus,
+        CommandOptions options,
+        out SearchDocument[] warmup,
+        out OnlineExample[] stream)
+    {
         var train = Shuffle(corpus.Train, options.Seed);
         int warmupCount = (int)Math.Round(train.Count * options.WarmupFraction, MidpointRounding.AwayFromZero);
 
         if (warmupCount < 0 || warmupCount > train.Count)
         {
             Console.Error.WriteLine("classification-online: the warmup fraction leaves no stream.");
-            return 2;
+            warmup = Array.Empty<SearchDocument>();
+            stream = Array.Empty<OnlineExample>();
+            return false;
         }
 
-        var warmup = train.Take(warmupCount).Select(ToDocument).ToArray();
-        var stream = train.Skip(warmupCount)
+        int streamCount = train.Count - warmupCount;
+        warmup = train.Take(warmupCount).Select(ToDocument).ToArray();
+        stream = train.Skip(warmupCount)
             .Select((document, index) => new OnlineExample(
                 ToDocument(document),
-                options.Blocks <= 1 ? 0 : index * options.Blocks / Math.Max(1, train.Count - warmupCount)))
+                options.Blocks <= 1 ? 0 : index * options.Blocks / Math.Max(1, streamCount)))
             .ToArray();
 
-        if (stream.Length == 0)
-        {
-            Console.Error.WriteLine("classification-online: the stream is empty.");
-            return 2;
-        }
+        if (stream.Length > 0)
+            return true;
 
-        Func<int, bool>? retrainWhen = options.RetrainEvery > 0
-            ? count => count % options.RetrainEvery == 0
-            : null;
+        Console.Error.WriteLine("classification-online: the stream is empty.");
+        return false;
+    }
 
-        int retrainEvery = options.RetrainEvery;
-
-        if (!options.Learn)
-            retrainWhen = null;
-
-        string modelName = options.Model;
-        Func<ITextClassifier> factory = modelName switch
+    private static Func<ITextClassifier>? CreateFactory(string model) =>
+        model switch
         {
             "nb" => () => new NaiveBayesClassifier(),
             "linear" => () => new LinearClassifier(),
@@ -127,33 +168,28 @@ internal static class OnlineClassificationCommand
                 MinDocumentsPerLeaf = 5,
                 MinDocumentFrequency = 2,
             }),
-            _ => throw new InvalidOperationException($"Unknown model '{modelName}'."),
+            _ => null,
         };
 
-        if (options.Learn && retrainWhen is null && modelName != "nb")
-        {
-            Console.Error.WriteLine(
-                $"classification-online: '{modelName}' is not incremental; pass --retrain-every N or --no-learn.");
-            return 2;
-        }
+    private static bool ValidateLearnMode(CommandOptions options, Func<int, bool>? retrainWhen)
+    {
+        if (!options.Learn || retrainWhen is not null || options.Model == "nb")
+            return true;
 
-        var evaluation = new OnlineEvaluationOptions(
-            factory,
-            warmup,
-            stream,
-            options.TopK,
-            retrainWhen,
-            BootstrapResamples: 1000,
-            Seed: options.Seed,
-            CoverageTarget: options.CoverageTarget,
-            Learn: options.Learn,
-            Method: modelName);
+        Console.Error.WriteLine(
+            $"classification-online: '{options.Model}' is not incremental; pass --retrain-every N or --no-learn.");
+        return false;
+    }
 
-        var report = OnlineClassificationEvaluation.Run(evaluation);
-
+    private static void PrintReport(
+        CommandOptions options,
+        OnlineReport report,
+        int warmupCount,
+        int streamCount)
+    {
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
-            $"Online {modelName}: warmup {warmup.Length}, stream {stream.Length}, blocks {options.Blocks}, " +
+            $"Online {options.Model}: warmup {warmupCount}, stream {streamCount}, blocks {options.Blocks}, " +
             $"top-k {options.TopK}, learn={options.Learn}, retrain-every={(options.RetrainEvery == 0 ? "never" : options.RetrainEvery.ToString(CultureInfo.InvariantCulture))}"));
 
         Console.WriteLine(string.Create(
@@ -177,9 +213,10 @@ internal static class OnlineClassificationCommand
             $"predict {report.PredictTime.TotalMilliseconds:F1} ms, " +
             $"learn {report.LearnTime.TotalMilliseconds:F1} ms, " +
             $"retrain {report.RetrainTime.TotalMilliseconds:F1} ms; order {report.OrderHash[..12]}…"));
+    }
 
-        var pin = ToPin(corpus, options, warmup.Length, stream.Length, retrainEvery, report);
-
+    private static int WriteOrVerify(CommandOptions options, OnlineClassificationPin pin)
+    {
         if (options.WritePath is not null)
         {
             File.WriteAllText(options.WritePath, JsonSerializer.Serialize(pin, JsonOptions) + Environment.NewLine);
@@ -205,121 +242,152 @@ internal static class OnlineClassificationCommand
     {
         for (int i = 0; i < args.Length; i++)
         {
-            switch (args[i])
+            bool? handled = TryParseData(args, ref i, options)
+                ?? TryParseModel(args, ref i, options)
+                ?? TryParseEvaluation(args, ref i, options)
+                ?? TryParseOutput(args, ref i, options);
+
+            if (handled is null)
             {
-                case "--data" when i + 1 < args.Length:
-                    options.DataBaseDir = args[++i];
-                    break;
-                case "--limit" when i + 1 < args.Length:
-                    if (!int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out int limit)
-                        || limit <= 0)
-                    {
-                        Console.Error.WriteLine("classification-online: --limit expects a positive integer.");
-                        return false;
-                    }
-
-                    options.Limit = limit;
-                    break;
-                case "--text" when i + 1 < args.Length:
-                    string mode = args[++i];
-
-                    if (mode == "full")
-                        options.TextMode = ClassificationTextMode.SubjectAndBody;
-                    else if (mode == "subject")
-                        options.TextMode = ClassificationTextMode.SubjectOnly;
-                    else
-                    {
-                        Console.Error.WriteLine("classification-online: --text expects 'full' or 'subject'.");
-                        return false;
-                    }
-
-                    break;
-                case "--model" when i + 1 < args.Length:
-                    options.Model = args[++i];
-
-                    if (options.Model is not ("nb" or "linear" or "tree" or "forest"))
-                    {
-                        Console.Error.WriteLine("classification-online: --model expects nb, linear, tree or forest.");
-                        return false;
-                    }
-
-                    break;
-                case "--warmup" when i + 1 < args.Length:
-                    if (!double.TryParse(args[++i], NumberStyles.Float, CultureInfo.InvariantCulture, out double warmup)
-                        || !double.IsFinite(warmup) || warmup <= 0 || warmup >= 1)
-                    {
-                        Console.Error.WriteLine("classification-online: --warmup expects a number in (0, 1).");
-                        return false;
-                    }
-
-                    options.WarmupFraction = warmup;
-                    break;
-                case "--retrain-every" when i + 1 < args.Length:
-                    if (!int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out int every)
-                        || every < 0)
-                    {
-                        Console.Error.WriteLine("classification-online: --retrain-every expects a non-negative integer.");
-                        return false;
-                    }
-
-                    options.RetrainEvery = every;
-                    break;
-                case "--top-k" when i + 1 < args.Length:
-                    if (!int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out int topK)
-                        || topK < 1)
-                    {
-                        Console.Error.WriteLine("classification-online: --top-k expects a positive integer.");
-                        return false;
-                    }
-
-                    options.TopK = topK;
-                    break;
-                case "--blocks" when i + 1 < args.Length:
-                    if (!int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out int blocks)
-                        || blocks < 1)
-                    {
-                        Console.Error.WriteLine("classification-online: --blocks expects a positive integer.");
-                        return false;
-                    }
-
-                    options.Blocks = blocks;
-                    break;
-                case "--seed" when i + 1 < args.Length:
-                    if (!int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out int seed)
-                        || seed < 0)
-                    {
-                        Console.Error.WriteLine("classification-online: --seed expects a non-negative integer.");
-                        return false;
-                    }
-
-                    options.Seed = seed;
-                    break;
-                case "--coverage-target" when i + 1 < args.Length:
-                    if (!double.TryParse(args[++i], NumberStyles.Float, CultureInfo.InvariantCulture, out double target)
-                        || !double.IsFinite(target) || target <= 0 || target > 1)
-                    {
-                        Console.Error.WriteLine("classification-online: --coverage-target expects a number in (0, 1].");
-                        return false;
-                    }
-
-                    options.CoverageTarget = target;
-                    break;
-                case "--no-learn":
-                    options.Learn = false;
-                    break;
-                case "--write" when i + 1 < args.Length:
-                    options.WritePath = args[++i];
-                    break;
-                case "--verify" when i + 1 < args.Length:
-                    options.VerifyPath = args[++i];
-                    break;
-                default:
-                    Console.Error.WriteLine($"classification-online: unknown argument '{args[i]}'.");
-                    return false;
+                Console.Error.WriteLine($"classification-online: unknown argument '{args[i]}'.");
+                return false;
             }
+
+            if (handled == false)
+                return false;
         }
 
         return true;
+    }
+
+    private static bool? TryParseData(string[] args, ref int i, CommandOptions options)
+    {
+        switch (args[i])
+        {
+            case "--data" when i + 1 < args.Length:
+                options.DataBaseDir = args[++i];
+                return true;
+            case "--limit" when i + 1 < args.Length:
+                if (!CommandParsing.TryPositiveInt(args[++i], out int limit))
+                {
+                    Console.Error.WriteLine("classification-online: --limit expects a positive integer.");
+                    return false;
+                }
+
+                options.Limit = limit;
+                return true;
+            case "--text" when i + 1 < args.Length:
+                if (!CommandParsing.TryTextMode(args[++i], out ClassificationTextMode mode))
+                {
+                    Console.Error.WriteLine("classification-online: --text expects 'full' or 'subject'.");
+                    return false;
+                }
+
+                options.TextMode = mode;
+                return true;
+            default:
+                return null;
+        }
+    }
+
+    private static bool? TryParseModel(string[] args, ref int i, CommandOptions options)
+    {
+        switch (args[i])
+        {
+            case "--model" when i + 1 < args.Length:
+                options.Model = args[++i];
+
+                if (options.Model is not ("nb" or "linear" or "tree" or "forest"))
+                {
+                    Console.Error.WriteLine("classification-online: --model expects nb, linear, tree or forest.");
+                    return false;
+                }
+
+                return true;
+            case "--warmup" when i + 1 < args.Length:
+                if (!CommandParsing.TryFraction(args[++i], out double warmup))
+                {
+                    Console.Error.WriteLine("classification-online: --warmup expects a number in (0, 1).");
+                    return false;
+                }
+
+                options.WarmupFraction = warmup;
+                return true;
+            case "--retrain-every" when i + 1 < args.Length:
+                if (!CommandParsing.TryNonNegativeInt(args[++i], out int every))
+                {
+                    Console.Error.WriteLine("classification-online: --retrain-every expects a non-negative integer.");
+                    return false;
+                }
+
+                options.RetrainEvery = every;
+                return true;
+            default:
+                return null;
+        }
+    }
+
+    private static bool? TryParseEvaluation(string[] args, ref int i, CommandOptions options)
+    {
+        switch (args[i])
+        {
+            case "--top-k" when i + 1 < args.Length:
+                if (!CommandParsing.TryPositiveInt(args[++i], out int topK))
+                {
+                    Console.Error.WriteLine("classification-online: --top-k expects a positive integer.");
+                    return false;
+                }
+
+                options.TopK = topK;
+                return true;
+            case "--blocks" when i + 1 < args.Length:
+                if (!CommandParsing.TryPositiveInt(args[++i], out int blocks))
+                {
+                    Console.Error.WriteLine("classification-online: --blocks expects a positive integer.");
+                    return false;
+                }
+
+                options.Blocks = blocks;
+                return true;
+            case "--seed" when i + 1 < args.Length:
+                if (!CommandParsing.TryNonNegativeInt(args[++i], out int seed))
+                {
+                    Console.Error.WriteLine("classification-online: --seed expects a non-negative integer.");
+                    return false;
+                }
+
+                options.Seed = seed;
+                return true;
+            case "--coverage-target" when i + 1 < args.Length:
+                if (!CommandParsing.TryUnitInterval(args[++i], out double target) || target <= 0)
+                {
+                    Console.Error.WriteLine("classification-online: --coverage-target expects a number in (0, 1].");
+                    return false;
+                }
+
+                options.CoverageTarget = target;
+                return true;
+            default:
+                return null;
+        }
+    }
+
+    private static bool? TryParseOutput(string[] args, ref int i, CommandOptions options)
+    {
+        switch (args[i])
+        {
+            case "--no-learn":
+                options.Learn = false;
+                return true;
+            case "--write" when i + 1 < args.Length:
+                options.WritePath = args[++i];
+                return true;
+            case "--verify" when i + 1 < args.Length:
+                options.VerifyPath = args[++i];
+                return true;
+            default:
+                return null;
+        }
     }
 
     private static OnlineClassificationPin ToPin(

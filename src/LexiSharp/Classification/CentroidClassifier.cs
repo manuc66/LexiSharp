@@ -819,6 +819,19 @@ public sealed class CentroidClassifier : ITextClassifier, IIncrementalTextClassi
         ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(embeddings);
 
+        (CentroidClassifierOptions options, int dimension) = ReadOptions(reader, embeddings.Dimension);
+        (Dictionary<string, double[]> sums, Dictionary<string, int> counts, double[] globalSum, int globalCount) =
+            ReadCorpusState(reader, dimension);
+
+        var model = new CentroidClassifier(embeddings, options);
+        model._inner.LoadState(dimension, sums, counts, globalSum, globalCount);
+        return model;
+    }
+
+    private static (CentroidClassifierOptions Options, int Dimension) ReadOptions(
+        BinaryReader reader,
+        int providerDimension)
+    {
         double temperature = reader.ReadDouble();
         var trainingUse = (EmbeddingUse)reader.ReadByte();
         var predictionUse = (EmbeddingUse)reader.ReadByte();
@@ -832,13 +845,33 @@ public sealed class CentroidClassifier : ITextClassifier, IIncrementalTextClassi
         if (dimension < 0 || dimension > 1_000_000)
             throw new InvalidDataException($"A centroid dimension is invalid ({dimension}).");
 
-        if (dimension != embeddings.Dimension)
+        if (dimension != providerDimension)
         {
             throw new InvalidDataException(
                 $"The stored centroid model has {dimension} dimensions but the provider declares " +
-                $"{embeddings.Dimension}.");
+                $"{providerDimension}.");
         }
 
+        var options = new CentroidClassifierOptions
+        {
+            Temperature = temperature,
+            TrainingUse = trainingUse,
+            PredictionUse = predictionUse,
+            CenterOnGlobalMean = center,
+        };
+
+        if (!options.IsValid)
+            throw new InvalidDataException("The stored centroid options are not valid.");
+
+        return (options, dimension);
+    }
+
+    private static (
+        Dictionary<string, double[]> Sums,
+        Dictionary<string, int> Counts,
+        double[] GlobalSum,
+        int GlobalCount) ReadCorpusState(BinaryReader reader, int dimension)
+    {
         int categoryCount = ModelFormat.ReadCount(reader);
         var sums = new Dictionary<string, double[]>(categoryCount, StringComparer.Ordinal);
         var counts = new Dictionary<string, int>(categoryCount, StringComparer.Ordinal);
@@ -881,20 +914,7 @@ public sealed class CentroidClassifier : ITextClassifier, IIncrementalTextClassi
                 $"The global centroid sum has {globalSum.Length} values for dimension {dimension}.");
         }
 
-        var options = new CentroidClassifierOptions
-        {
-            Temperature = temperature,
-            TrainingUse = trainingUse,
-            PredictionUse = predictionUse,
-            CenterOnGlobalMean = center,
-        };
-
-        if (!options.IsValid)
-            throw new InvalidDataException("The stored centroid options are not valid.");
-
-        var model = new CentroidClassifier(embeddings, options);
-        model._inner.LoadState(dimension, sums, counts, globalSum, globalCount);
-        return model;
+        return (sums, counts, globalSum, globalCount);
     }
 
     private ReadOnlyMemory<float> Validate(ReadOnlyMemory<float> vector, string? documentId)

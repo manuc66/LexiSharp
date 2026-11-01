@@ -131,6 +131,24 @@ public sealed class BlendTextClassifier : ITextClassifier
         var probability = new Dictionary<string, double>(StringComparer.Ordinal);
         var trainedCategories = new HashSet<string>(StringComparer.Ordinal);
 
+        CollectLaneProbabilities(text, excludedCategories, probability, trainedCategories);
+        AddCandidateProbabilities(text, excludedCategories, probability);
+
+        if (probability.Count == 0)
+            return Array.Empty<ClassificationResult>();
+
+        if (_priors.Count > 0)
+            ApplyPriors(text, probability, trainedCategories);
+
+        return Rank(probability, excludedCategories, limit);
+    }
+
+    private void CollectLaneProbabilities(
+        string text,
+        IReadOnlySet<string>? excludedCategories,
+        Dictionary<string, double> probability,
+        HashSet<string> trainedCategories)
+    {
         foreach (TextClassifierLane lane in _lanes)
         {
             if (lane.Weight == 0)
@@ -147,7 +165,13 @@ public sealed class BlendTextClassifier : ITextClassifier
                 probability[result.Category] = current + (lane.Weight * result.Probability);
             }
         }
+    }
 
+    private void AddCandidateProbabilities(
+        string text,
+        IReadOnlySet<string>? excludedCategories,
+        Dictionary<string, double> probability)
+    {
         foreach (CandidateLane lane in _candidates)
         {
             if (lane.Weight == 0)
@@ -181,13 +205,13 @@ public sealed class BlendTextClassifier : ITextClassifier
                 probability[category] = current + (lane.Weight * weight / total);
             }
         }
+    }
 
-        if (probability.Count == 0)
-            return Array.Empty<ClassificationResult>();
-
-        if (_priors.Count > 0)
-            ApplyPriors(text, probability, trainedCategories);
-
+    private static IReadOnlyList<ClassificationResult> Rank(
+        Dictionary<string, double> probability,
+        IReadOnlySet<string>? excludedCategories,
+        int limit)
+    {
         double mass = 0;
 
         foreach (double value in probability.Values)

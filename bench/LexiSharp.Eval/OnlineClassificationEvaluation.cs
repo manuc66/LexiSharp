@@ -85,6 +85,28 @@ internal static class OnlineClassificationEvaluation
 {
     public static OnlineReport Run(OnlineEvaluationOptions options)
     {
+        Validate(options);
+        ITextClassifier model = CreateModel(options);
+
+        (List<SearchDocument> accumulated, HashSet<string> seenTexts, HashSet<string> seenCategories,
+            TimeSpan warmupTime) = Warmup(model, options);
+
+        StreamResult stream = RunStream(model, options, accumulated, seenTexts, seenCategories);
+
+        return BuildReport(
+            options,
+            model,
+            stream.Outcomes,
+            stream.LearnCalls,
+            stream.RetrainCalls,
+            warmupTime,
+            stream.PredictTime,
+            stream.LearnTime,
+            stream.RetrainTime);
+    }
+
+    private static void Validate(OnlineEvaluationOptions options)
+    {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(options.Factory);
         ArgumentNullException.ThrowIfNull(options.Warmup);
@@ -103,15 +125,18 @@ internal static class OnlineClassificationEvaluation
         if (options.BootstrapResamples < 1)
             throw new ArgumentOutOfRangeException(nameof(options), "At least one bootstrap resample is required.");
 
-        for (int i = 0; i < options.Stream.Count; i++)
+        foreach (OnlineExample example in options.Stream)
         {
-            SearchDocument document = options.Stream[i].Document
+            SearchDocument document = example.Document
                 ?? throw new ArgumentException("The stream contains a null document.", nameof(options));
 
             if (string.IsNullOrEmpty(document.Category))
                 throw new ArgumentException($"Stream document '{document.Id}' has no category.", nameof(options));
         }
+    }
 
+    private static ITextClassifier CreateModel(OnlineEvaluationOptions options)
+    {
         ITextClassifier model = options.Factory()
             ?? throw new InvalidOperationException("The classifier factory returned null.");
 
@@ -123,9 +148,18 @@ internal static class OnlineClassificationEvaluation
                 nameof(options));
         }
 
-        var warmupWatch = Stopwatch.StartNew();
+        return model;
+    }
+
+    private static (
+        List<SearchDocument> Accumulated,
+        HashSet<string> SeenTexts,
+        HashSet<string> SeenCategories,
+        TimeSpan Elapsed) Warmup(ITextClassifier model, OnlineEvaluationOptions options)
+    {
+        var watch = Stopwatch.StartNew();
         model.Train(options.Warmup);
-        warmupWatch.Stop();
+        watch.Stop();
 
         var seenTexts = new HashSet<string>(StringComparer.Ordinal);
         var seenCategories = new HashSet<string>(StringComparer.Ordinal);
@@ -144,6 +178,16 @@ internal static class OnlineClassificationEvaluation
         var accumulated = new List<SearchDocument>(options.Warmup.Count + options.Stream.Count);
         accumulated.AddRange(options.Warmup);
 
+        return (accumulated, seenTexts, seenCategories, watch.Elapsed);
+    }
+
+    private static StreamResult RunStream(
+        ITextClassifier model,
+        OnlineEvaluationOptions options,
+        List<SearchDocument> accumulated,
+        HashSet<string> seenTexts,
+        HashSet<string> seenCategories)
+    {
         var outcomes = new List<Outcome>(options.Stream.Count);
         var predictWatch = Stopwatch.StartNew();
         var learnWatch = new Stopwatch();
@@ -154,75 +198,125 @@ internal static class OnlineClassificationEvaluation
         for (int i = 0; i < options.Stream.Count; i++)
         {
             OnlineExample example = options.Stream[i];
-            SearchDocument document = example.Document;
-            string actual = document.Category!;
-
-            IReadOnlyList<ClassificationResult> results;
-            predictWatch.Start();
-            results = model.Predict(document.Text, limit: int.MaxValue);
-            predictWatch.Stop();
-
-            string? predicted = results.Count > 0 ? results[0].Category : null;
-            int rank = RankOf(results, actual);
-            bool correctAt1 = rank == 0;
-            bool correctAtK = rank >= 0 && rank < options.TopK;
-            double topProbability = results.Count > 0 ? results[0].Probability : 0;
-
-            outcomes.Add(new Outcome(
-                example.Block,
-                actual,
-                predicted,
-                topProbability,
-                correctAt1,
-                correctAtK,
-                seenTexts.Contains(document.Text),
-                seenCategories.Contains(actual)));
-
-            seenTexts.Add(document.Text);
+            outcomes.Add(Observe(model, example, options.TopK, seenTexts, seenCategories, predictWatch));
+            seenTexts.Add(example.Document.Text);
 
             if (!options.Learn)
                 continue;
 
-            // The schedule counts the examples already consumed, including this one. That makes
-            // `--retrain-every 50` read as "retrain after every 50th document", with no off-by-one
-            // hidden in the caller.
-            bool retrainDue = options.RetrainWhen is not null && options.RetrainWhen(i + 1);
-
-            if (model is IIncrementalTextClassifier incremental && !retrainDue)
-            {
-                learnWatch.Start();
-                incremental.Learn(document);
-                learnWatch.Stop();
-                learnCalls++;
-
-                if (!string.IsNullOrEmpty(actual))
-                    seenCategories.Add(actual);
-
-                continue;
-            }
-
-            accumulated.Add(document);
-
-            if (!retrainDue)
-                continue;
-
-            retrainWatch.Start();
-            model.Train(accumulated);
-            retrainWatch.Stop();
-            retrainCalls++;
-
-            seenCategories.Clear();
-
-            foreach (SearchDocument learned in accumulated)
-            {
-                if (!string.IsNullOrEmpty(learned.Category))
-                    seenCategories.Add(learned.Category);
-            }
+            LearnOne(
+                model,
+                example.Document,
+                i + 1,
+                options,
+                accumulated,
+                seenCategories,
+                learnWatch,
+                retrainWatch,
+                ref learnCalls,
+                ref retrainCalls);
         }
 
-        return BuildReport(options, model, outcomes, learnCalls, retrainCalls,
-            warmupWatch.Elapsed, predictWatch.Elapsed, learnWatch.Elapsed, retrainWatch.Elapsed);
+        return new StreamResult(
+            outcomes,
+            learnCalls,
+            retrainCalls,
+            predictWatch.Elapsed,
+            learnWatch.Elapsed,
+            retrainWatch.Elapsed);
     }
+
+    private static Outcome Observe(
+        ITextClassifier model,
+        OnlineExample example,
+        int topK,
+        HashSet<string> seenTexts,
+        HashSet<string> seenCategories,
+        Stopwatch predictWatch)
+    {
+        SearchDocument document = example.Document;
+        string actual = document.Category!;
+
+        predictWatch.Start();
+        IReadOnlyList<ClassificationResult> results = model.Predict(document.Text, limit: int.MaxValue);
+        predictWatch.Stop();
+
+        string? predicted = results.Count > 0 ? results[0].Category : null;
+        int rank = RankOf(results, actual);
+
+        return new Outcome(
+            example.Block,
+            actual,
+            predicted,
+            results.Count > 0 ? results[0].Probability : 0,
+            rank == 0,
+            rank >= 0 && rank < topK,
+            seenTexts.Contains(document.Text),
+            seenCategories.Contains(actual));
+    }
+
+    private static void LearnOne(
+        ITextClassifier model,
+        SearchDocument document,
+        int consumed,
+        OnlineEvaluationOptions options,
+        List<SearchDocument> accumulated,
+        HashSet<string> seenCategories,
+        Stopwatch learnWatch,
+        Stopwatch retrainWatch,
+        ref int learnCalls,
+        ref int retrainCalls)
+    {
+        // The schedule counts the examples already consumed, including this one. That makes
+        // `--retrain-every 50` read as "retrain after every 50th document", with no off-by-one
+        // hidden in the caller.
+        bool retrainDue = options.RetrainWhen is not null && options.RetrainWhen(consumed);
+
+        if (model is IIncrementalTextClassifier incremental && !retrainDue)
+        {
+            learnWatch.Start();
+            incremental.Learn(document);
+            learnWatch.Stop();
+            learnCalls++;
+
+            if (!string.IsNullOrEmpty(document.Category))
+                seenCategories.Add(document.Category);
+
+            return;
+        }
+
+        accumulated.Add(document);
+
+        if (!retrainDue)
+            return;
+
+        retrainWatch.Start();
+        model.Train(accumulated);
+        retrainWatch.Stop();
+        retrainCalls++;
+        RebuildSeenCategories(accumulated, seenCategories);
+    }
+
+    private static void RebuildSeenCategories(
+        List<SearchDocument> accumulated,
+        HashSet<string> seenCategories)
+    {
+        seenCategories.Clear();
+
+        foreach (SearchDocument learned in accumulated)
+        {
+            if (!string.IsNullOrEmpty(learned.Category))
+                seenCategories.Add(learned.Category);
+        }
+    }
+
+    private sealed record StreamResult(
+        List<Outcome> Outcomes,
+        int LearnCalls,
+        int RetrainCalls,
+        TimeSpan PredictTime,
+        TimeSpan LearnTime,
+        TimeSpan RetrainTime);
 
     private static OnlineReport BuildReport(
         OnlineEvaluationOptions options,
@@ -333,33 +427,48 @@ internal static class OnlineClassificationEvaluation
 
         foreach (string category in categories)
         {
-            int tp = 0;
-            int fp = 0;
-            int fn = 0;
+            double? f1 = CategoryF1(outcomes, category);
 
-            foreach (Outcome outcome in outcomes)
-            {
-                bool isActual = string.Equals(outcome.Actual, category, StringComparison.Ordinal);
-                bool isPredicted = string.Equals(outcome.Predicted, category, StringComparison.Ordinal);
-
-                if (isActual && isPredicted)
-                    tp++;
-                else if (!isActual && isPredicted)
-                    fp++;
-                else if (isActual && !isPredicted)
-                    fn++;
-            }
-
-            if (tp + fp + fn == 0)
+            if (f1 is null)
                 continue;
 
             present++;
-            double precision = tp + fp == 0 ? 0 : (double)tp / (tp + fp);
-            double recall = tp + fn == 0 ? 0 : (double)tp / (tp + fn);
-            sum += precision + recall == 0 ? 0 : 2 * precision * recall / (precision + recall);
+            sum += f1.Value;
         }
 
         return present == 0 ? 0 : sum / present;
+    }
+
+    private static double? CategoryF1(List<Outcome> outcomes, string category)
+    {
+        int truePositive = 0;
+        int falsePositive = 0;
+        int falseNegative = 0;
+
+        foreach (Outcome outcome in outcomes)
+        {
+            bool isActual = string.Equals(outcome.Actual, category, StringComparison.Ordinal);
+            bool isPredicted = string.Equals(outcome.Predicted, category, StringComparison.Ordinal);
+
+            if (isActual && isPredicted)
+                truePositive++;
+            else if (!isActual && isPredicted)
+                falsePositive++;
+            else if (isActual && !isPredicted)
+                falseNegative++;
+        }
+
+        if (truePositive + falsePositive + falseNegative == 0)
+            return null;
+
+        double precision = truePositive + falsePositive == 0
+            ? 0
+            : (double)truePositive / (truePositive + falsePositive);
+        double recall = truePositive + falseNegative == 0
+            ? 0
+            : (double)truePositive / (truePositive + falseNegative);
+
+        return precision + recall == 0 ? 0 : 2 * precision * recall / (precision + recall);
     }
 
     private static (IReadOnlyList<CoveragePoint> Points, CoveragePoint Recommended) BuildCoverage(

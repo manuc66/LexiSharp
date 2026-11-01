@@ -267,98 +267,120 @@ internal static class NewClassClassificationCommand
     {
         for (int i = 0; i < args.Length; i++)
         {
-            switch (args[i])
+            bool? handled = TryParseData(args, ref i, options)
+                ?? TryParseExperiment(args, ref i, options)
+                ?? TryParseOutput(args, ref i, options);
+
+            if (handled is null)
             {
-                case "--data" when i + 1 < args.Length:
-                    options.DataBaseDir = args[++i];
-                    break;
-                case "--limit" when i + 1 < args.Length:
-                    if (!int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out int limit)
-                        || limit <= 0)
-                    {
-                        Console.Error.WriteLine("classification-new-class: --limit expects a positive integer.");
-                        return false;
-                    }
-
-                    options.Limit = limit;
-                    break;
-                case "--text" when i + 1 < args.Length:
-                    string text = args[++i];
-
-                    if (text == "full")
-                        options.TextMode = ClassificationTextMode.SubjectAndBody;
-                    else if (text == "subject")
-                        options.TextMode = ClassificationTextMode.SubjectOnly;
-                    else
-                    {
-                        Console.Error.WriteLine("classification-new-class: --text expects 'full' or 'subject'.");
-                        return false;
-                    }
-
-                    break;
-                case "--held-out" when i + 1 < args.Length:
-                    if (!int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out int heldOut)
-                        || heldOut < 1)
-                    {
-                        Console.Error.WriteLine("classification-new-class: --held-out expects a positive integer.");
-                        return false;
-                    }
-
-                    options.HeldOutCategories = heldOut;
-                    break;
-                case "--correction-weight" when i + 1 < args.Length:
-                    if (!double.TryParse(args[++i], NumberStyles.Float, CultureInfo.InvariantCulture, out double weight)
-                        || !double.IsFinite(weight) || weight <= 0)
-                    {
-                        Console.Error.WriteLine("classification-new-class: --correction-weight expects a positive number.");
-                        return false;
-                    }
-
-                    options.CorrectionWeight = weight;
-                    break;
-                case "--bias" when i + 1 < args.Length:
-                    if (!double.TryParse(args[++i], NumberStyles.Float, CultureInfo.InvariantCulture, out double bias)
-                        || !double.IsFinite(bias))
-                    {
-                        Console.Error.WriteLine("classification-new-class: --bias expects a finite number.");
-                        return false;
-                    }
-
-                    options.UnseenCategoryBias = bias;
-                    break;
-                case "--retrain-every" when i + 1 < args.Length:
-                    if (!int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out int every)
-                        || every < 1)
-                    {
-                        Console.Error.WriteLine("classification-new-class: --retrain-every expects a positive integer.");
-                        return false;
-                    }
-
-                    options.RetrainEvery = every;
-                    break;
-                case "--seed" when i + 1 < args.Length:
-                    if (!int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out int seed)
-                        || seed < 0)
-                    {
-                        Console.Error.WriteLine("classification-new-class: --seed expects a non-negative integer.");
-                        return false;
-                    }
-
-                    options.Seed = seed;
-                    break;
-                case "--write" when i + 1 < args.Length:
-                    options.WritePath = args[++i];
-                    break;
-                case "--verify" when i + 1 < args.Length:
-                    options.VerifyPath = args[++i];
-                    break;
-                default:
-                    Console.Error.WriteLine($"classification-new-class: unknown argument '{args[i]}'.");
-                    return false;
+                Console.Error.WriteLine($"classification-new-class: unknown argument '{args[i]}'.");
+                return false;
             }
+
+            if (handled == false)
+                return false;
         }
 
         return true;
+    }
+
+    private static bool? TryParseData(string[] args, ref int i, CommandOptions options)
+    {
+        switch (args[i])
+        {
+            case "--data" when i + 1 < args.Length:
+                options.DataBaseDir = args[++i];
+                return true;
+            case "--limit" when i + 1 < args.Length:
+                if (!CommandParsing.TryPositiveInt(args[++i], out int limit))
+                {
+                    Console.Error.WriteLine("classification-new-class: --limit expects a positive integer.");
+                    return false;
+                }
+
+                options.Limit = limit;
+                return true;
+            case "--text" when i + 1 < args.Length:
+                if (!CommandParsing.TryTextMode(args[++i], out ClassificationTextMode mode))
+                {
+                    Console.Error.WriteLine("classification-new-class: --text expects 'full' or 'subject'.");
+                    return false;
+                }
+
+                options.TextMode = mode;
+                return true;
+            default:
+                return null;
+        }
+    }
+
+    private static bool? TryParseExperiment(string[] args, ref int i, CommandOptions options)
+    {
+        switch (args[i])
+        {
+            case "--held-out" when i + 1 < args.Length:
+                if (!CommandParsing.TryPositiveInt(args[++i], out int heldOut))
+                {
+                    Console.Error.WriteLine("classification-new-class: --held-out expects a positive integer.");
+                    return false;
+                }
+
+                options.HeldOutCategories = heldOut;
+                return true;
+            case "--correction-weight" when i + 1 < args.Length:
+                if (!CommandParsing.TryPositiveDouble(args[++i], out double weight))
+                {
+                    Console.Error.WriteLine("classification-new-class: --correction-weight expects a positive number.");
+                    return false;
+                }
+
+                options.CorrectionWeight = weight;
+                return true;
+            case "--bias" when i + 1 < args.Length:
+                if (!CommandParsing.TryFiniteDouble(args[++i], out double bias))
+                {
+                    Console.Error.WriteLine("classification-new-class: --bias expects a finite number.");
+                    return false;
+                }
+
+                options.UnseenCategoryBias = bias;
+                return true;
+            case "--retrain-every" when i + 1 < args.Length:
+                if (!CommandParsing.TryPositiveInt(args[++i], out int every))
+                {
+                    Console.Error.WriteLine("classification-new-class: --retrain-every expects a positive integer.");
+                    return false;
+                }
+
+                options.RetrainEvery = every;
+                return true;
+            case "--seed" when i + 1 < args.Length:
+                if (!CommandParsing.TryNonNegativeInt(args[++i], out int seed))
+                {
+                    Console.Error.WriteLine("classification-new-class: --seed expects a non-negative integer.");
+                    return false;
+                }
+
+                options.Seed = seed;
+                return true;
+            default:
+                return null;
+        }
+    }
+
+    private static bool? TryParseOutput(string[] args, ref int i, CommandOptions options)
+    {
+        switch (args[i])
+        {
+            case "--write" when i + 1 < args.Length:
+                options.WritePath = args[++i];
+                return true;
+            case "--verify" when i + 1 < args.Length:
+                options.VerifyPath = args[++i];
+                return true;
+            default:
+                return null;
+        }
     }
 
     private static SearchDocument ToDocument(ClassificationDocument document) =>
