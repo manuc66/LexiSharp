@@ -448,8 +448,9 @@ jobs:
     # The classification numbers in docs/ are only claims unless a run can reproduce them. This
     # replays the tuned 20 Newsgroups configuration and fails on any drift in accuracy, macro-F1,
     # the bootstrap intervals, the per-class F1, the prediction hash, the calibration temperatures
-    # or the McNemar counts. It downloads the dataset (checksum-verified) and is deterministic:
-    # every seed and the fold assignment are fixed.
+    # or the McNemar counts. It also replays the subject-only short-text pin, so the measured
+    # disappearance of the linear model's lead cannot silently revert. It downloads the dataset
+    # (checksum-verified) and is deterministic: every seed and the fold assignment are fixed.
     name: Classification pin (20 Newsgroups must not drift)
     runs-on: ubuntu-latest
     steps:
@@ -467,6 +468,15 @@ jobs:
           --tune --validation 0.15 --trees 25 --criterion Gini
           --cv
           --verify bench/LexiSharp.Eval/reference/classification-20news-tuned.json
+
+      - name: Classification reference (subject-only short text, verify)
+        run: >
+          dotnet run --project bench/LexiSharp.Eval -c Release --
+          classification
+          --data bench/LexiSharp.Eval/data
+          --text subject
+          --tune --validation 0.15 --trees 25 --criterion Gini
+          --verify bench/LexiSharp.Eval/reference/classification-20news-subject.json
 
   bench-smoke:
     # Does not measure performance: only proves the benchmarks build and run

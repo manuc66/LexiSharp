@@ -73,7 +73,8 @@ workflow.
   one to quote, and the CV table is published with that limit. A CI job replays the tuned pin.
   None of the models learns online — `Train` rebuilds, `Reinforce`/`Unreinforce` correct — and none
   persists a model; replaying the history is the intended path. The evidence is long 20 Newsgroups
-  messages, so short-text transfer is unproven and context features may carry most of the gain.
+  messages, and the subject-only run (`--text subject`) confirms it does not transfer: linear
+  **0.5533 / 0.5295** against Naive Bayes **0.5624 / 0.5293**, McNemar p = 0.16.
   Measured on the standard `20news-bydate` split: the single tree reads **0.4457** accuracy / **0.4945**
   macro-F1, the forest **0.6621** / **0.6584**, Naive Bayes **0.7573** / **0.7289**, and
   `LinearClassifier` **0.8085** / **0.8027** — the tree and forest are explainability/ensemble

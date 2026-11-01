@@ -406,7 +406,10 @@ AdaGrad and a deterministic shuffle. It has no path, but it sees every feature a
 coefficients are readable through `TopFeatures`. On 20 Newsgroups it reads **0.8085** accuracy /
 **0.8027** macro-F1 against Naive Bayes's **0.7573 / 0.7289**, the forest's **0.6621 / 0.6584**
 and the tree's **0.4457 / 0.4945**. The three are not competitors: the tree explains, the forest
-ensembles, the linear model decides.
+ensembles, the linear model decides. That ordering is a long-document result: on the same split
+with only the `Subject` line (`--text subject`), the linear model reads **0.5533 / 0.5295** and
+Naive Bayes **0.5624 / 0.5293** — the lead is gone and McNemar cannot separate them (p = 0.16).
+Measure the baseline on short text before assuming the linear model is the answer.
 
 ```csharp
 var linear = new LinearClassifier(new LinearClassifierOptions

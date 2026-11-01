@@ -79,6 +79,7 @@ internal static class ClassificationCommand
         bool linearIdf = false;
         bool linearTfIdf = false;
         bool crossValidate = false;
+        var textMode = ClassificationTextMode.SubjectAndBody;
         double validationFraction = 0.15;
         string? verifyPath = null;
         string? writePath = null;
@@ -167,6 +168,21 @@ internal static class ClassificationCommand
                 case "--cv":
                     crossValidate = true;
                     break;
+                case "--text" when i + 1 < args.Length:
+                    textMode = args[++i] switch
+                    {
+                        "full" => ClassificationTextMode.SubjectAndBody,
+                        "subject" => ClassificationTextMode.SubjectOnly,
+                        _ => (ClassificationTextMode)(-1),
+                    };
+
+                    if (!Enum.IsDefined(textMode))
+                    {
+                        Console.Error.WriteLine("classification: --text expects 'full' or 'subject'.");
+                        return 2;
+                    }
+
+                    break;
                 case "--validation" when i + 1 < args.Length:
                     if (!TryReadFraction(args[++i], out validationFraction))
                     {
@@ -187,7 +203,7 @@ internal static class ClassificationCommand
             }
         }
 
-        var corpus = await TwentyNewsgroups.LoadOrDownloadAsync(dataBaseDir, limit);
+        var corpus = await TwentyNewsgroups.LoadOrDownloadAsync(dataBaseDir, limit, textMode);
 
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
