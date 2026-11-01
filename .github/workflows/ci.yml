@@ -84,7 +84,7 @@ jobs:
         run: >
           dotnet test tests/LexiSharp.Onnx.Tests -c Release
           -p:CollectCoverage=true -p:CoverletOutputFormat=cobertura
-          -p:CoverletOutput=../../TestResults/onnx-coverage-
+          -p:CoverletOutput=../../TestResults/coverage-onnx-
           -p:Threshold=90 -p:ThresholdType=line -p:ThresholdStat=total
           -p:Include="[LexiSharp.Onnx]*"
 
@@ -257,8 +257,20 @@ jobs:
       - name: Build
         run: dotnet build LexiSharp.slnx -c Release
 
-      - name: Test (lexical + vector + sparse + fuzzy)
-        run: dotnet test tests/LexiSharp.Tests -c Release --no-build
+      - name: Test with coverage (lexical + vector + sparse + fuzzy)
+        run: >
+          dotnet test tests/LexiSharp.Tests -c Release
+          -p:CollectCoverage=true -p:CoverletOutputFormat=cobertura
+          -p:CoverletOutput=../../TestResults/coverage-postgres-
+
+      - name: Upload coverage to Codecov
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        if: env.CODECOV_TOKEN != ''
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
+        with:
+          files: TestResults/**/coverage*.cobertura.xml
+          fail_ci_if_error: true
 
   paradedb:
     name: Integration tests (paradedb/paradedb:pg16)
