@@ -24,86 +24,19 @@ internal static class CentroidClassificationCommand
 
     public static async Task<int> RunAsync(string[] args)
     {
-        string dataBaseDir = Path.Combine(AppContext.BaseDirectory, "../../../data");
-        string modelDir = Path.Combine(AppContext.BaseDirectory, "../../../data/models");
-        var textMode = ClassificationTextMode.SubjectAndBody;
-        int? limit = null;
-        double validationFraction = ValidationFraction;
-        double temperature = Temperature;
-        int maxSequenceLength = MaximumSequenceLength;
+        CommandOptions? options = ParseOptions(args);
 
-        for (int i = 0; i < args.Length; i++)
-        {
-            switch (args[i])
-            {
-                case "--data" when i + 1 < args.Length:
-                    dataBaseDir = args[++i];
-                    break;
-                case "--model" when i + 1 < args.Length:
-                    modelDir = args[++i];
-                    break;
-                case "--text" when i + 1 < args.Length:
-                    textMode = args[++i] switch
-                    {
-                        "full" => ClassificationTextMode.SubjectAndBody,
-                        "subject" => ClassificationTextMode.SubjectOnly,
-                        _ => (ClassificationTextMode)(-1),
-                    };
+        if (options is null)
+            return 2;
 
-                    if (!Enum.IsDefined(textMode))
-                    {
-                        Console.Error.WriteLine("classification-centroid: --text expects 'full' or 'subject'.");
-                        return 2;
-                    }
-
-                    break;
-                case "--limit" when i + 1 < args.Length:
-                    if (!TryReadPositive(args[++i], out int parsedLimit))
-                    {
-                        Console.Error.WriteLine("classification-centroid: --limit expects a positive integer.");
-                        return 2;
-                    }
-
-                    limit = parsedLimit;
-                    break;
-                case "--validation" when i + 1 < args.Length:
-                    if (!TryReadFraction(args[++i], out validationFraction))
-                    {
-                        Console.Error.WriteLine("classification-centroid: --validation expects a number in (0, 1).");
-                        return 2;
-                    }
-
-                    break;
-                case "--temperature" when i + 1 < args.Length:
-                    if (!TryReadPositiveDouble(args[++i], out temperature))
-                    {
-                        Console.Error.WriteLine("classification-centroid: --temperature expects a finite number greater than 0.");
-                        return 2;
-                    }
-
-                    break;
-                case "--max-seq" when i + 1 < args.Length:
-                    if (!TryReadPositive(args[++i], out maxSequenceLength))
-                    {
-                        Console.Error.WriteLine("classification-centroid: --max-seq expects a positive integer.");
-                        return 2;
-                    }
-
-                    break;
-                default:
-                    Console.Error.WriteLine($"classification-centroid: unknown argument '{args[i]}'.");
-                    return 2;
-            }
-        }
-
-        string? onnxPath = ResolveModelFile(modelDir, Path.Combine("onnx", "model.onnx"))
-            ?? ResolveModelFile(modelDir, "model.onnx");
-        string? sentencePiecePath = ResolveModelFile(modelDir, "sentencepiece.bpe.model");
+        string? onnxPath = ResolveModelFile(options.ModelDir, Path.Combine("onnx", "model.onnx"))
+            ?? ResolveModelFile(options.ModelDir, "model.onnx");
+        string? sentencePiecePath = ResolveModelFile(options.ModelDir, "sentencepiece.bpe.model");
 
         if (onnxPath is null || sentencePiecePath is null)
         {
             Console.Error.WriteLine(
-                $"classification-centroid: expected model.onnx (or onnx/model.onnx) and sentencepiece.bpe.model under '{modelDir}'.");
+                $"classification-centroid: expected model.onnx (or onnx/model.onnx) and sentencepiece.bpe.model under '{options.ModelDir}'.");
             return 2;
         }
 
@@ -114,14 +47,14 @@ internal static class CentroidClassificationCommand
             cancellation.Cancel();
         };
 
-        var corpus = await TwentyNewsgroups.LoadOrDownloadAsync(dataBaseDir, limit, textMode);
+        var corpus = await TwentyNewsgroups.LoadOrDownloadAsync(options.DataBaseDir, options.Limit, options.TextMode);
 
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
             $"20 Newsgroups ({corpus.Name}): {corpus.Train.Count} train, {corpus.Test.Count} test, " +
             $"{corpus.Categories.Count} categories"));
 
-        using var encoder = CreateEncoder(onnxPath, sentencePiecePath, maxSequenceLength);
+        using var encoder = CreateEncoder(onnxPath, sentencePiecePath, options.MaxSequenceLength);
 
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
@@ -129,7 +62,7 @@ internal static class CentroidClassificationCommand
 
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
-            $"Encoding {corpus.Train.Count + corpus.Test.Count} texts (batch {EmbeddingBatchSize}, max {maxSequenceLength} tokens)..."));
+            $"Encoding {corpus.Train.Count + corpus.Test.Count} texts (batch {EmbeddingBatchSize}, max {options.MaxSequenceLength} tokens)..."));
 
         var watch = System.Diagnostics.Stopwatch.StartNew();
 
@@ -147,8 +80,8 @@ internal static class CentroidClassificationCommand
             CultureInfo.InvariantCulture,
             $"Embedded in {watch.Elapsed.TotalSeconds:0.0}s."));
 
-        var split = Split(corpus.Train, validationFraction);
-        var fitModel = TrainModel(corpus.Train, trainVectors, split.Fit, temperature);
+        var split = Split(corpus.Train, options.ValidationFraction);
+        var fitModel = TrainModel(corpus.Train, trainVectors, split.Fit, options.Temperature);
         var validation = PredictAll(
             corpus.Train,
             trainVectors,
@@ -158,7 +91,7 @@ internal static class CentroidClassificationCommand
             corpus.Categories.Count);
 
         double bestWeight = SelectWeight(validation, corpus.Train, split.Validation, corpus.Categories);
-        var fullModel = TrainModel(corpus.Train, trainVectors, Enumerable.Range(0, corpus.Train.Count).ToArray(), temperature);
+        var fullModel = TrainModel(corpus.Train, trainVectors, Enumerable.Range(0, corpus.Train.Count).ToArray(), options.Temperature);
         var test = PredictAll(
             corpus.Test,
             testVectors,
@@ -173,6 +106,107 @@ internal static class CentroidClassificationCommand
             $"Held-out selection: {split.Validation.Count} training documents, best weight {bestWeight:0.00}"));
         Console.WriteLine();
 
+        PrintResults(corpus, test, bestWeight);
+
+        return 0;
+    }
+
+    private static CommandOptions? ParseOptions(string[] args)
+    {
+        var options = new CommandOptions(
+            Path.Combine(AppContext.BaseDirectory, "../../../data"),
+            Path.Combine(AppContext.BaseDirectory, "../../../data/models"),
+            ClassificationTextMode.SubjectAndBody,
+            Limit: null,
+            ValidationFraction,
+            Temperature,
+            MaximumSequenceLength);
+
+        for (int i = 0; i < args.Length; i++)
+        {
+            string argument = args[i];
+
+            if (i + 1 >= args.Length)
+            {
+                Console.Error.WriteLine($"classification-centroid: {argument} expects a value.");
+                return null;
+            }
+
+            string value = args[++i];
+
+            switch (argument)
+            {
+                case "--data":
+                    options = options with { DataBaseDir = value };
+                    break;
+                case "--model":
+                    options = options with { ModelDir = value };
+                    break;
+                case "--text":
+                {
+                    var textMode = value switch
+                    {
+                        "full" => ClassificationTextMode.SubjectAndBody,
+                        "subject" => ClassificationTextMode.SubjectOnly,
+                        _ => (ClassificationTextMode)(-1),
+                    };
+
+                    if (!Enum.IsDefined(textMode))
+                    {
+                        Console.Error.WriteLine("classification-centroid: --text expects 'full' or 'subject'.");
+                        return null;
+                    }
+
+                    options = options with { TextMode = textMode };
+                    break;
+                }
+                case "--limit":
+                    if (!TryReadPositive(value, out int parsedLimit))
+                    {
+                        Console.Error.WriteLine("classification-centroid: --limit expects a positive integer.");
+                        return null;
+                    }
+
+                    options = options with { Limit = parsedLimit };
+                    break;
+                case "--validation":
+                    if (!TryReadFraction(value, out double validationFraction))
+                    {
+                        Console.Error.WriteLine("classification-centroid: --validation expects a number in (0, 1).");
+                        return null;
+                    }
+
+                    options = options with { ValidationFraction = validationFraction };
+                    break;
+                case "--temperature":
+                    if (!TryReadPositiveDouble(value, out double temperature))
+                    {
+                        Console.Error.WriteLine("classification-centroid: --temperature expects a finite number greater than 0.");
+                        return null;
+                    }
+
+                    options = options with { Temperature = temperature };
+                    break;
+                case "--max-seq":
+                    if (!TryReadPositive(value, out int maxSequenceLength))
+                    {
+                        Console.Error.WriteLine("classification-centroid: --max-seq expects a positive integer.");
+                        return null;
+                    }
+
+                    options = options with { MaxSequenceLength = maxSequenceLength };
+                    break;
+                default:
+                    Console.Error.WriteLine($"classification-centroid: unknown argument '{argument}'.");
+                    return null;
+            }
+        }
+
+        return options;
+    }
+
+    private static void PrintResults(ClassificationCorpus corpus, Prediction[] test, double bestWeight)
+    {
         var rows = new[]
         {
             Evaluate("Naive Bayes", test, corpus.Test, corpus.Categories, weight: 0),
@@ -213,8 +247,6 @@ internal static class CentroidClassificationCommand
                 CultureInfo.InvariantCulture,
                 $"| {weight:0.00} | {row.Accuracy:0.0000} | {row.MacroF1:0.0000} |"));
         }
-
-        return 0;
     }
 
     private static OnnxTextEncoder CreateEncoder(string onnxPath, string sentencePiecePath, int maxSequenceLength)
@@ -484,6 +516,15 @@ internal static class CentroidClassificationCommand
         && parsed < 1;
 
     private sealed record LabelledVector(string Category, ReadOnlyMemory<float> Vector);
+
+    private sealed record CommandOptions(
+        string DataBaseDir,
+        string ModelDir,
+        ClassificationTextMode TextMode,
+        int? Limit,
+        double ValidationFraction,
+        double Temperature,
+        int MaxSequenceLength);
 
     private sealed record Prediction(
         IReadOnlyList<ClassificationResult> Lexical,
