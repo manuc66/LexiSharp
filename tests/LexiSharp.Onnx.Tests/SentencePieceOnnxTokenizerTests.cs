@@ -87,6 +87,12 @@ public sealed class SentencePieceOnnxTokenizerTests
     }
 
     [Fact]
+    public void Constructor_RejectsAnEmptyPath()
+    {
+        Assert.Throws<ArgumentException>(() => new SentencePieceOnnxTokenizer(" "));
+    }
+
+    [Fact]
     public void Constructor_RejectsAFileOverTheConfiguredLimit()
     {
         Assert.Throws<InvalidOperationException>(
