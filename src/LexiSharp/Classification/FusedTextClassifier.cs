@@ -96,7 +96,7 @@ public sealed class FusedTextClassifier : ITextClassifier
         if (first.Count == 0 && second.Count == 0)
             return Array.Empty<ClassificationResult>();
 
-        var blended = new Dictionary<string, double>(StringComparer.Ordinal);
+        var blended = new Dictionary<string, double>(first.Count + second.Count, StringComparer.Ordinal);
 
         foreach (var result in first)
             blended[result.Category] = (1 - _secondWeight) * result.Probability;
@@ -115,10 +115,10 @@ public sealed class FusedTextClassifier : ITextClassifier
         if (total <= 0)
             return Array.Empty<ClassificationResult>();
 
-        var ranked = new List<ClassificationResult>(blended.Count);
+        var ranked = new List<(string Category, double Probability)>(blended.Count);
 
         foreach (var (category, probability) in blended)
-            ranked.Add(new ClassificationResult(category, probability / total));
+            ranked.Add((category, probability / total));
 
         ranked.Sort(static (left, right) =>
         {
@@ -128,10 +128,15 @@ public sealed class FusedTextClassifier : ITextClassifier
                 : string.CompareOrdinal(left.Category, right.Category);
         });
 
-        if (ranked.Count > limit)
-            ranked.RemoveRange(limit, ranked.Count - limit);
+        // Only the returned categories become result objects. The union can be wider than the
+        // page, and materializing every category only to discard it is the allocation this avoids.
+        int take = Math.Min(limit, ranked.Count);
+        var results = new ClassificationResult[take];
 
-        return ranked;
+        for (int i = 0; i < take; i++)
+            results[i] = new ClassificationResult(ranked[i].Category, ranked[i].Probability);
+
+        return results;
     }
 
     /// <inheritdoc />

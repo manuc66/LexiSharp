@@ -44,6 +44,14 @@ public sealed class CentroidClassifier<TItem>
     private IReadOnlyDictionary<string, ReadOnlyMemory<float>> _centroids =
         new Dictionary<string, ReadOnlyMemory<float>>(StringComparer.Ordinal);
 
+    /// <summary>
+    /// The L2 norm of every centroid, computed when the model is trained. A prediction compares
+    /// one query against every category, so recomputing these would repeat the same work once per
+    /// category; the query norm is computed once per call for the same reason.
+    /// </summary>
+    private IReadOnlyDictionary<string, float> _centroidNorms =
+        new Dictionary<string, float>(StringComparer.Ordinal);
+
     private int _dimension;
 
     /// <summary>Creates a classifier over a caller-supplied vector source and label.</summary>
@@ -140,6 +148,7 @@ public sealed class CentroidClassifier<TItem>
         }
 
         var centroids = new Dictionary<string, ReadOnlyMemory<float>>(sums.Count, StringComparer.Ordinal);
+        var norms = new Dictionary<string, float>(sums.Count, StringComparer.Ordinal);
 
         foreach (var (category, sum) in sums)
         {
@@ -151,9 +160,15 @@ public sealed class CentroidClassifier<TItem>
                 mean[i] = sum[i] * reciprocal;
 
             centroids[category] = mean;
+
+            // Cached once: a prediction compares every centroid against one query, and the norm
+            // of each centroid is the same on every call. Recomputing it per prediction turns a
+            // dot product into a dot product plus two norm passes.
+            norms[category] = VectorSimilarity.Norm(mean);
         }
 
         _centroids = centroids;
+        _centroidNorms = norms;
         _dimension = dimension < 0 ? 0 : dimension;
     }
 
@@ -179,53 +194,61 @@ public sealed class CentroidClassifier<TItem>
 
         ValidateFinite(vector, null, nameof(vector));
 
-        var categories = new List<string>(_centroids.Count);
-        var cosines = new List<double>(_centroids.Count);
+        var scores = new List<Score>(_centroids.Count);
         double highest = double.NegativeInfinity;
+        float queryNorm = VectorSimilarity.Norm(vector.Span);
 
         foreach (var (category, centroid) in _centroids)
         {
             if (excludedCategories?.Contains(category) == true)
                 continue;
 
-            double cosine = VectorSimilarity.CosineSimilarity(vector.Span, centroid.Span);
-            categories.Add(category);
-            cosines.Add(cosine);
+            // Both norms are known: the query's once per call, the centroid's since training.
+            // The internal overload is the same cosine without recomputing either.
+            double cosine = VectorSimilarity.CosineSimilarity(
+                vector.Span,
+                centroid.Span,
+                queryNorm,
+                _centroidNorms[category]);
+
+            scores.Add(new Score(category, cosine));
 
             if (cosine > highest)
                 highest = cosine;
         }
 
-        if (categories.Count == 0)
+        if (scores.Count == 0)
             return Array.Empty<ClassificationResult>();
 
-        var weights = new double[cosines.Count];
         double total = 0;
 
-        for (int i = 0; i < weights.Length; i++)
+        foreach (var score in scores)
         {
             // Subtracting the maximum is the usual softmax shift: exp stays in [0, 1] and the
             // largest term is exactly 1, so a corpus of mutually orthogonal vectors cannot underflow.
-            double weight = Math.Exp((cosines[i] - highest) / _temperature);
-            weights[i] = weight;
-            total += weight;
+            total += Math.Exp((score.Cosine - highest) / _temperature);
         }
 
-        var ranked = new List<ClassificationResult>(categories.Count);
-
-        for (int i = 0; i < categories.Count; i++)
-            ranked.Add(new ClassificationResult(categories[i], weights[i] / total));
-
-        ranked.Sort(static (left, right) =>
+        // Cosine order is probability order at any positive temperature, so the scores can be
+        // sorted before the softmax: only the returned categories become ClassificationResult
+        // objects, rather than one per category that is then discarded by the limit.
+        scores.Sort(static (left, right) =>
         {
-            int byProbability = right.Probability.CompareTo(left.Probability);
-            return byProbability != 0
-                ? byProbability
+            int byCosine = right.Cosine.CompareTo(left.Cosine);
+            return byCosine != 0
+                ? byCosine
                 : string.CompareOrdinal(left.Category, right.Category);
         });
 
-        if (ranked.Count > limit)
-            ranked.RemoveRange(limit, ranked.Count - limit);
+        int take = Math.Min(limit, scores.Count);
+        var ranked = new ClassificationResult[take];
+
+        for (int i = 0; i < take; i++)
+        {
+            ranked[i] = new ClassificationResult(
+                scores[i].Category,
+                Math.Exp((scores[i].Cosine - highest) / _temperature) / total);
+        }
 
         return ranked;
     }
@@ -244,6 +267,8 @@ public sealed class CentroidClassifier<TItem>
         for (int i = 0; i < vector.Length; i++)
             sum[i] += vector[i];
     }
+
+    private readonly record struct Score(string Category, double Cosine);
 
     private static void ValidateFinite(ReadOnlyMemory<float> vector, string? category, string parameterName)
     {
