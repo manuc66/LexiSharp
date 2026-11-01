@@ -481,11 +481,29 @@ data. Load with the same source configuration you trained with, or the same text
 features. The hash identifies the vocabulary for your own bookkeeping; it cannot detect a source
 that changed while keeping the same names.
 
-There is no online learning. `Train` rebuilds the model from the documents it is given, and
-`Reinforce`/`Unreinforce` are corrections on top of a trained model — there is no `Learn`/`Unlearn`
-that folds a document into the counts the way Naive Bayes does. For a corpus of a few thousand
-examples, retraining on every synchronization is likely cheap enough, but that cost has not been
-measured here, so treat it as an assumption to check on your data.
+### Online updates
+
+`Learn(document)` folds one labelled document into the model and returns a `long` token;
+`Unlearn(token)` removes exactly that contribution and returns `false` for an unknown token. On the
+tree the document changes the distribution of the leaf it reaches; on the linear model it adds
+signed mass on its known features for its category. Neither rebuilds the structure or the
+coefficients: this is an exact correction on top of a trained model, not a retrain, and `Train`
+clears both ledgers.
+
+```csharp
+long token = linear.Learn("i cannot connect", "Support");
+// ...
+linear.Unlearn(token);   // the exact contribution is gone
+```
+
+Measured on the 20 Newsgroups train split (11 300 documents, tuned configuration), learning 2 260
+documents one by one took **0.43 s** for the tree and **0.63 s** for the linear model; unlearning
+them took **0.02 s** and **0.58 s**. A full retrain of the 11 300 in the same run took **14.1 s**
+and **25.7 s**. At a few thousand documents a retrain is therefore affordable — seconds, not
+minutes — but an online update is roughly one to two orders of magnitude cheaper. The two are not
+interchangeable: `Learn` corrects the reached leaf or the feature logits and does not restructure
+the tree or re-optimize the coefficients, so measure the accuracy you need rather than assuming
+`Learn` equals `Train`.
 
 ### Unsupervised: dividing a corpus
 

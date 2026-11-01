@@ -10,11 +10,12 @@ namespace LexiSharp.Classification;
 /// <remarks>
 /// <para>
 /// The format carries the trained state only: the tree structure and its questions, the forest's
-/// trees, or the linear model's coefficients, together with the vocabulary and the correction
-/// ledger. It does not carry the <see cref="IFeatureSource{TItem}"/> or the tokenizer, because a
-/// delegate is not data; load with the same source configuration you trained with. The stored
-/// feature-space hash identifies the vocabulary for your own bookkeeping and is verified on load,
-/// so a corrupted file is rejected rather than silently misread.
+/// trees, or the linear model's coefficients, together with the vocabulary, the prediction options
+/// and both ledgers (corrections and learned tokens). It does not carry the
+/// <see cref="IFeatureSource{TItem}"/> or the tokenizer, because a delegate is not data; load with
+/// the same source configuration you trained with. The stored feature-space hash identifies the
+/// vocabulary for your own bookkeeping and is verified on load, so a corrupted file is rejected
+/// rather than silently misread.
 /// </para>
 /// <para>
 /// The format is little-endian and starts with the magic <c>LXCL</c>, an <see cref="int"/> version,
@@ -361,6 +362,36 @@ internal static class ModelFormat
                 throw new InvalidDataException($"An invalid collection size was read ({count}).");
 
             return count;
+        }
+
+        internal static void WritePath(BinaryWriter writer, IReadOnlyList<bool> path)
+        {
+            writer.Write(path.Count);
+
+            foreach (bool answer in path)
+                writer.Write((byte)(answer ? 1 : 0));
+        }
+
+        internal static bool[] ReadPath(BinaryReader reader)
+        {
+            int length = ReadCount(reader);
+
+            if (length > 4096)
+                throw new InvalidDataException("A path is too long.");
+
+            var path = new bool[length];
+
+            for (int step = 0; step < length; step++)
+            {
+                byte answer = reader.ReadByte();
+
+                if (answer > 1)
+                    throw new InvalidDataException("A path is not a bit sequence.");
+
+                path[step] = answer == 1;
+            }
+
+            return path;
         }
 
         internal static void WriteNode(BinaryWriter writer, DecisionTreeNode? node)

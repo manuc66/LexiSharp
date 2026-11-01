@@ -71,8 +71,10 @@ workflow.
   **0.8918 ± 0.0070** and Naive Bayes **0.8190 ± 0.0063**, about eight points above the held-out
   figures because `20news-bydate`'s halves are disjoint date windows — the held-out number is the
   one to quote, and the CV table is published with that limit. A CI job replays the tuned pin.
-  None of the models learns online — `Train` rebuilds, `Reinforce`/`Unreinforce` correct.
-  `ClassificationModelSerializer` saves a trained tree, forest, linear model or calibrated wrapper
+  `Learn`/`Unlearn` fold one labelled document into a trained tree or linear model and remove it
+  exactly, without rebuilding the structure or the coefficients; at 11 300 documents a Learn pass
+  over 2 260 reads **0.43 s / 0.63 s** against **14.1 s / 25.7 s** for a full retrain in the same
+  run. `ClassificationModelSerializer` saves a trained tree, forest, linear model or calibrated wrapper
   in a versioned binary (`LXCL`, version 1) with the vocabulary, prediction options and ledger; the
   tokenizer is not stored, so load with the same feature source. The evidence is long 20 Newsgroups
   messages, and the subject-only run (`--text subject`) confirms it does not transfer: linear
