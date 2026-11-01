@@ -30,6 +30,11 @@ workflow.
   `LexiSharp.Onnx` seam. Prediction caches each centroid's norm at training time and the query's
   once per call, so a category costs one dot product; only the returned categories become result
   objects.
+- **Precision at a chosen coverage.** `classification --coverage` retrains each model, sweeps the
+  winning probability and reports the precision over the documents each threshold covers;
+  `--coverage-target` sets the share the recommendation must cover. On 20NG at a 50 % target the
+  linear model reads **0.964** precision on **0.501** coverage, the forest **0.868** on **0.500**,
+  Naive Bayes **0.914** on **0.500** and the tree **0.775** on **0.506**.
 - **Question trees and a forest over any feature space.** `DecisionTreeClassifier` learns a binary
   question tree — the most discriminative feature first — and `Explain` returns the path;
   `CorpusDivider` does the same without labels, splitting an unlabelled corpus into two
@@ -88,6 +93,10 @@ workflow.
 
 ### Changed
 
+- **The docs mark unreleased features.** Anything on `main` but not in the 0.8.0 package is
+  labelled **unreleased** (the classification subsystem, French stemming,
+  `QueryFeedbackHistory`), and `WordJoiners` is documented with its identifier case and its 0.7.0
+  origin.
 - **The store path is timed, which is the path a deployment runs.** A new `store` lane writes a corpus
   into `SegmentedTextIndex`, commits it, reopens it three ways and measures the same three queries as
   the cursor lane. At 100,000 documents: building the in-memory index takes **4.5-4.7 s** while opening
