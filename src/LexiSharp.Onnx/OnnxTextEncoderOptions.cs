@@ -72,9 +72,16 @@ public sealed class OnnxTextEncoderOptions
 
     /// <summary>
     /// Maximum texts per session call when the batch API is used. Bounds the padded token arrays
-    /// a large corpus allocates at once. Defaults to 32.
+    /// a large corpus allocates at once. Defaults to <c>8</c>; the benchmark's medium run put
+    /// batch 8 ahead of both one-at-a-time and batch 32 on a CPU host.
     /// </summary>
-    public int MaxBatchSize { get; init; } = 32;
+    public int MaxBatchSize { get; init; } = 8;
+
+    /// <summary>
+    /// Number of text → vector entries kept for the query path. Defaults to <c>256</c>; set
+    /// <c>0</c> to disable. Only the single-text methods use the cache.
+    /// </summary>
+    public int EmbeddingCacheCapacity { get; init; } = 256;
 
     /// <summary>
     /// Hard cap on input characters, checked before tokenization so a huge document cannot make

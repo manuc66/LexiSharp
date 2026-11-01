@@ -226,6 +226,20 @@ public sealed class OnnxValidationTests
     }
 
     [Fact]
+    public void EmbeddingCache_IgnoresARepeatedWrite()
+    {
+        var cache = new OnnxEmbeddingCache(2);
+        ReadOnlyMemory<float> first = new[] { 1f, 0f };
+        ReadOnlyMemory<float> second = new[] { 0f, 1f };
+
+        cache.Set("hello", EmbeddingUse.Passage, first);
+        cache.Set("hello", EmbeddingUse.Passage, second);
+
+        Assert.True(cache.TryGet("hello", EmbeddingUse.Passage, out ReadOnlyMemory<float> value));
+        Assert.Equal(first.ToArray(), value.ToArray());
+    }
+
+    [Fact]
     public void TokenizedText_RejectsDifferentLengths()
     {
         Assert.Throws<ArgumentException>(() => new OnnxTokenizedText([1, 2], [0]));
