@@ -97,6 +97,24 @@ public class RandomForestClassifierTests
     }
 
     [Fact]
+    public void Forest_WithNoFeatures_LearnsThePrior()
+    {
+        var classifier = new RandomForestClassifier(options: new RandomForestOptions
+        {
+            Trees = 5,
+            MinDocumentFrequency = 1,
+        });
+        classifier.Train(new[]
+        {
+            new SearchDocument("a", string.Empty, Category: "A"),
+            new SearchDocument("b", string.Empty, Category: "B"),
+        });
+
+        Assert.Equal(5, classifier.TreeCount);
+        Assert.NotNull(classifier.PredictBest("anything"));
+    }
+
+    [Fact]
     public void Train_IgnoresDocumentsWithoutACategory()
     {
         var classifier = new RandomForestClassifier(
