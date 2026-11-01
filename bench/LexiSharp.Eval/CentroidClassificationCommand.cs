@@ -87,7 +87,7 @@ internal static class CentroidClassificationCommand
             $"Embedded in {watch.Elapsed.TotalSeconds:0.0}s."));
 
         var split = Split(corpus.Train, options.ValidationFraction);
-        var fitModel = TrainModel(corpus.Train, trainVectors, split.Fit, options.Temperature);
+        var fitModel = TrainModel(corpus.Train, trainVectors, split.Fit, options.Temperature, options.Center);
         var validation = PredictAll(
             corpus.Train,
             trainVectors,
@@ -97,7 +97,7 @@ internal static class CentroidClassificationCommand
             corpus.Categories.Count);
 
         double bestWeight = SelectWeight(validation, corpus.Train, split.Validation, corpus.Categories);
-        var fullModel = TrainModel(corpus.Train, trainVectors, Enumerable.Range(0, corpus.Train.Count).ToArray(), options.Temperature);
+        var fullModel = TrainModel(corpus.Train, trainVectors, Enumerable.Range(0, corpus.Train.Count).ToArray(), options.Temperature, options.Center);
         var test = PredictAll(
             corpus.Test,
             testVectors,
@@ -126,11 +126,18 @@ internal static class CentroidClassificationCommand
             Limit: null,
             ValidationFraction,
             Temperature,
-            MaximumSequenceLength);
+            MaximumSequenceLength,
+            Center: false);
 
         for (int i = 0; i < args.Length; i++)
         {
             string argument = args[i];
+
+            if (argument == "--center")
+            {
+                options = options with { Center = true };
+                continue;
+            }
 
             if (i + 1 >= args.Length)
             {
@@ -277,7 +284,8 @@ internal static class CentroidClassificationCommand
         IReadOnlyList<ClassificationDocument> documents,
         IReadOnlyList<ReadOnlyMemory<float>> vectors,
         IReadOnlyList<int> indices,
-        double temperature)
+        double temperature,
+        bool center)
     {
         var training = new SearchDocument[indices.Count];
         var labelled = new LabelledVector[indices.Count];
@@ -295,7 +303,11 @@ internal static class CentroidClassificationCommand
         var centroid = new CentroidClassifier<LabelledVector>(
             item => item.Vector,
             item => item.Category,
-            new CentroidClassifierOptions { Temperature = temperature });
+            new CentroidClassifierOptions
+            {
+                Temperature = temperature,
+                CenterOnGlobalMean = center,
+            });
 
         centroid.Train(labelled);
 
@@ -521,7 +533,8 @@ internal static class CentroidClassificationCommand
         int? Limit,
         double ValidationFraction,
         double Temperature,
-        int MaxSequenceLength);
+        int MaxSequenceLength,
+        bool Center);
 
     private sealed record Prediction(
         IReadOnlyList<ClassificationResult> Lexical,

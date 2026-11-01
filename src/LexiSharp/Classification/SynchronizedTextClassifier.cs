@@ -3,7 +3,7 @@ using LexiSharp.Core;
 namespace LexiSharp.Classification;
 
 /// <summary>
-/// Wraps an <see cref="IReinforceableTextClassifier"/> so that concurrent prediction and concurrent
+/// Wraps an <see cref="ITextClassifier"/> so that concurrent prediction and concurrent
 /// mutation stop being the caller's problem: any number of
 /// <see cref="Predict(string, int, IReadOnlySet{string})"/> and <see cref="PredictBest"/> calls may
 /// run at the same time, while <see cref="Train"/>, <see cref="Learn"/>, <see cref="Unlearn"/>,
@@ -12,10 +12,10 @@ namespace LexiSharp.Classification;
 /// </summary>
 /// <remarks>
 /// The capabilities it forwards are optional and detected on the wrapped instance.
-/// Reinforcement is what the wrapper is built around; <see cref="IWeightedPredictor"/> and
-/// <see cref="IIncrementalTextClassifier"/> are forwarded when the wrapped classifier supports them
-/// and throw <see cref="NotSupportedException"/> naming the wrapped type when it does not, rather
-/// than silently doing nothing.
+/// <see cref="IIncrementalTextClassifier"/>, <see cref="IReinforceableTextClassifier"/> and
+/// <see cref="IWeightedPredictor"/> are forwarded when the wrapped classifier supports them and
+/// throw <see cref="NotSupportedException"/> naming the wrapped type when it does not, rather than
+/// silently doing nothing.
 /// </remarks>
 /// <remarks>
 /// <para>
@@ -62,7 +62,7 @@ namespace LexiSharp.Classification;
 public sealed class SynchronizedTextClassifier
     : IIncrementalTextClassifier, IReinforceableTextClassifier, IWeightedPredictor, IDisposable
 {
-    private readonly IReinforceableTextClassifier _inner;
+    private readonly ITextClassifier _inner;
 
     // NoRecursion, so a mistake that re-enters fails loudly instead of deadlocking. Nothing in this
     // class does re-enter: the locked calls go straight to the wrapped instance, never back through
@@ -71,7 +71,7 @@ public sealed class SynchronizedTextClassifier
 
     /// <param name="inner">The classifier to synchronize access to. Not owned by this wrapper.</param>
     /// <exception cref="ArgumentNullException"><paramref name="inner"/> is null.</exception>
-    public SynchronizedTextClassifier(IReinforceableTextClassifier inner)
+    public SynchronizedTextClassifier(ITextClassifier inner)
     {
         ArgumentNullException.ThrowIfNull(inner);
         _inner = inner;
@@ -139,12 +139,17 @@ public sealed class SynchronizedTextClassifier
     }
 
     /// <inheritdoc />
+    /// <exception cref="NotSupportedException">
+    /// The wrapped classifier is not an <see cref="IReinforceableTextClassifier"/>.
+    /// </exception>
     public void Reinforce(string text, string category, double weight = 1.0)
     {
+        var reinforceable = AsReinforceable();
+
         _lock.EnterWriteLock();
         try
         {
-            _inner.Reinforce(text, category, weight);
+            reinforceable.Reinforce(text, category, weight);
         }
         finally
         {
@@ -153,12 +158,17 @@ public sealed class SynchronizedTextClassifier
     }
 
     /// <inheritdoc />
+    /// <exception cref="NotSupportedException">
+    /// The wrapped classifier is not an <see cref="IReinforceableTextClassifier"/>.
+    /// </exception>
     public void Unreinforce(string text, string category, double weight = 1.0)
     {
+        var reinforceable = AsReinforceable();
+
         _lock.EnterWriteLock();
         try
         {
-            _inner.Unreinforce(text, category, weight);
+            reinforceable.Unreinforce(text, category, weight);
         }
         finally
         {
@@ -167,17 +177,31 @@ public sealed class SynchronizedTextClassifier
     }
 
     /// <inheritdoc />
+    /// <exception cref="NotSupportedException">
+    /// The wrapped classifier is not an <see cref="IReinforceableTextClassifier"/>.
+    /// </exception>
     public void ForgetReinforcement()
     {
+        var reinforceable = AsReinforceable();
+
         _lock.EnterWriteLock();
         try
         {
-            _inner.ForgetReinforcement();
+            reinforceable.ForgetReinforcement();
         }
         finally
         {
             _lock.ExitWriteLock();
         }
+    }
+
+    private IReinforceableTextClassifier AsReinforceable()
+    {
+        if (_inner is IReinforceableTextClassifier reinforceable)
+            return reinforceable;
+
+        throw new NotSupportedException(
+            $"{_inner.GetType().Name} does not implement {nameof(IReinforceableTextClassifier)}.");
     }
 
     /// <inheritdoc />

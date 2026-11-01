@@ -70,6 +70,9 @@ public static class Program
             typeof(LevenshteinBenchmarks),
             typeof(ClassificationBenchmarks),
             typeof(CentroidClassificationBenchmarks),
+            typeof(CentroidIncrementalBenchmarks),
+            typeof(NearestNeighborClassificationBenchmarks),
+            typeof(BlendBenchmarks),
             typeof(StoreWriteBenchmarks),
             typeof(OnnxEncoderBenchmarks),
         });

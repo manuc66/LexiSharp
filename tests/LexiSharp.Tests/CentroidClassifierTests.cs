@@ -15,7 +15,8 @@ public class CentroidClassifierTests
             .Add("A one", Left)
             .Add("A two", new[] { 0.9f, 0.1f })
             .Add("B one", Right)
-            .Add("B two", new[] { 0.1f, 0.9f });
+            .Add("B two", new[] { 0.1f, 0.9f })
+            .Add("A one B one", new[] { 0.5f, 0.5f });
 
     private static readonly SearchDocument[] TwoClassCorpus =
     {
@@ -442,6 +443,200 @@ public class CentroidClassifierTests
 
         Assert.Equal("Billing", classifier.PredictBest("invoice"));
         Assert.Equal("Operations", classifier.PredictBest("database"));
+    }
+
+    [Fact]
+    public void TheTextWrapper_IsIncremental()
+    {
+        ITextClassifier classifier = new CentroidClassifier(TwoClasses());
+
+        Assert.IsAssignableFrom<IIncrementalTextClassifier>(classifier);
+    }
+
+    [Fact]
+    public void Learn_OneDocumentAtATime_EqualsTrainingTheCorpusAtOnce()
+    {
+        var trained = new CentroidClassifier(TwoClasses());
+        trained.Train(TwoClassCorpus);
+
+        var learned = new CentroidClassifier(TwoClasses());
+
+        foreach (SearchDocument document in TwoClassCorpus)
+            learned.Learn(document);
+
+        foreach (string query in new[] { "A one", "A two", "B one", "B two", "A one B one" })
+        {
+            IReadOnlyList<ClassificationResult> expected = trained.Predict(query, limit: 10);
+            IReadOnlyList<ClassificationResult> actual = learned.Predict(query, limit: 10);
+
+            Assert.Equal(expected.Count, actual.Count);
+
+            for (int i = 0; i < expected.Count; i++)
+            {
+                Assert.Equal(expected[i].Category, actual[i].Category);
+                Assert.Equal(expected[i].Probability, actual[i].Probability, precision: 10);
+            }
+        }
+    }
+
+    [Fact]
+    public void Learn_And_Unlearn_AreExactInverses()
+    {
+        var embeddings = TwoClasses().Add("C one", new[] { 0.5f, 0.5f });
+        var classifier = new CentroidClassifier(embeddings);
+        classifier.Train(TwoClassCorpus);
+
+        string[] queries = { "A one", "B one", "A one B one" };
+        var before = queries.ToDictionary(query => query, query => classifier.Predict(query, limit: 10));
+
+        var addition = new SearchDocument("5", "C one", Category: "C");
+        classifier.Learn(addition);
+        classifier.Unlearn(addition);
+
+        foreach (string query in queries)
+        {
+            IReadOnlyList<ClassificationResult> expected = before[query];
+            IReadOnlyList<ClassificationResult> actual = classifier.Predict(query, limit: 10);
+
+            Assert.Equal(expected.Count, actual.Count);
+
+            for (int i = 0; i < expected.Count; i++)
+            {
+                Assert.Equal(expected[i].Category, actual[i].Category);
+                Assert.Equal(expected[i].Probability, actual[i].Probability, precision: 10);
+            }
+        }
+    }
+
+    [Fact]
+    public void Unlearn_RetiresACategoryThatHeldOneDocument()
+    {
+        var embeddings = TwoClasses().Add("C one", new[] { 0.5f, 0.5f });
+        var classifier = new CentroidClassifier(embeddings);
+        classifier.Train(TwoClassCorpus);
+
+        var addition = new SearchDocument("5", "C one", Category: "C");
+        classifier.Learn(addition);
+
+        Assert.Equal(3, classifier.CategoryCount);
+
+        classifier.Unlearn(addition);
+
+        Assert.Equal(2, classifier.CategoryCount);
+        Assert.NotEqual("C", classifier.PredictBest("C one"));
+    }
+
+    [Fact]
+    public void Unlearn_OfAnUnknownCategory_SkipsTheProvider()
+    {
+        var embeddings = TwoClasses();
+        var classifier = new CentroidClassifier(embeddings);
+        classifier.Train(TwoClassCorpus);
+        int calls = embeddings.SingleCalls.Count;
+
+        classifier.Unlearn(new SearchDocument("9", "unknown", Category: "Missing"));
+
+        Assert.Equal(calls, embeddings.SingleCalls.Count);
+    }
+
+    [Fact]
+    public void TheGenericClassifier_LearnsAndUnlearns()
+    {
+        var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category);
+        classifier.Train(new[]
+        {
+            ("A", new[] { 1f, 0f }),
+            ("A", new[] { 0.9f, 0.1f }),
+            ("B", new[] { 0f, 1f }),
+            ("B", new[] { 0.1f, 0.9f }),
+        });
+
+        Assert.Equal("A", classifier.PredictBest(new[] { 1f, 0.1f }));
+
+        classifier.Learn(("C", new[] { 1f, 1f }));
+        Assert.Equal(3, classifier.CategoryCount);
+
+        classifier.Unlearn(("C", new[] { 1f, 1f }));
+        Assert.Equal(2, classifier.CategoryCount);
+        Assert.Equal("A", classifier.PredictBest(new[] { 1f, 0.1f }));
+    }
+
+    [Fact]
+    public void CenteringChangesTheRanking_WhenTheSharedComponentDominates()
+    {
+        // Hand-built so the raw cosine picks B and the centered cosine picks A: the query is
+        // dominated by the corpus mean, and removing that mean exposes the class-specific part.
+        var training = new[]
+        {
+            ("A", new[] { -1.9f, 0.17f }),
+            ("A", new[] { 1.76f, -0.48f }),
+            ("B", new[] { -1.13f, -0.31f }),
+            ("B", new[] { -1.88f, -1.11f }),
+        };
+        float[] query = { -0.25f, -0.02f };
+
+        var raw = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category);
+        raw.Train(training);
+
+        var centered = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category,
+            new CentroidClassifierOptions { CenterOnGlobalMean = true });
+        centered.Train(training);
+
+        Assert.Equal("B", raw.PredictBest(query));
+        Assert.Equal("A", centered.PredictBest(query));
+    }
+
+    [Fact]
+    public void A_CenteredModel_StaysCenteredWhenItLearnsAndUnlearns()
+    {
+        var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category,
+            new CentroidClassifierOptions { CenterOnGlobalMean = true });
+        classifier.Train(new[]
+        {
+            ("A", new[] { -1.9f, 0.17f }),
+            ("A", new[] { 1.76f, -0.48f }),
+            ("B", new[] { -1.13f, -0.31f }),
+            ("B", new[] { -1.88f, -1.11f }),
+        });
+
+        float[] query = { -0.25f, -0.02f };
+        string? before = classifier.PredictBest(query);
+
+        classifier.Learn(("C", new[] { 0.4f, 0.9f }));
+        classifier.Unlearn(("C", new[] { 0.4f, 0.9f }));
+
+        Assert.Equal(before, classifier.PredictBest(query));
+    }
+
+    [Fact]
+    public async Task LearnAsync_MatchesTheBlockingCall()
+    {
+        var blocking = new CentroidClassifier(TwoClasses());
+        blocking.Train(TwoClassCorpus);
+        var asynchronous = new CentroidClassifier(TwoClasses());
+        asynchronous.Train(TwoClassCorpus);
+
+        var addition = new SearchDocument("5", "C one", Category: "C");
+        var embeddings = TwoClasses().Add("C one", new[] { 0.5f, 0.5f });
+        var first = new CentroidClassifier(embeddings);
+        first.Train(TwoClassCorpus);
+        var second = new CentroidClassifier(embeddings);
+        second.Train(TwoClassCorpus);
+
+        first.Learn(addition);
+        await second.LearnAsync(addition);
+
+        Assert.Equal(
+            first.Predict("C one", limit: 10).Select(result => (result.Category, result.Probability)),
+            second.Predict("C one", limit: 10).Select(result => (result.Category, result.Probability)));
     }
 
     private sealed class FakeEmbeddings : IEmbeddingProvider, IBatchEmbeddingProvider
