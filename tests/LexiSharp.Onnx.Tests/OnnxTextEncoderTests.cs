@@ -184,6 +184,35 @@ public sealed class OnnxTextEncoderTests
     }
 
     [Fact]
+    public async Task Encoder_AsyncUsesTheEmbeddingCache()
+    {
+        var tokenizer = new CountingTokenizer();
+
+        using var encoder = new OnnxTextEncoder(new OnnxTextEncoderOptions
+        {
+            ModelPath = Fixture("tiny-encoder.onnx"),
+            Tokenizer = tokenizer,
+            EmbeddingCacheCapacity = 2,
+        });
+
+        await encoder.GetTextEmbeddingAsync("hello");
+        await encoder.GetTextEmbeddingAsync("hello");
+
+        Assert.Equal(1, tokenizer.Calls);
+    }
+
+    [Fact]
+    public void Encoder_RejectsANegativeEmbeddingCacheCapacity()
+    {
+        Assert.Throws<ArgumentException>(() => new OnnxTextEncoder(new OnnxTextEncoderOptions
+        {
+            ModelPath = Fixture("tiny-encoder.onnx"),
+            Tokenizer = Tokenizer(),
+            EmbeddingCacheCapacity = -1,
+        }));
+    }
+
+    [Fact]
     public void Encoder_CanDisableTheEmbeddingCache()
     {
         var tokenizer = new CountingTokenizer();
