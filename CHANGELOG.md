@@ -30,9 +30,73 @@ workflow.
   `LexiSharp.Onnx` seam. Prediction caches each centroid's norm at training time and the query's
   once per call, so a category costs one dot product; only the returned categories become result
   objects.
+- **Precision at a chosen coverage.** `classification --coverage` retrains each model, sweeps the
+  winning probability and reports the precision over the documents each threshold covers;
+  `--coverage-target` sets the share the recommendation must cover. On 20NG at a 50 % target the
+  linear model reads **0.964** precision on **0.501** coverage, the forest **0.868** on **0.500**,
+  Naive Bayes **0.914** on **0.500** and the tree **0.775** on **0.506**.
+- **Question trees and a forest over any feature space.** `DecisionTreeClassifier` learns a binary
+  question tree — the most discriminative feature first — and `Explain` returns the path;
+  `CorpusDivider` does the same without labels, splitting an unlabelled corpus into two
+  recursively; `RandomForestClassifier` bags the trees for accuracy and deliberately drops the
+  path. All three read an `IFeatureSource<TItem>`, so text is one dimension among any others
+  (bucketed time, transitions, derived flags), and all take an optional sample weight, which is
+  where a half-life belongs: `weightOf: item => Math.Pow(0.5, age(item) / halfLife)`. The core
+  never sees a clock. A feature can also carry a numeric value, and the tree scores thresholds
+  over it, so a time or a frequency is learned as `>= t` rather than as a bucket name; a missing
+  value answers no. A question can also carry a cost, and the split score is divided by it, so a
+  cheap question that is almost as discriminative wins over an expensive one. The tree can decline
+  to answer: `MinLeafProbability` and `MinLeafSupport` withhold a prediction whose leaf is too
+  flat or too small, and `Explain` still shows the path. `ClassWeights` multiplies a category's
+  sample weight, so a majority class no longer dominates the impurity and the leaves; a weight of
+  zero removes the class. A feature can be present, absent or unknown; `UnknownIndicatorSource`
+  turns the unknown into an explicit `unknown:<name>` feature, and `MaskedFeatureSource` suppresses
+  the inner dimensions when an item is generic or excluded. The tree keeps a correction
+  ledger: `Reinforce`/`Unreinforce` add or remove signed mass at the leaf an item reaches without
+  retraining, `Explain` shows the adjusted leaf, and `Train` clears it. `LinearClassifier` is the
+  accuracy companion: multinomial logistic regression over the same feature seam, AdaGrad, a
+  deterministic shuffle, and coefficients through `TopFeatures`; it has no question path.
+  `TemperatureCalibrator` fits one temperature on a validation set by minimizing log-loss, and
+  `CalibratedClassifier` wraps any `ITextClassifier` with it without changing the top category; on
+  the linear model it reads **T = 1.04**, log-loss **0.7741 → 0.7650**, Brier **0.2855 → 0.2855**,
+  so the softmax was already close. The forest's averaged probabilities are underconfident
+  (**T = 0.35**, log-loss **1.8156 → 1.2785**), while the tree's **T = 0.87** does not transfer.
+  The forest is a bagged ensemble with a global feature subset per tree, not Breiman's per-split
+  sampling, and has no OOB estimate or feature importance. The linear model also keeps a correction ledger:
+  `Reinforce`/`Unreinforce` add or remove signed mass on the item's features without retraining,
+  and `Train` clears it. `IdfWeighting` and `StandardizeNumericFeatures` are opt-in;
+  IDF measured a loss on 20NG (**0.7753 / 0.7682** against **0.8085 / 0.8027**), and sublinear
+  TF-IDF — `emitTermFrequency: true` plus `IdfWeighting` — lost too (**0.7757 / 0.7676**); both
+  stay off.
+  The classification pin stores per-class F1, a SHA-256 of the ordered predictions, and each
+  metric's percentile-bootstrap 95 % interval over the test split; the eval prints McNemar
+  against Naive Bayes: the linear model fixes 905 documents and breaks 520
+  (p = 2.6e-24), while the forest and the tree lose significantly. `--cv` runs a stratified
+  5-fold cross-validation on the train split, fixed seed: the linear model reads
+  **0.8918 ± 0.0070** and Naive Bayes **0.8190 ± 0.0063**, about eight points above the held-out
+  figures because `20news-bydate`'s halves are disjoint date windows — the held-out number is the
+  one to quote, and the CV table is published with that limit. A CI job replays the tuned pin.
+  `Learn`/`Unlearn` fold one labelled document into a trained tree or linear model and remove it
+  exactly, without rebuilding the structure or the coefficients; at 11 300 documents a Learn pass
+  over 2 260 reads **0.43 s / 0.63 s** against **14.1 s / 25.7 s** for a full retrain in the same
+  run. `ClassificationModelSerializer` saves a trained tree, forest, linear model or calibrated wrapper
+  in a versioned binary (`LXCL`, version 1) with the vocabulary, prediction options and ledger; the
+  tokenizer is not stored, so load with the same feature source. The evidence is long 20 Newsgroups
+  messages, and the subject-only run (`--text subject`) confirms it does not transfer: linear
+  **0.5533 / 0.5295** against Naive Bayes **0.5624 / 0.5293**, McNemar p = 0.16.
+  Measured on the standard `20news-bydate` split: the single tree reads **0.4457** accuracy / **0.4945**
+  macro-F1, the forest **0.6621** / **0.6584**, Naive Bayes **0.7573** / **0.7289**, and
+  `LinearClassifier` **0.8085** / **0.8027** — the tree and forest are explainability/ensemble
+  options, the linear model is the accuracy one. See
+  [evaluation](docs/evaluation.md#classification-on-20-newsgroups) and
+  [text analysis](docs/text-analysis.md#question-trees-classification-and-corpus-division).
 
 ### Changed
 
+- **The docs mark unreleased features.** Anything on `main` but not in the 0.8.0 package is
+  labelled **unreleased** (the classification subsystem, French stemming,
+  `QueryFeedbackHistory`), and `WordJoiners` is documented with its identifier case and its 0.7.0
+  origin.
 - **The store path is timed, which is the path a deployment runs.** A new `store` lane writes a corpus
   into `SegmentedTextIndex`, commits it, reopens it three ways and measures the same three queries as
   the cursor lane. At 100,000 documents: building the in-memory index takes **4.5-4.7 s** while opening

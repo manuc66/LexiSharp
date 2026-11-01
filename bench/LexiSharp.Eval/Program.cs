@@ -15,6 +15,11 @@ public static class Program
         if (args.Length > 0 && string.Equals(args[0], "classification-centroid", StringComparison.Ordinal))
             return await CentroidClassificationCommand.RunAsync(args[1..]);
 
+        // The classification lane is a separate verb rather than a flag on the retrieval run: it
+        // reads a different corpus format, reports different metrics, and has no query set.
+        if (args.Length > 0 && args[0] == "classification")
+            return await ClassificationCommand.RunAsync(args[1..]);
+
         string dataBaseDir = Path.Combine(AppContext.BaseDirectory, "../../../data");
         string datasetArg = "nfcorpus";
         int topK = 10;

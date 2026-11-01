@@ -132,6 +132,49 @@ was designed from:
   many recorded associations it starts to. Measure on your own data before relying on either —
   [learning from past choices](ranking.md#learning-from-past-choices-queryfeedbackhistory),
   [fitted confidence](observability.md#fitted-confidence-and-the-abstention-threshold-calibratedscoreconfidence).
+- **The question trees are greedy and uncalibrated, and the linear model is the accuracy leader.**
+  `DecisionTreeClassifier`, `RandomForestClassifier` and `CorpusDivider` learn binary or threshold
+  feature questions; each split is the best greedy one, not the optimal tree (finding the smallest
+  separating tree is NP-hard), and a leaf's distribution is the smoothed label mix of the documents
+  that reached it, not a probability of correctness. A numeric feature is learned as an inequality
+  (`hour >= 14`), so adjacent values generalize; a categorical bucket, a transition and a process
+  hierarchy are still flat names. A feature can be present, absent or unknown; a binary question
+  answers no for unknown, `UnknownIndicatorSource` makes the unknown explicit for the binary
+  models, and `MaskedFeatureSource` is the caller-side seam for excluding a dimension when an item
+  is generic or excluded. On the standard `20news-bydate` split the single
+  tree reads **0.4457** accuracy / **0.4945** macro-F1, the forest **0.6621** / **0.6584**, Naive
+  Bayes **0.7573** / **0.7289**, and `LinearClassifier` **0.8085** / **0.8027**: the tree and forest
+  are explainability/ensemble options and the linear model is the accuracy one. Every figure
+  carries a percentile-bootstrap 95 % interval over the test split, and a stratified 5-fold
+  cross-validation on the train split reads **0.8918 ± 0.0070** for the linear model and
+  **0.8190 ± 0.0063** for Naive Bayes — about eight points above the held-out figures, because
+  `20news-bydate`'s halves are disjoint date windows. The held-out number is the one to quote;
+  the CV table is published with that limit. A temperature
+  calibrator exists (`TemperatureCalibrator` / `CalibratedClassifier`); on 20NG the linear model
+  reads **T = 1.04**, log-loss **0.7741 → 0.7650**, Brier **0.2855 → 0.2855**, so its softmax was
+  already close. The forest's averaged probabilities are underconfident (**T = 0.35**, log-loss
+  **1.8156 → 1.2785**, Brier **0.6713 → 0.4701**), while the tree's **T = 0.87** does not transfer
+  and its test loss is slightly worse. The forest is a bagged ensemble with a global feature
+  subset per tree, not Breiman's per-split sampling; it has no OOB estimate or feature importance.
+  `IdfWeighting` is available and measured a loss on 20NG (**0.7753 / 0.7682** against
+  **0.8085 / 0.8027**), and sublinear TF-IDF (`emitTermFrequency: true` plus `IdfWeighting`) lost
+  too (**0.7757 / 0.7676**), so both are off by default. `Learn`/`Unlearn` fold one labelled
+  document into a trained tree or linear model and remove it exactly, without rebuilding the
+  structure or the coefficients; `--online` measures the cost (0.43 s / 0.63 s for 2 260 documents
+  against 14.1 s / 25.7 s for a full retrain in the same run). `--coverage` sweeps the winning
+  probability and recommends a threshold for a coverage target; at 50 % on 20NG the linear model
+  reads **0.964** precision, the forest **0.868**, Naive Bayes **0.914** and the tree **0.775**.
+  `ClassificationModelSerializer`
+  saves and loads a trained tree, forest, linear model or calibrated wrapper in a versioned binary
+  (`LXCL`, version 1) that carries the vocabulary, the prediction options and the ledger; the
+  tokenizer is not stored, so load with the same feature source. The long-document figures do not
+  transfer to short text: with only the `Subject`
+  line the linear model reads **0.5533 / 0.5295** and Naive Bayes **0.5624 / 0.5293**, with no
+  significant difference (McNemar p = 0.16), so run the baseline on your own short texts first.
+  The command and the pin are in
+  [Evaluation](evaluation.md#classification-on-20-newsgroups); [Benchmarks](benchmarks.md#classification-classificationbenchmarks)
+  reports cost. Measure on your own labels before trusting either. See
+  [question trees](text-analysis.md#question-trees-classification-and-corpus-division).
 - **Combinatorial coverage is partial.** Engines, scorers, rerankers and mergers are tested
   individually *and* in the combinations described here, but not every pairing is exercised.
   Treat an unusual combination as supported but unproven until you test it on your data.

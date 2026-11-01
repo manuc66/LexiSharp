@@ -599,7 +599,7 @@ negative ones (factor in (0, 1) damp, negative offset penalty) are equally expre
 drops the document entirely. The decorator requests more candidates than the final limit
 (`maxCandidates`, default 50) so boosted documents can surface.
 
-## Learning from past choices (`QueryFeedbackHistory`)
+## Learning from past choices (`QueryFeedbackHistory`) (unreleased)
 
 A ranking function reads the query and the corpus. Sometimes the answer depends on something the
 text does not carry — an internal name for a recurring obligation, an abbreviation only the people
