@@ -39,27 +39,32 @@ public sealed class CentroidClassifier<TItem>
 {
     private readonly Func<TItem, ReadOnlyMemory<float>> _vectorOf;
     private readonly Func<TItem, string?> _categoryOf;
-    private readonly double _temperature;
+    private readonly CentroidClassifierOptions _options;
+
+    // Sums are carried in double precision so that learning and unlearning a document does not
+    // accumulate a float rounding error into the class mean. The exposed centroids stay float,
+    // because that is the precision the cosine arithmetic and the provider use.
+    private readonly Dictionary<string, double[]> _sums = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _counts = new(StringComparer.Ordinal);
+    private double[] _globalSum = Array.Empty<double>();
+    private int _globalCount;
+    private float[] _globalMean = Array.Empty<float>();
 
     private IReadOnlyDictionary<string, ReadOnlyMemory<float>> _centroids =
         new Dictionary<string, ReadOnlyMemory<float>>(StringComparer.Ordinal);
 
-    /// <summary>
-    /// The L2 norm of every centroid, computed when the model is trained. A prediction compares
-    /// one query against every category, so recomputing these would repeat the same work once per
-    /// category; the query norm is computed once per call for the same reason.
-    /// </summary>
     private IReadOnlyDictionary<string, float> _centroidNorms =
         new Dictionary<string, float>(StringComparer.Ordinal);
 
     private int _dimension;
+    private bool _dirty;
 
     /// <summary>Creates a classifier over a caller-supplied vector source and label.</summary>
     /// <param name="vectorOf">Produces the embedding of one item. Every vector must have the same length.</param>
     /// <param name="categoryOf">Returns the item's category, or null/empty to skip it during training.</param>
     /// <param name="options">Tunable knobs; when null, <see cref="CentroidClassifierOptions.Default"/> applies.</param>
     /// <exception cref="ArgumentNullException">A delegate is null.</exception>
-    /// <exception cref="ArgumentException">The temperature is not a finite positive number.</exception>
+    /// <exception cref="ArgumentException">The options are not valid.</exception>
     public CentroidClassifier(
         Func<TItem, ReadOnlyMemory<float>> vectorOf,
         Func<TItem, string?> categoryOf,
@@ -70,31 +75,38 @@ public sealed class CentroidClassifier<TItem>
 
         _vectorOf = vectorOf;
         _categoryOf = categoryOf;
+        _options = options ?? CentroidClassifierOptions.Default;
 
-        var resolved = options ?? CentroidClassifierOptions.Default;
-
-        if (!resolved.IsValid)
-            throw new ArgumentException("Temperature must be a finite number greater than 0.", nameof(options));
-
-        _temperature = resolved.Temperature;
+        if (!_options.IsValid)
+            throw new ArgumentException("The centroid options are not valid.", nameof(options));
     }
 
     /// <summary>The class means, keyed by category; empty until training.</summary>
     /// <remarks>
-    /// The values are the means the classifier actually compares against. They are exposed for
-    /// inspection and for a caller that persists the model; the arrays behind them are never
-    /// mutated after <see cref="Train"/>.
+    /// The values are the means the classifier actually compares against. When
+    /// <see cref="CentroidClassifierOptions.CenterOnGlobalMean"/> is set they are already centered;
+    /// the arrays behind them are never mutated after a rebuild.
     /// </remarks>
-    public IReadOnlyDictionary<string, ReadOnlyMemory<float>> Centroids => _centroids;
+    public IReadOnlyDictionary<string, ReadOnlyMemory<float>> Centroids
+    {
+        get
+        {
+            EnsureBuilt();
+            return _centroids;
+        }
+    }
 
     /// <summary>Vector length the model was trained on, or <c>0</c> before training.</summary>
     public int Dimension => _dimension;
 
     /// <summary>Number of categories in the model, or <c>0</c> before training.</summary>
-    public int CategoryCount => _centroids.Count;
+    public int CategoryCount => _counts.Count;
 
     /// <summary>The softmax temperature applied to cosine similarities.</summary>
-    public double Temperature => _temperature;
+    public double Temperature => _options.Temperature;
+
+    /// <summary>Whether the class means are centered on the corpus mean before the cosine.</summary>
+    public bool CenterOnGlobalMean => _options.CenterOnGlobalMean;
 
     /// <summary>Trains the model on labelled items, replacing any previous model.</summary>
     /// <param name="items">The training items. Unlabelled items are skipped.</param>
@@ -104,7 +116,7 @@ public sealed class CentroidClassifier<TItem>
     {
         ArgumentNullException.ThrowIfNull(items);
 
-        var sums = new Dictionary<string, float[]>(StringComparer.Ordinal);
+        var sums = new Dictionary<string, double[]>(StringComparer.Ordinal);
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
         int dimension = -1;
 
@@ -119,26 +131,12 @@ public sealed class CentroidClassifier<TItem>
                 continue;
 
             ReadOnlyMemory<float> vector = _vectorOf(item);
-
-            if (vector.Length == 0)
-                throw new ArgumentException("The vector source returned an empty vector.", nameof(items));
-
-            if (dimension < 0)
-            {
-                dimension = vector.Length;
-            }
-            else if (vector.Length != dimension)
-            {
-                throw new ArgumentException(
-                    $"All vectors must have the same length (got {vector.Length} after {dimension}).",
-                    nameof(items));
-            }
-
+            ValidateShape(vector, ref dimension, nameof(items));
             ValidateFinite(vector, category, nameof(items));
 
-            if (!sums.TryGetValue(category, out float[]? sum))
+            if (!sums.TryGetValue(category, out double[]? sum))
             {
-                sum = new float[dimension];
+                sum = new double[dimension];
                 sums[category] = sum;
                 counts[category] = 0;
             }
@@ -147,29 +145,147 @@ public sealed class CentroidClassifier<TItem>
             counts[category]++;
         }
 
-        var centroids = new Dictionary<string, ReadOnlyMemory<float>>(sums.Count, StringComparer.Ordinal);
-        var norms = new Dictionary<string, float>(sums.Count, StringComparer.Ordinal);
+        _sums.Clear();
+        _counts.Clear();
 
         foreach (var (category, sum) in sums)
         {
-            int count = counts[category];
-            var mean = new float[dimension];
-            float reciprocal = 1f / count;
-
-            for (int i = 0; i < mean.Length; i++)
-                mean[i] = sum[i] * reciprocal;
-
-            centroids[category] = mean;
-
-            // Cached once: a prediction compares every centroid against one query, and the norm
-            // of each centroid is the same on every call. Recomputing it per prediction turns a
-            // dot product into a dot product plus two norm passes.
-            norms[category] = VectorSimilarity.Norm(mean);
+            _sums[category] = sum;
+            _counts[category] = counts[category];
         }
 
-        _centroids = centroids;
-        _centroidNorms = norms;
         _dimension = dimension < 0 ? 0 : dimension;
+        _globalSum = new double[_dimension];
+        _globalCount = 0;
+
+        foreach (var (category, sum) in _sums)
+        {
+            for (int i = 0; i < _globalSum.Length; i++)
+                _globalSum[i] += sum[i];
+
+            _globalCount += _counts[category];
+        }
+
+        _dirty = true;
+        EnsureBuilt();
+    }
+
+    /// <summary>
+    /// Adds one labelled item to the model, as though it had been part of the last
+    /// <see cref="Train"/> call. A null or empty category is ignored, exactly as in
+    /// <see cref="Train"/>.
+    /// </summary>
+    /// <remarks>
+    /// The vector is added to the category's sum, the category's document count and the corpus
+    /// mean. It is not a retraining: no previous vector is revisited. Learning the same item
+    /// twice weighs it twice, matching two copies in the training corpus.
+    /// </remarks>
+    /// <param name="item">The labelled item to learn.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="item"/> is null.</exception>
+    /// <exception cref="ArgumentException">The vector is empty, non-finite, or has the wrong length.</exception>
+    public void Learn(TItem item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        string? category = _categoryOf(item);
+
+        if (string.IsNullOrEmpty(category))
+            return;
+
+        ReadOnlyMemory<float> vector = _vectorOf(item);
+
+        if (vector.Length == 0)
+            throw new ArgumentException("The vector source returned an empty vector.", nameof(item));
+
+        if (_counts.Count == 0 && _dimension == 0)
+            _dimension = vector.Length;
+
+        if (vector.Length != _dimension)
+        {
+            throw new ArgumentException(
+                $"The vector has {vector.Length} dimensions but the model was trained on {_dimension}.",
+                nameof(item));
+        }
+
+        ValidateFinite(vector, category, nameof(item));
+
+        if (!_sums.TryGetValue(category, out double[]? sum))
+        {
+            sum = new double[_dimension];
+            _sums[category] = sum;
+        }
+
+        Accumulate(vector.Span, sum);
+        _counts.TryGetValue(category, out int count);
+        _counts[category] = count + 1;
+
+        if (_globalSum.Length != _dimension)
+            _globalSum = new double[_dimension];
+
+        AddToGlobal(vector.Span);
+        _globalCount++;
+        _dirty = true;
+    }
+
+    /// <summary>
+    /// Removes one labelled item's contribution: the category loses the vector from its sum and a
+    /// document from its count, and a category with no document left is retired.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is arithmetic, not bookkeeping. It does not verify that the item was ever learned:
+    /// tracking that would cost memory proportional to the corpus. Unlearning a document the model
+    /// never saw is well defined — the category loses a document and the vector is subtracted — and
+    /// the same caveat as <see cref="IIncrementalTextClassifier"/> applies.
+    /// </para>
+    /// <para>
+    /// The vector is re-read from the source, so a non-deterministic provider makes the inverse
+    /// approximate. With a deterministic provider it is exact up to the double-to-float conversion
+    /// of the exposed centroid.
+    /// </para>
+    /// </remarks>
+    /// <param name="item">The item to retract.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="item"/> is null.</exception>
+    /// <exception cref="ArgumentException">The vector is empty, non-finite, or has the wrong length.</exception>
+    public void Unlearn(TItem item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        string? category = _categoryOf(item);
+
+        if (string.IsNullOrEmpty(category) || !_counts.TryGetValue(category, out int count))
+            return;
+
+        ReadOnlyMemory<float> vector = _vectorOf(item);
+
+        if (vector.Length != _dimension)
+        {
+            throw new ArgumentException(
+                $"The vector has {vector.Length} dimensions but the model was trained on {_dimension}.",
+                nameof(item));
+        }
+
+        ValidateFinite(vector, category, nameof(item));
+
+        Subtract(vector.Span, _sums[category]);
+        SubtractFromGlobal(vector.Span);
+        count--;
+        _globalCount = Math.Max(0, _globalCount - 1);
+
+        if (count <= 0)
+        {
+            _sums.Remove(category);
+            _counts.Remove(category);
+        }
+        else
+        {
+            _counts[category] = count;
+        }
+
+        if (_globalCount == 0)
+            Array.Clear(_globalSum);
+
+        _dirty = true;
     }
 
     /// <summary>Predicts the most likely categories for a vector, by decreasing probability.</summary>
@@ -182,8 +298,10 @@ public sealed class CentroidClassifier<TItem>
         int limit = 3,
         IReadOnlySet<string>? excludedCategories = null)
     {
-        if (limit <= 0 || _centroids.Count == 0)
+        if (limit <= 0 || _counts.Count == 0)
             return Array.Empty<ClassificationResult>();
+
+        EnsureBuilt();
 
         if (vector.Length != _dimension)
         {
@@ -194,19 +312,30 @@ public sealed class CentroidClassifier<TItem>
 
         ValidateFinite(vector, null, nameof(vector));
 
+        ReadOnlySpan<float> query = vector.Span;
+        float[]? centered = null;
+
+        if (_options.CenterOnGlobalMean && _globalCount > 0)
+        {
+            centered = new float[_dimension];
+
+            for (int i = 0; i < centered.Length; i++)
+                centered[i] = vector.Span[i] - _globalMean[i];
+
+            query = centered;
+        }
+
         var scores = new List<Score>(_centroids.Count);
         double highest = double.NegativeInfinity;
-        float queryNorm = VectorSimilarity.Norm(vector.Span);
+        float queryNorm = VectorSimilarity.Norm(query);
 
         foreach (var (category, centroid) in _centroids)
         {
             if (excludedCategories?.Contains(category) == true)
                 continue;
 
-            // Both norms are known: the query's once per call, the centroid's since training.
-            // The internal overload is the same cosine without recomputing either.
             double cosine = VectorSimilarity.CosineSimilarity(
-                vector.Span,
+                query,
                 centroid.Span,
                 queryNorm,
                 _centroidNorms[category]);
@@ -224,14 +353,9 @@ public sealed class CentroidClassifier<TItem>
 
         foreach (var score in scores)
         {
-            // Subtracting the maximum is the usual softmax shift: exp stays in [0, 1] and the
-            // largest term is exactly 1, so a corpus of mutually orthogonal vectors cannot underflow.
-            total += Math.Exp((score.Cosine - highest) / _temperature);
+            total += Math.Exp((score.Cosine - highest) / _options.Temperature);
         }
 
-        // Cosine order is probability order at any positive temperature, so the scores can be
-        // sorted before the softmax: only the returned categories become ClassificationResult
-        // objects, rather than one per category that is then discarded by the limit.
         scores.Sort(static (left, right) =>
         {
             int byCosine = right.Cosine.CompareTo(left.Cosine);
@@ -247,7 +371,7 @@ public sealed class CentroidClassifier<TItem>
         {
             ranked[i] = new ClassificationResult(
                 scores[i].Category,
-                Math.Exp((scores[i].Cosine - highest) / _temperature) / total);
+                Math.Exp((scores[i].Cosine - highest) / _options.Temperature) / total);
         }
 
         return ranked;
@@ -262,10 +386,160 @@ public sealed class CentroidClassifier<TItem>
         return results.Count > 0 ? results[0].Category : null;
     }
 
-    private static void Accumulate(ReadOnlySpan<float> vector, Span<float> sum)
+    private void EnsureBuilt()
+    {
+        if (!_dirty)
+            return;
+
+        var centroids = new Dictionary<string, ReadOnlyMemory<float>>(_sums.Count, StringComparer.Ordinal);
+        var norms = new Dictionary<string, float>(_sums.Count, StringComparer.Ordinal);
+        _globalMean = new float[_dimension];
+
+        if (_options.CenterOnGlobalMean && _globalCount > 0)
+        {
+            for (int i = 0; i < _globalMean.Length; i++)
+                _globalMean[i] = (float)(_globalSum[i] / _globalCount);
+        }
+
+        foreach (string category in _sums.Keys.OrderBy(key => key, StringComparer.Ordinal))
+        {
+            int count = _counts[category];
+
+            if (count <= 0)
+                continue;
+
+            double[] sum = _sums[category];
+            var mean = new float[_dimension];
+
+            for (int i = 0; i < mean.Length; i++)
+            {
+                double value = sum[i] / count;
+
+                if (_options.CenterOnGlobalMean && _globalCount > 0)
+                    value -= _globalMean[i];
+
+                mean[i] = (float)value;
+            }
+
+            centroids[category] = mean;
+            norms[category] = VectorSimilarity.Norm(mean);
+        }
+
+        _centroids = centroids;
+        _centroidNorms = norms;
+        _dirty = false;
+    }
+
+    private void AddToGlobal(ReadOnlySpan<float> vector)
+    {
+        if (_globalSum.Length != _dimension)
+            _globalSum = new double[_dimension];
+
+        for (int i = 0; i < vector.Length; i++)
+            _globalSum[i] += vector[i];
+    }
+
+    private void SubtractFromGlobal(ReadOnlySpan<float> vector)
+    {
+        for (int i = 0; i < vector.Length; i++)
+            _globalSum[i] -= vector[i];
+    }
+
+    private static void Accumulate(ReadOnlySpan<float> vector, Span<double> sum)
     {
         for (int i = 0; i < vector.Length; i++)
             sum[i] += vector[i];
+    }
+
+    private static void Subtract(ReadOnlySpan<float> vector, Span<double> sum)
+    {
+        for (int i = 0; i < vector.Length; i++)
+            sum[i] -= vector[i];
+    }
+
+    /// <summary>Whether the model currently holds a category; used to skip a no-op unlearn.</summary>
+    internal bool HoldsCategory(string category) => _counts.ContainsKey(category);
+
+    /// <summary>Writes the options and the corpus state; the caller writes the envelope.</summary>
+    internal void WriteState(BinaryWriter writer)
+    {
+        EnsureBuilt();
+
+        writer.Write(_options.Temperature);
+        writer.Write((byte)_options.TrainingUse);
+        writer.Write((byte)_options.PredictionUse);
+        writer.Write(_options.CenterOnGlobalMean);
+        writer.Write(_dimension);
+
+        string[] categories = _sums.Keys.OrderBy(key => key, StringComparer.Ordinal).ToArray();
+        writer.Write(categories.Length);
+
+        foreach (string category in categories)
+        {
+            ModelFormat.WriteString(writer, category);
+            writer.Write(_counts[category]);
+            ModelFormat.WriteDoubles(writer, _sums[category]);
+        }
+
+        writer.Write(_globalCount);
+        ModelFormat.WriteDoubles(writer, _globalSum);
+    }
+
+    /// <summary>Replaces the corpus state from a persisted model.</summary>
+    internal void LoadState(
+        int dimension,
+        Dictionary<string, double[]> sums,
+        Dictionary<string, int> counts,
+        double[] globalSum,
+        int globalCount)
+    {
+        ArgumentNullException.ThrowIfNull(sums);
+        ArgumentNullException.ThrowIfNull(counts);
+        ArgumentNullException.ThrowIfNull(globalSum);
+
+        if (dimension < 0 || globalSum.Length != dimension)
+            throw new InvalidDataException("The persisted centroid state is inconsistent.");
+
+        if (counts.Keys.Any(category => !sums.TryGetValue(category, out double[]? sum) || sum.Length != dimension)
+            || sums.Keys.Any(category => !counts.ContainsKey(category)))
+        {
+            throw new InvalidDataException("A persisted centroid has no matching sum and count.");
+        }
+
+        _sums.Clear();
+        _counts.Clear();
+
+        foreach (var (category, sum) in sums)
+        {
+            _sums[category] = sum;
+            _counts[category] = counts[category];
+        }
+
+        _dimension = dimension;
+        _globalSum = globalSum;
+        _globalCount = globalCount;
+        _dirty = true;
+        EnsureBuilt();
+    }
+
+    private static void ValidateShape(
+        ReadOnlyMemory<float> vector,
+        ref int dimension,
+        string parameterName)
+    {
+        if (vector.Length == 0)
+            throw new ArgumentException("The vector source returned an empty vector.", parameterName);
+
+        if (dimension < 0)
+        {
+            dimension = vector.Length;
+        }
+        else if (vector.Length != dimension)
+        {
+            throw new ArgumentException(
+                $"All vectors must have the same length (got {vector.Length} after {dimension}).",
+                parameterName);
+        }
     }
 
     private readonly record struct Score(string Category, double Cosine);
@@ -309,11 +583,19 @@ public sealed class CentroidClassifier<TItem>
 /// </para>
 /// <para>
 /// <see cref="Train"/> and <see cref="Predict"/> block on the provider, because
-/// <see cref="ITextClassifier"/> is synchronous. Prefer <see cref="TrainAsync"/> and
-/// <see cref="PredictAsync"/> when the provider is remote or runs on ONNX Runtime.
+/// <see cref="ITextClassifier"/> is synchronous. Prefer <see cref="TrainAsync"/>,
+/// <see cref="PredictAsync"/>, <see cref="LearnAsync"/> and <see cref="UnlearnAsync"/> when the
+/// provider is remote or runs on ONNX Runtime.
+/// </para>
+/// <para>
+/// <see cref="Learn"/> and <see cref="Unlearn"/> are exact inverses with a deterministic provider:
+/// they add or subtract the document's vector, its document count and its contribution to the
+/// corpus mean. A category that loses its last document is retired. The model is arithmetic, not a
+/// bookkeeping table, so unlearning a document that was never learned is well defined but not
+/// verified; the same caveat as <see cref="IIncrementalTextClassifier"/> applies.
 /// </para>
 /// </remarks>
-public sealed class CentroidClassifier : ITextClassifier
+public sealed class CentroidClassifier : ITextClassifier, IIncrementalTextClassifier
 {
     private readonly IEmbeddingProvider _embeddings;
     private readonly CentroidClassifierOptions _options;
@@ -323,7 +605,7 @@ public sealed class CentroidClassifier : ITextClassifier
     /// <param name="embeddings">External embedding producer; never implemented inside LexiSharp.</param>
     /// <param name="options">Tunable knobs; when null, <see cref="CentroidClassifierOptions.Default"/> applies.</param>
     /// <exception cref="ArgumentNullException"><paramref name="embeddings"/> is null.</exception>
-    /// <exception cref="ArgumentException">The temperature is not a finite positive number.</exception>
+    /// <exception cref="ArgumentException">The options are not valid.</exception>
     public CentroidClassifier(IEmbeddingProvider embeddings, CentroidClassifierOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(embeddings);
@@ -332,7 +614,7 @@ public sealed class CentroidClassifier : ITextClassifier
         _options = options ?? CentroidClassifierOptions.Default;
 
         if (!_options.IsValid)
-            throw new ArgumentException("Temperature must be a finite number greater than 0.", nameof(options));
+            throw new ArgumentException("The centroid options are not valid.", nameof(options));
 
         _inner = new CentroidClassifier<LabelledVector>(
             static entry => entry.Vector,
@@ -351,6 +633,9 @@ public sealed class CentroidClassifier : ITextClassifier
 
     /// <summary>The softmax temperature applied to cosine similarities.</summary>
     public double Temperature => _inner.Temperature;
+
+    /// <summary>Whether the class means are centered on the corpus mean before the cosine.</summary>
+    public bool CenterOnGlobalMean => _inner.CenterOnGlobalMean;
 
     /// <inheritdoc />
     public void Train(IEnumerable<SearchDocument> documents) =>
@@ -433,6 +718,60 @@ public sealed class CentroidClassifier : ITextClassifier
         _inner.Train(entries);
     }
 
+    /// <summary>
+    /// Embeds one labelled document and adds it to the model, as though it had been part of the
+    /// last <see cref="Train"/> call. A document with no category is ignored.
+    /// </summary>
+    /// <param name="document">The labelled document to learn.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="document"/> is null.</exception>
+    public void Learn(SearchDocument document) => LearnAsync(document).GetAwaiter().GetResult();
+
+    /// <summary>Embeds one labelled document and adds it to the model.</summary>
+    /// <param name="document">The labelled document to learn.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public async Task LearnAsync(
+        SearchDocument document,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        if (string.IsNullOrEmpty(document.Category))
+            return;
+
+        ReadOnlyMemory<float> vector = await _embeddings
+            .GetTextEmbeddingAsync(document.Text, _options.TrainingUse, cancellationToken)
+            .ConfigureAwait(false);
+
+        _inner.Learn(new LabelledVector(Validate(vector, document.Id), document.Category));
+    }
+
+    /// <summary>
+    /// Embeds one document and removes its contribution. A document with no category, or one whose
+    /// category the model does not hold, is ignored without an embedding call.
+    /// </summary>
+    /// <param name="document">The document to retract.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="document"/> is null.</exception>
+    public void Unlearn(SearchDocument document) => UnlearnAsync(document).GetAwaiter().GetResult();
+
+    /// <summary>Embeds one document and removes its contribution.</summary>
+    /// <param name="document">The document to retract.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public async Task UnlearnAsync(
+        SearchDocument document,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        if (string.IsNullOrEmpty(document.Category) || !_inner.HoldsCategory(document.Category))
+            return;
+
+        ReadOnlyMemory<float> vector = await _embeddings
+            .GetTextEmbeddingAsync(document.Text, _options.TrainingUse, cancellationToken)
+            .ConfigureAwait(false);
+
+        _inner.Unlearn(new LabelledVector(Validate(vector, document.Id), document.Category));
+    }
+
     /// <inheritdoc />
     public IReadOnlyList<ClassificationResult> Predict(
         string text,
@@ -469,6 +808,113 @@ public sealed class CentroidClassifier : ITextClassifier
     {
         var results = Predict(text, limit: 1, excludedCategories);
         return results.Count > 0 ? results[0].Category : null;
+    }
+
+    /// <summary>Writes the options and the corpus state; the caller writes the envelope.</summary>
+    internal void WriteState(BinaryWriter writer) => _inner.WriteState(writer);
+
+    /// <summary>Reads a text model's options and state, pairing it with the caller's provider.</summary>
+    internal static CentroidClassifier ReadState(BinaryReader reader, IEmbeddingProvider embeddings)
+    {
+        ArgumentNullException.ThrowIfNull(reader);
+        ArgumentNullException.ThrowIfNull(embeddings);
+
+        (CentroidClassifierOptions options, int dimension) = ReadOptions(reader, embeddings.Dimension);
+        (Dictionary<string, double[]> sums, Dictionary<string, int> counts, double[] globalSum, int globalCount) =
+            ReadCorpusState(reader, dimension);
+
+        var model = new CentroidClassifier(embeddings, options);
+        model._inner.LoadState(dimension, sums, counts, globalSum, globalCount);
+        return model;
+    }
+
+    private static (CentroidClassifierOptions Options, int Dimension) ReadOptions(
+        BinaryReader reader,
+        int providerDimension)
+    {
+        double temperature = reader.ReadDouble();
+        var trainingUse = (EmbeddingUse)reader.ReadByte();
+        var predictionUse = (EmbeddingUse)reader.ReadByte();
+
+        if (!Enum.IsDefined(trainingUse) || !Enum.IsDefined(predictionUse))
+            throw new InvalidDataException("A stored embedding role is invalid.");
+
+        bool center = reader.ReadBoolean();
+        int dimension = reader.ReadInt32();
+
+        if (dimension < 0 || dimension > 1_000_000)
+            throw new InvalidDataException($"A centroid dimension is invalid ({dimension}).");
+
+        if (dimension != providerDimension)
+        {
+            throw new InvalidDataException(
+                $"The stored centroid model has {dimension} dimensions but the provider declares " +
+                $"{providerDimension}.");
+        }
+
+        var options = new CentroidClassifierOptions
+        {
+            Temperature = temperature,
+            TrainingUse = trainingUse,
+            PredictionUse = predictionUse,
+            CenterOnGlobalMean = center,
+        };
+
+        if (!options.IsValid)
+            throw new InvalidDataException("The stored centroid options are not valid.");
+
+        return (options, dimension);
+    }
+
+    private static (
+        Dictionary<string, double[]> Sums,
+        Dictionary<string, int> Counts,
+        double[] GlobalSum,
+        int GlobalCount) ReadCorpusState(BinaryReader reader, int dimension)
+    {
+        int categoryCount = ModelFormat.ReadCount(reader);
+        var sums = new Dictionary<string, double[]>(categoryCount, StringComparer.Ordinal);
+        var counts = new Dictionary<string, int>(categoryCount, StringComparer.Ordinal);
+
+        for (int i = 0; i < categoryCount; i++)
+        {
+            string category = ModelFormat.ReadString(reader)
+                ?? throw new InvalidDataException("A centroid category is null.");
+
+            if (sums.ContainsKey(category))
+                throw new InvalidDataException($"The centroid category '{category}' appears twice.");
+
+            int count = reader.ReadInt32();
+
+            if (count <= 0)
+                throw new InvalidDataException($"The centroid category '{category}' has a non-positive count.");
+
+            double[] sum = ModelFormat.ReadDoubles(reader);
+
+            if (sum.Length != dimension)
+            {
+                throw new InvalidDataException(
+                    $"The centroid category '{category}' has {sum.Length} values for dimension {dimension}.");
+            }
+
+            sums[category] = sum;
+            counts[category] = count;
+        }
+
+        int globalCount = reader.ReadInt32();
+
+        if (globalCount < 0)
+            throw new InvalidDataException($"A global centroid count is invalid ({globalCount}).");
+
+        double[] globalSum = ModelFormat.ReadDoubles(reader);
+
+        if (globalSum.Length != dimension)
+        {
+            throw new InvalidDataException(
+                $"The global centroid sum has {globalSum.Length} values for dimension {dimension}.");
+        }
+
+        return (sums, counts, globalSum, globalCount);
     }
 
     private ReadOnlyMemory<float> Validate(ReadOnlyMemory<float> vector, string? documentId)

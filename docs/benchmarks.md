@@ -1558,6 +1558,54 @@ the tree's training reads **43.6 ms instead of 53.2 ms** and allocates **22.7 MB
 noise, which is what the allocation change alone should do — its cost is the profile walk, not the
 hash set.
 
+## Nearest neighbours (`NearestNeighborClassificationBenchmarks`)
+
+Synthetic in-memory corpus: 2 000 documents of 20 tokens over 5 categories, 16 queries per
+invocation, one `MediumRun` on the machine above. Both paths are exact scans; the table prices the
+scan and the memory the store retains, not a throughput a sharded index would report.
+
+| Method | Mean | Error | StdDev | Allocated |
+|---|---:|---:|---:|---:|
+| TrainBm25 | 6.890 ms | 0.138 ms | 0.193 ms | 4 602.29 KB |
+| PredictBm25K5 | 4.752 ms | 0.045 ms | 0.040 ms | 37.13 KB |
+| PredictBm25K25 | 4.814 ms | 0.033 ms | 0.028 ms | 54.88 KB |
+| TrainDense | 5.003 ms | 0.083 ms | 0.073 ms | 6 805.45 KB |
+| PredictDenseK5 | 2.703 ms | 0.018 ms | 0.016 ms | 41.75 KB |
+
+The prediction rows are 16 queries, so BM25 costs about 0.30 ms per query and the dense 256-dim
+path about 0.17 ms at 2 000 stored documents. The bounded top-k buffer keeps a prediction at a few
+tens of KB instead of one entry per stored document; the store itself is the memory. K = 5 and
+K = 25 read the same mean because the scan, not the heap, dominates at this size.
+
+## Incremental centroids (`CentroidIncrementalBenchmarks`)
+
+2 000 documents of 384 dimensions over 20 categories, one `MediumRun`. `Train` is the full pass;
+`LearnThenUnlearn` is one add and one exact removal of the same document.
+
+| Method | Mean | Error | StdDev | Allocated |
+|---|---:|---:|---:|---:|
+| Train | 850.114 us | 1.986 us | 1.858 us | 108 832 B |
+| Predict | 2.143 us | 0.022 us | 0.020 us | 584 B |
+| LearnThenUnlearn | 1.422 us | 0.015 us | 0.014 us | 0 B |
+
+One `Learn`/`Unlearn` pair is about 600× cheaper than the full training pass and allocates
+nothing: it adds or subtracts one vector and one count. It is a correction, not a retrain — the
+centroid of the touched category changes, the other categories do not move unless the global mean
+is centered on.
+
+## Blends (`BlendBenchmarks`)
+
+Eight categories, two and three trained lanes, and a candidate source, one `MediumRun`.
+
+| Method | Mean | Error | StdDev | Allocated |
+|---|---:|---:|---:|---:|
+| TwoLanes | 979.5 ns | 18.97 ns | 18.63 ns | 1.67 KB |
+| ThreeLanes | 1 223.6 ns | 24.22 ns | 30.64 ns | 1.84 KB |
+| TwoLanesWithCandidate | 1 208.2 ns | 23.95 ns | 43.18 ns | 1.99 KB |
+
+A third lane costs about 0.24 µs and 0.17 KB; a candidate source costs about 0.23 µs and 0.32 KB.
+The allocation is the distribution and the result page, not a full copy per lane.
+
 ## Behavioural gate (`lexisharp verify`)
 
 Not a benchmark, and the distinction matters. `verify` replays the reference corpus against a

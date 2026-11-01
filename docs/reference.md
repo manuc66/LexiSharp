@@ -165,9 +165,11 @@ was designed from:
   probability and recommends a threshold for a coverage target; at 50 % on 20NG the linear model
   reads **0.964** precision, the forest **0.868**, Naive Bayes **0.914** and the tree **0.775**.
   `ClassificationModelSerializer`
-  saves and loads a trained tree, forest, linear model or calibrated wrapper in a versioned binary
-  (`LXCL`, version 1) that carries the vocabulary, the prediction options and the ledger; the
-  tokenizer is not stored, so load with the same feature source. The long-document figures do not
+  saves and loads a trained tree, forest, linear model, centroid or calibrated wrapper in a
+  versioned binary (`LXCL`, version 2) that carries the vocabulary, the prediction options, the
+  ledger and, for the linear model, its virtual categories; the tokenizer and the embedding
+  provider are not stored, so load with the same source and provider. Version 1 is refused rather
+  than guessed. The long-document figures do not
   transfer to short text: with only the `Subject`
   line the linear model reads **0.5533 / 0.5295** and Naive Bayes **0.5624 / 0.5293**, with no
   significant difference (McNemar p = 0.16), so run the baseline on your own short texts first.

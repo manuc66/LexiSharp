@@ -20,13 +20,15 @@ namespace LexiSharp.Classification;
 /// <para>
 /// The format is little-endian and starts with the magic <c>LXCL</c>, an <see cref="int"/> version,
 /// a kind byte and the feature-space hash. <see cref="CurrentVersion"/> is the only version this
-/// build reads; a mismatch throws <see cref="InvalidDataException"/> instead of guessing.
+/// build reads; a mismatch throws <see cref="InvalidDataException"/> instead of guessing. Version 2
+/// added the linear model's virtual categories and its correction options; a version-1 file is
+/// refused rather than guessed, and the 0.x migration is to retrain and save again.
 /// </para>
 /// </remarks>
 public static class ClassificationModelSerializer
 {
     /// <summary>The only format version this build reads.</summary>
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
 
     private static ReadOnlySpan<byte> Magic => "LXCL"u8;
 
@@ -36,6 +38,7 @@ public static class ClassificationModelSerializer
         RandomForest = 2,
         Linear = 3,
         Calibrated = 4,
+        Centroid = 5,
     }
 
     /// <summary>Saves a trained model.</summary>
@@ -74,16 +77,43 @@ public static class ClassificationModelSerializer
     public static void Save(CalibratedClassifier model, Stream destination) =>
         Save((ITextClassifier)model, destination);
 
+    /// <summary>Saves a centroid model.</summary>
+    /// <param name="model">The model to save.</param>
+    /// <param name="destination">The stream to write to; it is left open.</param>
+    public static void Save(CentroidClassifier model, Stream destination) =>
+        Save((ITextClassifier)model, destination);
+
     /// <summary>Loads a model, dispatching on the stored kind.</summary>
     /// <param name="source">The stream to read; it is left open.</param>
     /// <param name="features">The feature source to pair with the loaded state; null means a default <see cref="TextFeatureSource"/>.</param>
+    /// <param name="embeddings">
+    /// The embedding provider to pair with a stored centroid model. It is not stored in the file,
+    /// exactly as the tokenizer is not: a provider is a delegate, not data.
+    /// </param>
     /// <returns>The loaded model, typed as <see cref="ITextClassifier"/>.</returns>
-    public static ITextClassifier Load(Stream source, IFeatureSource<SearchDocument>? features = null)
+    public static ITextClassifier Load(
+        Stream source,
+        IFeatureSource<SearchDocument>? features = null,
+        IEmbeddingProvider? embeddings = null)
     {
         ArgumentNullException.ThrowIfNull(source);
 
         using var reader = new BinaryReader(source, Encoding.UTF8, leaveOpen: true);
-        return ReadEnvelope(reader, features);
+        return ReadEnvelope(reader, features, embeddings);
+    }
+
+    /// <summary>Loads a centroid model, pairing its stored state with the caller's provider.</summary>
+    /// <param name="source">The stream to read; it is left open.</param>
+    /// <param name="embeddings">The embedding provider the loaded model will call.</param>
+    /// <returns>The loaded centroid model.</returns>
+    public static CentroidClassifier LoadCentroid(Stream source, IEmbeddingProvider embeddings)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(embeddings);
+
+        using var reader = new BinaryReader(source, Encoding.UTF8, leaveOpen: true);
+        ReadHeader(reader, ModelKind.Centroid, out _);
+        return CentroidClassifier.ReadState(reader, embeddings);
     }
 
     /// <summary>Loads a decision tree.</summary>
@@ -143,17 +173,19 @@ public static class ClassificationModelSerializer
     /// <summary>Loads a calibrated model and the model it wraps.</summary>
     /// <param name="source">The stream to read; it is left open.</param>
     /// <param name="features">The feature source to pair with the loaded state; null means a default <see cref="TextFeatureSource"/>.</param>
+    /// <param name="embeddings">The embedding provider to pair with a stored centroid inner model, when there is one.</param>
     /// <returns>The loaded calibrated model.</returns>
     public static CalibratedClassifier LoadCalibrated(
         Stream source,
-        IFeatureSource<SearchDocument>? features = null)
+        IFeatureSource<SearchDocument>? features = null,
+        IEmbeddingProvider? embeddings = null)
     {
         ArgumentNullException.ThrowIfNull(source);
 
         using var reader = new BinaryReader(source, Encoding.UTF8, leaveOpen: true);
         ReadHeader(reader, ModelKind.Calibrated, out _);
         double temperature = reader.ReadDouble();
-        ITextClassifier inner = ReadEnvelope(reader, features);
+        ITextClassifier inner = ReadEnvelope(reader, features, embeddings);
 
         return new CalibratedClassifier(inner, new TemperatureCalibrator(temperature));
     }
@@ -183,6 +215,20 @@ public static class ClassificationModelSerializer
                 WriteEnvelope(writer, calibrated.Inner);
                 break;
 
+            case CentroidClassifier centroid:
+                WriteHeader(writer, ModelKind.Centroid, string.Empty);
+                centroid.WriteState(writer);
+                break;
+
+            case FusedTextClassifier:
+            case BlendTextClassifier:
+                throw new NotSupportedException(
+                    "A blended classifier is a graph of models and evidence sources; save the lanes individually.");
+
+            case NearestNeighborClassifier:
+                throw new NotSupportedException(
+                    "A nearest-neighbour model stores its corpus; persistence is not implemented in v1.");
+
             default:
                 throw new NotSupportedException(
                     $"No persistence format exists for {model.GetType().Name}.");
@@ -191,7 +237,8 @@ public static class ClassificationModelSerializer
 
     private static ITextClassifier ReadEnvelope(
         BinaryReader reader,
-        IFeatureSource<SearchDocument>? features)
+        IFeatureSource<SearchDocument>? features,
+        IEmbeddingProvider? embeddings)
     {
         ModelKind kind = ReadHeader(reader, expected: null, out string hash);
 
@@ -217,8 +264,19 @@ public static class ClassificationModelSerializer
 
             case ModelKind.Calibrated:
                 double temperature = reader.ReadDouble();
-                ITextClassifier inner = ReadEnvelope(reader, features);
+                ITextClassifier inner = ReadEnvelope(reader, features, embeddings);
                 return new CalibratedClassifier(inner, new TemperatureCalibrator(temperature));
+
+            case ModelKind.Centroid:
+                if (embeddings is null)
+                {
+                    throw new InvalidOperationException(
+                        "A centroid model needs an embedding provider to load; pass one to Load or use LoadCentroid.");
+                }
+
+                model = CentroidClassifier.ReadState(reader, embeddings);
+                actual = string.Empty;
+                break;
 
             default:
                 throw new InvalidDataException($"Unknown model kind {(byte)kind}.");

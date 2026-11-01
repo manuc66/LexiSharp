@@ -25,11 +25,16 @@ namespace LexiSharp.Classification;
 /// <see cref="Train"/> trains both models. If either was already trained, its model is replaced —
 /// the same contract as every other <see cref="ITextClassifier"/>.
 /// </para>
+/// <para>
+/// This is the two-lane case of <see cref="BlendTextClassifier"/>: <c>FusedTextClassifier(a, b, w)</c>
+/// produces exactly the same distribution as
+/// <c>BlendTextClassifier([(a, 1-w), (b, w)])</c>. Use the latter when the blend has more than two
+/// models or when candidate/prior evidence has to be injected.
+/// </para>
 /// </remarks>
 public sealed class FusedTextClassifier : ITextClassifier
 {
-    private readonly ITextClassifier _first;
-    private readonly ITextClassifier _second;
+    private readonly BlendTextClassifier _blend;
     private readonly double _secondWeight;
 
     /// <summary>Creates a blended classifier over two text classifiers.</summary>
@@ -58,91 +63,28 @@ public sealed class FusedTextClassifier : ITextClassifier
                 "The second model's weight must be a finite number in [0, 1].");
         }
 
-        _first = first;
-        _second = second;
         _secondWeight = secondWeight;
+        _blend = new BlendTextClassifier(new[]
+        {
+            new TextClassifierLane(first, 1 - secondWeight),
+            new TextClassifierLane(second, secondWeight),
+        });
     }
 
     /// <summary>The weight of the second model in the blend.</summary>
     public double SecondWeight => _secondWeight;
 
     /// <inheritdoc />
-    public void Train(IEnumerable<SearchDocument> documents)
-    {
-        ArgumentNullException.ThrowIfNull(documents);
-
-        // Materialize once: an IEnumerable may be a one-pass query, and training two models from
-        // the same enumerator would otherwise hand the second an empty corpus.
-        var corpus = documents as IReadOnlyList<SearchDocument> ?? documents.ToList();
-
-        _first.Train(corpus);
-        _second.Train(corpus);
-    }
+    public void Train(IEnumerable<SearchDocument> documents) => _blend.Train(documents);
 
     /// <inheritdoc />
     public IReadOnlyList<ClassificationResult> Predict(
         string text,
         int limit = 3,
-        IReadOnlySet<string>? excludedCategories = null)
-    {
-        ArgumentNullException.ThrowIfNull(text);
-
-        if (limit <= 0)
-            return Array.Empty<ClassificationResult>();
-
-        var first = _first.Predict(text, limit: int.MaxValue, excludedCategories);
-        var second = _second.Predict(text, limit: int.MaxValue, excludedCategories);
-
-        if (first.Count == 0 && second.Count == 0)
-            return Array.Empty<ClassificationResult>();
-
-        var blended = new Dictionary<string, double>(first.Count + second.Count, StringComparer.Ordinal);
-
-        foreach (var result in first)
-            blended[result.Category] = (1 - _secondWeight) * result.Probability;
-
-        foreach (var result in second)
-        {
-            blended.TryGetValue(result.Category, out double current);
-            blended[result.Category] = current + (_secondWeight * result.Probability);
-        }
-
-        double total = 0;
-
-        foreach (double probability in blended.Values)
-            total += probability;
-
-        if (total <= 0)
-            return Array.Empty<ClassificationResult>();
-
-        var ranked = new List<(string Category, double Probability)>(blended.Count);
-
-        foreach (var (category, probability) in blended)
-            ranked.Add((category, probability / total));
-
-        ranked.Sort(static (left, right) =>
-        {
-            int byProbability = right.Probability.CompareTo(left.Probability);
-            return byProbability != 0
-                ? byProbability
-                : string.CompareOrdinal(left.Category, right.Category);
-        });
-
-        // Only the returned categories become result objects. The union can be wider than the
-        // page, and materializing every category only to discard it is the allocation this avoids.
-        int take = Math.Min(limit, ranked.Count);
-        var results = new ClassificationResult[take];
-
-        for (int i = 0; i < take; i++)
-            results[i] = new ClassificationResult(ranked[i].Category, ranked[i].Probability);
-
-        return results;
-    }
+        IReadOnlySet<string>? excludedCategories = null) =>
+        _blend.Predict(text, limit, excludedCategories);
 
     /// <inheritdoc />
-    public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null)
-    {
-        var results = Predict(text, limit: 1, excludedCategories);
-        return results.Count > 0 ? results[0].Category : null;
-    }
+    public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null) =>
+        _blend.PredictBest(text, excludedCategories);
 }

@@ -147,7 +147,7 @@ twice. Every figure below is reproducible with a command on the
 | [BM25 and ranking functions](ranking.md) | four scorers, BM25+ / BM25L and their δ tuners, BM25F, score boosting, proximity, per-term explanations — each with the measurement behind it |
 | [Rerankers and hybrid search](pipelines.md) | rerankers (MMR, cascade, cross-encoder, MaxSim), hybrid federation, cost-based and intent-based routing |
 | [Dense, sparse and query expansion](embeddings.md) | dense, learned-sparse and corpus-derived expansion, all behind consumer-supplied seams |
-| [Classification and text analysis](text-analysis.md) | lexical similarity, keyword extraction, Naive Bayes classification |
+| [Classification and text analysis](text-analysis.md) | lexical similarity, keyword extraction, Naive Bayes, trees/forest/linear, centroids, nearest neighbours and blends |
 | [PostgreSQL and ParadeDB backends](backends.md) | PostgreSQL lexical / vector / sparse / fuzzy, ParadeDB BM25, what the integration tests cover |
 | [Search traces and telemetry](observability.md) | `SearchTrace`, production telemetry, source agreement, calibrated score confidence |
 | [Retrieval quality and IR metrics](evaluation.md) | the BEIR numbers in full, IR metrics, the benchmark CLI, per-query diffs, parameter tuning |

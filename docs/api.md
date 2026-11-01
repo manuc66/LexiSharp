@@ -34,6 +34,7 @@ are listed first.
 | `IFeatureSource<TItem>` | — | Extracts the features of an item — the seam that keeps the question trees domain-agnostic. | [guide](text-analysis.md) |
 | `IBatchEmbeddingProvider` | `IEmbeddingProvider` | An IEmbeddingProvider that can embed several texts in one call. Engines that index a corpus check for this interface and use it instead of calling… | [guide](reference.md) |
 | `ICandidateIndex` | `IReadOnlyTextIndex` | Capability for an index that can enumerate only the documents containing at least one of the given query terms, instead of scanning the whole corpus. | [guide](reference.md) |
+| `ICandidateTextSource` | — | Produces categories that no trained classifier has learned, from the text alone. | [guide](reference.md) |
 | `IChunkContextEnricher` | — | Augments the searchable text of a SearchDocument before it is indexed — the « contextual retrieval » seam. A chunk that only says "the benefit rose 12%" is… | [guide](reference.md) |
 | `IColumnAwareBatchEmbeddingProvider` | `IBatchEmbeddingProvider`, `IEmbeddingProvider` | A batch provider that also knows which column the texts belong to — the pair of capabilities a PostgreSQL engine with EmbeddingColumns needs to batch one column… | [guide](reference.md) |
 | `ICompressingSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that can return, alongside the ranked page, each document compressed to its query-relevant content — the surface a… | [guide](reference.md) |
@@ -66,6 +67,7 @@ are listed first.
 | `ITermOverlapScorer` | `ITextScorer` | Capability for a scorer whose score is exactly 0 for every document sharing no query term with the query, which lets the search engine skip such documents… | [guide](reference.md) |
 | `ITextClassifier` | — | Supervised text classifier trained on labelled documents. | [guide](reference.md) |
 | `ITextIndex` | `IReadOnlyTextIndex` | A write-capable index: the read surface of IReadOnlyTextIndex plus the mutations a caller that owns the corpus performs (Index/Add/Remove/Clear). | [guide](reference.md) |
+| `ITextPriorSource` | — | Produces additive log-prior evidence for categories a trained model already holds. | [guide](reference.md) |
 | `ITextScorer` | — | Computes how relevant a single document is with respect to a tokenized query, given a shared IReadOnlyTextIndex for corpus statistics. | [guide](reference.md) |
 | `ITextSearchEngine` | — | The public search surface of the library: index documents and rank them against a query. | [guide](reference.md) |
 | `ITokenEmbeddingProvider` | — | Produces a sequence of token-level embeddings for a text — the building block of late interaction (ColBERT-style) ranking, where a query is matched to a… | [guide](reference.md) |
@@ -133,9 +135,11 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
+| `BlendTextClassifier` | class | `ITextClassifier` | Blends any number of text classifiers, then optionally injects candidate categories and log-prior bonuses. |
 | `CalibratedClassifier` | class | `ITextClassifier` | Wraps an ITextClassifier with a fitted temperature, so Predict returns the calibrated distribution and PredictBest the same top category. |
 | `CalibrationSample` | record | — | One validation observation for calibration: the distribution a model produced and the category that was actually right. |
-| `CentroidClassifier` | class | `ITextClassifier` | Text wrapper over the generic nearest-centroid model: embeds documents with an IEmbeddingProvider, computes one centroid per Category, and classifies a text by… |
+| `CandidateLane` | record | — | One source of categories no model learned, and the weight of its evidence. |
+| `CentroidClassifier` | class | `IIncrementalTextClassifier`, `ITextClassifier` | Text wrapper over the generic nearest-centroid model: embeds documents with an IEmbeddingProvider, computes one centroid per Category, and classifies a text by… |
 | `CentroidClassifier<TItem>` | class | — | Nearest-centroid classifier over caller-supplied vectors: one mean per category, ranked by cosine similarity, with a softmax over the cosines as the posterior. |
 | `CentroidClassifierOptions` | record | — | Tunable knobs for the nearest-centroid classifiers: the softmax temperature, and the embedding role the text wrapper uses on each side. |
 | `ClassificationModelSerializer` | class | — | Saves and loads trained text classifiers in a versioned, dependency-free binary format. |
@@ -172,14 +176,19 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `MaskedFeatureSource<TItem>` | class | `IFeatureSource` | Suppresses an inner feature source for the items a mask predicate selects, and reports the mask's own features instead. |
 | `NaiveBayesClassifier` | class | `IIncrementalTextClassifier`, `IReinforceableTextClassifier`, `ITextClassifier`, `IWeightedPredictor` | Multinomial Naive Bayes trained on labelled documents. |
 | `NaiveBayesOptions` | record | — | Tunable knobs for NaiveBayesClassifier; the defaults reproduce the classic Laplace-smoothed, unweighted multinomial Naive Bayes. |
+| `NearestNeighborClassifier` | class | `IIncrementalTextClassifier`, `ITextClassifier` | K-nearest-neighbour text classifier: BM25 over terms, or cosine over embeddings, with a configurable vote. |
+| `NearestNeighborOptions` | record | — | Tunable knobs for NearestNeighborClassifier: how many neighbours vote, how their scores become weights, the BM25 parameters of the lexical path, and the… |
+| `NeighborVote` | enum | — | How a neighbour's similarity becomes a vote. |
 | `NumericThresholdQuestion` | record | `FeatureQuestion` | True when a feature's numeric value is at or above the threshold. A missing value — the feature is absent, carries no number, or carries NaN — answers no, which… |
+| `PriorLane` | record | — | One source of log-prior bonuses on categories a model already holds. |
 | `QuestionAnswer` | record | — | One question and the answer a particular item gave it. |
 | `RandomForestClassifier` | class | `ITextClassifier` | The text convenience over RandomForestClassifier: a SearchDocument forest over Text. |
 | `RandomForestClassifier<TItem>` | class | — | A bagged forest of DecisionTreeClassifier trees: each tree sees a bootstrap sample and a random subset of the features, and the forest averages their… |
 | `RandomForestOptions` | record | — | Tunable knobs for RandomForestClassifier: how many trees, how deep, and how much of the feature space each tree is allowed to see. |
 | `SplitCriterion` | enum | — | How a candidate split is scored when a decision tree chooses its next question. |
-| `SynchronizedTextClassifier` | class | `IDisposable`, `IIncrementalTextClassifier`, `IReinforceableTextClassifier`, `ITextClassifier`, `IWeightedPredictor` | Wraps an IReinforceableTextClassifier so that concurrent prediction and concurrent mutation stop being the caller's problem: any number of Predict and… |
+| `SynchronizedTextClassifier` | class | `IDisposable`, `IIncrementalTextClassifier`, `IReinforceableTextClassifier`, `ITextClassifier`, `IWeightedPredictor` | Wraps an ITextClassifier so that concurrent prediction and concurrent mutation stop being the caller's problem: any number of Predict and PredictBest calls may… |
 | `TemperatureCalibrator` | class | — | A one-parameter post-hoc calibrator: it divides the log-probabilities by a temperature fitted on a validation set to minimize log-loss. |
+| `TextClassifierLane` | record | — | One trained classifier and the weight its distribution carries in the blend. |
 | `TextFeatureSource` | class | `IFeatureSource` | The text feature space: the normalized terms of Text. |
 | `UnknownIndicatorSource<TItem>` | class | `IFeatureSource` | Turns every unknown feature into an explicit binary indicator named prefix + feature, so a model that only asks binary questions can learn the difference… |
 
@@ -261,6 +270,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `StageRetrievalMetrics` | record | — | Aggregated measurements for one pipeline stage of one engine. |
 | `SynchronizedTextSearchEngine` | class | `IDetailedSearchEngine`, `IDisposable`, `IExplainableSearchEngine`, `IFacetedSearchEngine`, `ITextSearchEngine` | Wraps an ITextSearchEngine so that concurrent searches and concurrent mutation stop being the caller's problem: any number of Search (and the capability calls… |
 | `TermContribution` | record | — | The contribution of a single query term to a document's score, as broken down by an IScoreExplainer. |
+| `TextEvidence` | record | — | A category with an unnormalized weight, produced by a source that is not a trained classifier. |
 | `TextFields` | class | — | Field naming rules shared by the index and the field-aware scorers. |
 | `TextIndexStatistics` | record | — | A read-only snapshot of the corpus statistics of an ITextIndex — useful for observability, dashboards and corpus introspection. |
 | `TokenEmbeddingProviderExtensions` | class | — | Backwards-compatible call shape: embeds text as a Passage. |

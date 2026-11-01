@@ -1,0 +1,20 @@
+{
+  "dataset": "20news-bydate-subject",
+  "sourceMd5": "D6E9E45CB8CB77EC5276DFA6DFC14318",
+  "knownCategories": 15,
+  "heldOutCategories": 5,
+  "heldOut": "soc.religion.christian,talk.politics.guns,talk.politics.mideast,talk.politics.misc,talk.religion.misc",
+  "knownTrainDocuments": 5459,
+  "streamDocuments": 586,
+  "seed": 7,
+  "correctionWeight": 20,
+  "unseenCategoryBias": 0,
+  "retrainEvery": 50,
+  "staticAccuracy": 0,
+  "virtualAccuracy": 0.29180887372013653,
+  "virtualFirstAccuracy": 0,
+  "virtualRepeatAccuracy": 0.2943201376936317,
+  "retrainAccuracy": 0.2883959044368601,
+  "virtualLearns": 586,
+  "retrains": 11
+}
