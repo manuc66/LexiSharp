@@ -139,8 +139,9 @@ was designed from:
   that reached it, not a probability of correctness. A numeric feature is learned as an inequality
   (`hour >= 14`), so adjacent values generalize; a categorical bucket, a transition and a process
   hierarchy are still flat names. A feature can be present, absent or unknown; a binary question
-  answers no for unknown, and `MaskedFeatureSource` is the caller-side seam for excluding a
-  dimension when an item is generic or excluded. On the standard `20news-bydate` split the single
+  answers no for unknown, `UnknownIndicatorSource` makes the unknown explicit for the binary
+  models, and `MaskedFeatureSource` is the caller-side seam for excluding a dimension when an item
+  is generic or excluded. On the standard `20news-bydate` split the single
   tree reads **0.4457** accuracy / **0.4945** macro-F1, the forest **0.6621** / **0.6584**, Naive
   Bayes **0.7573** / **0.7289**, and `LinearClassifier` **0.8085** / **0.8027**: the tree and forest
   are explainability/ensemble options and the linear model is the accuracy one. A temperature
