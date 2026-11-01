@@ -57,6 +57,11 @@ truncate and inserts in one transaction. With `EmbeddingColumns`, a provider tha
 | E5, multilingual, SentencePiece (`spiece.model` / `sentencepiece.bpe.model`) | `SentencePieceOnnxTokenizer` |
 | GPT-2/RoBERTa byte-level BPE (`tokenizer.json`) | `BpeOnnxTokenizer` |
 
+**E5's `tokenizer.json` is Unigram, not BPE.** `BpeOnnxTokenizer` refuses it by design; use the
+checkpoint's `sentencepiece.bpe.model` with `SentencePieceOnnxTokenizer`. The JSON contains a
+precompiled normalizer, but the `.model` is the file that defines the ids the graph was exported
+against.
+
 SentencePiece exports often offset the graph vocabulary from the model ids. That is an option,
 not a fork:
 

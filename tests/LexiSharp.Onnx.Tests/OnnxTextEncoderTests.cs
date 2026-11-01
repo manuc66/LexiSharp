@@ -19,6 +19,22 @@ public sealed class OnnxTextEncoderTests
             Tokenizer = Tokenizer(),
         };
 
+    private sealed class CountingTokenizer : IOnnxTokenizer
+    {
+        public int Calls { get; private set; }
+
+        public OnnxTokenizedText Encode(string text, int maxSequenceLength)
+        {
+            if (text != "probe")
+                Calls++;
+
+            return new OnnxTokenizedText([4, 5]);
+        }
+
+        public OnnxTokenizedText EncodePair(string query, string document, int maxSequenceLength, int maxQueryTokens) =>
+            new([2, 4, 5, 3]);
+    }
+
     private sealed class ThrowingTokenizer : IOnnxTokenizer
     {
         public OnnxTokenizedText Encode(string text, int maxSequenceLength) =>
@@ -141,6 +157,47 @@ public sealed class OnnxTextEncoderTests
         Assert.NotEqual(
             cls.GetTextEmbedding("hello world").ToArray(),
             mean.GetTextEmbedding("hello world").ToArray());
+    }
+
+    [Fact]
+    public void Encoder_CachesQueryEmbeddingsByRole()
+    {
+        var tokenizer = new CountingTokenizer();
+
+        using var encoder = new OnnxTextEncoder(new OnnxTextEncoderOptions
+        {
+            ModelPath = Fixture("tiny-encoder.onnx"),
+            Tokenizer = tokenizer,
+            EmbeddingCacheCapacity = 2,
+        });
+
+        encoder.GetTextEmbedding("hello");
+        encoder.GetTextEmbedding("hello");
+        Assert.Equal(1, tokenizer.Calls);
+
+        encoder.GetTextEmbedding("hello", EmbeddingUse.Query);
+        Assert.Equal(2, tokenizer.Calls);
+
+        encoder.GetTextEmbedding("world");
+        encoder.GetTextEmbedding("hello");
+        Assert.Equal(4, tokenizer.Calls);
+    }
+
+    [Fact]
+    public void Encoder_CanDisableTheEmbeddingCache()
+    {
+        var tokenizer = new CountingTokenizer();
+
+        using var encoder = new OnnxTextEncoder(new OnnxTextEncoderOptions
+        {
+            ModelPath = Fixture("tiny-encoder.onnx"),
+            Tokenizer = tokenizer,
+            EmbeddingCacheCapacity = 0,
+        });
+
+        encoder.GetTextEmbedding("hello");
+        encoder.GetTextEmbedding("hello");
+        Assert.Equal(2, tokenizer.Calls);
     }
 
     [Fact]
