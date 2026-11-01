@@ -12,6 +12,9 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        if (args.Length > 0 && string.Equals(args[0], "classification-centroid", StringComparison.Ordinal))
+            return await CentroidClassificationCommand.RunAsync(args[1..]);
+
         string dataBaseDir = Path.Combine(AppContext.BaseDirectory, "../../../data");
         string datasetArg = "nfcorpus";
         int topK = 10;
