@@ -63,6 +63,12 @@ public sealed class OnnxCrossEncoderOptions
     /// <summary>Hard cap on the merged sequence, special tokens included. Defaults to 512.</summary>
     public int MaxSequenceLength { get; init; } = 512;
 
+    /// <summary>
+    /// Token id written to padded positions. Defaults to <c>0</c>, which is <c>[PAD]</c> for BERT;
+    /// RoBERTa-style vocabularies use <c>1</c>.
+    /// </summary>
+    public int PadTokenId { get; init; }
+
     /// <summary>Cap on the query side of the pair, so a long query cannot crowd out the document. Defaults to 128.</summary>
     public int MaxQueryTokens { get; init; } = 128;
 

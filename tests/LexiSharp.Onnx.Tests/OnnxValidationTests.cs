@@ -129,6 +129,31 @@ public sealed class OnnxValidationTests
     }
 
     [Fact]
+    public void Encoder_PadTokenIdIsConfigurableAndValidated()
+    {
+        using var zero = new OnnxTextEncoder(EncoderVariant());
+        using var one = new OnnxTextEncoder(new OnnxTextEncoderOptions
+        {
+            ModelPath = Fixture("tiny-encoder.onnx"),
+            Tokenizer = Tokenizer(),
+            PadTokenId = 1,
+        });
+
+        float[] left = zero.GetTextEmbedding("hello world").ToArray();
+        float[] right = one.GetTextEmbedding("hello world").ToArray();
+
+        for (int i = 0; i < left.Length; i++)
+            Assert.InRange(Math.Abs(left[i] - right[i]), 0, 1e-6f);
+
+        Assert.Throws<ArgumentException>(() => new OnnxTextEncoder(new OnnxTextEncoderOptions
+        {
+            ModelPath = Fixture("tiny-encoder.onnx"),
+            Tokenizer = Tokenizer(),
+            PadTokenId = -1,
+        }));
+    }
+
+    [Fact]
     public void Encoder_SignatureChangesWithTheModelFile()
     {
         using var first = new OnnxTextEncoder(EncoderVariant("tiny-encoder.onnx"));

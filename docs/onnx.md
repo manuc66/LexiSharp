@@ -167,6 +167,27 @@ The package and the harness agree exactly. The 0.337/0.346 in the evaluation tab
 different run/configuration than this command; both encoders read 0.335/0.341 here, so that gap is
 not a package difference.
 
+## Model assumptions
+
+The package does not infer a model card. These are the conventions it applies; check them against
+the checkpoint before trusting a result:
+
+- **Pooling.** `Mean` averages the real tokens, special tokens included, which is what
+  sentence-transformers does for MiniLM/E5. `Cls` takes position 0. A model that pools only the
+  content tokens, or uses the last token, needs its own `IOnnxTokenizer`/encoder.
+- **Padding.** Padded positions use `PadTokenId` (default `0`, `[PAD]` for BERT/E5; RoBERTa uses
+  `1`). The attention mask hides them, but a tokenizer-correct id keeps graph assumptions intact.
+- **Truncation.** A single text keeps its head. A pair keeps the query head and the document
+  **tail** (the harness's cross-encoder does the same). A model trained with `longest_first` or
+  `only_second` needs a different tokenizer.
+- **Prefixes.** `QueryPrefix`/`PassagePrefix` are literal text; E5 needs `"query: "` and
+  `"passage: "`, and the space is significant.
+- **Scores.** The cross-encoder returns the selected logit raw. A multi-class relevance model sets
+  `ScoreIndex` and `ScoreTransform` (`Softmax` or `Sigmoid`); a regression reranker keeps `None`.
+- **Signature.** It covers the model file, the tokenizer fingerprint and the preprocessing
+  options. A custom `IdMap` is recorded as present/absent, not by value; give such a tokenizer its
+  own fingerprint if two mappings can differ.
+
 ## Signature, warm-up and cancellation
 
 `OnnxTextEncoder` implements `IEmbeddingSignatureProvider`: the signature is a SHA-256 over the

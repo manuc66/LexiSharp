@@ -59,6 +59,39 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
     /// <exception cref="NotSupportedException">The graph's tensor types or output rank are not supported.</exception>
     public OnnxTextEncoder(OnnxTextEncoderOptions options)
     {
+        ValidateOptions(options);
+
+        _options = options;
+        _signature = new Lazy<string>(ComputeSignature);
+        _session = OnnxSessionFactory.Create(
+            options.ModelPath,
+            options.IntraOpNumThreads,
+            options.InterOpNumThreads,
+            options.ConfigureSession);
+
+        try
+        {
+            var input = OnnxGraphMetadata.ReadInputs(
+                _session, options.InputIdsName, options.AttentionMaskName, options.TokenTypeIdsName);
+            _inputType = input.InputType;
+            _inputNames = input.InputNames;
+
+            var output = ReadOutputMetadata(_session, options);
+            _outputType = output.OutputType;
+            _pooledOutput = output.PooledOutput;
+            _outputNames = [options.OutputName];
+
+            Dimension = ResolveDimension();
+        }
+        catch
+        {
+            _session.Dispose();
+            throw;
+        }
+    }
+
+    private static void ValidateOptions(OnnxTextEncoderOptions options)
+    {
         ArgumentNullException.ThrowIfNull(options);
 
         if (string.IsNullOrWhiteSpace(options.ModelPath))
@@ -75,58 +108,28 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
         if (options.MaxBatchSize < 1)
             throw new ArgumentException("MaxBatchSize must be at least 1.", nameof(options));
 
-        _options = options;
-        _signature = new Lazy<string>(ComputeSignature);
-        _session = OnnxSessionFactory.Create(
-            options.ModelPath,
-            options.IntraOpNumThreads,
-            options.InterOpNumThreads,
-            options.ConfigureSession);
+        if (options.PadTokenId < 0)
+            throw new ArgumentException("PadTokenId cannot be negative.", nameof(options));
+    }
 
-        try
-        {
-            if (!_session.InputMetadata.TryGetValue(options.InputIdsName, out NodeMetadata? idsMetadata))
-                throw new ArgumentException($"The model declares no input named '{options.InputIdsName}'.", nameof(options));
+    private static (TensorElementType OutputType, bool PooledOutput) ReadOutputMetadata(
+        InferenceSession session,
+        OnnxTextEncoderOptions options)
+    {
+        if (!session.OutputMetadata.TryGetValue(options.OutputName, out NodeMetadata? output))
+            throw new ArgumentException($"The model declares no output named '{options.OutputName}'.", nameof(options));
 
-            if (!_session.InputMetadata.TryGetValue(options.AttentionMaskName, out NodeMetadata? maskMetadata))
-                throw new ArgumentException($"The model declares no input named '{options.AttentionMaskName}'.", nameof(options));
+        TensorElementType outputType = output.ElementDataType;
 
-            _inputType = idsMetadata.ElementDataType;
+        if (outputType is not (TensorElementType.Float or TensorElementType.Float16))
+            throw new NotSupportedException(
+                $"Output '{options.OutputName}' is {outputType}; only Float and Float16 are supported.");
 
-            if (_inputType is not (TensorElementType.Int64 or TensorElementType.Int32))
-                throw new NotSupportedException(
-                    $"Input '{options.InputIdsName}' is {_inputType}; only Int64 and Int32 token ids are supported.");
+        if (output.Dimensions.Length is not (2 or 3))
+            throw new NotSupportedException(
+                $"Output '{options.OutputName}' has rank {output.Dimensions.Length}; expected [batch, sequence, hidden] or [batch, hidden].");
 
-            if (maskMetadata.ElementDataType != _inputType)
-                throw new NotSupportedException(
-                    $"Inputs '{options.InputIdsName}' and '{options.AttentionMaskName}' use different element types.");
-
-            if (!_session.OutputMetadata.TryGetValue(options.OutputName, out NodeMetadata? outputMetadata))
-                throw new ArgumentException($"The model declares no output named '{options.OutputName}'.", nameof(options));
-
-            _outputType = outputMetadata.ElementDataType;
-
-            if (_outputType is not (TensorElementType.Float or TensorElementType.Float16))
-                throw new NotSupportedException(
-                    $"Output '{options.OutputName}' is {_outputType}; only Float and Float16 are supported.");
-
-            if (outputMetadata.Dimensions.Length is not (2 or 3))
-                throw new NotSupportedException(
-                    $"Output '{options.OutputName}' has rank {outputMetadata.Dimensions.Length}; expected [batch, sequence, hidden] or [batch, hidden].");
-
-            _pooledOutput = outputMetadata.Dimensions.Length == 2;
-            _outputNames = [options.OutputName];
-            _inputNames = options.TokenTypeIdsName is not null && _session.InputMetadata.ContainsKey(options.TokenTypeIdsName)
-                ? [options.InputIdsName, options.AttentionMaskName, options.TokenTypeIdsName]
-                : [options.InputIdsName, options.AttentionMaskName];
-
-            Dimension = ResolveDimension();
-        }
-        catch
-        {
-            _session.Dispose();
-            throw;
-        }
+        return (outputType, output.Dimensions.Length == 2);
     }
 
     /// <inheritdoc />
@@ -308,17 +311,18 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
         else
         {
             int offset = index * stride;
+            double[] sum = new double[Dimension];
 
             for (int position = 0; position < positions; position++)
             {
                 int at = offset + (position * Dimension);
 
                 for (int d = 0; d < Dimension; d++)
-                    vector[d] += output[at + d];
+                    sum[d] += output[at + d];
             }
 
             for (int d = 0; d < Dimension; d++)
-                vector[d] /= positions;
+                vector[d] = (float)(sum[d] / positions);
         }
 
         if (_options.Normalize)
@@ -396,6 +400,7 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
             _inputNames,
             _outputNames,
             _inputType,
+            _options.PadTokenId,
             batch,
             cancellationToken,
             _disposeCancellation.Token,

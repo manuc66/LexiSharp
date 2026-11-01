@@ -61,6 +61,16 @@ public sealed class BertWordPieceTokenizerTests
     }
 
     [Fact]
+    public void Fingerprint_ChangesWithTheCasingRules()
+    {
+        var cased = new BertWordPieceTokenizer(
+            Fixture("vocab.txt"),
+            new BertWordPieceOptions { LowerCase = false });
+
+        Assert.NotEqual(Tokenizer().Fingerprint, cased.Fingerprint);
+    }
+
+    [Fact]
     public void Fingerprint_IsStableAndExposed()
     {
         Assert.Equal(Tokenizer().Fingerprint, Tokenizer().Fingerprint);

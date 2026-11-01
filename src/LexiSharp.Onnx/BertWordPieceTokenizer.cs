@@ -87,6 +87,7 @@ public sealed class BertWordPieceTokenizer : IOnnxTokenizer
 
         string canonical = string.Join('\n', _vocabulary.OrderBy(entry => entry.Key, StringComparer.Ordinal)
             .Select(entry => $"{entry.Key}:{entry.Value}"));
+        canonical += $"\nlower={_options.LowerCase};fold={_options.FoldAccents}";
         _fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
 

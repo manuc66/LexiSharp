@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using Microsoft.ML.Tokenizers;
 
 namespace LexiSharp.Onnx;
@@ -101,7 +102,12 @@ public sealed class SentencePieceOnnxTokenizer : IOnnxTokenizer
             stream,
             _options.AddBeginningOfSentence,
             _options.AddEndOfSentence);
-        _fingerprint = Convert.ToHexString(SHA256.HashData(model));
+        string modelHash = Convert.ToHexString(SHA256.HashData(model));
+        string configuration =
+            $"{modelHash}|{_options.AddBeginningOfSentence}|{_options.AddEndOfSentence}|" +
+            $"{_options.PrefixId}|{_options.SuffixId}|{_options.GraphVocabularySize}|" +
+            $"{(_options.IdMap is null ? "nomap" : "map")}";
+        _fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(configuration)));
     }
 
     /// <inheritdoc />

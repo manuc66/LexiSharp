@@ -52,6 +52,13 @@ public sealed class OnnxTextEncoderOptions
     public int MaxSequenceLength { get; init; } = 512;
 
     /// <summary>
+    /// Token id written to padded positions. Defaults to <c>0</c>, which is <c>[PAD]</c> for BERT
+    /// and E5; RoBERTa-style vocabularies use <c>1</c>. The attention mask already hides padding,
+    /// but a tokenizer-correct id keeps every graph assumption intact.
+    /// </summary>
+    public int PadTokenId { get; init; }
+
+    /// <summary>
     /// Maximum texts per session call when the batch API is used. Bounds the padded token arrays
     /// a large corpus allocates at once. Defaults to 32.
     /// </summary>
