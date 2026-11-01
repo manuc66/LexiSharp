@@ -407,11 +407,10 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
     {
         float[][] vectors = new float[texts.Count][];
 
-        if (_embeddings is IBatchEmbeddingProvider batch
-            && (column is null
-                || _embeddings is IColumnAwareBatchEmbeddingProvider
-                || _embeddings is not IColumnAwareEmbeddingProvider))
+        if (CanUseBatch(column))
         {
+            var batch = (IBatchEmbeddingProvider)_embeddings;
+
             for (int start = 0; start < texts.Count; start += _options.EmbeddingBatchSize)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -516,6 +515,17 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         }
 
         await InsertMultiAsync(connection, transaction, document, columns, embeddings, cancellationToken).ConfigureAwait(false);
+    }
+
+    private bool CanUseBatch(string? column)
+    {
+        if (_embeddings is not IBatchEmbeddingProvider)
+            return false;
+
+        if (column is null || _embeddings is IColumnAwareBatchEmbeddingProvider)
+            return true;
+
+        return _embeddings is not IColumnAwareEmbeddingProvider;
     }
 
     private async Task InsertSingleAsync(
