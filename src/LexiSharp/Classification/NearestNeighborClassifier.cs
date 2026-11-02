@@ -19,12 +19,13 @@ namespace LexiSharp.Classification;
 /// The lexical path has no such notion; an empty text is simply a document with no terms.
 /// </para>
 /// <para>
-/// The lexical path stores each document's term frequencies and the corpus document frequencies;
-/// a prediction scores every stored document against the query terms with the same Okapi BM25
-/// formula as the search engine, then keeps the <see cref="NearestNeighborOptions.K"/> best. The
-/// dense path stores one vector per document and ranks by cosine. Neither path is an inverted
-/// index or an ANN: a prediction is O(N) in the corpus, which is the price of exactness and the
-/// reason this classifier is not the default for a large corpus.
+/// The lexical path stores each document's term frequencies, the corpus document frequencies and
+/// an inverted postings index. A selective query scores only the documents that contain its terms;
+/// a query whose terms cover most of the corpus falls back to a scan of the sorted per-document
+/// term frequencies. Both paths compute the same Okapi BM25 score and keep the
+/// <see cref="NearestNeighborOptions.K"/> best, so the hybrid changes cost, not ranking. The dense
+/// path stores one vector per document and ranks by cosine; it remains an exact O(N × dim) scan.
+/// Neither path uses an ANN, which is the price of exactness.
 /// </para>
 /// <para>
 /// <see cref="Train"/> replaces the model; <see cref="Learn"/> adds one document and

@@ -1561,24 +1561,29 @@ hash set.
 ## Nearest neighbours (`NearestNeighborClassificationBenchmarks`)
 
 Synthetic in-memory corpus: 2 000 documents of 20 tokens over 5 categories, 16 queries per
-invocation, one `MediumRun` on the machine above. Both paths are exact scans; the table prices the
-scan and the memory the store retains, not a throughput a sharded index would report.
+invocation, one `MediumRun` on the machine above. The corpus draws from 38 words, so every term
+sits in most documents; the lexical rows therefore price the scan fallback, not the postings path.
+The table prices the work and the memory the store retains, not a throughput a sharded index would
+report.
 
 | Method | Mean | Error | StdDev | Allocated |
 |---|---:|---:|---:|---:|
-| TrainBm25 | 7.288 ms | 0.142 ms | 0.233 ms | 4 602.30 KB |
-| PredictBm25K5 | 4.849 ms | 0.068 ms | 0.064 ms | 37.13 KB |
-| PredictBm25K25 | 5.924 ms | 0.118 ms | 0.303 ms | 54.88 KB |
-| TrainDense | 6.411 ms | 0.146 ms | 0.395 ms | 6 821.07 KB |
-| PredictDenseK5 | 1.659 ms | 0.032 ms | 0.036 ms | 41.75 KB |
+| TrainBm25 | 3.801 ms | 0.037 ms | 0.055 ms | 3 386.96 KB |
+| PredictBm25K5 | 0.939 ms | 0.013 ms | 0.019 ms | 22.38 KB |
+| PredictBm25K25 | 1.068 ms | 0.013 ms | 0.020 ms | 28.88 KB |
+| TrainDense | 4.191 ms | 0.111 ms | 0.159 ms | 6 743.51 KB |
+| PredictDenseK5 | 1.367 ms | 0.015 ms | 0.022 ms | 31 KB |
 
-The prediction rows are 16 queries, so BM25 costs about 0.30 ms per query and the dense 256-dim
-path about 0.10 ms at 2 000 stored documents. The dense store now caches each vector's norm and
-computes the query norm once per prediction, so a pair is one dot product instead of three passes;
-training pays the one norm pass per stored document, which is why `TrainDense` is slightly above its
-previous reading. The bounded top-k buffer keeps a prediction at a few tens of KB instead of one
-entry per stored document; the store itself is the memory. K = 5 and K = 25 read the same mean
-because the scan, not the heap, dominates at this size.
+The prediction rows are 16 queries, so the BM25 scan costs about 0.06 ms per query and the dense
+256-dim path about 0.09 ms at 2 000 stored documents. The lexical store also carries a postings
+index: on the 20 Newsgroups subject pin, where the terms are selective, it walks the postings and
+the predict phase reads **310 ms instead of 857 ms** for the 3 761 test queries; this synthetic
+38-word corpus is the broad-query case, so it takes the scan and stays close to the scan-only
+reading. The dense store caches each vector's norm and computes the query norm once per prediction,
+so a pair is one dot product instead of three passes; training pays the one norm pass per stored
+document. The bounded top-k buffer keeps a prediction at a few tens of KB instead of one entry per
+stored document; the store itself is the memory. K = 25 reads slightly above K = 5 because the
+larger buffer is the only difference the scan sees at this size.
 
 ## Incremental centroids (`CentroidIncrementalBenchmarks`)
 
