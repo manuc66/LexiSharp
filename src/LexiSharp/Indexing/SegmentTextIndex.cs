@@ -648,9 +648,9 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
         // falls through to the block walk below. Returning here would drop the term from the query
         // and score an empty page for it, which is what a 200,000-entry cache did to the head term of
         // a 500,000-document store until this branch was made conditional.
-        if (_decoded is not null && TryGetPostingArrays(weight.Term, out var ordinalsCache, out var frequenciesCache))
+        if (_decoded is not null && TryGetPostingArrays(weight.Term, out var plate))
         {
-            Fold(ordinalsCache, frequenciesCache, weight, accumulator, offset, lengths);
+            Fold(plate.Ordinals, plate.Frequencies, weight, accumulator, offset, lengths);
 
             return;
         }
@@ -682,15 +682,14 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     /// are no arrays that outlive the walk, so the answer is <c>false</c> and the engine keeps the
     /// accumulator rather than materializing postings per query.
     /// </remarks>
-    internal bool TryGetPostingArrays(string term, out int[] ordinals, out int[] frequencies)
+    internal bool TryGetPostingArrays(string term, out PostingArrays resolved)
     {
-        ordinals = [];
-        frequencies = [];
+        resolved = PostingArrays.Empty;
 
         if (_decoded is not { } decoded)
             return false;
 
-        if (decoded.TryGet(term, out ordinals, out frequencies))
+        if (decoded.TryGet(term, out resolved))
             return true;
 
         if (!_reader.TryFindTerm(term.AsSpan(), out int df, out var postings))
@@ -703,13 +702,40 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
         if (df > decoded.MaxEntries)
             return false;
 
-        ordinals = new int[df];
-        frequencies = new int[df];
+        var ordinals = new int[df];
+        var frequencies = new int[df];
+
+        // The block header already carries the bound — largest frequency and shortest document per
+        // ordinal window — so capturing it here is free: this walk is the one that decodes the entries
+        // anyway. A window with no block stays zero, which is the right bound for a term that holds
+        // nothing there.
+        int[]? maxFrequencies = null;
+        int[]? minLengths = null;
 
         int index = 0;
 
         while (postings.MoveNext())
         {
+            int window = postings.WindowIndex;
+
+            if (window >= 0)
+            {
+                if (maxFrequencies is null)
+                {
+                    maxFrequencies = new int[window + 1];
+                    minLengths = new int[window + 1];
+                }
+                else if (window >= maxFrequencies.Length)
+                {
+                    int size = Math.Max(window + 1, maxFrequencies.Length * 2);
+                    Array.Resize(ref maxFrequencies, size);
+                    Array.Resize(ref minLengths, size);
+                }
+
+                maxFrequencies[window] = postings.MaxFrequency;
+                minLengths![window] = postings.MinDocumentLength;
+            }
+
             while (postings.TryReadEntry(out int ordinal, out int frequency))
             {
                 ordinals[index] = ordinal;
@@ -718,7 +744,8 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
             }
         }
 
-        decoded.Store(term, ordinals, frequencies);
+        resolved = new PostingArrays(ordinals, frequencies, maxFrequencies, minLengths);
+        decoded.Store(term, resolved);
 
         return true;
     }

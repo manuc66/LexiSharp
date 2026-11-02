@@ -173,6 +173,24 @@ public sealed record SearchOptions(
         ScoreRounding = rounding,
     };
 
+    /// <summary>
+    /// Whether a document-at-a-time pass may skip a document whose upper bound cannot reach the page.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Off by default, and it changes no result when on: a document is skipped only when the sum of its
+    /// terms' block bounds, passed through the same finalisation the window sees, is strictly below the
+    /// worst score the window holds. Strictly, because a tie can still be decided by the identifier and
+    /// a skipped equal score could have displaced the document it tied with.
+    /// </para>
+    /// <para>
+    /// It is a property rather than a constructor parameter so that no existing call site changes
+    /// behaviour, and it is read where the bound exists: an index that lends flat posting arrays
+    /// without per-window bounds — the in-memory one, today — ignores it.
+    /// </para>
+    /// </remarks>
+    public bool PruneByBlockBound { get; init; }
+
     /// <summary>The defaults every positional parameter already has: ten hits, no floor, no offset.</summary>
     public static readonly SearchOptions Default = new();
 

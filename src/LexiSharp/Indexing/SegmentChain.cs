@@ -599,13 +599,12 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     /// <inheritdoc />
     bool IPostingArrayIndex.TryResolvePostingArrays(string term, out PostingArrays postings)
     {
-        if (!CanLendPostings || !_segments[0].TryGetPostingArrays(term, out var ordinals, out var frequencies))
+        if (!CanLendPostings || !_segments[0].TryGetPostingArrays(term, out postings))
         {
             postings = default;
             return false;
         }
 
-        postings = new PostingArrays(ordinals, frequencies);
         return true;
     }
 

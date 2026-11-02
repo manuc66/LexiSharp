@@ -1,3 +1,5 @@
+using LexiSharp.Indexing;
+
 namespace LexiSharp.Core;
 
 /// <summary>
@@ -22,9 +24,29 @@ namespace LexiSharp.Core;
 internal readonly struct PostingArrays
 {
     public PostingArrays(int[] ordinals, int[] frequencies)
+        : this(ordinals, frequencies, null, null)
+    {
+    }
+
+    /// <param name="ordinals">Document ordinals, ascending, one per document carrying the term.</param>
+    /// <param name="frequencies">Term frequency at the same position in <paramref name="ordinals"/>.</param>
+    /// <param name="windowMaxFrequencies">
+    /// Per-ordinal-window largest term frequency, one entry per <c>ordinal / BlockSpan</c>, or
+    /// <c>null</c> when the index cannot say. Together with
+    /// <paramref name="windowMinDocumentLengths"/> this is the true block bound
+    /// <see cref="PostingBlocks"/> already writes in every block header.
+    /// </param>
+    /// <param name="windowMinDocumentLengths">Per-ordinal-window shortest document length, or <c>null</c>.</param>
+    public PostingArrays(
+        int[] ordinals,
+        int[] frequencies,
+        int[]? windowMaxFrequencies,
+        int[]? windowMinDocumentLengths)
     {
         Ordinals = ordinals;
         Frequencies = frequencies;
+        WindowMaxFrequencies = windowMaxFrequencies;
+        WindowMinDocumentLengths = windowMinDocumentLengths;
     }
 
     /// <summary>Document ordinals, ascending, one per document carrying the term.</summary>
@@ -32,6 +54,26 @@ internal readonly struct PostingArrays
 
     /// <summary>Term frequency at the same position in <see cref="Ordinals"/>.</summary>
     public int[] Frequencies { get; }
+
+    /// <summary>
+    /// Largest term frequency per ordinal window, aligned with <see cref="WindowOf"/>, or <c>null</c>.
+    /// </summary>
+    public int[]? WindowMaxFrequencies { get; }
+
+    /// <summary>Shortest document length per ordinal window, or <c>null</c>.</summary>
+    public int[]? WindowMinDocumentLengths { get; }
+
+    /// <summary>
+    /// Whether this plate carries what a pruning traversal needs: both halves of the bound, covering
+    /// the windows its entries fall in.
+    /// </summary>
+    public bool HasWindowBounds =>
+        WindowMaxFrequencies is not null
+        && WindowMinDocumentLengths is not null
+        && WindowMaxFrequencies.Length == WindowMinDocumentLengths.Length;
+
+    /// <summary>The ordinal window an ordinal belongs to, the alignment the segment format writes.</summary>
+    public static int WindowOf(int ordinal) => ordinal / PostingBlocks.BlockSpan;
 
     /// <summary>Number of posting entries.</summary>
     public int Count => Ordinals.Length;
@@ -97,6 +139,31 @@ internal interface IDocumentScoreSink
 {
     /// <summary>Offers the document at <paramref name="ordinal"/> with its summed score.</summary>
     void Score(int ordinal, double score);
+
+    /// <summary>
+    /// Whether this sink will ever answer <see cref="CanPrune"/> with true, so a traversal can skip
+    /// computing bounds entirely when it will not.
+    /// </summary>
+    bool Pruning => false;
+
+    /// <summary>
+    /// Whether a document whose summed contribution cannot exceed <paramref name="upperBound"/> may be
+    /// skipped instead of offered.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A predicate rather than a threshold number because the comparison lives in a different space
+    /// from the bound: <see cref="Score"/> receives the raw sum and the sink finalises it before the
+    /// window sees it, and finalisation is not the identity — BM25 in single precision rounds the sum
+    /// to <c>float</c>, which can round <em>up</em>. Comparing a raw bound against a finalised
+    /// threshold would therefore skip a document that finalises into the page. The sink owns both
+    /// numbers, so the sink does the comparison.
+    /// </para>
+    /// <para>
+    /// The default is false: a traversal may not prune for a sink that has not thought about it.
+    /// </para>
+    /// </remarks>
+    bool CanPrune(double upperBound) => false;
 }
 
 /// <summary>One term's contribution to a document, from that document's term frequency and length.</summary>
@@ -154,6 +221,18 @@ internal static class DocumentAtATime
 
         var cursors = new int[terms];
 
+        // Pruning needs every term that holds anything to carry its window bounds; a term with no
+        // entries contributes nothing and needs none.
+        bool prune = true;
+
+        prune = sink.Pruning;
+
+        for (int t = 0; prune && t < terms; t++)
+        {
+            if (postings[t].Count > 0 && !postings[t].HasWindowBounds)
+                prune = false;
+        }
+
         while (true)
         {
             int smallest = int.MaxValue;
@@ -169,6 +248,21 @@ internal static class DocumentAtATime
 
             if (smallest == int.MaxValue)
                 return;
+
+            // Before scoring: every term holding this document is bounded by its window's largest
+            // frequency and shortest document, so the sum of those contributions is an upper bound on
+            // the score. The sink compares it against the page, in the space its own finalisation
+            // produces; strictly, because an equal score can still be ordered by its identifier.
+            if (prune && sink.CanPrune(UpperBound(weights, postings, cursors, smallest)))
+            {
+                for (int t = 0; t < terms; t++)
+                {
+                    if (cursors[t] < postings[t].Count && postings[t].Ordinals[cursors[t]] == smallest)
+                        cursors[t]++;
+                }
+
+                continue;
+            }
 
             double score = 0;
             bool first = true;
@@ -201,5 +295,42 @@ internal static class DocumentAtATime
 
             sink.Score(smallest, score);
         }
+    }
+
+    /// <summary>
+    /// An upper bound on the score of <paramref name="ordinal"/> from the window bounds of the terms
+    /// that hold it, or positive infinity when a window is out of the bound's range.
+    /// </summary>
+    /// <remarks>
+    /// A term whose cursor sits past the ordinal does not hold it — postings ascend and carry one entry
+    /// per document — so it contributes nothing and is not bounded by anything. Every contribution is
+    /// non-negative, so the sum is monotone under addition and rounding cannot make it fall below the
+    /// score the same terms produce.
+    /// </remarks>
+    private static double UpperBound<TWeight>(
+        ReadOnlySpan<TWeight> weights,
+        Span<PostingArrays> postings,
+        int[] cursors,
+        int ordinal)
+        where TWeight : struct, IWeightFunction
+    {
+        int window = PostingArrays.WindowOf(ordinal);
+        double bound = 0;
+
+        for (int t = 0; t < weights.Length; t++)
+        {
+            PostingArrays term = postings[t];
+            int at = cursors[t];
+
+            if (at >= term.Count || term.Ordinals[at] != ordinal)
+                continue;
+
+            if (term.WindowMaxFrequencies is not { } frequencies || window >= frequencies.Length)
+                return double.PositiveInfinity;
+
+            bound += weights[t].Weight(frequencies[window], term.WindowMinDocumentLengths![window]);
+        }
+
+        return bound;
     }
 }
