@@ -193,6 +193,31 @@ reproduce on other hardware; the qualitative result will. Read-path cost of the 
 0.986x / 1.051x / 1.057x / 0.975x / 1.043x across five runs — straddling 1.0, so the uncontended
 read lock is not measurably expensive here, though it is not free either.
 
+### Prediction and mutation at the same time
+
+The models keep their single-writer contract; the synchronization is opt-in, so a single-threaded
+caller pays nothing. Wrap the model once, at the point where requests and feedback can overlap, and
+send every call through the wrapper:
+
+```csharp
+using var safe = new SynchronizedTextClassifier(classifier);
+
+// Request threads:
+var best = safe.PredictBest(text);
+
+// Feedback threads:
+safe.Learn(new SearchDocument("9", "package never arrived", Category: "Shipping"));
+safe.Reinforce(text, category);
+```
+
+The wrapper takes a read lock for `Predict`/`PredictBest`, so readers overlap, and a write lock for
+`Train`/`Learn`/`Unlearn`/`Reinforce`/…. A writer waits for the predictions already in flight and
+blocks new ones for the duration of the write. If a retrain is frequent enough that waiting is a
+problem, build a fresh model off-lock and publish it atomically instead — the same snapshot pattern
+the search engine uses (`AtomicEngineReference`). Do not clone the model for every `Learn`: one
+`Learn` is under a microsecond, while copying the corpus or the vocabulary is orders of magnitude
+larger.
+
 ## Centroids over embeddings
 
 Naive Bayes classifies on terms. A **centroid classifier** classifies on vectors: one mean per
