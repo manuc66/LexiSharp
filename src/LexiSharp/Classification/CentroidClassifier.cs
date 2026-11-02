@@ -597,17 +597,15 @@ public sealed class CentroidClassifier<TItem>
     private static void ValidateFinite(ReadOnlyMemory<float> vector, string? category, string parameterName)
     {
         ReadOnlySpan<float> span = vector.Span;
+        int index = VectorSimilarity.IndexOfNonFinite(span);
 
-        for (int i = 0; i < span.Length; i++)
-        {
-            if (float.IsFinite(span[i]))
-                continue;
+        if (index < 0)
+            return;
 
-            string subject = category is null ? "query" : $"category '{category}'";
-            throw new ArgumentOutOfRangeException(
-                parameterName,
-                $"The vector source returned a non-finite value ({span[i]}) at index {i} for {subject}.");
-        }
+        string subject = category is null ? "query" : $"category '{category}'";
+        throw new ArgumentOutOfRangeException(
+            parameterName,
+            $"The vector source returned a non-finite value ({span[index]}) at index {index} for {subject}.");
     }
 }
 
@@ -1011,15 +1009,13 @@ public sealed class CentroidClassifier : ITextClassifier, IIncrementalTextClassi
         }
 
         ReadOnlySpan<float> span = vector.Span;
+        int index = VectorSimilarity.IndexOfNonFinite(span);
 
-        for (int i = 0; i < span.Length; i++)
+        if (index >= 0)
         {
-            if (float.IsFinite(span[i]))
-                continue;
-
             string subject = documentId is null ? "the input text" : $"'{documentId}'";
             throw new InvalidOperationException(
-                $"The embedding provider returned a non-finite value ({span[i]}) at index {i} for {subject}.");
+                $"The embedding provider returned a non-finite value ({span[index]}) at index {index} for {subject}.");
         }
 
         return vector;

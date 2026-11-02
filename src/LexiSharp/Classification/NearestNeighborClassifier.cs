@@ -450,15 +450,13 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
         }
 
         ReadOnlySpan<float> span = vector.Span;
+        int index = VectorSimilarity.IndexOfNonFinite(span);
 
-        for (int i = 0; i < span.Length; i++)
+        if (index >= 0)
         {
-            if (float.IsFinite(span[i]))
-                continue;
-
             string subject = documentId is null ? "the input text" : $"'{documentId}'";
             throw new InvalidOperationException(
-                $"The embedding provider returned a non-finite value ({span[i]}) at index {i} for {subject}.");
+                $"The embedding provider returned a non-finite value ({span[index]}) at index {index} for {subject}.");
         }
 
         return vector;

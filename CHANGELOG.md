@@ -11,8 +11,8 @@
   instead of **4.78 ms** (21 KB instead of 37 KB per 16 queries), `PredictDenseK5` **1.32 ms**
   instead of **1.58 ms**, `BlendBenchmarks.TwoLanes` **0.87 us** instead of **1.41 us** (1.6 KB
   instead of 2.4 KB), and `TrainDecisionTree` **42 ms** instead of **50 ms**. `VectorSimilarity`
-  now vectorizes `Center`, `Normalize` and `CenterAndNormalize`, and the hashing provider uses
-  that shared normalize.
+  now vectorizes `Center`, `Normalize`, `CenterAndNormalize` and the finite-value check used by
+  the centroid and neighbour validators, and the hashing provider uses that shared normalize.
 
 ## [0.9.0] — 2026-11-02
 

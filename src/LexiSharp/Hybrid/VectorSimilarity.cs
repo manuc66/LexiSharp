@@ -96,6 +96,46 @@ public static class VectorSimilarity
     /// <summary>The squared Euclidean norm of a vector — the quantity actually accumulated.</summary>
     public static float NormSquared(ReadOnlySpan<float> vector) => DotProductUnchecked(vector, vector);
 
+    /// <summary>Returns the index of the first non-finite value, or <c>-1</c> when all are finite.</summary>
+    /// <remarks>
+    /// A validator that walks every embedding one float at a time is a meaningful part of a
+    /// prediction when the model has hundreds of dimensions. The wide check is the same
+    /// comparison the scalar tail makes — <c>abs(value) &lt;= float.MaxValue</c> is false for
+    /// both an infinity and a NaN — and the scalar path runs only inside the block that failed.
+    /// </remarks>
+    internal static int IndexOfNonFinite(ReadOnlySpan<float> vector)
+    {
+        int width = Vector<float>.Count;
+        int i = 0;
+        Vector<float> limit = new(float.MaxValue);
+        ref float source = ref MemoryMarshal.GetReference(vector);
+
+        for (; i <= vector.Length - width; i += width)
+        {
+            Vector<float> value = Vector.LoadUnsafe(ref source, (nuint)i);
+            Vector<int> finite = Vector.LessThanOrEqual(Vector.Abs(value), limit);
+
+            // A true lane is all bits set, a false lane is zero. The comparison is already false
+            // for an infinity and for a NaN, so a zero lane is the one worth inspecting.
+            if (!Vector.EqualsAny(finite, Vector<int>.Zero))
+                continue;
+
+            for (int j = i; j < i + width; j++)
+            {
+                if (!float.IsFinite(vector[j]))
+                    return j;
+            }
+        }
+
+        for (; i < vector.Length; i++)
+        {
+            if (!float.IsFinite(vector[i]))
+                return i;
+        }
+
+        return -1;
+    }
+
     /// <summary>
     /// The elementwise mean of a set of embeddings — the offset <see cref="Center"/> subtracts.
     /// </summary>
