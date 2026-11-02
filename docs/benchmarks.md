@@ -1276,9 +1276,15 @@ the top of the page, so no document is strictly below tenth place, none may be s
 computed for every candidate of every term anyway. The head query is where a bound has something to
 skip — and it is the query the cursor pass never serves, its reach of 95,402 being far over the cap of
 500. Forcing that pass onto it makes pruning 3.2 % faster than not pruning **and still 1.4× slower than
-the accumulator**, which is the pass the engine picks. So the option stays off, and the default path is
-untouched by it: the rows above still read 1.00 and 2.20 µs on the same build, because the traversal
-skips computing bounds whenever the sink has not opted in.
+the accumulator**, which is the pass the engine picks.
+
+**And it is not a question of density.** The sweep reads the cursor pass pruned and unpruned on the same
+query at one term near each of nine document frequencies, from 10 to 19,914, and pruning is slower at
+every one of them: 1.20 → 1.30 µs at df 10, 9.90 → 12.60 at df 250, 47.80 → 56.80 at df 1,002, 373 →
+424 at df 19,914. A single row could be a window that had not filled; nine rows across four orders of
+magnitude is a mechanism with nothing to win. The in-memory index accordingly builds the bound on the
+first query that asks for it and not at index time, so a search that does not opt in pays neither the
+two arrays a term nor the pass that fills them — which is why the rows above re-measure unchanged.
 
 ## Dense quantisation lane (`quantize`)
 
