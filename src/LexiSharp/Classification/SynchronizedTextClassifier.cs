@@ -78,6 +78,12 @@ public sealed class SynchronizedTextClassifier
         _inner = inner;
     }
 
+    /// <summary>Whether the wrapped classifier implements <see cref="IIncrementalTextClassifier"/>.</summary>
+    public bool SupportsIncremental => ClassifierCapabilities.IsIncremental(_inner);
+
+    /// <summary>Whether the wrapped classifier implements <see cref="IContextualTextClassifier"/>.</summary>
+    public bool SupportsContext => ClassifierCapabilities.IsContextual(_inner);
+
     /// <inheritdoc />
     public void Train(IEnumerable<SearchDocument> documents)
     {

@@ -223,7 +223,7 @@ public static class OnlineClassificationEvaluator
         ITextClassifier model = factory()
             ?? throw new InvalidOperationException("The classifier factory returned null.");
 
-        if (options.Learn && options.RetrainWhen is null && model is not IIncrementalTextClassifier)
+        if (options.Learn && options.RetrainWhen is null && !ClassifierCapabilities.IsIncremental(model))
         {
             throw new ArgumentException(
                 $"{model.GetType().Name} is not incremental and no retraining schedule was supplied; " +
@@ -317,8 +317,9 @@ public static class OnlineClassificationEvaluator
         ITextClassifier model,
         OnlineEvaluationExample example)
     {
-        if (example.Context is { } context && model is IContextualTextClassifier contextual)
-            return contextual.Predict(example.Document.Text, context, limit: int.MaxValue);
+        if (example.Context is { } context && ClassifierCapabilities.IsContextual(model))
+            return ((IContextualTextClassifier)model).Predict(
+                example.Document.Text, context, limit: int.MaxValue);
 
         return model.Predict(example.Document.Text, limit: int.MaxValue);
     }
@@ -369,10 +370,10 @@ public static class OnlineClassificationEvaluator
         // hidden in the caller.
         bool retrainDue = options.RetrainWhen is not null && options.RetrainWhen(consumed);
 
-        if (model is IIncrementalTextClassifier incremental && !retrainDue)
+        if (ClassifierCapabilities.IsIncremental(model) && !retrainDue)
         {
             learnWatch.Start();
-            incremental.Learn(document);
+            ((IIncrementalTextClassifier)model).Learn(document);
             learnWatch.Stop();
             learnCalls++;
 
@@ -645,6 +646,41 @@ public static class OnlineClassificationEvaluator
         return -1;
     }
 
+    private static void AppendContext(StringBuilder builder, BlendContext context)
+    {
+        builder.Append("\tctx");
+        builder.Append(context.CandidateWeight.ToString("R", CultureInfo.InvariantCulture));
+        builder.Append(':');
+        builder.Append(context.PriorWeight.ToString("R", CultureInfo.InvariantCulture));
+
+        AppendEvidence(builder, context.Candidates);
+        AppendEvidence(builder, context.Priors);
+    }
+
+    private static void AppendEvidence(StringBuilder builder, IReadOnlyList<TextEvidence>? evidence)
+    {
+        builder.Append('[');
+
+        if (evidence is not null)
+        {
+            foreach (TextEvidence item in evidence)
+            {
+                if (item is null)
+                {
+                    builder.Append("<null>;");
+                    continue;
+                }
+
+                builder.Append(item.Category);
+                builder.Append('=');
+                builder.Append(item.Score.ToString("R", CultureInfo.InvariantCulture));
+                builder.Append(';');
+            }
+        }
+
+        builder.Append(']');
+    }
+
     private static string HashOrder(
         IReadOnlyList<SearchDocument> warmup,
         IReadOnlyList<OnlineEvaluationExample> stream)
@@ -662,6 +698,10 @@ public static class OnlineClassificationEvaluator
             builder.Append(example.Document.Id);
             builder.Append('\t');
             builder.Append(example.Block.ToString(CultureInfo.InvariantCulture));
+
+            if (example.Context is { } context)
+                AppendContext(builder, context);
+
             builder.Append('\n');
         }
 

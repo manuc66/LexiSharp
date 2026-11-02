@@ -21,7 +21,10 @@ public interface IBatchEmbeddingProvider : IEmbeddingProvider
     /// <param name="texts">Texts to embed; the list is not mutated.</param>
     /// <param name="use">Whether these are queries or indexed passages.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>One vector per input, in the same order.</returns>
+    /// <returns>
+    /// One vector per input, in the same order. An empty vector means that text has no embedding,
+    /// the same convention as <see cref="IEmbeddingProvider"/>.
+    /// </returns>
     Task<IReadOnlyList<ReadOnlyMemory<float>>> GetTextEmbeddingsAsync(
         IReadOnlyList<string> texts,
         EmbeddingUse use,

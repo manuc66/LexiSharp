@@ -74,6 +74,9 @@ public sealed class FusedTextClassifier : ITextClassifier, IIncrementalTextClass
     /// <summary>The weight of the second model in the blend.</summary>
     public double SecondWeight => _secondWeight;
 
+    /// <summary>Whether both models can learn a document incrementally.</summary>
+    public bool SupportsIncremental => _blend.SupportsIncremental;
+
     /// <inheritdoc />
     public void Train(IEnumerable<SearchDocument> documents) => _blend.Train(documents);
 
