@@ -683,7 +683,8 @@ public sealed class CentroidClassifier<TItem>
 /// verified; the same caveat as <see cref="IIncrementalTextClassifier"/> applies.
 /// </para>
 /// </remarks>
-public sealed class CentroidClassifier : ITextClassifier, IIncrementalTextClassifier
+public sealed class CentroidClassifier
+    : ITextClassifier, IIncrementalTextClassifier, IIncrementalAsyncTextClassifier
 {
     private readonly IEmbeddingProvider _embeddings;
     private readonly CentroidClassifierOptions _options;
