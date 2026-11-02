@@ -27,4 +27,10 @@ internal static class ClassifierCapabilities
         SynchronizedTextClassifier synchronized => synchronized.SupportsContext,
         _ => model is IContextualTextClassifier,
     };
+
+    public static bool IsAsync(ITextClassifier model) => model switch
+    {
+        SynchronizedTextClassifier synchronized => synchronized.SupportsAsync,
+        _ => model is IAsyncTextClassifier,
+    };
 }

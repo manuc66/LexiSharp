@@ -1,5 +1,16 @@
 ## [Unreleased]
 
+### Added
+
+- **The classifier surface has an async contract and a snapshot publish point.** `IAsyncTextClassifier`
+  and `IIncrementalAsyncTextClassifier` name the async train/predict/learn surface that
+  `CentroidClassifier` and `NearestNeighborClassifier` already implemented, and
+  `SynchronizedTextClassifier` now forwards it under the same lock as the synchronous members — so a
+  caller mixing `PredictAsync`, `LearnAsync` and `Predict` no longer bypasses synchronization.
+  `AtomicClassifierReference` is the classifier counterpart of `AtomicEngineReference` for the
+  retrain-and-swap path: build a fresh model off-lock, publish it atomically, and let each reader
+  capture one model per prediction.
+
 ### Changed
 
 - **The blend reuses its prediction scratch per thread and the divider runs on integer feature
@@ -33,6 +44,17 @@
   the centroid and neighbour validators, and the hashing provider uses that shared normalize.
 
 ### Fixed
+
+- **The first prediction after a centroid or linear-classifier mutation no longer races another
+  reader.** `CentroidClassifier.EnsureBuilt` filled `_globalMean`, `_centroids` and
+  `_centroidEntries` in place from `Predict`, and `LinearClassifier.EffectiveCategories` wrote the
+  category array, its index and the dirty flag as separate fields; the wrapper's read lock lets
+  readers overlap, so two readers could observe a half-rebuilt table. Both now build one immutable
+  state object under a private gate and publish it with a volatile write; the empty centroid state
+  is read-only, so an untrained instance cannot leak a mutation into another. Both models have a
+  two-hundred-round stress test that invalidates the state and starts eight readers on each round,
+  and the centroid test runs with `CenterOnGlobalMean` on so it exercises the field that used to be
+  filled in place.
 
 - **A decoded-postings cache too small for a term no longer allocates 3.8 MB a query, and no longer
   drops the term.** `SegmentTextIndex` allocated `int[df]` twice before asking the cache whether it

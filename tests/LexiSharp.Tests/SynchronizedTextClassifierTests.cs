@@ -418,4 +418,169 @@ public class SynchronizedTextClassifierTests
         // that it actually did the work it claims to have.
         Assert.True(reads > 1000, $"expected a meaningful number of concurrent reads, saw {reads}.");
     }
+
+    [Fact]
+    public async Task AsyncMembers_ReachTheWrappedModel()
+    {
+        var inner = new NearestNeighborClassifier();
+        using var classifier = new SynchronizedTextClassifier(inner);
+
+        Assert.IsAssignableFrom<IAsyncTextClassifier>(classifier);
+        Assert.IsAssignableFrom<IIncrementalAsyncTextClassifier>(classifier);
+        Assert.True(classifier.SupportsAsync);
+
+        await classifier.TrainAsync(Corpus);
+
+        var results = await classifier.PredictAsync("invoice", limit: 1);
+        Assert.Equal("Billing", results[0].Category);
+
+        var addition = new SearchDocument("3", "package delivery tracking", Category: "Shipping");
+        await classifier.LearnAsync(addition);
+        await classifier.UnlearnAsync(addition);
+    }
+
+    [Fact]
+    public async Task AsyncMembers_ThrowWhenTheWrappedModelIsSynchronous()
+    {
+        using var classifier = new SynchronizedTextClassifier(TrainedInner());
+        var document = new SearchDocument("9", "package delivery", Category: "Shipping");
+
+        Assert.False(classifier.SupportsAsync);
+
+        var train = await Assert.ThrowsAsync<NotSupportedException>(() => classifier.TrainAsync(Corpus));
+        var predict = await Assert.ThrowsAsync<NotSupportedException>(() => classifier.PredictAsync("invoice"));
+        var learn = await Assert.ThrowsAsync<NotSupportedException>(() => classifier.LearnAsync(document));
+        var unlearn = await Assert.ThrowsAsync<NotSupportedException>(() => classifier.UnlearnAsync(document));
+
+        Assert.Contains(nameof(NaiveBayesClassifier), train.Message, StringComparison.Ordinal);
+        Assert.Contains(nameof(NaiveBayesClassifier), predict.Message, StringComparison.Ordinal);
+        Assert.Contains(nameof(NaiveBayesClassifier), learn.Message, StringComparison.Ordinal);
+        Assert.Contains(nameof(NaiveBayesClassifier), unlearn.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task APredictionWaitsForAnAsyncWriter()
+    {
+        var inner = new BlockingAsyncClassifier();
+        using var classifier = new SynchronizedTextClassifier(inner);
+        var document = new SearchDocument("9", "package delivery", Category: "Shipping");
+
+        Task learn = classifier.LearnAsync(document);
+        await inner.LearnEntered.Task;
+
+        Task<IReadOnlyList<ClassificationResult>> predict = classifier.PredictAsync("invoice");
+        Assert.False(predict.IsCompleted);
+
+        inner.LearnRelease.SetResult(true);
+        await learn;
+
+        await inner.PredictEntered.Task;
+        inner.PredictRelease.SetResult(true);
+
+        Assert.Equal("A", (await predict)[0].Category);
+    }
+
+    [Fact]
+    public async Task AnAsyncWriterWaitsForAPredictionInFlight()
+    {
+        var inner = new BlockingAsyncClassifier();
+        using var classifier = new SynchronizedTextClassifier(inner);
+        var document = new SearchDocument("9", "package delivery", Category: "Shipping");
+
+        Task<IReadOnlyList<ClassificationResult>> predict = classifier.PredictAsync("invoice");
+        await inner.PredictEntered.Task;
+
+        Task learn = classifier.LearnAsync(document);
+        Assert.False(learn.IsCompleted);
+
+        inner.PredictRelease.SetResult(true);
+        await predict;
+
+        await inner.LearnEntered.Task;
+        inner.LearnRelease.SetResult(true);
+
+        await learn;
+    }
+
+    [Fact]
+    public async Task AsyncPredictionsOverlap()
+    {
+        var inner = new BlockingAsyncClassifier();
+        using var classifier = new SynchronizedTextClassifier(inner);
+
+        Task<IReadOnlyList<ClassificationResult>> first = classifier.PredictAsync("first");
+        Task<IReadOnlyList<ClassificationResult>> second = classifier.PredictAsync("second");
+
+        await inner.TwoPredictionsEntered.Task;
+
+        Assert.False(first.IsCompleted);
+        Assert.False(second.IsCompleted);
+
+        inner.PredictRelease.SetResult(true);
+
+        await Task.WhenAll(first, second);
+    }
+
+    /// <summary>
+    /// A classifier whose async operations block until the test releases them, so the wrapper's
+    /// lock ordering can be observed rather than timed.
+    /// </summary>
+    private sealed class BlockingAsyncClassifier : IIncrementalAsyncTextClassifier
+    {
+        public TaskCompletionSource<bool> LearnEntered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<bool> LearnRelease { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<bool> PredictEntered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<bool> PredictRelease { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<bool> TwoPredictionsEntered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private int _predictions;
+
+        public void Train(IEnumerable<SearchDocument> documents) { }
+
+        public IReadOnlyList<ClassificationResult> Predict(
+            string text, int limit = 3, IReadOnlySet<string>? excludedCategories = null) =>
+            [new ClassificationResult("A", 1)];
+
+        public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null) => "A";
+
+        public Task TrainAsync(
+            IEnumerable<SearchDocument> documents,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public async Task<IReadOnlyList<ClassificationResult>> PredictAsync(
+            string text,
+            int limit = 3,
+            IReadOnlySet<string>? excludedCategories = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _predictions) == 2)
+                TwoPredictionsEntered.TrySetResult(true);
+
+            PredictEntered.TrySetResult(true);
+            await PredictRelease.Task.ConfigureAwait(false);
+
+            return [new ClassificationResult("A", 1)];
+        }
+
+        public async Task LearnAsync(
+            SearchDocument document,
+            CancellationToken cancellationToken = default)
+        {
+            LearnEntered.TrySetResult(true);
+            await LearnRelease.Task.ConfigureAwait(false);
+        }
+
+        public Task UnlearnAsync(
+            SearchDocument document,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
 }

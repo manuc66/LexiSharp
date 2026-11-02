@@ -191,7 +191,9 @@ Concurrency, 2 s windows with 8 readers and 2 writers (one on the reinforcement 
 The bare failure counts are erratic because a race only sometimes lands, and they will not
 reproduce on other hardware; the qualitative result will. Read-path cost of the lock came out at
 0.986x / 1.051x / 1.057x / 0.975x / 1.043x across five runs — straddling 1.0, so the uncontended
-read lock is not measurably expensive here, though it is not free either.
+read lock is not measurably expensive here, though it is not free either. Those figures predate the
+async-capable gate that replaced `ReaderWriterLockSlim`; the new gate has not been re-measured, so
+read them as an order of magnitude.
 
 ### Prediction and mutation at the same time
 
@@ -208,23 +210,45 @@ var best = safe.PredictBest(text);
 // Feedback threads:
 safe.Learn(new SearchDocument("9", "package never arrived", Category: "Shipping"));
 safe.Reinforce(text, category);
+
+// The async surface is covered by the same lock:
+var asyncBest = await safe.PredictAsync(text);
+await safe.LearnAsync(new SearchDocument("10", "refund requested", Category: "Billing"));
 ```
 
-The wrapper takes a read lock for `Predict`/`PredictBest`, so readers overlap, and a write lock for
-`Train`/`Learn`/`Unlearn`/`Reinforce`/…. A writer waits for the predictions already in flight and
-blocks new ones for the duration of the write. If a retrain is frequent enough that waiting is a
-problem, build a fresh model off-lock and publish it atomically instead — the same snapshot pattern
-the search engine uses (`AtomicEngineReference`). Do not clone the model for every `Learn`: one
-`Learn` is under a microsecond, while copying the corpus or the vocabulary is orders of magnitude
-larger.
+The wrapper takes a read lock for `Predict`/`PredictBest`/`PredictAsync`, so readers overlap, and a
+write lock for `Train`/`Learn`/`Unlearn`/`Reinforce`/… and their async counterparts. A writer waits
+for the predictions already in flight and blocks new ones for the duration of the write. The async
+members are available when the wrapped model implements `IAsyncTextClassifier` (the centroid and
+nearest-neighbour classifiers do); a synchronous model throws `NotSupportedException` naming the
+type instead of silently blocking.
 
-The wrapper covers the `ITextClassifier` surface. Three things stay outside it: the concrete async
-members (`CentroidClassifier.PredictAsync`/`LearnAsync`/`UnlearnAsync`,
-`NearestNeighborClassifier.PredictAsync`/…), `ClassificationModelSerializer.Save`, and the generic
-models (`LinearClassifier<TItem>`, `CentroidClassifier<TItem>`, the question trees). Calling those
-directly on the wrapped instance bypasses the lock; use a snapshot, or the same external
-synchronization. Wrap the model once: two wrappers around the same instance have two independent
-locks, and wrapping a blend while also wrapping its lanes nests locks rather than ordering them.
+If a retrain is frequent enough that waiting is a problem, build a fresh model off-lock and publish
+it atomically instead:
+
+```csharp
+var reference = new AtomicClassifierReference(trained);
+
+// Request thread — capture once per prediction:
+var model = reference.Current;
+var best = model.PredictBest(text);
+
+// Retrain thread — build first, then swap:
+var next = new NaiveBayesClassifier();
+next.Train(newCorpus);
+var retired = reference.Swap(next);   // caller owns and retires `retired`
+```
+
+Do not clone the model for every `Learn`: one `Learn` is under a microsecond, while copying the
+corpus or the vocabulary is orders of magnitude larger. The snapshot path is for retraining, which
+already builds a new model.
+
+Two things stay outside the wrapper: `ClassificationModelSerializer.Save`, which needs a quiescent
+or snapshot model, and the generic models (`LinearClassifier<TItem>`, `CentroidClassifier<TItem>`,
+the question trees), which do not implement `ITextClassifier`. Calling those directly on the
+wrapped instance bypasses the lock; use a snapshot, or the same external synchronization. Wrap the
+model once: two wrappers around the same instance have two independent locks, and wrapping a blend
+while also wrapping its lanes nests locks rather than ordering them.
 
 ## Centroids over embeddings
 
