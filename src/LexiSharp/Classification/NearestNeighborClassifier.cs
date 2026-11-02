@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.InteropServices;
 
 using LexiSharp.Core;
@@ -490,15 +491,19 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
     {
         private readonly ITokenizer _tokenizer;
         private readonly NearestNeighborOptions _options;
-        private readonly Dictionary<string, Document> _documents = new(StringComparer.Ordinal);
 
-        // One id per term, so a document stores integers rather than a dictionary of strings. The
-        // reverse list lets Remove release a term no document holds any more; ids are not reused,
-        // so a dead slot costs one int and one null reference.
+        // Documents are addressed by a dense ordinal, so a posting entry is two ints and the
+        // scoring pass writes into a dictionary keyed by that ordinal. A removed ordinal is
+        // recycled; the slot is marked by a null Id.
+        private readonly List<Document> _documents = new();
+        private readonly List<int> _freeOrdinals = new();
+        private readonly Dictionary<string, int> _indexById = new(StringComparer.Ordinal);
+
         private readonly Dictionary<string, int> _termIds = new(StringComparer.Ordinal);
         private readonly List<string?> _termText = new();
-        private readonly List<int> _documentFrequency = new();
+        private readonly Dictionary<int, List<Posting>> _postings = new();
         private readonly Dictionary<int, int> _scratch = new();
+
         private long _totalLength;
 
         public Bm25Store(ITokenizer tokenizer, NearestNeighborOptions options)
@@ -507,14 +512,14 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
             _options = options;
         }
 
-        public int Count => _documents.Count;
+        public int Count => _indexById.Count;
 
         public void Add(SearchDocument document)
         {
             if (string.IsNullOrEmpty(document.Id))
                 throw new ArgumentException("A document id must be non-empty.", nameof(document));
 
-            if (_documents.ContainsKey(document.Id))
+            if (_indexById.ContainsKey(document.Id))
                 throw new ArgumentException($"The document id '{document.Id}' is already in the model.", nameof(document));
 
             IReadOnlyList<string> tokens = _tokenizer.Tokenize(document.Text);
@@ -529,42 +534,69 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
 
             var terms = new TermFrequency[_scratch.Count];
             int index = 0;
+            int ordinal;
 
-            foreach (var (termId, count) in _scratch)
-                terms[index++] = new TermFrequency(termId, count);
+            if (_freeOrdinals.Count > 0)
+            {
+                ordinal = _freeOrdinals[^1];
+                _freeOrdinals.RemoveAt(_freeOrdinals.Count - 1);
+            }
+            else
+            {
+                ordinal = _documents.Count;
+                _documents.Add(default);
+            }
+
+            foreach (var (termId, frequency) in _scratch)
+            {
+                terms[index++] = new TermFrequency(termId, frequency);
+
+                if (!_postings.TryGetValue(termId, out List<Posting>? postings))
+                {
+                    postings = new List<Posting>();
+                    _postings[termId] = postings;
+                }
+
+                postings.Add(new Posting(ordinal, frequency));
+            }
 
             Array.Sort(terms, static (left, right) => left.TermId.CompareTo(right.TermId));
 
-            _documents[document.Id] = new Document(document.Category!, tokens.Count, terms);
-
-            foreach (TermFrequency term in terms)
-                _documentFrequency[term.TermId]++;
-
+            _documents[ordinal] = new Document(document.Id, document.Category!, tokens.Count, terms);
+            _indexById[document.Id] = ordinal;
             _totalLength += tokens.Count;
         }
 
         public bool Remove(string id)
         {
-            if (!_documents.TryGetValue(id, out Document document))
+            if (!_indexById.Remove(id, out int ordinal))
                 return false;
+
+            Document document = _documents[ordinal];
 
             foreach (TermFrequency term in document.Terms)
             {
-                int frequency = _documentFrequency[term.TermId];
+                int termId = term.TermId;
 
-                if (frequency <= 1)
+                if (!_postings.TryGetValue(termId, out List<Posting>? postings))
+                    continue;
+
+                for (int i = postings.Count - 1; i >= 0; i--)
                 {
-                    _documentFrequency[term.TermId] = 0;
-                    ReleaseTerm(term.TermId);
+                    if (postings[i].Ordinal == ordinal)
+                        postings.RemoveAt(i);
                 }
-                else
+
+                if (postings.Count == 0)
                 {
-                    _documentFrequency[term.TermId] = frequency - 1;
+                    _postings.Remove(termId);
+                    ReleaseTerm(termId);
                 }
             }
 
+            _documents[ordinal] = default;
+            _freeOrdinals.Add(ordinal);
             _totalLength -= document.Length;
-            _documents.Remove(id);
             return true;
         }
 
@@ -573,23 +605,24 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
             int k,
             IReadOnlySet<string>? excludedCategories)
         {
-            if (k <= 0 || _documents.Count == 0)
+            if (k <= 0 || _indexById.Count == 0)
                 return null;
 
             var queryTerms = new List<(int TermId, double Weight)>();
             var seen = new HashSet<int>();
+            long postingWork = 0;
 
             foreach (string token in _tokenizer.Tokenize(text))
             {
                 if (!_termIds.TryGetValue(token, out int termId) || !seen.Add(termId))
                     continue;
 
-                int frequency = _documentFrequency[termId];
-
-                if (frequency == 0)
+                if (!_postings.TryGetValue(termId, out List<Posting>? postings) || postings.Count == 0)
                     continue;
 
-                double idf = Math.Log(1 + (((double)_documents.Count - frequency + 0.5) / (frequency + 0.5)));
+                int frequency = postings.Count;
+                postingWork += frequency;
+                double idf = Math.Log(1 + (((double)_indexById.Count - frequency + 0.5) / (frequency + 0.5)));
                 queryTerms.Add((termId, idf * (_options.Bm25.K1 + 1)));
             }
 
@@ -598,7 +631,7 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
 
             queryTerms.Sort(static (left, right) => left.TermId.CompareTo(right.TermId));
 
-            double averageLength = (double)_totalLength / _documents.Count;
+            double averageLength = (double)_totalLength / _indexById.Count;
 
             if (averageLength <= 0)
                 return null;
@@ -607,45 +640,123 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
             double b = _options.Bm25.B;
             double fixedPart = k1 * (1 - b);
             double lengthPart = k1 * b / averageLength;
-            var top = new TopK<Neighbor>(k, NeighborComparer.Instance);
+            int documentCount = _indexById.Count;
 
-            foreach (var (id, document) in _documents)
+            // A term that sits in most of the corpus makes the posting walk longer than one scan:
+            // every posting entry is a document lookup and an accumulator write, while the scan
+            // sees each document once and merges its sorted term ids. The two paths produce the
+            // same scores; the estimate only decides which work to do.
+            if (postingWork > (long)documentCount * 2)
             {
-                if (excludedCategories?.Contains(document.Category) == true)
-                    continue;
+                var scanned = new TopK<Neighbor>(k, NeighborComparer.Instance);
 
-                double score = 0;
-                double normalization = fixedPart + (document.Length * lengthPart);
-                ReadOnlySpan<TermFrequency> documentTerms = document.Terms;
-                int d = 0;
-                int q = 0;
-
-                while (d < documentTerms.Length && q < queryTerms.Count)
+                foreach (Document document in _documents)
                 {
-                    TermFrequency documentTerm = documentTerms[d];
-                    (int termId, double weight) = queryTerms[q];
+                    if (document.Id is null)
+                        continue;
 
-                    if (documentTerm.TermId < termId)
+                    if (excludedCategories?.Contains(document.Category) == true)
+                        continue;
+
+                    double score = 0;
+                    double normalization = fixedPart + (document.Length * lengthPart);
+                    ReadOnlySpan<TermFrequency> terms = document.Terms;
+                    int d = 0;
+                    int q = 0;
+
+                    while (d < terms.Length && q < queryTerms.Count)
                     {
-                        d++;
+                        TermFrequency term = terms[d];
+                        (int termId, double weight) = queryTerms[q];
+
+                        if (term.TermId < termId)
+                        {
+                            d++;
+                        }
+                        else if (term.TermId > termId)
+                        {
+                            q++;
+                        }
+                        else
+                        {
+                            score += weight * term.Count / (term.Count + normalization);
+                            d++;
+                            q++;
+                        }
                     }
-                    else if (documentTerm.TermId > termId)
+
+                    if (score > 0)
+                        scanned.Add(new Neighbor(document.Id, document.Category, score));
+                }
+
+                return scanned;
+            }
+
+            // A dictionary here costs one hash and one allocation per candidate, which is fine
+            // for a selective query and ruinous when a head term puts most of the corpus in the
+            // posting lists. The rented arrays make the broad-query path an array write instead:
+            // the stamp marks the first visit, the touched list visits only docs that scored.
+            double[] scores = ArrayPool<double>.Shared.Rent(documentCount);
+            int[] visited = ArrayPool<int>.Shared.Rent(documentCount);
+            int[] touched = ArrayPool<int>.Shared.Rent(documentCount);
+
+            // Clear the flag array: it is rented from a process-wide pool, so a stale value left
+            // by another caller would otherwise mark a document as already scored.
+            Array.Clear(visited, 0, documentCount);
+
+            try
+            {
+                int touchedCount = 0;
+
+                foreach (var (termId, weight) in queryTerms)
+                {
+                    foreach (Posting posting in _postings[termId])
                     {
-                        q++;
-                    }
-                    else
-                    {
-                        score += weight * documentTerm.Count / (documentTerm.Count + normalization);
-                        d++;
-                        q++;
+                        Document document = _documents[posting.Ordinal];
+
+                        if (excludedCategories?.Contains(document.Category) == true)
+                            continue;
+
+                        double normalization = fixedPart + (document.Length * lengthPart);
+                        double contribution = weight * posting.Frequency / (posting.Frequency + normalization);
+                        int ordinal = posting.Ordinal;
+
+                        if (visited[ordinal] == 0)
+                        {
+                            visited[ordinal] = 1;
+                            scores[ordinal] = contribution;
+                            touched[touchedCount++] = ordinal;
+                        }
+                        else
+                        {
+                            scores[ordinal] += contribution;
+                        }
                     }
                 }
 
-                if (score > 0)
-                    top.Add(new Neighbor(id, document.Category, score));
-            }
+                if (touchedCount == 0)
+                    return null;
 
-            return top;
+                var top = new TopK<Neighbor>(k, NeighborComparer.Instance);
+
+                for (int i = 0; i < touchedCount; i++)
+                {
+                    int ordinal = touched[i];
+                    double score = scores[ordinal];
+                    Document document = _documents[ordinal];
+
+                    if (score > 0)
+                        top.Add(new Neighbor(document.Id, document.Category, score));
+                }
+
+                return top;
+            }
+            finally
+            {
+                ArrayPool<double>.Shared.Return(scores);
+                ArrayPool<int>.Shared.Return(visited);
+                ArrayPool<int>.Shared.Return(touched);
+            }
         }
 
         private int GetOrAddTerm(string term)
@@ -655,8 +766,7 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
             if (exists)
                 return termId;
 
-            termId = _documentFrequency.Count;
-            _documentFrequency.Add(0);
+            termId = _termText.Count;
             _termText.Add(term);
             return termId;
         }
@@ -673,12 +783,15 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
         }
 
         private readonly record struct Document(
+            string Id,
             string Category,
             int Length,
             TermFrequency[] Terms);
     }
 
     private readonly record struct TermFrequency(int TermId, int Count);
+
+    private readonly record struct Posting(int Ordinal, int Frequency);
 
     private sealed class DenseStore
     {
