@@ -295,6 +295,25 @@ introduces, a prior reweights. Weights are tuned on validation like any other bl
 probability average is still not a calibration. The Jira regex, the neighbour subjects and the
 recency term are the caller's domain and stay outside `LexiSharp.Classification`.
 
+`BlendTextClassifier` is itself an `IIncrementalTextClassifier`: `Learn` and `Unlearn` reach every
+lane. The lanes are checked before the first mutation, so a blend that contains a non-incremental
+model refuses the call instead of leaving half of its lanes updated. A document that belongs to a
+request, not to the configured sources, uses the `BlendContext` overload:
+
+```csharp
+var context = new BlendContext
+{
+    Candidates = new[] { new TextEvidence("PROJ-42", 2.0) },
+    Priors = new[] { new TextEvidence("Support", Math.Log(1.5)) },
+};
+
+var category = blend.PredictBestWithContext("see PROJ-42", context);
+```
+
+The context is read once and never stored, so two calls cannot leak evidence into each other and a
+caller does not rebuild the whole blend for every query. Its candidates introduce categories the
+same way a configured source does; its priors only shift categories a trained lane produced.
+
 ### What the centroids cost and how they read
 
 Training is one pass over the vectors plus the mean and the centroid norms; prediction is one

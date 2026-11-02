@@ -32,7 +32,7 @@ namespace LexiSharp.Classification;
 /// models or when candidate/prior evidence has to be injected.
 /// </para>
 /// </remarks>
-public sealed class FusedTextClassifier : ITextClassifier
+public sealed class FusedTextClassifier : ITextClassifier, IIncrementalTextClassifier
 {
     private readonly BlendTextClassifier _blend;
     private readonly double _secondWeight;
@@ -76,6 +76,14 @@ public sealed class FusedTextClassifier : ITextClassifier
 
     /// <inheritdoc />
     public void Train(IEnumerable<SearchDocument> documents) => _blend.Train(documents);
+
+    /// <inheritdoc />
+    /// <exception cref="NotSupportedException">One of the two models is not incremental.</exception>
+    public void Learn(SearchDocument document) => _blend.Learn(document);
+
+    /// <inheritdoc />
+    /// <exception cref="NotSupportedException">One of the two models is not incremental.</exception>
+    public void Unlearn(SearchDocument document) => _blend.Unlearn(document);
 
     /// <inheritdoc />
     public IReadOnlyList<ClassificationResult> Predict(
