@@ -883,7 +883,10 @@ public class CentroidClassifierTests
                 "right" => new[] { 0f, 1f },
                 _ => new[] { 0.5f, 0.5f },
             },
-            document => document.Category);
+            document => document.Category,
+            // Centering makes the rebuild read _globalMean, which is the field that used to be
+            // filled in place by whichever readers raced there first.
+            new CentroidClassifierOptions { CenterOnGlobalMean = true });
 
         classifier.Train(new[]
         {

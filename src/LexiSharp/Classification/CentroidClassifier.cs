@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using LexiSharp.Core;
 using LexiSharp.Hybrid;
 
@@ -471,7 +472,12 @@ public sealed class CentroidClassifier<TItem>
             entries.Add(new CentroidEntry(category, mean, norm));
         }
 
-        return new CentroidState(dimension, globalCount, globalMean, centroids, entries.ToArray());
+        return new CentroidState(
+            dimension,
+            globalCount,
+            globalMean,
+            new ReadOnlyDictionary<string, ReadOnlyMemory<float>>(centroids),
+            entries.ToArray());
     }
 
     private void AddToGlobal(ReadOnlySpan<float> vector)
@@ -613,7 +619,8 @@ public sealed class CentroidClassifier<TItem>
             0,
             0,
             Array.Empty<float>(),
-            new Dictionary<string, ReadOnlyMemory<float>>(StringComparer.Ordinal),
+            new ReadOnlyDictionary<string, ReadOnlyMemory<float>>(
+                new Dictionary<string, ReadOnlyMemory<float>>(StringComparer.Ordinal)),
             Array.Empty<CentroidEntry>());
 
         public int Dimension { get; } = dimension;
