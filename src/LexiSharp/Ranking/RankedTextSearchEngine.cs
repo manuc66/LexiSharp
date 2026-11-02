@@ -2267,7 +2267,9 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
             // Every value identical: one point bucket, inclusive on both sides. Dividing (max - min)
             // by the bucket count here would be a division by zero, and [x, x) would count nothing.
-            if (min == max)
+            // Exact equality on purpose: the sorted extremes are identical only when every value is,
+            // and a tolerance would collapse a narrow but real spread into that single bucket.
+            if (min == max) // NOSONAR:S1244
                 return new[] { new NumericFacetRange(min, max, values.Length, UpperInclusive: true) };
 
             var edges = new double[bucketCount + 1];

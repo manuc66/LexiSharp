@@ -377,7 +377,7 @@ public sealed class OnnxTextEncoder : IEmbeddingProvider, IBatchEmbeddingProvide
     /// Runs one short sequence through the session so the graph optimization and memory arena are
     /// paid before the first real request. Results are unchanged; the call is optional.
     /// </summary>
-    public void Warmup() => GetTextEmbedding("warmup");
+    public void Warmup() => GetTextEmbedding("warmup", EmbeddingUse.Passage, _disposeCancellation.Token);
 
     /// <summary>Releases the ONNX Runtime session.</summary>
     public void Dispose()
