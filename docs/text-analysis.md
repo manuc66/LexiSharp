@@ -218,6 +218,14 @@ the search engine uses (`AtomicEngineReference`). Do not clone the model for eve
 `Learn` is under a microsecond, while copying the corpus or the vocabulary is orders of magnitude
 larger.
 
+The wrapper covers the `ITextClassifier` surface. Three things stay outside it: the concrete async
+members (`CentroidClassifier.PredictAsync`/`LearnAsync`/`UnlearnAsync`,
+`NearestNeighborClassifier.PredictAsync`/…), `ClassificationModelSerializer.Save`, and the generic
+models (`LinearClassifier<TItem>`, `CentroidClassifier<TItem>`, the question trees). Calling those
+directly on the wrapped instance bypasses the lock; use a snapshot, or the same external
+synchronization. Wrap the model once: two wrappers around the same instance have two independent
+locks, and wrapping a blend while also wrapping its lanes nests locks rather than ordering them.
+
 ## Centroids over embeddings
 
 Naive Bayes classifies on terms. A **centroid classifier** classifies on vectors: one mean per
