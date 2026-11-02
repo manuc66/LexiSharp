@@ -1540,7 +1540,7 @@ random, so the tree rows price the builder, not its accuracy:
 |-------------------- |--------------:|------------:|------------:|------------:|
 | TrainClassifier     |   1,683.26 us |   15.17 us |    22.23 us |   1571.28 KB |
 | PredictText         |       9.81 us |    0.27 us |     0.38 us |     10.63 KB |
-| TrainDecisionTree   |  43,640.45 us |  527.53 us |   756.56 us |  22723.11 KB |
+| TrainDecisionTree   |  36,160.00 us |  760.00 us | 1,114.00 us |     22.37 MB |
 | PredictDecisionTree |       3.95 us |    0.12 us |     0.17 us |      5.45 KB |
 | DivideCorpus        |   9,582.25 us |  480.35 us |   704.09 us |   4484.59 KB |
 
@@ -1552,11 +1552,12 @@ the document's feature set, which is why it reads below the Naive Bayes `Predict
 the model is larger.
 
 The table is one `MediumRun` on an idle machine. Against the build before the integer-id refactor,
-the tree's training reads **43.6 ms instead of 53.2 ms** and allocates **22.7 MB instead of
-33.9 MB**; prediction reads **3.95 µs instead of 4.51 µs** and allocates 5.45 KB instead of
-7.13 KB; the divider allocates **4.5 MB instead of 6.7 MB**. The divider's mean is flat within
-noise, which is what the allocation change alone should do — its cost is the profile walk, not the
-hash set.
+the tree's training reads **36.2 ms instead of 53.2 ms** and allocates **22.37 MB instead of
+33.9 MB**; the intermediate integer-id pass read 43.6 ms, and carrying those ids into the item
+pass plus pooling the flat arrays removed the second hash and the per-run allocations. Prediction
+reads **3.95 µs instead of 4.51 µs** and allocates 5.45 KB instead of 7.13 KB; the divider
+allocates **4.5 MB instead of 6.7 MB**. The divider's mean is flat within noise, which is what the
+allocation change alone should do — its cost is the profile walk, not the hash set.
 
 ## Nearest neighbours (`NearestNeighborClassificationBenchmarks`)
 

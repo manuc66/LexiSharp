@@ -217,7 +217,8 @@ public sealed class DecisionTreeClassifier<TItem>
             return;
         }
 
-        var (featureIds, featuresById, documentFrequency) = BuildVocabulary(pending, featureSubset);
+        var (featuresById, documentFrequency, allFeatureIds, allFeatureCounts) =
+            BuildVocabulary(pending, featureSubset);
         _featuresById = featuresById.ToArray();
         _featureCosts = Array.Empty<double>();
         ResolveQuestionCosts();
@@ -227,26 +228,44 @@ public sealed class DecisionTreeClassifier<TItem>
         for (int id = 0; id < documentFrequency.Count; id++)
             candidate[id] = documentFrequency[id] >= _options.MinDocumentFrequency;
 
-        List<TrainingItem> training = BuildTrainingItems(
-            pending,
-            featureIds,
-            candidate,
-            out int[] flat,
-            out double[] flatValues);
-
-        // The build reads the flat ids and the names, so the source's feature sets are no longer
-        // needed once the slices exist.
-        pending.Clear();
-
-        var scratch = new SplitScratch(_featuresById.Length);
+        int[] flat = Array.Empty<int>();
+        double[] flatValues = Array.Empty<double>();
 
         try
         {
-            _root = Build(training, flat, flatValues, depth: 0, scratch);
+            List<TrainingItem> training = BuildTrainingItems(
+                pending,
+                allFeatureIds,
+                allFeatureCounts,
+                candidate,
+                out flat,
+                out flatValues);
+
+            // The build reads the flat ids and the names, so the source's feature sets are no
+            // longer needed once the slices exist.
+            pending.Clear();
+
+            var scratch = new SplitScratch(_featuresById.Length);
+
+            try
+            {
+                _root = Build(training, flat, flatValues, depth: 0, scratch);
+            }
+            finally
+            {
+                scratch.Release();
+            }
         }
         finally
         {
-            scratch.Release();
+            if (allFeatureIds.Length > 0)
+                ArrayPool<int>.Shared.Return(allFeatureIds);
+
+            if (flat.Length > 0)
+                ArrayPool<int>.Shared.Return(flat);
+
+            if (flatValues.Length > 0)
+                ArrayPool<double>.Shared.Return(flatValues);
         }
     }
 
@@ -299,9 +318,10 @@ public sealed class DecisionTreeClassifier<TItem>
     }
 
     private static (
-        Dictionary<string, int> Ids,
         List<string> Features,
-        List<int> Frequency) BuildVocabulary(
+        List<int> Frequency,
+        int[] AllFeatureIds,
+        int[] AllFeatureCounts) BuildVocabulary(
         List<PendingItem> pending,
         IReadOnlySet<string>? featureSubset)
     {
@@ -311,28 +331,55 @@ public sealed class DecisionTreeClassifier<TItem>
         var featureIds = new Dictionary<string, int>(pending.Count, StringComparer.Ordinal);
         var featuresById = new List<string>(pending.Count);
         var documentFrequency = new List<int>(pending.Count);
+        int total = 0;
 
-        foreach (var item in pending)
+        foreach (PendingItem item in pending)
+            total += item.Features.Features.Count;
+
+        int[] allFeatureIds = total == 0
+            ? Array.Empty<int>()
+            : ArrayPool<int>.Shared.Rent(total);
+        var allFeatureCounts = new int[pending.Count];
+
+        try
         {
-            foreach (string feature in item.Features.Features)
+            int offset = 0;
+
+            for (int itemIndex = 0; itemIndex < pending.Count; itemIndex++)
             {
-                if (featureSubset is not null && !featureSubset.Contains(feature))
-                    continue;
+                int count = 0;
 
-                ref int id = ref CollectionsMarshal.GetValueRefOrAddDefault(featureIds, feature, out bool exists);
-
-                if (!exists)
+                foreach (string feature in pending[itemIndex].Features.Features)
                 {
-                    id = featuresById.Count;
-                    featuresById.Add(feature);
-                    documentFrequency.Add(0);
+                    if (featureSubset is not null && !featureSubset.Contains(feature))
+                        continue;
+
+                    ref int id = ref CollectionsMarshal.GetValueRefOrAddDefault(featureIds, feature, out bool exists);
+
+                    if (!exists)
+                    {
+                        id = featuresById.Count;
+                        featuresById.Add(feature);
+                        documentFrequency.Add(0);
+                    }
+
+                    documentFrequency[id]++;
+                    allFeatureIds[offset++] = id;
+                    count++;
                 }
 
-                documentFrequency[id]++;
+                allFeatureCounts[itemIndex] = count;
             }
         }
+        catch
+        {
+            if (allFeatureIds.Length > 0)
+                ArrayPool<int>.Shared.Return(allFeatureIds);
 
-        return (featureIds, featuresById, documentFrequency);
+            throw;
+        }
+
+        return (featuresById, documentFrequency, allFeatureIds, allFeatureCounts);
     }
 
     private void ResolveQuestionCosts()
@@ -355,48 +402,58 @@ public sealed class DecisionTreeClassifier<TItem>
 
     private List<TrainingItem> BuildTrainingItems(
         List<PendingItem> pending,
-        Dictionary<string, int> featureIds,
+        int[] allFeatureIds,
+        int[] allFeatureCounts,
         bool[] candidate,
         out int[] flat,
         out double[] flatValues)
     {
         // Each document owns a slice of one flat int[]: its candidate feature ids. Two passes
-        // (count, then fill) avoid a per-document array object.
+        // (count, then fill) avoid a per-document array object, and the ids are the ones
+        // BuildVocabulary already resolved, so this pass does no string hashing.
         var counts = new int[pending.Count];
         int total = 0;
+        int read = 0;
 
         for (int i = 0; i < pending.Count; i++)
         {
             int count = 0;
+            int end = read + allFeatureCounts[i];
 
-            foreach (string feature in pending[i].Features.Features)
+            for (int j = read; j < end; j++)
             {
-                if (featureIds.TryGetValue(feature, out int id) && candidate[id])
+                if (candidate[allFeatureIds[j]])
                     count++;
             }
 
             counts[i] = count;
             total += count;
+            read = end;
         }
 
-        flat = new int[total];
-        flatValues = new double[total];
+        flat = total == 0 ? Array.Empty<int>() : ArrayPool<int>.Shared.Rent(total);
+        flatValues = total == 0 ? Array.Empty<double>() : ArrayPool<double>.Shared.Rent(total);
+
         var training = new List<TrainingItem>(pending.Count);
-        int offset = 0;
+        read = 0;
+        int write = 0;
 
         for (int i = 0; i < pending.Count; i++)
         {
-            var item = pending[i];
-            int start = offset;
+            PendingItem item = pending[i];
+            int start = write;
+            int end = read + allFeatureCounts[i];
 
-            foreach (string feature in item.Features.Features)
+            for (int j = read; j < end; j++)
             {
-                if (!featureIds.TryGetValue(feature, out int id) || !candidate[id])
+                int id = allFeatureIds[j];
+
+                if (!candidate[id])
                     continue;
 
-                flat[offset] = id;
-                flatValues[offset] = item.Features.NumericValue(feature) ?? double.NaN;
-                offset++;
+                flat[write] = id;
+                flatValues[write] = item.Features.NumericValue(_featuresById[id]) ?? double.NaN;
+                write++;
             }
 
             training.Add(new TrainingItem(
@@ -404,6 +461,8 @@ public sealed class DecisionTreeClassifier<TItem>
                 start,
                 counts[i],
                 item.Weight));
+
+            read = end;
         }
 
         return training;

@@ -14,10 +14,11 @@
   centroid attains one array of category/vector/norm entries and skips a second validation pass;
   the blend aggregates in place; and the linear model vectorizes its class loop with
   `Vector<double>`. `PredictDenseK5` reads **1.32 ms** instead of **1.58 ms**,
-  `BlendBenchmarks.TwoLanes` **0.87 us** instead of **1.41 us** (1.6 KB instead of 2.4 KB), and
-  `TrainDecisionTree` **42 ms** instead of **50 ms**. `VectorSimilarity` now vectorizes `Center`,
-  `Normalize`, `CenterAndNormalize` and the finite-value check used by the centroid and neighbour
-  validators, and the hashing provider uses that shared normalize.
+  `BlendBenchmarks.TwoLanes` **0.87 us** instead of **1.41 us** (1.6 KB instead of 2.4 KB),
+  `TrainDecisionTree` **36 ms** instead of **50 ms**, and the 25-tree forest's training phase in
+  the 20 Newsgroups pin falls from **8.54 s to 6.57 s** with accuracy unchanged. `VectorSimilarity`
+  now vectorizes `Center`, `Normalize`, `CenterAndNormalize` and the finite-value check used by
+  the centroid and neighbour validators, and the hashing provider uses that shared normalize.
 
 ### Fixed
 
