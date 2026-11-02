@@ -47,6 +47,42 @@ the published **0.3970** — 0.0035 short under the same conventions — and tha
 any configuration tried. The gap between the two row groups is configuration, not ranking; the
 ArguAna gap is not yet explained.
 
+### Paired bootstrap over queries
+
+A point estimate is not an interval. `--bootstrap` captures every configuration's per-query
+outcome, resamples the queries with replacement, and prints a percentile 95 % CI on the mean and
+on the paired difference against `--bootstrap-baseline`. The same run prints a two-sided sign-flip
+randomization test; `--bootstrap-correction` applies Holm (the default) or Benjamini-Hochberg to
+the family of configurations in the table.
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
+  --bootstrap --analyzer uax29 --ndcg-gain linear --reference-bm25 0.9,0.4 \
+  --query-term-frequency --reference-index-statistics --reference-score-rounding \
+  --omit-saturation-constant --single-precision-bm25
+```
+
+The aligned rows, with their intervals:
+
+| Corpus | nDCG@10 [95 % CI] | Δ vs BM25 1.5/0.75 [95 % CI] | p | p (Holm) |
+|---|---:|---:|---:|---:|
+| NFCorpus | 0.3218 [0.2869, 0.3564] | −0.0042 [−0.0083, 0.0000] | 0.048 | 0.240 |
+| SciFact | 0.6789 [0.6334, 0.7237] | −0.0087 [−0.0202, +0.0032] | 0.151 | 1.000 |
+| ArguAna | 0.4005 [0.3820, 0.4194] | −0.0879 [−0.0967, −0.0794] | 0.0001 | 0.001 |
+
+The published figures (0.325, 0.665, 0.397) all fall **inside** those intervals. Equality to four
+decimals is a property of the point estimate, not evidence that the two systems are statistically
+equivalent. The NFCorpus difference is the one the Holm correction removes: across 14
+configurations, a raw p=0.048 is not a family-wise result. The ArguAna difference is not removed:
+under the same exclusion convention, BM25 1.5/0.75 reads **0.4884** [0.4697, 0.5077], 0.0879 above
+the aligned 0.9/0.4 row (paired difference [0.0794, 0.0967], p<0.0001, Holm p=0.001). The aligned
+row is a reproduction target, not the best operating point.
+
+The bootstrap covers the table `Evaluation.Run` produces: the lexical scorers, their variants, the
+in-memory fusion rows, and — when the corresponding flags are on — dense and rerank rows. The
+`--backend` lane is measured outside that table and does not yet carry intervals; `--sparse` does
+when `--bootstrap` is set and the vector set is present.
+
 **The 2021 figures the defaults rows sit beside are not reproducible from this repository, and that is
 measured.** The three numbers — 0.325, 0.665, 0.315 — were not produced by any single configuration
 tried here. Rerun over the same corpora and qrels, with Lucene 10's analyzers and with this
@@ -1333,6 +1369,24 @@ model — the same feature seam, a softmax over every feature at once — is the
 **0.8085**, ahead of Naive Bayes's **0.7573**. The tree and the forest are not the accuracy models;
 the linear model is.
 
+**The default linear model is not tuned, and it is not a competitive text classifier.** `--tune-linear`
+selects epochs, learning rate and L2 on a 15 % validation slice of the train split, retrains on the
+full train split and scores test once. On this split it selects 40 epochs, rate 0.10, L2 1e-3 and
+reads **0.8282** accuracy / **0.8224** macro-F1, against **0.8085** / **0.8027** at the defaults.
+The validation figure is 0.9104, so the date-window shift is visible in the selection too; the test
+figure is the one to quote.
+
+The same split through scikit-learn's TF-IDF + LinearSVC reads **0.8649** / **0.8585**, about 3.7
+points above the tuned in-house model. The comparison is not tokenizer-identical — scikit-learn's
+regex tokenizer versus this library's UAX29 — but the corpus text, labels, header handling and
+cross-split deduplication are the same. The in-house linear model is the accuracy leader among the
+four in-house classifiers, not a competitive text classifier.
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- classification --tune-linear --validation 0.15
+python3 bench/LexiSharp.Eval/classification/sklearn_20ng_baseline.py   # needs scikit-learn
+```
+
 The calibration lane fits a temperature on the same 15 % validation slice and measures the test
 split before and after:
 
@@ -1341,6 +1395,10 @@ split before and after:
 | Decision tree | 0.87 | 2.0196 → 2.0351 | 0.6653 → 0.6676 |
 | Random forest | 0.35 | 1.8156 → 1.2785 | 0.6713 → 0.4701 |
 | Linear | 1.04 | 0.7741 → 0.7650 | 0.2855 → 0.2855 |
+
+The linear row is the **default** model. Under `--tune-linear` the fitted temperature is 0.80 and
+log-loss rises from 0.7458 to 0.7570 (Brier falls from 0.2716 to 0.2628), so the accuracy gain did
+not come with better calibration; the default model's temperature was already close.
 
 The tree's one temperature does not transfer: its test loss is slightly **worse**, because a
 leaf's smoothed mix is structurally overconfident, not a one-parameter error. The forest's

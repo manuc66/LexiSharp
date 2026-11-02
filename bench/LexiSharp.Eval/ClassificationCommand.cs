@@ -65,6 +65,20 @@ internal static class ClassificationCommand
         WriteIndented = true,
     };
 
+    private static readonly LinearCandidate[] LinearCandidates =
+    [
+        new(20, 0.05, 1e-4),
+        new(20, 0.10, 1e-4),
+        new(20, 0.20, 1e-4),
+        new(40, 0.05, 1e-4),
+        new(40, 0.10, 1e-4),
+        new(40, 0.20, 1e-4),
+        new(60, 0.10, 1e-4),
+        new(80, 0.10, 1e-4),
+        new(40, 0.10, 1e-5),
+        new(40, 0.10, 1e-3),
+    ];
+
     public static async Task<int> RunAsync(string[] args)
     {
         var options = new CommandOptions();
@@ -206,6 +220,9 @@ internal static class ClassificationCommand
             case "--tune":
                 options.Tune = true;
                 return true;
+            case "--tune-linear":
+                options.TuneLinear = true;
+                return true;
             default:
                 return null;
         }
@@ -339,9 +356,32 @@ internal static class ClassificationCommand
             IdfWeighting = options.LinearIdf || options.LinearTfIdf,
         };
 
-        Func<ITextClassifier> linearFactory = options.LinearTfIdf
-            ? () => new LinearClassifier(new TextFeatureSource(emitTermFrequency: true), linearOptions)
-            : () => new LinearClassifier(options: linearOptions);
+        Func<LinearClassifierOptions, ITextClassifier> linearFactoryFor = options.LinearTfIdf
+            ? candidate => new LinearClassifier(new TextFeatureSource(emitTermFrequency: true), candidate)
+            : candidate => new LinearClassifier(options: candidate);
+
+        if (options.TuneLinear)
+        {
+            var split = ClassificationEvaluation.HoldOut(corpus.Train, options.ValidationFraction);
+            TunedLinear tuned = ClassificationEvaluation.TuneLinear(
+                split.Fit, split.Validation, LinearCandidates, linearOptions, linearFactoryFor);
+
+            linearOptions = linearOptions with
+            {
+                Epochs = tuned.Candidate.Epochs,
+                LearningRate = tuned.Candidate.LearningRate,
+                L2 = tuned.Candidate.L2,
+            };
+
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"Linear tuning on validation ({split.Fit.Count} fit / {split.Validation.Count} validation): " +
+                $"epochs={tuned.Candidate.Epochs}, rate={tuned.Candidate.LearningRate:F2}, " +
+                $"l2={tuned.Candidate.L2:G3} (accuracy={tuned.ValidationAccuracy:F4}, " +
+                $"macro-F1={tuned.ValidationMacroF1:F4})"));
+        }
+
+        Func<ITextClassifier> linearFactory = () => linearFactoryFor(linearOptions);
 
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
@@ -642,6 +682,8 @@ internal static class ClassificationCommand
         public int ForestSeed { get; set; } = 7;
 
         public bool Tune { get; set; }
+
+        public bool TuneLinear { get; set; }
 
         public bool LinearIdf { get; set; }
 

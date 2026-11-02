@@ -1,4 +1,5 @@
 using LexiSharp.Classification;
+using LexiSharp.Core;
 using LexiSharp.Eval;
 using Xunit;
 
@@ -160,6 +161,47 @@ public class ClassificationTuningTests
             scores,
             score => score.Candidate == tuned.Candidate
                 && Math.Abs(score.Score - tuned.ValidationAccuracy) < 1e-12);
+    }
+
+    [Fact]
+    public void TuneLinear_ChoosesTheBestValidationCandidate_AndIsDeterministic()
+    {
+        var split = ClassificationEvaluation.HoldOut(Corpus(), validationFraction: 0.4, seed: 7);
+        var candidates = new[]
+        {
+            new LinearCandidate(5, 0.1, 1e-4),
+            new LinearCandidate(5, 0.2, 1e-3),
+        };
+        var baseOptions = new LinearClassifierOptions { MinDocumentFrequency = 1 };
+
+        Func<LinearClassifierOptions, ITextClassifier> factory =
+            options => new LinearClassifier(options: options);
+
+        var first = ClassificationEvaluation.TuneLinear(
+            split.Fit, split.Validation, candidates, baseOptions, factory);
+        var second = ClassificationEvaluation.TuneLinear(
+            split.Fit, split.Validation, candidates, baseOptions, factory);
+
+        Assert.Equal(first.Candidate, second.Candidate);
+
+        var scores = candidates
+            .Select(candidate => (
+                Candidate: candidate,
+                Score: ClassificationEvaluation.MeasureClassifier(
+                    "Linear",
+                    split.Fit,
+                    split.Validation,
+                    () => factory(baseOptions with
+                    {
+                        Epochs = candidate.Epochs,
+                        LearningRate = candidate.LearningRate,
+                        L2 = candidate.L2,
+                    }),
+                    confidence: false).Accuracy))
+            .ToArray();
+
+        Assert.Equal(scores.Max(score => score.Score), first.ValidationAccuracy, precision: 12);
+        Assert.Contains(scores, score => score.Candidate == first.Candidate);
     }
 
     [Fact]

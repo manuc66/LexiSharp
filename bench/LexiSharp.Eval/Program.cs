@@ -69,6 +69,7 @@ public static class Program
         bool bootstrap = false;
         int bootstrapResamples = 10_000;
         string bootstrapBaseline = "BM25 (k1=1.5, b=0.75)";
+        BootstrapCorrection bootstrapCorrection = BootstrapCorrection.Holm;
 
         // The pair the disagreement columns are measured between — normally the lexical row and a
         // dense row, because the signal exists to explain what a third stage adds on top of two
@@ -263,6 +264,26 @@ public static class Program
                     break;
                 case "--bootstrap-baseline" when i + 1 < args.Length:
                     bootstrapBaseline = args[++i];
+                    break;
+                case "--bootstrap-correction" when i + 1 < args.Length:
+                    switch (args[++i].ToLowerInvariant())
+                    {
+                        case "none":
+                            bootstrapCorrection = BootstrapCorrection.None;
+                            break;
+                        case "holm":
+                            bootstrapCorrection = BootstrapCorrection.Holm;
+                            break;
+                        case "bh":
+                        case "benjamini-hochberg":
+                            bootstrapCorrection = BootstrapCorrection.BenjaminiHochberg;
+                            break;
+                        default:
+                            Console.Error.WriteLine(
+                                "--bootstrap-correction expects none, holm or bh.");
+                            return 2;
+                    }
+
                     break;
                 case "--ann-ef" when i + 1 < args.Length:
                     annEfValues.AddRange(ParsePositiveInts(args[++i], "--ann-ef"));
@@ -611,7 +632,8 @@ public static class Program
                 analyzePath, analyzeBaseline, analyzeCandidate,
                 disagreementLeft, disagreementRight,
                 expandDensities, expandRankings, annEfValues, annConnection, backendLane, rerankCacheDir,
-                heldOutFraction, sparseLane, bootstrap, bootstrapResamples, bootstrapBaseline);
+                heldOutFraction, sparseLane, bootstrap, bootstrapResamples, bootstrapBaseline,
+                bootstrapCorrection);
             Console.WriteLine();
         }
 
@@ -743,7 +765,8 @@ public static class Program
         IReadOnlyList<double> expandDensities, IReadOnlyList<ExpansionRanking> expandRankings,
         IReadOnlyList<int> annEfValues, string? annConnection, BackendLane? backendLane,
         string? rerankCacheDir, double? heldOutFraction, SparseLane? sparseLane,
-        bool bootstrap, int bootstrapResamples, string bootstrapBaseline)
+        bool bootstrap, int bootstrapResamples, string bootstrapBaseline,
+        BootstrapCorrection bootstrapCorrection)
     {
         Console.WriteLine($"== {dataset.Name} ==");
 
@@ -899,7 +922,7 @@ public static class Program
         PrintTable(results, topK, jobs);
 
         if (bootstrap)
-            RetrievalBootstrap.Print(results, bootstrapBaseline, bootstrapResamples);
+            RetrievalBootstrap.Print(results, bootstrapBaseline, bootstrapResamples, bootstrapCorrection);
 
         PrintReference(dataset, analysisDescription, gain);
 
@@ -925,7 +948,9 @@ public static class Program
 
         if (sparseLane is not null)
         {
-            RunSparseRow(sparseLane, corpus, dataset, topK, limit, gain, excludeQueryDocument, jobs);
+            RunSparseRow(
+                sparseLane, corpus, dataset, topK, limit, gain, excludeQueryDocument, jobs,
+                results, bootstrap, bootstrapResamples, bootstrapBaseline, bootstrapCorrection);
         }
 
         if (rerankCache is not null)
@@ -984,7 +1009,9 @@ public static class Program
     /// </summary>
     private static void RunSparseRow(
         SparseLane lane, BeirCorpus corpus, BeirDataset dataset, int topK, int? limit,
-        NdcgGain gain, bool excludeQueryDocument, int jobs)
+        NdcgGain gain, bool excludeQueryDocument, int jobs,
+        IReadOnlyList<ConfigResult> results, bool bootstrap, int bootstrapResamples,
+        string bootstrapBaseline, BootstrapCorrection bootstrapCorrection)
     {
         Console.WriteLine();
 
@@ -994,9 +1021,28 @@ public static class Program
             // owns its index and its ranking function, so what it shares with the table above is the
             // query list, the qrels and the metric code.
             SparseMeasurement measurement = SparseBenchmark.Measure(
-                lane, corpus, dataset.Name, topK, limit, gain, excludeQueryDocument, jobs);
+                lane, corpus, dataset.Name, topK, limit, gain, excludeQueryDocument, jobs,
+                captureOutcomes: bootstrap);
 
             Console.Write(SparseBenchmark.Format(measurement, dataset.Name));
+
+            if (bootstrap && measurement.Result.Outcomes is not null)
+            {
+                ConfigResult? baseline = results.FirstOrDefault(result => result.Name == bootstrapBaseline);
+
+                if (baseline?.Outcomes is not null)
+                {
+                    RetrievalBootstrap.Print(
+                        [baseline, measurement.Result], bootstrapBaseline,
+                        bootstrapResamples, bootstrapCorrection);
+                }
+                else
+                {
+                    Console.WriteLine(
+                        $"Note: --bootstrap-baseline '{bootstrapBaseline}' has no per-query outcomes; "
+                        + "the sparse row is omitted from the bootstrap.");
+                }
+            }
 
             foreach (string caveat in measurement.Caveats)
                 Console.WriteLine($"Note: {caveat}");
@@ -1819,6 +1865,9 @@ public static class Program
                                 per-query outcomes, so it costs one extra array per query.
               --bootstrap-resamples <n>
                                 Resamples for the percentile CI and the sign-flip test (default: 10000).
+              --bootstrap-correction <none|holm|bh>
+                                Multiple-comparison correction for the p-values (default: holm).
+                                'bh' is Benjamini-Hochberg; 'none' leaves each p-value unadjusted.
               --bootstrap-baseline <name>
                                 Configuration the paired difference is measured against
                                 (default: "BM25 (k1=1.5, b=0.75)").

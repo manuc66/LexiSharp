@@ -76,6 +76,15 @@ internal sealed record TunedForest(
     double ValidationAccuracy,
     double ValidationMacroF1);
 
+/// <summary>One point of the linear model's tuning grid.</summary>
+internal sealed record LinearCandidate(int Epochs, double LearningRate, double L2);
+
+/// <summary>The linear grid point the validation split chose, and the score it won with.</summary>
+internal sealed record TunedLinear(
+    LinearCandidate Candidate,
+    double ValidationAccuracy,
+    double ValidationMacroF1);
+
 /// <summary>
 /// Trains and scores the two classifiers on a labelled corpus. The measurement is deliberately
 /// the same for both: accuracy and macro-F1 over the test split, with training and prediction time
@@ -214,6 +223,55 @@ internal static class ClassificationEvaluation
         string.Create(
             CultureInfo.InvariantCulture,
             $"{candidate.MaxDepth:D2}|{candidate.FeatureSubset:F2}|{candidate.MinDocumentsPerLeaf:D2}");
+
+    /// <summary>
+    /// Trains the linear model on the fit split and scores every candidate on the validation split,
+    /// then returns the best one. The test split is deliberately absent from the signature.
+    /// </summary>
+    public static TunedLinear TuneLinear(
+        IReadOnlyList<ClassificationDocument> fit,
+        IReadOnlyList<ClassificationDocument> validation,
+        IReadOnlyList<LinearCandidate> candidates,
+        LinearClassifierOptions baseOptions,
+        Func<LinearClassifierOptions, ITextClassifier> factory)
+    {
+        ArgumentNullException.ThrowIfNull(fit);
+        ArgumentNullException.ThrowIfNull(validation);
+        ArgumentNullException.ThrowIfNull(candidates);
+        ArgumentNullException.ThrowIfNull(baseOptions);
+        ArgumentNullException.ThrowIfNull(factory);
+
+        if (candidates.Count == 0)
+            throw new ArgumentException("At least one candidate is required.", nameof(candidates));
+
+        var scored = new List<(LinearCandidate Candidate, double Score)>(candidates.Count);
+        var measured = new Dictionary<LinearCandidate, ClassificationMetrics>(candidates.Count);
+
+        foreach (LinearCandidate candidate in candidates)
+        {
+            var options = baseOptions with
+            {
+                Epochs = candidate.Epochs,
+                LearningRate = candidate.LearningRate,
+                L2 = candidate.L2,
+            };
+
+            ClassificationMetrics metrics = MeasureClassifier(
+                "Linear", fit, validation, () => factory(options), confidence: false);
+            scored.Add((candidate, metrics.Accuracy));
+            measured[candidate] = metrics;
+        }
+
+        LinearCandidate best = SelectBest(scored, LinearKey);
+        ClassificationMetrics bestMetrics = measured[best];
+
+        return new TunedLinear(best, bestMetrics.Accuracy, bestMetrics.MacroF1);
+    }
+
+    private static string LinearKey(LinearCandidate candidate) =>
+        string.Create(
+            CultureInfo.InvariantCulture,
+            $"{candidate.Epochs:D3}|{candidate.LearningRate:F3}|{candidate.L2:G3}");
 
     public static ClassificationMetrics MeasureNaiveBayes(
         IReadOnlyList<ClassificationDocument> train,

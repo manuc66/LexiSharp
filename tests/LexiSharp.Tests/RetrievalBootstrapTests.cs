@@ -36,6 +36,29 @@ public class RetrievalBootstrapTests
         Assert.Equal(0, row.DeltaLower, 12);
         Assert.Equal(0, row.DeltaUpper, 12);
         Assert.Equal(1.0, row.PValue, 12);
+        Assert.Equal(1.0, row.AdjustedPValue, 12);
+    }
+
+    [Fact]
+    public void Holm_AdjustsPValues_PreservingOrder()
+    {
+        double[] adjusted = RetrievalBootstrap.AdjustPValues(
+            new[] { 0.01, 0.04, 0.03 }, BootstrapCorrection.Holm);
+
+        Assert.Equal(0.03, adjusted[0], 12);
+        Assert.Equal(0.06, adjusted[1], 12);
+        Assert.Equal(0.06, adjusted[2], 12);
+    }
+
+    [Fact]
+    public void BenjaminiHochberg_AdjustsPValues_PreservingOrder()
+    {
+        double[] adjusted = RetrievalBootstrap.AdjustPValues(
+            new[] { 0.01, 0.04, 0.03 }, BootstrapCorrection.BenjaminiHochberg);
+
+        Assert.Equal(0.03, adjusted[0], 12);
+        Assert.Equal(0.04, adjusted[1], 12);
+        Assert.Equal(0.04, adjusted[2], 12);
     }
 
     [Fact]

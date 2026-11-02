@@ -60,7 +60,8 @@ internal static class SparseBenchmark
         int? limit,
         NdcgGain ndcgGain,
         bool excludeQueryDocument = false,
-        int jobs = 1)
+        int jobs = 1,
+        bool captureOutcomes = false)
     {
         ArgumentNullException.ThrowIfNull(lane);
         ArgumentNullException.ThrowIfNull(corpus);
@@ -99,7 +100,7 @@ internal static class SparseBenchmark
 
         ConfigResult result = Evaluation.RunEngine(
             corpus, engine, vectors.Manifest.Description, topK, limit, ndcgGain,
-            excludeQueryDocument, jobs);
+            excludeQueryDocument, jobs, captureOutcomes);
 
         var caveats = new List<string>
         {
