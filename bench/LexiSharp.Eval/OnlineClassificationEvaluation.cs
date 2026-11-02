@@ -483,28 +483,27 @@ internal static class OnlineClassificationEvaluation
             return (new[] { empty }, empty);
         }
 
-        var thresholds = outcomes
-            .Select(outcome => outcome.TopProbability)
-            .Distinct()
-            .OrderByDescending(probability => probability)
+        Outcome[] ordered = outcomes
+            .OrderByDescending(outcome => outcome.TopProbability)
             .ToArray();
 
-        var points = new List<CoveragePoint>(thresholds.Length);
+        var points = new List<CoveragePoint>();
+        int covered = 0;
+        int correct = 0;
+        int index = 0;
 
-        foreach (double threshold in thresholds)
+        while (index < ordered.Length)
         {
-            int covered = 0;
-            int correct = 0;
+            double threshold = ordered[index].TopProbability;
 
-            foreach (Outcome outcome in outcomes)
+            while (index < ordered.Length && ordered[index].TopProbability == threshold)
             {
-                if (outcome.TopProbability < threshold)
-                    continue;
-
                 covered++;
 
-                if (outcome.CorrectAt1)
+                if (ordered[index].CorrectAt1)
                     correct++;
+
+                index++;
             }
 
             points.Add(new CoveragePoint(

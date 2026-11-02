@@ -1566,16 +1566,19 @@ scan and the memory the store retains, not a throughput a sharded index would re
 
 | Method | Mean | Error | StdDev | Allocated |
 |---|---:|---:|---:|---:|
-| TrainBm25 | 6.890 ms | 0.138 ms | 0.193 ms | 4 602.29 KB |
-| PredictBm25K5 | 4.752 ms | 0.045 ms | 0.040 ms | 37.13 KB |
-| PredictBm25K25 | 4.814 ms | 0.033 ms | 0.028 ms | 54.88 KB |
-| TrainDense | 5.003 ms | 0.083 ms | 0.073 ms | 6 805.45 KB |
-| PredictDenseK5 | 2.703 ms | 0.018 ms | 0.016 ms | 41.75 KB |
+| TrainBm25 | 7.288 ms | 0.142 ms | 0.233 ms | 4 602.30 KB |
+| PredictBm25K5 | 4.849 ms | 0.068 ms | 0.064 ms | 37.13 KB |
+| PredictBm25K25 | 5.924 ms | 0.118 ms | 0.303 ms | 54.88 KB |
+| TrainDense | 6.411 ms | 0.146 ms | 0.395 ms | 6 821.07 KB |
+| PredictDenseK5 | 1.659 ms | 0.032 ms | 0.036 ms | 41.75 KB |
 
 The prediction rows are 16 queries, so BM25 costs about 0.30 ms per query and the dense 256-dim
-path about 0.17 ms at 2 000 stored documents. The bounded top-k buffer keeps a prediction at a few
-tens of KB instead of one entry per stored document; the store itself is the memory. K = 5 and
-K = 25 read the same mean because the scan, not the heap, dominates at this size.
+path about 0.10 ms at 2 000 stored documents. The dense store now caches each vector's norm and
+computes the query norm once per prediction, so a pair is one dot product instead of three passes;
+training pays the one norm pass per stored document, which is why `TrainDense` is slightly above its
+previous reading. The bounded top-k buffer keeps a prediction at a few tens of KB instead of one
+entry per stored document; the store itself is the memory. K = 5 and K = 25 read the same mean
+because the scan, not the heap, dominates at this size.
 
 ## Incremental centroids (`CentroidIncrementalBenchmarks`)
 
