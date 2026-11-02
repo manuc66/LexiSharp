@@ -19,6 +19,19 @@
   `Normalize`, `CenterAndNormalize` and the finite-value check used by the centroid and neighbour
   validators, and the hashing provider uses that shared normalize.
 
+### Fixed
+
+- **The search endpoint encodes the characters a document carries before they reach a page.**
+  `highlightedText` is markup — the `<em>` tags sit inside the document's own text — and
+  `LexiSharpSearchEndpoint.Handle` built its query options without `HighlightOptions`, so the core's
+  default always applied: `EscapeHtml` off. A document holding `<img src=x onerror=...>` came back
+  as an element, and no parameter on the route could say otherwise, which made the one field the
+  endpoint returns for rendering the one field a page could not safely render. The endpoint now
+  highlights with `EscapeHtml` on, so the tags it inserts are the only tags in the value. The
+  core's default is unchanged, because a console or a log still wants the text verbatim; the
+  façade can still choose either. The endpoint's test sends a document carrying an element, an
+  ampersand and a quote, and reads `highlightedText` back out of the JSON.
+
 ## [0.9.0] — 2026-11-02
 
 ### Added

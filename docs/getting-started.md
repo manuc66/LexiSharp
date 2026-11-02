@@ -152,7 +152,9 @@ app.Run();
   those is about the request and retrying it cannot work.
 - With `highlight=true` each hit carries `highlightedText`, the document text with matched
   terms wrapped in `<em>`; the page honors `Limit`/`MinimumScore`/`Offset` exactly like the
-  in-process `LexiSharpIndex<T>.Search`.
+  in-process `LexiSharpIndex<T>.Search`. The document's own characters arrive HTML-encoded
+  (`&lt;`, `&amp;`, `&quot;`), so the value can go into an element's content as it is; the tags
+  around a match are the only tags in it, and the route offers no way to turn that off.
 
 ### Exposing the route
 
