@@ -34,6 +34,21 @@ public class BlendTextClassifierTests
     }
 
     [Fact]
+    public void A_WrappedNonIncrementalLaneDoesNotCountAsIncremental()
+    {
+        using var lane = new SynchronizedTextClassifier(
+            new FixedClassifier(new ClassificationResult("A", 1)));
+        var blend = new BlendTextClassifier(new[]
+        {
+            new TextClassifierLane(lane, 1),
+        });
+
+        Assert.False(blend.SupportsIncremental);
+        Assert.Throws<NotSupportedException>(() =>
+            blend.Learn(new SearchDocument("1", "text", Category: "A")));
+    }
+
+    [Fact]
     public void LearnRefusesANonIncrementalLaneBeforeMutatingAnyLane()
     {
         var incremental = new IncrementalClassifier();

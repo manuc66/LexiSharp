@@ -106,7 +106,8 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
 
         foreach (TextClassifierLane lane in lanes)
         {
-            if (lane.Classifier is IIncrementalTextClassifier incrementalLane)
+            if (ClassifierCapabilities.IsIncremental(lane.Classifier)
+                && lane.Classifier is IIncrementalTextClassifier incrementalLane)
                 incremental.Add(incrementalLane);
             else
                 missing ??= lane.Classifier.GetType().Name;
@@ -123,6 +124,9 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
 
     /// <summary>The prior sources, in the order they were supplied.</summary>
     public IReadOnlyList<PriorLane> Priors => _priors;
+
+    /// <summary>Whether every lane can learn a document incrementally.</summary>
+    public bool SupportsIncremental => _incrementalLanes is not null;
 
     /// <inheritdoc />
     public void Train(IEnumerable<SearchDocument> documents)

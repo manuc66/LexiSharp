@@ -331,6 +331,90 @@ public class OnlineClassificationEvaluationTests
     }
 
     [Fact]
+    public void ASynchronizedPlainModelIgnoresAContextInsteadOfThrowing()
+    {
+        using var model = new SynchronizedTextClassifier(new LearningClassifier());
+        var stream = new[]
+        {
+            new OnlineEvaluationExample(
+                Doc("1", "x", "A"),
+                0,
+                new BlendContext { Candidates = new[] { new TextEvidence("X", 1) } }),
+        };
+
+        var report = OnlineClassificationEvaluator.Evaluate(
+            () => model, Array.Empty<SearchDocument>(), stream, Options(learn: false));
+
+        Assert.Equal(0, report.AccuracyAt1);
+    }
+
+    [Fact]
+    public void ASynchronizedContextualModelReceivesTheContext()
+    {
+        var blend = new BlendTextClassifier(new[]
+        {
+            new TextClassifierLane(new FixedClassifier(
+                new ClassificationResult("A", 0.5), new ClassificationResult("B", 0.5)), 1),
+        });
+        using var model = new SynchronizedTextClassifier(blend);
+        var stream = new[]
+        {
+            new OnlineEvaluationExample(
+                Doc("1", "x", "X"),
+                0,
+                new BlendContext { Candidates = new[] { new TextEvidence("X", 10) } }),
+        };
+
+        var report = OnlineClassificationEvaluator.Evaluate(
+            () => model, Array.Empty<SearchDocument>(), stream, Options(learn: false));
+
+        Assert.Equal(1, report.AccuracyAt1);
+    }
+
+    [Fact]
+    public void ASynchronizedNonIncrementalModelNeedsASchedule()
+    {
+        using var model = new SynchronizedTextClassifier(new FixedClassifier(
+            new ClassificationResult("A", 1)));
+        var stream = new[] { new OnlineEvaluationExample(Doc("1", "x", "A"), 0) };
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            OnlineClassificationEvaluator.Evaluate(
+                () => model, Array.Empty<SearchDocument>(), stream, Options()));
+
+        Assert.Contains("retraining schedule", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ASynchronizedWrappedNonIncrementalFusedNeedsASchedule()
+    {
+        var fused = new FusedTextClassifier(
+            new FixedClassifier(new ClassificationResult("A", 0.5)),
+            new FixedClassifier(new ClassificationResult("B", 0.5)));
+        using var model = new SynchronizedTextClassifier(fused);
+
+        Assert.False(model.SupportsIncremental);
+
+        var stream = new[] { new OnlineEvaluationExample(Doc("1", "x", "A"), 0) };
+        Assert.Throws<ArgumentException>(() =>
+            OnlineClassificationEvaluator.Evaluate(
+                () => model, Array.Empty<SearchDocument>(), stream, Options()));
+    }
+
+    [Fact]
+    public void AFusedWithANonIncrementalLaneNeedsASchedule()
+    {
+        var model = new FusedTextClassifier(
+            new FixedClassifier(new ClassificationResult("A", 0.5)),
+            new FixedClassifier(new ClassificationResult("B", 0.5)));
+        var stream = new[] { new OnlineEvaluationExample(Doc("1", "x", "A"), 0) };
+
+        Assert.Throws<ArgumentException>(() =>
+            OnlineClassificationEvaluator.Evaluate(
+                () => model, Array.Empty<SearchDocument>(), stream, Options()));
+    }
+
+    [Fact]
     public void APerExampleContextReachesAContextualClassifier()
     {
         var blend = new BlendTextClassifier(new[]
@@ -359,6 +443,33 @@ public class OnlineClassificationEvaluationTests
         Assert.IsAssignableFrom<IContextualTextClassifier>(blend);
         Assert.Equal(1.0, contextual.AccuracyAt1);
         Assert.Equal(0.0, plain.AccuracyAt1);
+    }
+
+    [Fact]
+    public void TheOrderHashIncludesTheRequestContext()
+    {
+        var model = new FixedClassifier(new ClassificationResult("A", 1));
+        var first = new[]
+        {
+            new OnlineEvaluationExample(
+                Doc("1", "x", "A"),
+                0,
+                new BlendContext { Candidates = new[] { new TextEvidence("X", 1) } }),
+        };
+        var second = new[]
+        {
+            new OnlineEvaluationExample(
+                Doc("1", "x", "A"),
+                0,
+                new BlendContext { Candidates = new[] { new TextEvidence("Y", 1) } }),
+        };
+
+        var firstReport = OnlineClassificationEvaluator.Evaluate(
+            () => model, Array.Empty<SearchDocument>(), first, Options(learn: false));
+        var secondReport = OnlineClassificationEvaluator.Evaluate(
+            () => model, Array.Empty<SearchDocument>(), second, Options(learn: false));
+
+        Assert.NotEqual(firstReport.OrderHash, secondReport.OrderHash);
     }
 
     [Fact]
