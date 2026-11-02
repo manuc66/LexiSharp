@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using LexiSharp.Classification;
 using LexiSharp.Core;
 using LexiSharp.Embeddings;
@@ -867,6 +868,56 @@ public class CentroidClassifierTests
         Assert.Equal(
             first.Predict("C one", limit: 10).Select(result => (result.Category, result.Probability)),
             second.Predict("C one", limit: 10).Select(result => (result.Category, result.Probability)));
+    }
+
+    // The published centroid table is rebuilt by the first reader after a mutation. Those readers
+    // overlap, so this exercises the rebuild itself rather than the writer/readers split: each
+    // round invalidates the table and then starts eight readers on the same query.
+    [Fact]
+    public void Predict_IsConsistentWhenReadersRebuildThePublishedState()
+    {
+        var classifier = new CentroidClassifier<SearchDocument>(
+            document => document.Text switch
+            {
+                "left" => new[] { 1f, 0f },
+                "right" => new[] { 0f, 1f },
+                _ => new[] { 0.5f, 0.5f },
+            },
+            document => document.Category);
+
+        classifier.Train(new[]
+        {
+            new SearchDocument("1", "left", Category: "A"),
+            new SearchDocument("2", "right", Category: "B"),
+        });
+
+        ReadOnlyMemory<float> query = new[] { 1f, 0f };
+        var errors = new ConcurrentQueue<Exception>();
+        long reads = 0;
+
+        for (int round = 0; round < 200; round++)
+        {
+            // Learn invalidates the published table, so this batch of readers races to rebuild it.
+            classifier.Learn(new SearchDocument("m", "left", Category: "A"));
+
+            Parallel.For(0, 8, _ =>
+            {
+                try
+                {
+                    Interlocked.Increment(ref reads);
+
+                    if (classifier.PredictBest(query) != "A")
+                        throw new InvalidOperationException("A reader observed a torn centroid table.");
+                }
+                catch (Exception failure)
+                {
+                    errors.Enqueue(failure);
+                }
+            });
+        }
+
+        Assert.Empty(errors);
+        Assert.Equal(200 * 8, reads);
     }
 
     private sealed class FakeEmbeddings : IEmbeddingProvider, IBatchEmbeddingProvider

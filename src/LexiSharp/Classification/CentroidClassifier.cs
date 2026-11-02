@@ -32,8 +32,11 @@ namespace LexiSharp.Classification;
 /// </para>
 /// <para>
 /// Thread-safety: concurrent <see cref="Predict(ReadOnlyMemory{float}, int, IReadOnlySet{string})"/>
-/// calls are supported. <see cref="Train"/> must not run concurrently with a prediction or another
-/// training; it replaces the centroid table in one assignment.
+/// calls are supported, including the first call after a mutation: the centroid table is rebuilt
+/// under a private gate and published as one immutable object, so no reader observes a half-built
+/// one. <see cref="Train"/>, <see cref="Learn"/> and <see cref="Unlearn"/> mutate the corpus sums
+/// and must not run concurrently with a prediction or another mutation;
+/// <see cref="SynchronizedTextClassifier"/> provides that writer/readers lock.
 /// </para>
 /// </remarks>
 /// <typeparam name="TItem">The item type; the caller supplies the vector and the label.</typeparam>
@@ -50,20 +53,14 @@ public sealed class CentroidClassifier<TItem>
     private readonly Dictionary<string, int> _counts = new(StringComparer.Ordinal);
     private double[] _globalSum = Array.Empty<double>();
     private int _globalCount;
-    private float[] _globalMean = Array.Empty<float>();
-
-    private IReadOnlyDictionary<string, ReadOnlyMemory<float>> _centroids =
-        new Dictionary<string, ReadOnlyMemory<float>>(StringComparer.Ordinal);
-
-    private IReadOnlyDictionary<string, float> _centroidNorms =
-        new Dictionary<string, float>(StringComparer.Ordinal);
-
-    // The hot prediction loop reads category, vector and norm together; a dictionary lookup for
-    // the norm per category per query was pure overhead, and the array is ordered by category.
-    private CentroidEntry[] _centroidEntries = Array.Empty<CentroidEntry>();
-
     private int _dimension;
-    private bool _dirty;
+
+    // The prediction-side view of the corpus sums. It is published as one immutable object so
+    // that concurrent readers never observe a half-rebuilt centroid table: a mutation clears the
+    // reference and the first reader rebuilds under _buildGate, then publishes the whole state at
+    // once. The lock is taken only after a mutation, never on the steady-state read path.
+    private readonly object _buildGate = new();
+    private CentroidState? _state = CentroidState.Empty;
 
     /// <summary>Creates a classifier over a caller-supplied vector source and label.</summary>
     /// <param name="vectorOf">Produces the embedding of one item. Every vector must have the same length.</param>
@@ -93,14 +90,7 @@ public sealed class CentroidClassifier<TItem>
     /// <see cref="CentroidClassifierOptions.CenterOnGlobalMean"/> is set they are already centered;
     /// the arrays behind them are never mutated after a rebuild.
     /// </remarks>
-    public IReadOnlyDictionary<string, ReadOnlyMemory<float>> Centroids
-    {
-        get
-        {
-            EnsureBuilt();
-            return _centroids;
-        }
-    }
+    public IReadOnlyDictionary<string, ReadOnlyMemory<float>> Centroids => EnsureBuilt().Centroids;
 
     /// <summary>Vector length the model was trained on, or <c>0</c> before training.</summary>
     public int Dimension => _dimension;
@@ -178,7 +168,7 @@ public sealed class CentroidClassifier<TItem>
             _globalCount += _counts[category];
         }
 
-        _dirty = true;
+        InvalidateState();
         EnsureBuilt();
     }
 
@@ -236,7 +226,7 @@ public sealed class CentroidClassifier<TItem>
 
         AddToGlobal(vector.Span);
         _globalCount++;
-        _dirty = true;
+        InvalidateState();
     }
 
     /// <summary>
@@ -300,7 +290,7 @@ public sealed class CentroidClassifier<TItem>
         if (_globalCount == 0)
             Array.Clear(_globalSum);
 
-        _dirty = true;
+        InvalidateState();
     }
 
     /// <summary>Predicts the most likely categories for a vector, by decreasing probability.</summary>
@@ -346,30 +336,30 @@ public sealed class CentroidClassifier<TItem>
         if (limit <= 0 || vector.Length == 0)
             return Array.Empty<ClassificationResult>();
 
-        EnsureBuilt();
+        CentroidState state = EnsureBuilt();
 
-        if (_centroidEntries.Length == 0)
+        if (state.Entries.Length == 0)
             return Array.Empty<ClassificationResult>();
 
         ReadOnlySpan<float> query = vector.Span;
         float[]? centered = null;
 
-        if (_options.CenterOnGlobalMean && _globalCount > 0)
+        if (_options.CenterOnGlobalMean && state.GlobalCount > 0)
         {
-            centered = new float[_dimension];
+            centered = new float[state.Dimension];
 
             for (int i = 0; i < centered.Length; i++)
-                centered[i] = query[i] - _globalMean[i];
+                centered[i] = query[i] - state.GlobalMean[i];
 
             query = centered;
         }
 
-        var scores = new Score[_centroidEntries.Length];
+        var scores = new Score[state.Entries.Length];
         int count = 0;
         double highest = double.NegativeInfinity;
         float queryNorm = VectorSimilarity.Norm(query);
 
-        foreach (CentroidEntry entry in _centroidEntries)
+        foreach (CentroidEntry entry in state.Entries)
         {
             if (excludedCategories?.Contains(entry.Category) == true)
                 continue;
@@ -416,20 +406,44 @@ public sealed class CentroidClassifier<TItem>
         return results.Count > 0 ? results[0].Category : null;
     }
 
-    private void EnsureBuilt()
+    private CentroidState EnsureBuilt()
     {
-        if (!_dirty)
-            return;
+        CentroidState? state = Volatile.Read(ref _state);
 
-        var centroids = new Dictionary<string, ReadOnlyMemory<float>>(_sums.Count, StringComparer.Ordinal);
-        var norms = new Dictionary<string, float>(_sums.Count, StringComparer.Ordinal);
-        var entries = new List<CentroidEntry>(_sums.Count);
-        _globalMean = new float[_dimension];
+        if (state is not null)
+            return state;
 
-        if (_options.CenterOnGlobalMean && _globalCount > 0)
+        // Only the first reader after a mutation pays for the rebuild; every later reader sees the
+        // published state without touching the lock. The state is built and published as one
+        // object, so no reader can observe a partially rebuilt centroid table.
+        lock (_buildGate)
         {
-            for (int i = 0; i < _globalMean.Length; i++)
-                _globalMean[i] = (float)(_globalSum[i] / _globalCount);
+            state = _state;
+
+            if (state is not null)
+                return state;
+
+            state = BuildState();
+            Volatile.Write(ref _state, state);
+
+            return state;
+        }
+    }
+
+    private void InvalidateState() => Volatile.Write(ref _state, null);
+
+    private CentroidState BuildState()
+    {
+        int dimension = _dimension;
+        int globalCount = _globalCount;
+        var centroids = new Dictionary<string, ReadOnlyMemory<float>>(_sums.Count, StringComparer.Ordinal);
+        var entries = new List<CentroidEntry>(_sums.Count);
+        var globalMean = new float[dimension];
+
+        if (_options.CenterOnGlobalMean && globalCount > 0)
+        {
+            for (int i = 0; i < globalMean.Length; i++)
+                globalMean[i] = (float)(_globalSum[i] / globalCount);
         }
 
         foreach (string category in _sums.Keys.OrderBy(key => key, StringComparer.Ordinal))
@@ -440,28 +454,24 @@ public sealed class CentroidClassifier<TItem>
                 continue;
 
             double[] sum = _sums[category];
-            var mean = new float[_dimension];
+            var mean = new float[dimension];
 
             for (int i = 0; i < mean.Length; i++)
             {
                 double value = sum[i] / count;
 
-                if (_options.CenterOnGlobalMean && _globalCount > 0)
-                    value -= _globalMean[i];
+                if (_options.CenterOnGlobalMean && globalCount > 0)
+                    value -= globalMean[i];
 
                 mean[i] = (float)value;
             }
 
             float norm = VectorSimilarity.Norm(mean);
             centroids[category] = mean;
-            norms[category] = norm;
             entries.Add(new CentroidEntry(category, mean, norm));
         }
 
-        _centroids = centroids;
-        _centroidNorms = norms;
-        _centroidEntries = entries.ToArray();
-        _dirty = false;
+        return new CentroidState(dimension, globalCount, globalMean, centroids, entries.ToArray());
     }
 
     private void AddToGlobal(ReadOnlySpan<float> vector)
@@ -552,7 +562,7 @@ public sealed class CentroidClassifier<TItem>
         _dimension = dimension;
         _globalSum = globalSum;
         _globalCount = globalCount;
-        _dirty = true;
+        InvalidateState();
         EnsureBuilt();
     }
 
@@ -587,6 +597,35 @@ public sealed class CentroidClassifier<TItem>
         string Category,
         ReadOnlyMemory<float> Vector,
         float Norm);
+
+    /// <summary>
+    /// One immutable view of the centroid table. The prediction path captures one instance, so a
+    /// rebuild from another reader cannot swap a mean or a norm underneath it mid-query.
+    /// </summary>
+    private sealed class CentroidState(
+        int dimension,
+        int globalCount,
+        float[] globalMean,
+        IReadOnlyDictionary<string, ReadOnlyMemory<float>> centroids,
+        CentroidEntry[] entries)
+    {
+        public static readonly CentroidState Empty = new(
+            0,
+            0,
+            Array.Empty<float>(),
+            new Dictionary<string, ReadOnlyMemory<float>>(StringComparer.Ordinal),
+            Array.Empty<CentroidEntry>());
+
+        public int Dimension { get; } = dimension;
+
+        public int GlobalCount { get; } = globalCount;
+
+        public float[] GlobalMean { get; } = globalMean;
+
+        public IReadOnlyDictionary<string, ReadOnlyMemory<float>> Centroids { get; } = centroids;
+
+        public CentroidEntry[] Entries { get; } = entries;
+    }
 
     private static void ValidateFinite(ReadOnlyMemory<float> vector, string? category, string parameterName)
     {
