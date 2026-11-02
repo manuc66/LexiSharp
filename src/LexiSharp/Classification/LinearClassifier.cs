@@ -53,6 +53,9 @@ public sealed class LinearClassifier<TItem>
         new(StringComparer.Ordinal);
     private readonly Dictionary<long, LearnedItem> _learned = new();
     private readonly SortedSet<string> _virtualCategories = new(StringComparer.Ordinal);
+    private string[]? _effectiveCategories;
+    private Dictionary<string, int>? _effectiveIndex;
+    private bool _effectiveDirty = true;
     private long _nextToken;
     private bool _trained;
 
@@ -99,6 +102,8 @@ public sealed class LinearClassifier<TItem>
 
         for (int i = 0; i < _categories.Count; i++)
             _categoryIndex[_categories[i]] = i;
+
+        _effectiveDirty = true;
 
         SelectVocabulary(featuresById, documentFrequency, pending.Count);
         _numericMeans = new double[_featuresById.Length];
@@ -421,18 +426,16 @@ public sealed class LinearClassifier<TItem>
         }
 
         if (_reinforcement.Count > 0)
-            ApplyReinforcement(features, logits, categories);
+            ApplyReinforcement(features, logits, _effectiveIndex!);
 
         return (logits, categories);
     }
 
-    private void ApplyReinforcement(IFeatureSet features, double[] logits, string[] categories)
+    private void ApplyReinforcement(
+        IFeatureSet features,
+        double[] logits,
+        IReadOnlyDictionary<string, int> index)
     {
-        var index = new Dictionary<string, int>(categories.Length, StringComparer.Ordinal);
-
-        for (int c = 0; c < categories.Length; c++)
-            index[categories[c]] = c;
-
         foreach (var (category, deltas) in _reinforcement)
         {
             if (!index.TryGetValue(category, out int c))
@@ -453,8 +456,8 @@ public sealed class LinearClassifier<TItem>
 
     private string[] EffectiveCategories()
     {
-        if (_virtualCategories.Count == 0)
-            return _categories.ToArray();
+        if (!_effectiveDirty && _effectiveCategories is not null)
+            return _effectiveCategories;
 
         var categories = new string[_categories.Count + _virtualCategories.Count];
 
@@ -462,6 +465,15 @@ public sealed class LinearClassifier<TItem>
             categories[i] = _categories[i];
 
         _virtualCategories.CopyTo(categories, _categories.Count);
+
+        var index = new Dictionary<string, int>(categories.Length, StringComparer.Ordinal);
+
+        for (int i = 0; i < categories.Length; i++)
+            index[categories[i]] = i;
+
+        _effectiveCategories = categories;
+        _effectiveIndex = index;
+        _effectiveDirty = false;
         return categories;
     }
 
@@ -565,8 +577,8 @@ public sealed class LinearClassifier<TItem>
         if (!double.IsFinite(weight) || weight <= 0)
             throw new ArgumentException("The effective correction weight must be finite and positive.", nameof(item));
 
-        if (!_categoryIndex.ContainsKey(category))
-            _virtualCategories.Add(category);
+        if (!_categoryIndex.ContainsKey(category) && _virtualCategories.Add(category))
+            _effectiveDirty = true;
 
         IFeatureSet features = _features.FeaturesOf(item);
         var known = features.Features.Where(_featureIds.ContainsKey).ToArray();
@@ -594,7 +606,8 @@ public sealed class LinearClassifier<TItem>
             && !_reinforcement.ContainsKey(learned.Category)
             && !_learned.Values.Any(item => string.Equals(item.Category, learned.Category, StringComparison.Ordinal)))
         {
-            _virtualCategories.Remove(learned.Category);
+            if (_virtualCategories.Remove(learned.Category))
+                _effectiveDirty = true;
         }
 
         return true;
@@ -801,6 +814,7 @@ public sealed class LinearClassifier<TItem>
     internal void ReadBody(BinaryReader reader)
     {
         _categories = ModelFormat.ReadStrings(reader);
+        _effectiveDirty = true;
         _categoryIndex = new Dictionary<string, int>(_categories.Count, StringComparer.Ordinal);
 
         for (int i = 0; i < _categories.Count; i++)

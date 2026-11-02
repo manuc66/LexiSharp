@@ -20,6 +20,12 @@ workflow.
 
 ### Added
 
+- **The dense KNN caches each stored vector's norm.** A prediction computes the query norm once
+  and then one dot product per document, instead of recomputing both norms for every pair. On the
+  synthetic 2 000 × 256 benchmark `PredictDenseK5` reads **1.659 ms** for 16 queries instead of
+  **2.703 ms**; `TrainDense` pays one norm pass per stored document. The online coverage sweep is
+  now O(n log n) rather than O(n²), and the linear model caches its effective category array and
+  index instead of rebuilding them per prediction.
 - **A tested predict-then-learn evaluator, for any classifier.** `classification-online` replays an
   ordered stream, predicts before it learns, buckets rows by whether the text or the category had
   been seen, reports top-k accuracy, a precision/coverage curve and a block bootstrap interval. It
