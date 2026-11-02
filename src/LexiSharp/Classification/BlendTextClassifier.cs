@@ -56,6 +56,52 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
     private readonly IReadOnlyList<IIncrementalTextClassifier>? _incrementalLanes;
     private readonly string? _nonIncrementalLane;
 
+    /// <summary>
+    /// The per-thread working state of one prediction. A prediction used to allocate five
+    /// collections and a ranking array each time, which made prediction a GC problem rather than a
+    /// classification one; they are now reused. The slot holds one instance per thread so two
+    /// threads never share a dictionary.
+    /// </summary>
+    [ThreadStatic]
+    private static Scratch? _scratch;
+
+    private sealed class Scratch
+    {
+        public readonly Dictionary<string, double> Probability = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, double> Bonus = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, double> Updated = new(StringComparer.Ordinal);
+        public readonly HashSet<string> TrainedCategories = new(StringComparer.Ordinal);
+        public (string Category, double Probability)[] Ranked = new (string, double)[4];
+
+        public void Reset()
+        {
+            Probability.Clear();
+            Bonus.Clear();
+            Updated.Clear();
+            TrainedCategories.Clear();
+        }
+    }
+
+    private static Scratch RentScratch()
+    {
+        Scratch? scratch = _scratch;
+
+        if (scratch is null)
+            return new Scratch();
+
+        // Emptying the slot before clearing means a nested blend — a lane that is itself a
+        // blend — gets its own instance instead of wiping the dictionary its caller is filling.
+        _scratch = null;
+        scratch.Reset();
+
+        return scratch;
+    }
+
+    private static void ReturnScratch(Scratch scratch) =>
+        // A nested call returns first; keep its instance rather than the outer one, so the slot
+        // still holds one usable instance per thread.
+        _scratch ??= scratch;
+
     /// <summary>Creates a blend over one or more trained lanes, with optional evidence sources.</summary>
     /// <param name="lanes">The trained lanes; at least one, each non-null with a finite non-negative weight.</param>
     /// <param name="candidates">Sources that may introduce categories no lane learned; null means none.</param>
@@ -229,25 +275,32 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
             ValidateWeight(context.PriorWeight, nameof(context));
         }
 
-        var probability = new Dictionary<string, double>(StringComparer.Ordinal);
-        bool hasPriors = _priors.Count > 0 || context?.Priors is { Count: > 0 };
-        HashSet<string>? trainedCategories = hasPriors
-            ? new HashSet<string>(StringComparer.Ordinal)
-            : null;
+        var scratch = RentScratch();
 
-        CollectLaneProbabilities(text, excludedCategories, probability, trainedCategories);
-        AddCandidateProbabilities(text, excludedCategories, probability);
+        try
+        {
+            Dictionary<string, double> probability = scratch.Probability;
+            bool hasPriors = _priors.Count > 0 || context?.Priors is { Count: > 0 };
+            HashSet<string>? trainedCategories = hasPriors ? scratch.TrainedCategories : null;
 
-        if (context?.Candidates is { Count: > 0 } candidates)
-            AddCandidates(candidates, context.CandidateWeight, excludedCategories, probability, nameof(context));
+            CollectLaneProbabilities(text, excludedCategories, probability, trainedCategories);
+            AddCandidateProbabilities(text, excludedCategories, probability);
 
-        if (probability.Count == 0)
-            return Array.Empty<ClassificationResult>();
+            if (context?.Candidates is { Count: > 0 } candidates)
+                AddCandidates(candidates, context.CandidateWeight, excludedCategories, probability, nameof(context));
 
-        if (hasPriors)
-            ApplyPriors(text, context, probability, trainedCategories!);
+            if (probability.Count == 0)
+                return Array.Empty<ClassificationResult>();
 
-        return Rank(probability, excludedCategories, limit);
+            if (hasPriors)
+                ApplyPriors(text, context, probability, trainedCategories!, scratch);
+
+            return Rank(probability, excludedCategories, limit, scratch);
+        }
+        finally
+        {
+            ReturnScratch(scratch);
+        }
     }
 
     private void CollectLaneProbabilities(
@@ -336,7 +389,8 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
     private static IReadOnlyList<ClassificationResult> Rank(
         Dictionary<string, double> probability,
         IReadOnlySet<string>? excludedCategories,
-        int limit)
+        int limit,
+        Scratch scratch)
     {
         double mass = 0;
 
@@ -346,7 +400,14 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
         if (!(mass > 0) || double.IsNaN(mass) || double.IsInfinity(mass))
             return Array.Empty<ClassificationResult>();
 
-        var ranked = new (string Category, double Probability)[probability.Count];
+        var ranked = scratch.Ranked;
+
+        if (ranked.Length < probability.Count)
+        {
+            ranked = new (string Category, double Probability)[probability.Count];
+            scratch.Ranked = ranked;
+        }
+
         int count = 0;
 
         foreach (var (category, value) in probability)
@@ -395,9 +456,10 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
         string text,
         BlendContext? context,
         Dictionary<string, double> probability,
-        HashSet<string> trainedCategories)
+        HashSet<string> trainedCategories,
+        Scratch scratch)
     {
-        var bonus = new Dictionary<string, double>(StringComparer.Ordinal);
+        Dictionary<string, double> bonus = scratch.Bonus;
 
         AccumulateConfiguredPriors(text, bonus, trainedCategories);
 
@@ -407,7 +469,7 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
         if (bonus.Count == 0)
             return;
 
-        ApplyBonus(probability, bonus);
+        ApplyBonus(probability, bonus, scratch.Updated);
     }
 
     private void AccumulateConfiguredPriors(
@@ -455,7 +517,8 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
 
     private static void ApplyBonus(
         Dictionary<string, double> probability,
-        Dictionary<string, double> bonus)
+        Dictionary<string, double> bonus,
+        Dictionary<string, double> updated)
     {
         // Work in log space: exp(bonus) can overflow for a large but finite bonus, while
         // exp(log(p) + bonus - max) is the same renormalized distribution without the overflow.
@@ -477,7 +540,7 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
         }
 
         double total = 0;
-        var updated = new Dictionary<string, double>(probability.Count, StringComparer.Ordinal);
+        updated.Clear();
 
         foreach (var (category, value) in probability)
         {

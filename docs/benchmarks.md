@@ -1573,7 +1573,7 @@ random, so the tree rows price the builder, not its accuracy:
 | PredictText         |       9.81 us |    0.27 us |     0.38 us |     10.63 KB |
 | TrainDecisionTree   |  36,160.00 us |  760.00 us | 1,114.00 us |     22.37 MB |
 | PredictDecisionTree |       3.95 us |    0.12 us |     0.17 us |      5.45 KB |
-| DivideCorpus        |   9,582.25 us |  480.35 us |   704.09 us |   4484.59 KB |
+| DivideCorpus        |   5,651.00 us |  138.80 us |   203.40 us |       4.7 MB |
 
 The tree's training cost is the split search, not prediction: every node walks its documents and
 their features once, and the scratch buffers are reused across nodes. The allocation is the corpus
@@ -1586,9 +1586,20 @@ The table is one `MediumRun` on an idle machine. Against the build before the in
 the tree's training reads **36.2 ms instead of 53.2 ms** and allocates **22.37 MB instead of
 33.9 MB**; the intermediate integer-id pass read 43.6 ms, and carrying those ids into the item
 pass plus pooling the flat arrays removed the second hash and the per-run allocations. Prediction
-reads **3.95 µs instead of 4.51 µs** and allocates 5.45 KB instead of 7.13 KB; the divider
-allocates **4.5 MB instead of 6.7 MB**. The divider's mean is flat within noise, which is what the
-allocation change alone should do — its cost is the profile walk, not the hash set.
+reads **3.95 µs instead of 4.51 µs** and allocates 5.45 KB instead of 7.13 KB.
+
+The divider got the same integer-id treatment. Every feature is resolved to an id once, the ids
+are reordered so that ordinal name order is integer order (the split tie-break stays the same),
+and the node walk, the postings and the score are integer loops over flat arrays instead of
+string-keyed dictionaries and one list per candidate. `DivideCorpus` reads **5.65 ms instead of
+9.58 ms**. Its allocation reads **4.7 MB**, against **6.7 MB** before this optimization series and
+**4.5 MB** for the immediately preceding build; that count is dominated by the feature source
+rather than the divider, since every call still tokenizes the text into a feature set per document.
+A direct `GC.GetAllocatedBytesForCurrentThread` measurement of the divide itself on 10 000
+documents reads **24.97 MB against 28.56 MB** per call, so the integer pass does remove a tenth of
+what the algorithm allocates; on the 2 000-document benchmark the tokenizer hides it. The divider
+was compared with the previous implementation on 10 000 documents of 30 tokens: identical node for
+node, down to every question, separation, balance, child weight, cluster size and top-feature list.
 
 ## Nearest neighbours (`NearestNeighborClassificationBenchmarks`)
 
@@ -1639,12 +1650,15 @@ Eight categories, two and three trained lanes, and a candidate source, one `Medi
 
 | Method | Mean | Error | StdDev | Allocated |
 |---|---:|---:|---:|---:|
-| TwoLanes | 979.5 ns | 18.97 ns | 18.63 ns | 1.67 KB |
-| ThreeLanes | 1 223.6 ns | 24.22 ns | 30.64 ns | 1.84 KB |
-| TwoLanesWithCandidate | 1 208.2 ns | 23.95 ns | 43.18 ns | 1.99 KB |
+| TwoLanes | 787.7 ns | 11.52 ns | 16.89 ns | 576 B |
+| ThreeLanes | 978.1 ns | 7.85 ns | 11.51 ns | 744 B |
+| TwoLanesWithCandidate | 907.3 ns | 15.42 ns | 21.62 ns | 704 B |
 
-A third lane costs about 0.24 µs and 0.17 KB; a candidate source costs about 0.23 µs and 0.32 KB.
-The allocation is the distribution and the result page, not a full copy per lane.
+A third lane costs about 0.19 µs and 168 B; a candidate source costs about 0.12 µs and 128 B. The
+prediction's dictionaries, trained-category set and ranking buffer are now rented per thread and
+reset for the next call, so the blend's working state allocates nothing per prediction; only the
+result page and the fixed lanes' own `Take(...).ToArray()` remain. A nested blend gets a second
+instance rather than clearing its caller's.
 
 ## Behavioural gate (`lexisharp verify`)
 

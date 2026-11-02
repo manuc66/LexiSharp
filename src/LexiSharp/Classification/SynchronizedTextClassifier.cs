@@ -55,6 +55,13 @@ namespace LexiSharp.Classification;
 /// quietly returning something else.
 /// </para>
 /// <para>
+/// The wrapper covers the <see cref="ITextClassifier"/> surface. Concrete async members and
+/// model-specific methods are not on that surface: calling them directly on the wrapped instance
+/// bypasses the lock. Wrap once, and do not also expose the wrapped instance to callers; two
+/// wrappers around the same instance do not share a lock, and wrapping a blend while also wrapping
+/// its lanes nests locks instead of ordering them.
+/// </para>
+/// <para>
 /// Dispose releases the lock. It does not dispose the wrapped classifier, which the caller still
 /// owns. Every member throws <see cref="ObjectDisposedException"/> afterwards.
 /// </para>
