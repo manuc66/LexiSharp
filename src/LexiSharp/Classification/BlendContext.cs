@@ -17,6 +17,14 @@ namespace LexiSharp.Classification;
 /// <see cref="ITextPriorSource"/>. The weights are applied to the context's evidence only; the
 /// configured lanes and sources keep their own weights.
 /// </para>
+/// <para>
+/// Candidate scores are <b>normalized</b> within the context before <see cref="CandidateWeight"/>
+/// is applied, so the absolute amount of evidence is discarded: two neighbours that agree do not
+/// outweigh one unless the caller folds the agreement into <see cref="CandidateWeight"/> (for
+/// example, scale it by the sum of the evidence). A fixed weight treats every positive candidate
+/// as equally meaningful; a sum-scaled weight lets several agreeing candidates outvote one. That
+/// is a validation choice, and a wrong one can cost several points.
+/// </para>
 /// </remarks>
 public sealed record BlendContext
 {

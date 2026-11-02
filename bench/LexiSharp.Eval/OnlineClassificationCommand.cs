@@ -73,7 +73,7 @@ internal static class OnlineClassificationCommand
 
         PrintCorpus(corpus);
 
-        if (!TrySplit(corpus, options, out SearchDocument[] warmup, out OnlineExample[] stream))
+        if (!TrySplit(corpus, options, out SearchDocument[] warmup, out OnlineEvaluationExample[] stream))
             return 2;
 
         Func<int, bool>? retrainWhen = options.Learn && options.RetrainEvery > 0
@@ -91,19 +91,18 @@ internal static class OnlineClassificationCommand
         if (!ValidateLearnMode(options, retrainWhen))
             return 2;
 
-        var evaluation = new OnlineEvaluationOptions(
-            factory,
-            warmup,
-            stream,
-            options.TopK,
-            retrainWhen,
-            BootstrapResamples: 1000,
-            Seed: options.Seed,
-            CoverageTarget: options.CoverageTarget,
-            Learn: options.Learn,
-            Method: options.Model);
+        var evaluation = new OnlineEvaluationOptions
+        {
+            TopK = options.TopK,
+            RetrainWhen = retrainWhen,
+            BootstrapResamples = 1000,
+            Seed = options.Seed,
+            CoverageTarget = options.CoverageTarget,
+            Learn = options.Learn,
+            Method = options.Model,
+        };
 
-        OnlineReport report = OnlineClassificationEvaluation.Run(evaluation);
+        OnlineReport report = OnlineClassificationEvaluator.Evaluate(factory, warmup, stream, evaluation);
         PrintReport(options, report, warmup.Length, stream.Length);
 
         var pin = ToPin(corpus, options, warmup.Length, stream.Length, options.RetrainEvery, report);
@@ -120,7 +119,7 @@ internal static class OnlineClassificationCommand
         ClassificationCorpus corpus,
         CommandOptions options,
         out SearchDocument[] warmup,
-        out OnlineExample[] stream)
+        out OnlineEvaluationExample[] stream)
     {
         var train = Shuffle(corpus.Train, options.Seed);
         int warmupCount = (int)Math.Round(train.Count * options.WarmupFraction, MidpointRounding.AwayFromZero);
@@ -129,14 +128,14 @@ internal static class OnlineClassificationCommand
         {
             Console.Error.WriteLine("classification-online: the warmup fraction leaves no stream.");
             warmup = Array.Empty<SearchDocument>();
-            stream = Array.Empty<OnlineExample>();
+            stream = Array.Empty<OnlineEvaluationExample>();
             return false;
         }
 
         int streamCount = train.Count - warmupCount;
         warmup = train.Take(warmupCount).Select(ToDocument).ToArray();
         stream = train.Skip(warmupCount)
-            .Select((document, index) => new OnlineExample(
+            .Select((document, index) => new OnlineEvaluationExample(
                 ToDocument(document),
                 options.Blocks <= 1 ? 0 : index * options.Blocks / Math.Max(1, streamCount)))
             .ToArray();

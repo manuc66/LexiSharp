@@ -23,10 +23,19 @@ public enum EmbeddingUse
 /// their per-side prefixes/suffixes.
 /// </summary>
 /// <remarks>
+/// <para>
+/// <b>An empty vector means "this text has no embedding".</b> A provider that cannot embed a text
+/// returns <see cref="ReadOnlyMemory{T}.Empty"/> rather than a zero vector. Semantic consumers —
+/// the centroid classifier and the dense nearest-neighbour path — skip that example in training,
+/// learning, forgetting and prediction; they do not treat it as a zero vector. This is what lets a
+/// provider decline a text without a sentinel value or a dimension trick.
+/// </para>
+/// <para>
 /// This seam exists so that embedding-backed engines (a PostgreSQL <c>pgvector</c> ANN index,
 /// an in-memory HNSW store, ...) can be integrated and merged with lexical engines through the
 /// hybrid package — whose <c>ReciprocalRankFusionMerger</c> combines ranks across engines with
 /// incomparable score scales.
+/// </para>
 /// <para>
 /// Thread-safety is implementation-defined: an engine may call this method concurrently from
 /// several search/index operations, so providers should be safe against concurrent invocation.

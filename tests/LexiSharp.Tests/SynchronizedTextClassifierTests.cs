@@ -158,6 +158,37 @@ public class SynchronizedTextClassifierTests
     }
 
     [Fact]
+    public void ContextualPredict_ReachesTheWrappedBlend()
+    {
+        var inner = new NaiveBayesClassifier();
+        inner.Train(Corpus);
+        var blend = new BlendTextClassifier(new[]
+        {
+            new TextClassifierLane(inner, 1),
+        });
+        using var classifier = new SynchronizedTextClassifier(blend);
+        var context = new BlendContext
+        {
+            Candidates = new[] { new TextEvidence("X", 10) },
+        };
+
+        Assert.IsAssignableFrom<IContextualTextClassifier>(classifier);
+        Assert.Equal("X", classifier.Predict("invoice", context, limit: 1)[0].Category);
+    }
+
+    [Fact]
+    public void ContextualPredict_ThrowsWhenTheWrappedModelCannotDoIt()
+    {
+        using var classifier = new SynchronizedTextClassifier(TrainedInner());
+        var context = BlendContext.Empty;
+
+        var failure = Assert.Throws<NotSupportedException>(
+            () => classifier.Predict("invoice", context));
+
+        Assert.Contains(nameof(NaiveBayesClassifier), failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Predict_WeightedTokens_ThrowsWhenTheWrappedModelCannotDoIt()
     {
         using var classifier = new SynchronizedTextClassifier(new PlainReinforceableClassifier());
