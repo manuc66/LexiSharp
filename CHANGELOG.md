@@ -87,8 +87,11 @@
   **costs 1.4× and 2.6×** on the two tail queries the cursor pass serves, because their candidates all
   tie at the top of the page and nothing is skippable while every candidate of every term still gets a
   bound; and it saves **3.2 %** on a head query forced onto that pass, where the accumulator remains
-  1.4× faster. Off by default, and being off costs one boolean test: the published rows re-measure at
-  1.00 and 2.20 µs unchanged.
+  1.4× faster. Off by default, and being off costs one boolean test and no memory: the bound is built on
+  the first query that asks for it, so a search that does not opt in pays neither the two arrays a term
+  nor the pass that fills them, and the published rows re-measure at 1.00 and 2.20 µs unchanged. The
+  sweep says the same thing at nine densities from df 10 to 19,914, where pruning is slower at every
+  one of them.
 
 - **Online bucket metrics carry top-k accuracy.** `OnlineBucketMetrics` now has `AccuracyAtK` and
   its own block-bootstrap interval alongside top-1, so "the category was second" is visible inside
