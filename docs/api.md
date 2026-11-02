@@ -30,6 +30,7 @@ are listed first.
 
 | Contract | Extends | What it is | Guide |
 | --- | --- | --- | --- |
+| `IContextualTextClassifier` | `ITextClassifier` | A classifier that accepts request-scoped evidence in addition to the text. | [guide](text-analysis.md) |
 | `IFeatureSet` | — | The features of one item, as a question sees them: a set of names, no domain. | [guide](text-analysis.md) |
 | `IFeatureSource<TItem>` | — | Extracts the features of an item — the seam that keeps the question trees domain-agnostic. | [guide](text-analysis.md) |
 | `IBatchEmbeddingProvider` | `IEmbeddingProvider` | An IEmbeddingProvider that can embed several texts in one call. Engines that index a corpus check for this interface and use it instead of calling… | [guide](reference.md) |
@@ -136,13 +137,14 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
 | `BlendContext` | record | — | Evidence supplied for one prediction, instead of being configured as a source on the blend. |
-| `BlendTextClassifier` | class | `IIncrementalTextClassifier`, `ITextClassifier` | Blends any number of text classifiers, then optionally injects candidate categories and log-prior bonuses. |
+| `BlendTextClassifier` | class | `IContextualTextClassifier`, `IIncrementalTextClassifier`, `ITextClassifier` | Blends any number of text classifiers, then optionally injects candidate categories and log-prior bonuses. |
 | `CalibratedClassifier` | class | `ITextClassifier` | Wraps an ITextClassifier with a fitted temperature, so Predict returns the calibrated distribution and PredictBest the same top category. |
 | `CalibrationSample` | record | — | One validation observation for calibration: the distribution a model produced and the category that was actually right. |
 | `CandidateLane` | record | — | One source of categories no model learned, and the weight of its evidence. |
 | `CentroidClassifier` | class | `IIncrementalTextClassifier`, `ITextClassifier` | Text wrapper over the generic nearest-centroid model: embeds documents with an IEmbeddingProvider, computes one centroid per Category, and classifies a text by… |
 | `CentroidClassifier<TItem>` | class | — | Nearest-centroid classifier over caller-supplied vectors: one mean per category, ranked by cosine similarity, with a softmax over the cosines as the posterior. |
 | `CentroidClassifierOptions` | record | — | Tunable knobs for the nearest-centroid classifiers: the softmax temperature, and the embedding role the text wrapper uses on each side. |
+| `ClassificationInterval` | record struct | — | A percentile confidence interval. |
 | `ClassificationModelSerializer` | class | — | Saves and loads trained text classifiers in a versioned, dependency-free binary format. |
 | `CompositeFeatureSource<TItem>` | class | `IFeatureSource` | Combines several feature sources by union: an item carries every feature any source reports. |
 | `CorpusCluster` | record | — | One terminal region of a corpus division: its document ids, the features that best represent it, and the depth at which it was found. |
@@ -181,13 +183,19 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `NearestNeighborOptions` | record | — | Tunable knobs for NearestNeighborClassifier: how many neighbours vote, how their scores become weights, the BM25 parameters of the lexical path, and the… |
 | `NeighborVote` | enum | — | How a neighbour's similarity becomes a vote. |
 | `NumericThresholdQuestion` | record | `FeatureQuestion` | True when a feature's numeric value is at or above the threshold. A missing value — the feature is absent, carries no number, or carries NaN — answers no, which… |
+| `OnlineBucketMetrics` | record | — | Accuracy and macro-F1 for one slice of the stream. |
+| `OnlineClassificationEvaluator` | class | — | Replays a labelled stream through any ITextClassifier: predict first, then learn. |
+| `OnlineCoveragePoint` | record | — | One point of the precision/coverage curve. |
+| `OnlineEvaluationExample` | record | — | One labelled document in the stream, with the block (day, period, ...) it belongs to and an optional request context for a contextual classifier. |
+| `OnlineEvaluationOptions` | record | — | Options for Evaluate. |
+| `OnlineReport` | record | — | The outcome of one predict-then-learn run. |
 | `PriorLane` | record | — | One source of log-prior bonuses on categories a model already holds. |
 | `QuestionAnswer` | record | — | One question and the answer a particular item gave it. |
 | `RandomForestClassifier` | class | `ITextClassifier` | The text convenience over RandomForestClassifier: a SearchDocument forest over Text. |
 | `RandomForestClassifier<TItem>` | class | — | A bagged forest of DecisionTreeClassifier trees: each tree sees a bootstrap sample and a random subset of the features, and the forest averages their… |
 | `RandomForestOptions` | record | — | Tunable knobs for RandomForestClassifier: how many trees, how deep, and how much of the feature space each tree is allowed to see. |
 | `SplitCriterion` | enum | — | How a candidate split is scored when a decision tree chooses its next question. |
-| `SynchronizedTextClassifier` | class | `IDisposable`, `IIncrementalTextClassifier`, `IReinforceableTextClassifier`, `ITextClassifier`, `IWeightedPredictor` | Wraps an ITextClassifier so that concurrent prediction and concurrent mutation stop being the caller's problem: any number of Predict and PredictBest calls may… |
+| `SynchronizedTextClassifier` | class | `IContextualTextClassifier`, `IDisposable`, `IIncrementalTextClassifier`, `IReinforceableTextClassifier`, `ITextClassifier`, `IWeightedPredictor` | Wraps an ITextClassifier so that concurrent prediction and concurrent mutation stop being the caller's problem: any number of Predict and PredictBest calls may… |
 | `TemperatureCalibrator` | class | — | A one-parameter post-hoc calibrator: it divides the log-probabilities by a temperature fitted on a validation set to minimize log-loss. |
 | `TextClassifierLane` | record | — | One trained classifier and the weight its distribution carries in the blend. |
 | `TextFeatureSource` | class | `IFeatureSource` | The text feature space: the normalized terms of Text. |

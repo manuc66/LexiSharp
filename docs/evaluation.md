@@ -1434,6 +1434,39 @@ same reason — all 20 labels are in the warmup. The evaluator also handles a no
 by retraining on a schedule (`--retrain-every`); a non-incremental model without a schedule is
 rejected rather than silently returning the warmup's answers forever.
 
+### The evaluator as a library
+
+The same run is available in `LexiSharp.Classification`, so a test can keep its own figures without
+running the command-line harness:
+
+```csharp
+using LexiSharp.Classification;
+using LexiSharp.Core;
+
+var stream = documents.Select((document, index) =>
+    new OnlineEvaluationExample(document, block: index / 100));
+
+var report = OnlineClassificationEvaluator.Evaluate(
+    () => new NaiveBayesClassifier(),
+    warmup,
+    stream,
+    new OnlineEvaluationOptions
+    {
+        TopK = 3,
+        Learn = true,
+        BootstrapResamples = 1_000,
+        Seed = 7,
+        CoverageTarget = 0.5,
+    });
+```
+
+`OnlineEvaluationExample` carries the block (a day, a week, any correlated unit) and an optional
+`BlendContext`; the evaluator calls `IContextualTextClassifier.Predict` when the model implements it,
+so request-scoped candidates and priors take the same path as a production request. The report has
+top-1/top-k accuracy, macro-F1, seen/never-seen text and category buckets, a precision/coverage
+curve, block-bootstrap intervals, learn/retrain counts and timings. A non-incremental model without
+`RetrainWhen` is rejected rather than scored on a frozen model.
+
 ### Nearest neighbours on the same split
 
 The BM25 nearest-neighbour model is tuned the same way: K over

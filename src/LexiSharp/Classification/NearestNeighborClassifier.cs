@@ -11,6 +11,11 @@ namespace LexiSharp.Classification;
 /// </summary>
 /// <remarks>
 /// <para>
+/// On the dense path, an empty vector means "no embedding for this text": <see cref="TrainAsync"/>
+/// and <see cref="LearnAsync"/> skip the example and <see cref="PredictAsync"/> returns nothing.
+/// The lexical path has no such notion; an empty text is simply a document with no terms.
+/// </para>
+/// <para>
 /// The lexical path stores each document's term frequencies and the corpus document frequencies;
 /// a prediction scores every stored document against the query terms with the same Okapi BM25
 /// formula as the search engine, then keeps the <see cref="NearestNeighborOptions.K"/> best. The
@@ -161,10 +166,12 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
 
                 for (int i = 0; i < labelled.Count; i++)
                 {
-                    store.Add(
-                        labelled[i].Id,
-                        labelled[i].Category!,
-                        Validate(vectors[i], labelled[i].Id));
+                    ReadOnlyMemory<float> vector = Validate(vectors[i], labelled[i].Id);
+
+                    if (vector.Length == 0)
+                        continue;
+
+                    store.Add(labelled[i].Id, labelled[i].Category!, vector);
                 }
             }
             else
@@ -177,7 +184,12 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
                         .GetTextEmbeddingAsync(labelled[i].Text, _options.TrainingUse, cancellationToken)
                         .ConfigureAwait(false);
 
-                    store.Add(labelled[i].Id, labelled[i].Category!, Validate(vector, labelled[i].Id));
+                    vector = Validate(vector, labelled[i].Id);
+
+                    if (vector.Length == 0)
+                        continue;
+
+                    store.Add(labelled[i].Id, labelled[i].Category!, vector);
                 }
             }
         }
@@ -225,8 +237,13 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
             .GetTextEmbeddingAsync(document.Text, _options.TrainingUse, cancellationToken)
             .ConfigureAwait(false);
 
+        vector = Validate(vector, document.Id);
+
+        if (vector.Length == 0)
+            return;
+
         _dense ??= new DenseStore();
-        _dense.Add(document.Id, document.Category, Validate(vector, document.Id));
+        _dense.Add(document.Id, document.Category, vector);
     }
 
     /// <inheritdoc />
@@ -299,8 +316,12 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
             .GetTextEmbeddingAsync(text, _options.PredictionUse, cancellationToken)
             .ConfigureAwait(false);
 
-        IReadOnlyList<Neighbor> neighbors = _dense.Search(
-            Validate(vector, documentId: null), _options.K, excludedCategories);
+        vector = Validate(vector, documentId: null);
+
+        if (vector.Length == 0)
+            return Array.Empty<ClassificationResult>();
+
+        IReadOnlyList<Neighbor> neighbors = _dense.Search(vector, _options.K, excludedCategories);
 
         return BuildResults(neighbors, limit);
     }
@@ -405,6 +426,9 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
 
     private ReadOnlyMemory<float> Validate(ReadOnlyMemory<float> vector, string? documentId)
     {
+        if (vector.Length == 0)
+            return vector;
+
         if (vector.Length != _embeddings!.Dimension)
         {
             string subject = documentId is null ? "the input text" : $"'{documentId}'";

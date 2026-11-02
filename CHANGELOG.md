@@ -20,6 +20,17 @@ workflow.
 
 ### Added
 
+- **The predict-then-learn evaluator is a library API.** `OnlineClassificationEvaluator.Evaluate`
+  takes any `ITextClassifier`, an ordered `OnlineEvaluationExample` stream with a block per row and
+  an optional `BlendContext`, and returns top-k accuracy, seen/never-seen buckets, a
+  precision/coverage curve and block-bootstrap intervals. The command-line lane now calls the same
+  code instead of keeping its own copy in `bench/`.
+- **An empty vector means "no embedding".** `IEmbeddingProvider` may return
+  `ReadOnlyMemory<float>.Empty`; `CentroidClassifier` and the dense `NearestNeighborClassifier`
+  skip that example in training, `Learn` and `Unlearn`, and return nothing for it at prediction.
+  A provider no longer needs a sentinel vector or a dimension hack to decline a text.
+- **Candidates are documented as normalized.** `BlendContext` says that the absolute evidence mass
+  is discarded and that a caller who wants agreement to count must fold it into `CandidateWeight`.
 - **The dense KNN caches each stored vector's norm.** A prediction computes the query norm once
   and then one dot product per document, instead of recomputing both norms for every pair. On the
   synthetic 2 000 × 256 benchmark `PredictDenseK5` reads **1.659 ms** for 16 queries instead of

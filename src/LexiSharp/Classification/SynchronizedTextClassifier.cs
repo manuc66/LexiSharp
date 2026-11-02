@@ -60,7 +60,8 @@ namespace LexiSharp.Classification;
 /// </para>
 /// </remarks>
 public sealed class SynchronizedTextClassifier
-    : IIncrementalTextClassifier, IReinforceableTextClassifier, IWeightedPredictor, IDisposable
+    : IIncrementalTextClassifier, IReinforceableTextClassifier, IContextualTextClassifier,
+      IWeightedPredictor, IDisposable
 {
     private readonly ITextClassifier _inner;
 
@@ -242,6 +243,42 @@ public sealed class SynchronizedTextClassifier
         try
         {
             return weighted.Predict(tokens, limit, excludedCategories);
+        }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
+    }
+
+    /// <summary>
+    /// Forwards a request context to the wrapped classifier when it implements
+    /// <see cref="IContextualTextClassifier"/>.
+    /// </summary>
+    /// <param name="text">The text being classified.</param>
+    /// <param name="context">Request-scoped evidence.</param>
+    /// <param name="limit">Maximum number of categories to return.</param>
+    /// <param name="excludedCategories">Optional categories to hide.</param>
+    /// <exception cref="NotSupportedException">
+    /// The wrapped classifier is not an <see cref="IContextualTextClassifier"/>.
+    /// </exception>
+    public IReadOnlyList<ClassificationResult> Predict(
+        string text,
+        BlendContext context,
+        int limit = 3,
+        IReadOnlySet<string>? excludedCategories = null)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        if (_inner is not IContextualTextClassifier contextual)
+        {
+            throw new NotSupportedException(
+                $"{_inner.GetType().Name} does not implement {nameof(IContextualTextClassifier)}.");
+        }
+
+        _lock.EnterReadLock();
+        try
+        {
+            return contextual.Predict(text, context, limit, excludedCategories);
         }
         finally
         {

@@ -465,16 +465,21 @@ public class CentroidClassifierTests
     }
 
     [Fact]
-    public void Train_RejectsAnEmptyVector()
+    public void Train_SkipsAnEmptyVector()
     {
         var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
             item => item.Vector,
             item => item.Category);
 
-        Assert.Throws<ArgumentException>(() => classifier.Train(new[]
+        classifier.Train(new[]
         {
-            ("A", Array.Empty<float>()),
-        }));
+            ("A", new[] { 1f, 0f }),
+            ("B", Array.Empty<float>()),
+        });
+
+        Assert.Equal(1, classifier.CategoryCount);
+        Assert.Empty(classifier.Predict(Array.Empty<float>()));
+        Assert.Equal("A", classifier.PredictBest(new[] { 1f, 0f }));
     }
 
     [Fact]
@@ -491,15 +496,30 @@ public class CentroidClassifierTests
     }
 
     [Fact]
-    public void Learn_RejectsAnEmptyVectorAndADimensionMismatch()
+    public void Learn_SkipsAnEmptyVectorAndRejectsADimensionMismatch()
     {
         var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
             item => item.Vector,
             item => item.Category);
         classifier.Train(new[] { ("A", new[] { 1f, 0f }) });
 
-        Assert.Throws<ArgumentException>(() => classifier.Learn(("B", Array.Empty<float>())));
+        classifier.Learn(("B", Array.Empty<float>()));
+        Assert.Equal(1, classifier.CategoryCount);
+
         Assert.Throws<ArgumentException>(() => classifier.Learn(("B", new[] { 1f, 0f, 0f })));
+    }
+
+    [Fact]
+    public void Unlearn_SkipsAnEmptyVector()
+    {
+        var classifier = new CentroidClassifier<(string Category, float[] Vector)>(
+            item => item.Vector,
+            item => item.Category);
+        classifier.Train(new[] { ("A", new[] { 1f, 0f }) });
+
+        classifier.Unlearn(("A", Array.Empty<float>()));
+
+        Assert.Equal(1, classifier.CategoryCount);
     }
 
     [Fact]
@@ -630,6 +650,29 @@ public class CentroidClassifierTests
             new CentroidClassifierOptions { CenterOnGlobalMean = true });
 
         Assert.True(classifier.CenterOnGlobalMean);
+    }
+
+    [Fact]
+    public async Task TheTextWrapper_SkipsATextWithoutAVector()
+    {
+        var embeddings = TwoClasses().Add("no vector", Array.Empty<float>());
+        var classifier = new CentroidClassifier(embeddings);
+
+        await classifier.TrainAsync(new[]
+        {
+            new SearchDocument("1", "A one", Category: "A"),
+            new SearchDocument("2", "B one", Category: "B"),
+            new SearchDocument("3", "no vector", Category: "C"),
+        });
+
+        Assert.Equal(2, classifier.CategoryCount);
+        Assert.Empty(await classifier.PredictAsync("no vector"));
+
+        await classifier.LearnAsync(new SearchDocument("4", "no vector", Category: "A"));
+        Assert.Equal(2, classifier.CategoryCount);
+
+        await classifier.UnlearnAsync(new SearchDocument("4", "no vector", Category: "A"));
+        Assert.Equal(2, classifier.CategoryCount);
     }
 
     [Fact]

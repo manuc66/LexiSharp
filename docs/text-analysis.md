@@ -314,6 +314,13 @@ The context is read once and never stored, so two calls cannot leak evidence int
 caller does not rebuild the whole blend for every query. Its candidates introduce categories the
 same way a configured source does; its priors only shift categories a trained lane produced.
 
+Candidate scores are normalized within each source or context, so the **absolute** amount of
+evidence is discarded. Two neighbours that agree do not weigh more than one unless the caller folds
+the agreement into `CandidateWeight` — for example by scaling it by the sum of the evidence. A fixed
+weight is right when every positive candidate means the same thing; a sum-scaled weight is right
+when five agreeing neighbours should outvote one. The choice is a validation decision, and a wrong
+one can cost several points.
+
 ### What the centroids cost and how they read
 
 Training is one pass over the vectors plus the mean and the centroid norms; prediction is one
@@ -358,6 +365,10 @@ deterministic provider, and learning a corpus one document at a time is indistin
 persisted, sums and global mean included, through `ClassificationModelSerializer`; the embedding
 provider is not stored, exactly as the tokenizer is not, so load it with the same provider.
 
+An empty vector means "no embedding": `Train`, `Learn` and `Unlearn` skip that item, and
+`Predict` returns nothing for it. It is not a zero vector, so a provider can decline a text without
+a sentinel value or a dimension trick.
+
 `CenterOnGlobalMean` subtracts the corpus mean from every centroid and from the query before the
 cosine. It can change the ranking when a large shared direction dominates the raw cosine, and it
 changes the cosine scale, so the temperature and a fused model's weight have to be tuned again.
@@ -399,6 +410,8 @@ consume a place. Ties are ordinal. `Learn` adds one document and `Unlearn` remov
 `SearchDocument.Id`; duplicate ids are rejected, and unlearning an id the model does not hold is a
 no-op.
 
+On the dense path an empty vector means "no embedding": training and `Learn` skip the document and
+`Predict` returns nothing. On the lexical path an empty text is simply a document with no terms.
 Both paths are exact scans: BM25 costs O(N × query terms) per prediction, dense costs O(N × dim),
 and the dense store holds N × dim floats. There is no inverted index, no ANN and no persistence
 for this model in v1; the centroid remains the O(categories × dim) alternative. On the
