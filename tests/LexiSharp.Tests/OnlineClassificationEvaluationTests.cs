@@ -204,6 +204,133 @@ public class OnlineClassificationEvaluationTests
     }
 
     [Fact]
+    public void InvalidOptionsAndStreamRowsAreRejected()
+    {
+        var model = new LearningClassifier();
+        var stream = new[] { new OnlineEvaluationExample(Doc("1", "x", "A"), 0) };
+
+        Assert.Throws<ArgumentNullException>(() =>
+            OnlineClassificationEvaluator.Evaluate(null!, Array.Empty<SearchDocument>(), stream));
+        Assert.Throws<ArgumentNullException>(() =>
+            OnlineClassificationEvaluator.Evaluate(() => model, null!, stream));
+        Assert.Throws<ArgumentNullException>(() =>
+            OnlineClassificationEvaluator.Evaluate(() => model, Array.Empty<SearchDocument>(), null!));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            OnlineClassificationEvaluator.Evaluate(
+                () => model, Array.Empty<SearchDocument>(), stream, Options(topK: 0)));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            OnlineClassificationEvaluator.Evaluate(
+                () => model,
+                Array.Empty<SearchDocument>(),
+                stream,
+                new OnlineEvaluationOptions { CoverageTarget = 0 }));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            OnlineClassificationEvaluator.Evaluate(
+                () => model,
+                Array.Empty<SearchDocument>(),
+                stream,
+                new OnlineEvaluationOptions { BootstrapResamples = 0 }));
+        Assert.Throws<ArgumentException>(() =>
+            OnlineClassificationEvaluator.Evaluate(
+                () => model,
+                Array.Empty<SearchDocument>(),
+                new[] { new OnlineEvaluationExample(Doc("1", "x", string.Empty), 0) }));
+        Assert.Throws<ArgumentNullException>(() =>
+            OnlineClassificationEvaluator.Evaluate(
+                () => model,
+                Array.Empty<SearchDocument>(),
+                new OnlineEvaluationExample[] { null! }));
+        Assert.Throws<InvalidOperationException>(() =>
+            OnlineClassificationEvaluator.Evaluate(
+                () => null!,
+                Array.Empty<SearchDocument>(),
+                stream));
+    }
+
+    [Fact]
+    public void TheReportExposesEveryFigure()
+    {
+        var model = new LearningClassifier();
+        var report = OnlineClassificationEvaluator.Evaluate(
+            () => model,
+            Array.Empty<SearchDocument>(),
+            new[] { new OnlineEvaluationExample(Doc("1", "x", "A"), 0) },
+            Options(learn: false));
+
+        _ = report.Method;
+        _ = report.Documents;
+        _ = report.TopK;
+        _ = report.AccuracyAt1;
+        _ = report.AccuracyAtK;
+        _ = report.MacroF1;
+        _ = report.AccuracyAt195;
+        _ = report.AccuracyAtK95;
+        _ = report.MacroF195;
+        _ = report.TextBuckets;
+        _ = report.CategoryBuckets;
+        _ = report.Coverage;
+        _ = report.RecommendedCoverage;
+        _ = report.LearnCalls;
+        _ = report.RetrainCalls;
+        _ = report.WarmupTrainTime;
+        _ = report.PredictTime;
+        _ = report.LearnTime;
+        _ = report.RetrainTime;
+        _ = report.OrderHash;
+    }
+
+    [Fact]
+    public void MacroF1CountsAFalsePositiveAndAFalseNegative()
+    {
+        var model = new FixedClassifier(new ClassificationResult("B", 1));
+        var report = OnlineClassificationEvaluator.Evaluate(
+            () => model,
+            Array.Empty<SearchDocument>(),
+            new[] { new OnlineEvaluationExample(Doc("1", "x", "A"), 0) },
+            Options(learn: false));
+
+        Assert.Equal(0, report.MacroF1);
+    }
+
+    [Fact]
+    public void TheBlockBootstrapValidatesItsInputsAndHandlesEmptyInputs()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            OnlineEvaluationStatistics.BootstrapBlocks(
+                new[] { 0 }, new[] { "A" }, new string?[] { "A", "B" }));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            OnlineEvaluationStatistics.BootstrapBlocks(
+                new[] { 0 }, new[] { "A" }, new string?[] { "A" }, resamples: 0));
+        Assert.Throws<ArgumentException>(() =>
+            OnlineEvaluationStatistics.BootstrapAccuracyBlocks(
+                new[] { 0 }, new[] { true, false }));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            OnlineEvaluationStatistics.BootstrapAccuracyBlocks(
+                new[] { 0 }, new[] { true }, resamples: 0));
+
+        EvaluationIntervals empty = OnlineEvaluationStatistics.BootstrapBlocks(
+            Array.Empty<int>(), Array.Empty<string>(), Array.Empty<string?>());
+        Assert.Equal(0, empty.Accuracy.Lower);
+        Assert.Equal(0, empty.MacroF1.Upper);
+        Assert.Equal(0, OnlineEvaluationStatistics.BootstrapAccuracyBlocks(
+            Array.Empty<int>(), Array.Empty<bool>()).Lower);
+    }
+
+    [Fact]
+    public void TheBlockBootstrapHandlesTwoCategories()
+    {
+        EvaluationIntervals intervals = OnlineEvaluationStatistics.BootstrapBlocks(
+            new[] { 0, 0, 1, 1 },
+            new[] { "A", "B", "A", "B" },
+            new[] { "B", "A", "A", "B" },
+            200,
+            7);
+
+        Assert.InRange(intervals.Accuracy.Lower, 0, 1);
+        Assert.InRange(intervals.Accuracy.Upper, intervals.Accuracy.Lower, 1);
+    }
+
+    [Fact]
     public void APerExampleContextReachesAContextualClassifier()
     {
         var blend = new BlendTextClassifier(new[]
