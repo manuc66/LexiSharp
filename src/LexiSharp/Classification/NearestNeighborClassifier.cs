@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 using LexiSharp.Core;
 using LexiSharp.Hybrid;
 using LexiSharp.Linguistics;
@@ -145,6 +147,8 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
 
         if (labelled.Count > 0)
         {
+            store.Reserve(labelled.Count, _embeddings.Dimension);
+
             if (_embeddings is IBatchEmbeddingProvider batch)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -283,10 +287,11 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
         if (_embeddings is not null)
             return PredictAsync(text, limit, excludedCategories).GetAwaiter().GetResult();
 
-        IReadOnlyList<Neighbor> neighbors = _bm25?.Search(text, _options.K, excludedCategories)
-            ?? Array.Empty<Neighbor>();
+        TopKBuffer? neighbors = _bm25?.Search(text, _options.K, excludedCategories);
 
-        return BuildResults(neighbors, limit);
+        return neighbors is null
+            ? Array.Empty<ClassificationResult>()
+            : BuildResults(neighbors, limit);
     }
 
     /// <summary>Embeds a text and ranks the stored neighbours by cosine similarity.</summary>
@@ -321,7 +326,7 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
         if (vector.Length == 0)
             return Array.Empty<ClassificationResult>();
 
-        IReadOnlyList<Neighbor> neighbors = _dense.Search(vector, _options.K, excludedCategories);
+        TopKBuffer neighbors = _dense.Search(vector, _options.K, excludedCategories);
 
         return BuildResults(neighbors, limit);
     }
@@ -333,16 +338,14 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
         return results.Count > 0 ? results[0].Category : null;
     }
 
-    private IReadOnlyList<ClassificationResult> BuildResults(
-        IReadOnlyList<Neighbor> neighbors,
-        int limit)
+    private IReadOnlyList<ClassificationResult> BuildResults(TopKBuffer neighbors, int limit)
     {
-        int k = Math.Min(_options.K, neighbors.Count);
+        int k = neighbors.Count;
 
         if (k <= 0)
             return Array.Empty<ClassificationResult>();
 
-        var weights = new double[k];
+        Span<double> weights = k <= 64 ? stackalloc double[k] : new double[k];
         double total = 0;
 
         switch (_options.Vote)
@@ -385,41 +388,50 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
             // No similarity carried any weight (a BM25 query with no overlapping term, or a dense
             // score set that is entirely non-positive under Score). Every selected neighbour votes
             // once rather than the model abstaining arbitrarily.
-            for (int i = 0; i < k; i++)
-                weights[i] = 1.0;
-
+            weights.Fill(1.0);
             total = k;
         }
 
-        var scores = new Dictionary<string, double>(StringComparer.Ordinal);
+        // Aggregate in the array the search already allocated: a category repeats only when two
+        // neighbours share it, so the distinct prefix stays short and a scan beats a dictionary.
+        Span<Neighbor> items = neighbors.Items;
+        int distinct = 0;
 
         for (int i = 0; i < k; i++)
         {
-            scores.TryGetValue(neighbors[i].Category, out double current);
-            scores[neighbors[i].Category] = current + (weights[i] / total);
+            Neighbor neighbor = items[i];
+            double weighted = weights[i] / total;
+            int found = -1;
+
+            for (int j = 0; j < distinct; j++)
+            {
+                if (string.Equals(items[j].Category, neighbor.Category, StringComparison.Ordinal))
+                {
+                    found = j;
+                    break;
+                }
+            }
+
+            if (found >= 0)
+            {
+                items[found] = items[found] with { Score = items[found].Score + weighted };
+            }
+            else
+            {
+                items[distinct++] = new Neighbor(neighbor.Category, neighbor.Category, weighted);
+            }
         }
 
-        var ranked = new List<(string Category, double Probability)>(scores.Count);
+        items[..distinct].Sort(ProbabilityComparer.Instance);
 
-        foreach (var (category, probability) in scores)
-            ranked.Add((category, probability));
-
-        ranked.Sort(static (left, right) =>
-        {
-            int byProbability = right.Probability.CompareTo(left.Probability);
-            return byProbability != 0
-                ? byProbability
-                : string.CompareOrdinal(left.Category, right.Category);
-        });
-
-        if (ranked.Count == 0 || ranked[0].Probability < _options.MinProbability)
+        if (items[0].Score < _options.MinProbability)
             return Array.Empty<ClassificationResult>();
 
-        int take = Math.Min(limit, ranked.Count);
+        int take = Math.Min(limit, distinct);
         var results = new ClassificationResult[take];
 
         for (int i = 0; i < take; i++)
-            results[i] = new ClassificationResult(ranked[i].Category, ranked[i].Probability);
+            results[i] = new ClassificationResult(items[i].Category, items[i].Score);
 
         return results;
     }
@@ -466,6 +478,13 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
 
         public TopKBuffer(int k) => _items = new Neighbor[k];
 
+        public int Count => _count;
+
+        public Neighbor this[int index] => _items[index];
+
+        /// <summary>The used prefix, which the caller may reorder and overwrite once the search is done.</summary>
+        public Span<Neighbor> Items => _items.AsSpan(0, _count);
+
         public void Add(Neighbor candidate)
         {
             int index;
@@ -491,8 +510,6 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
             _items[index] = candidate;
         }
 
-        public IReadOnlyList<Neighbor> ToList() => _items[.._count];
-
         private static bool IsBetter(Neighbor left, Neighbor right)
         {
             int byScore = left.Score.CompareTo(right.Score);
@@ -503,12 +520,33 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
         }
     }
 
+    private sealed class ProbabilityComparer : IComparer<Neighbor>
+    {
+        public static readonly ProbabilityComparer Instance = new();
+
+        public int Compare(Neighbor left, Neighbor right)
+        {
+            int byProbability = right.Score.CompareTo(left.Score);
+
+            return byProbability != 0
+                ? byProbability
+                : string.CompareOrdinal(left.Category, right.Category);
+        }
+    }
+
     private sealed class Bm25Store
     {
         private readonly ITokenizer _tokenizer;
         private readonly NearestNeighborOptions _options;
         private readonly Dictionary<string, Document> _documents = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, int> _documentFrequency = new(StringComparer.Ordinal);
+
+        // One id per term, so a document stores integers rather than a dictionary of strings. The
+        // reverse list lets Remove release a term no document holds any more; ids are not reused,
+        // so a dead slot costs one int and one null reference.
+        private readonly Dictionary<string, int> _termIds = new(StringComparer.Ordinal);
+        private readonly List<string?> _termText = new();
+        private readonly List<int> _documentFrequency = new();
+        private readonly Dictionary<int, int> _scratch = new();
         private long _totalLength;
 
         public Bm25Store(ITokenizer tokenizer, NearestNeighborOptions options)
@@ -528,37 +566,49 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
                 throw new ArgumentException($"The document id '{document.Id}' is already in the model.", nameof(document));
 
             IReadOnlyList<string> tokens = _tokenizer.Tokenize(document.Text);
-            var terms = new Dictionary<string, int>(StringComparer.Ordinal);
+            _scratch.Clear();
 
             foreach (string token in tokens)
             {
-                terms.TryGetValue(token, out int count);
-                terms[token] = count + 1;
+                int termId = GetOrAddTerm(token);
+                ref int count = ref CollectionsMarshal.GetValueRefOrAddDefault(_scratch, termId, out _);
+                count++;
             }
 
-            foreach (string term in terms.Keys)
-            {
-                _documentFrequency.TryGetValue(term, out int frequency);
-                _documentFrequency[term] = frequency + 1;
-            }
+            var terms = new TermFrequency[_scratch.Count];
+            int index = 0;
+
+            foreach (var (termId, count) in _scratch)
+                terms[index++] = new TermFrequency(termId, count);
+
+            Array.Sort(terms, static (left, right) => left.TermId.CompareTo(right.TermId));
 
             _documents[document.Id] = new Document(document.Category!, tokens.Count, terms);
+
+            foreach (TermFrequency term in terms)
+                _documentFrequency[term.TermId]++;
+
             _totalLength += tokens.Count;
         }
 
         public bool Remove(string id)
         {
-            if (!_documents.TryGetValue(id, out Document? document))
+            if (!_documents.TryGetValue(id, out Document document))
                 return false;
 
-            foreach (string term in document.Terms.Keys)
+            foreach (TermFrequency term in document.Terms)
             {
-                _documentFrequency.TryGetValue(term, out int frequency);
+                int frequency = _documentFrequency[term.TermId];
 
                 if (frequency <= 1)
-                    _documentFrequency.Remove(term);
+                {
+                    _documentFrequency[term.TermId] = 0;
+                    ReleaseTerm(term.TermId);
+                }
                 else
-                    _documentFrequency[term] = frequency - 1;
+                {
+                    _documentFrequency[term.TermId] = frequency - 1;
+                }
             }
 
             _totalLength -= document.Length;
@@ -566,42 +616,45 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
             return true;
         }
 
-        public IReadOnlyList<Neighbor> Search(
+        public TopKBuffer? Search(
             string text,
             int k,
             IReadOnlySet<string>? excludedCategories)
         {
             if (k <= 0 || _documents.Count == 0)
-                return Array.Empty<Neighbor>();
+                return null;
 
-            var queryTerms = new HashSet<string>(StringComparer.Ordinal);
+            var queryTerms = new List<(int TermId, double Weight)>();
+            var seen = new HashSet<int>();
 
             foreach (string token in _tokenizer.Tokenize(text))
-                queryTerms.Add(token);
+            {
+                if (!_termIds.TryGetValue(token, out int termId) || !seen.Add(termId))
+                    continue;
+
+                int frequency = _documentFrequency[termId];
+
+                if (frequency == 0)
+                    continue;
+
+                double idf = Math.Log(1 + (((double)_documents.Count - frequency + 0.5) / (frequency + 0.5)));
+                queryTerms.Add((termId, idf * (_options.Bm25.K1 + 1)));
+            }
 
             if (queryTerms.Count == 0)
-                return Array.Empty<Neighbor>();
+                return null;
+
+            queryTerms.Sort(static (left, right) => left.TermId.CompareTo(right.TermId));
 
             double averageLength = (double)_totalLength / _documents.Count;
 
             if (averageLength <= 0)
-                return Array.Empty<Neighbor>();
+                return null;
 
             double k1 = _options.Bm25.K1;
             double b = _options.Bm25.B;
-            var idf = new Dictionary<string, double>(StringComparer.Ordinal);
-
-            foreach (string term in queryTerms)
-            {
-                if (!_documentFrequency.TryGetValue(term, out int frequency) || frequency == 0)
-                    continue;
-
-                idf[term] = Math.Log(1 + (((double)_documents.Count - frequency + 0.5) / (frequency + 0.5)));
-            }
-
-            if (idf.Count == 0)
-                return Array.Empty<Neighbor>();
-
+            double fixedPart = k1 * (1 - b);
+            double lengthPart = k1 * b / averageLength;
             var top = new TopKBuffer(k);
 
             foreach (var (id, document) in _documents)
@@ -610,68 +663,187 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
                     continue;
 
                 double score = 0;
-                double normalization = k1 * (1 - b + (b * document.Length / averageLength));
+                double normalization = fixedPart + (document.Length * lengthPart);
+                ReadOnlySpan<TermFrequency> documentTerms = document.Terms;
+                int d = 0;
+                int q = 0;
 
-                foreach (var (term, termIdf) in idf)
+                while (d < documentTerms.Length && q < queryTerms.Count)
                 {
-                    if (!document.Terms.TryGetValue(term, out int frequency))
-                        continue;
+                    TermFrequency documentTerm = documentTerms[d];
+                    (int termId, double weight) = queryTerms[q];
 
-                    score += termIdf * frequency * (k1 + 1) / (frequency + normalization);
+                    if (documentTerm.TermId < termId)
+                    {
+                        d++;
+                    }
+                    else if (documentTerm.TermId > termId)
+                    {
+                        q++;
+                    }
+                    else
+                    {
+                        score += weight * documentTerm.Count / (documentTerm.Count + normalization);
+                        d++;
+                        q++;
+                    }
                 }
 
                 if (score > 0)
                     top.Add(new Neighbor(id, document.Category, score));
             }
 
-            return top.ToList();
+            return top;
         }
 
-        private sealed record Document(string Category, int Length, IReadOnlyDictionary<string, int> Terms);
+        private int GetOrAddTerm(string term)
+        {
+            ref int termId = ref CollectionsMarshal.GetValueRefOrAddDefault(_termIds, term, out bool exists);
+
+            if (exists)
+                return termId;
+
+            termId = _documentFrequency.Count;
+            _documentFrequency.Add(0);
+            _termText.Add(term);
+            return termId;
+        }
+
+        private void ReleaseTerm(int termId)
+        {
+            string? term = _termText[termId];
+
+            if (term is null)
+                return;
+
+            _termIds.Remove(term);
+            _termText[termId] = null;
+        }
+
+        private readonly record struct Document(
+            string Category,
+            int Length,
+            TermFrequency[] Terms);
     }
+
+    private readonly record struct TermFrequency(int TermId, int Count);
 
     private sealed class DenseStore
     {
-        private readonly Dictionary<string, Entry> _documents = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, int> _indexById = new(StringComparer.Ordinal);
 
-        public int Count => _documents.Count;
+        // The vectors live in one buffer and an entry is its index, so a prediction walks
+        // contiguous memory instead of chasing one array per document. Remove copies the last
+        // vector into the hole, which keeps the first Count slots dense.
+        private Entry[] _entries = new Entry[16];
+        private float[] _vectors = Array.Empty<float>();
+        private int _count;
+        private int _dimension;
+
+        public int Count => _count;
+
+        /// <summary>Sizes the two buffers once, before a training loop adds every vector individually.</summary>
+        public void Reserve(int count, int dimension)
+        {
+            if (count <= 0 || dimension <= 0)
+                return;
+
+            _dimension = dimension;
+
+            if (_entries.Length < count)
+                Array.Resize(ref _entries, count);
+
+            int required = count * dimension;
+
+            if (_vectors.Length < required)
+                Array.Resize(ref _vectors, required);
+        }
 
         public void Add(string id, string category, ReadOnlyMemory<float> vector)
         {
             if (string.IsNullOrEmpty(id))
                 throw new ArgumentException("A document id must be non-empty.", nameof(id));
 
-            if (_documents.ContainsKey(id))
+            if (_indexById.ContainsKey(id))
                 throw new ArgumentException($"The document id '{id}' is already in the model.", nameof(id));
 
-            float[] stored = vector.ToArray();
-            _documents[id] = new Entry(category, stored, VectorSimilarity.Norm(stored));
+            if (_dimension == 0)
+                _dimension = vector.Length;
+            else if (vector.Length != _dimension)
+                throw new InvalidOperationException(
+                    $"The vector has {vector.Length} dimensions but the store holds {_dimension}.");
+
+            EnsureCapacity(_count + 1);
+
+            int offset = _count * _dimension;
+            vector.Span.CopyTo(_vectors.AsSpan(offset, _dimension));
+            ReadOnlySpan<float> stored = _vectors.AsSpan(offset, _dimension);
+
+            _entries[_count] = new Entry(id, category, VectorSimilarity.Norm(stored));
+            _indexById[id] = _count;
+            _count++;
         }
 
-        public bool Remove(string id) => _documents.Remove(id);
+        public bool Remove(string id)
+        {
+            if (!_indexById.Remove(id, out int index))
+                return false;
 
-        public IReadOnlyList<Neighbor> Search(
+            int last = _count - 1;
+
+            if (index != last)
+            {
+                Entry moved = _entries[last];
+                _entries[index] = moved;
+                _indexById[moved.Id] = index;
+                _vectors.AsSpan(last * _dimension, _dimension)
+                    .CopyTo(_vectors.AsSpan(index * _dimension, _dimension));
+            }
+
+            _count--;
+            return true;
+        }
+
+        public TopKBuffer Search(
             ReadOnlyMemory<float> query,
             int k,
             IReadOnlySet<string>? excludedCategories)
         {
-            var top = new TopKBuffer(k);
-            float queryNorm = VectorSimilarity.Norm(query.Span);
+            if (k <= 0 || _count == 0)
+                return new TopKBuffer(0);
 
-            foreach (var (id, entry) in _documents)
+            var top = new TopKBuffer(k);
+            ReadOnlySpan<float> querySpan = query.Span;
+            float queryNorm = VectorSimilarity.Norm(querySpan);
+
+            for (int i = 0; i < _count; i++)
             {
+                Entry entry = _entries[i];
+
                 if (excludedCategories?.Contains(entry.Category) == true)
                     continue;
 
+                ReadOnlySpan<float> vector = _vectors.AsSpan(i * _dimension, _dimension);
                 top.Add(new Neighbor(
-                    id,
+                    entry.Id,
                     entry.Category,
-                    VectorSimilarity.CosineSimilarity(query.Span, entry.Vector, queryNorm, entry.Norm)));
+                    VectorSimilarity.CosineSimilarity(querySpan, vector, queryNorm, entry.Norm)));
             }
 
-            return top.ToList();
+            return top;
         }
 
-        private sealed record Entry(string Category, float[] Vector, float Norm);
+        private void EnsureCapacity(int count)
+        {
+            if (_entries.Length < count)
+                Array.Resize(ref _entries, Math.Max(16, _entries.Length * 2));
+
+            int required = count * _dimension;
+
+            if (_vectors.Length < required)
+                Array.Resize(ref _vectors, Math.Max(_vectors.Length * 2, required));
+        }
+
+        private readonly record struct Entry(string Id, string Category, float Norm);
     }
 }

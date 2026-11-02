@@ -1,5 +1,19 @@
 ## [Unreleased]
 
+### Changed
+
+- **The classifiers added for 0.9.0 allocate less and use the vector width.** The BM25
+  neighbour stores term ids and a sorted per-document array, so a prediction is a merge over
+  integers rather than a dictionary lookup per term; the dense neighbour keeps its vectors in one
+  buffer; the centroid attains one array of category/vector/norm entries and skips a second
+  validation pass; the blend aggregates in place; and the linear model vectorizes its class loop
+  with `Vector<double>`. `NearestNeighborClassificationBenchmarks.PredictBm25K5` reads **0.93 ms**
+  instead of **4.78 ms** (21 KB instead of 37 KB per 16 queries), `PredictDenseK5` **1.32 ms**
+  instead of **1.58 ms**, `BlendBenchmarks.TwoLanes` **0.87 us** instead of **1.41 us** (1.6 KB
+  instead of 2.4 KB), and `TrainDecisionTree` **42 ms** instead of **50 ms**. `VectorSimilarity`
+  now vectorizes `Center`, `Normalize` and `CenterAndNormalize`, and the hashing provider uses
+  that shared normalize.
+
 ## [0.9.0] — 2026-11-02
 
 ### Added

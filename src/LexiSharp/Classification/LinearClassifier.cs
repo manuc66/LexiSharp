@@ -1,3 +1,5 @@
+using System.Numerics;
+
 using LexiSharp.Core;
 using LexiSharp.Linguistics;
 
@@ -120,8 +122,8 @@ public sealed class LinearClassifier<TItem>
         if (_options.StandardizeNumericFeatures)
             Standardize(pending);
 
-        List<SparseItem> sparse = BuildSparse(pending);
-        TrainEpochs(sparse);
+        (List<SparseItem> sparse, int[] featureIds, double[] featureValues) = BuildSparse(pending);
+        TrainEpochs(sparse, featureIds, featureValues);
         _trained = true;
     }
 
@@ -264,35 +266,59 @@ public sealed class LinearClassifier<TItem>
         }
     }
 
-    private List<SparseItem> BuildSparse(List<PendingItem> pending)
+    private (List<SparseItem> Items, int[] FeatureIds, double[] FeatureValues) BuildSparse(
+        List<PendingItem> pending)
     {
-        var sparse = new List<SparseItem>(pending.Count);
+        // Each document owns a slice of two flat arrays, as the tree does for its features:
+        // 10,000 documents must not leave 20,000 small arrays for the GC to trace.
+        var counts = new int[pending.Count];
+        int total = 0;
 
-        foreach (var item in pending)
+        for (int i = 0; i < pending.Count; i++)
         {
-            var ids = new List<int>();
-            var values = new List<double>();
+            int count = 0;
+
+            foreach (string feature in pending[i].Features.Features)
+            {
+                if (_featureIds.ContainsKey(feature))
+                    count++;
+            }
+
+            counts[i] = count;
+            total += count;
+        }
+
+        var featureIds = new int[total];
+        var featureValues = new double[total];
+        var sparse = new List<SparseItem>(pending.Count);
+        int offset = 0;
+
+        for (int i = 0; i < pending.Count; i++)
+        {
+            var item = pending[i];
+            int start = offset;
 
             foreach (string feature in item.Features.Features)
             {
                 if (!_featureIds.TryGetValue(feature, out int id))
                     continue;
 
-                ids.Add(id);
-                values.Add(ValueOf(id, feature, item.Features));
+                featureIds[offset] = id;
+                featureValues[offset] = ValueOf(id, feature, item.Features);
+                offset++;
             }
 
             sparse.Add(new SparseItem(
                 _categoryIndex[item.Category],
-                ids.ToArray(),
-                values.ToArray(),
+                start,
+                counts[i],
                 item.Weight));
         }
 
-        return sparse;
+        return (sparse, featureIds, featureValues);
     }
 
-    private void TrainEpochs(List<SparseItem> sparse)
+    private void TrainEpochs(List<SparseItem> sparse, int[] featureIds, double[] featureValues)
     {
         int classCount = _categories.Count;
         _weights = new double[_featuresById.Length * classCount];
@@ -318,6 +344,8 @@ public sealed class LinearClassifier<TItem>
             {
                 UpdateItem(
                     sparse[index],
+                    featureIds,
+                    featureValues,
                     logits,
                     probabilities,
                     errors,
@@ -338,6 +366,8 @@ public sealed class LinearClassifier<TItem>
 
     private void UpdateItem(
         SparseItem item,
+        int[] featureIds,
+        double[] featureValues,
         double[] logits,
         double[] probabilities,
         double[] errors,
@@ -345,40 +375,97 @@ public sealed class LinearClassifier<TItem>
         double[] weightAccumulator)
     {
         int classCount = _categories.Count;
+        double learningRate = _options.LearningRate;
+        double l2 = _options.L2;
+        int end = item.FeatureStart + item.FeatureCount;
+        int vectorWidth = Vector<double>.Count;
+        Vector<double> l2Vector = new(l2);
+        Vector<double> rateVector = new(learningRate);
+        Vector<double> epsilonVector = new(Epsilon);
         Array.Copy(_bias, logits, classCount);
 
-        for (int k = 0; k < item.FeatureIds.Length; k++)
+        for (int k = item.FeatureStart; k < end; k++)
         {
-            int offset = item.FeatureIds[k] * classCount;
-            double value = item.Values[k];
+            int offset = featureIds[k] * classCount;
+            double value = featureValues[k];
+            int c = 0;
 
-            for (int c = 0; c < classCount; c++)
+            if (classCount >= vectorWidth)
+            {
+                Vector<double> valueVector = new(value);
+
+                for (; c <= classCount - vectorWidth; c += vectorWidth)
+                {
+                    Vector<double> current = new(logits, c);
+                    current += new Vector<double>(_weights, offset + c) * valueVector;
+                    current.CopyTo(logits.AsSpan(c));
+                }
+            }
+
+            for (; c < classCount; c++)
                 logits[c] += _weights[offset + c] * value;
         }
 
         Softmax(logits, probabilities);
 
         for (int c = 0; c < classCount; c++)
-        {
-            double error = (probabilities[c] - (c == item.CategoryIndex ? 1 : 0)) * item.Weight;
-            errors[c] = error;
+            errors[c] = (probabilities[c] - (c == item.CategoryIndex ? 1 : 0)) * item.Weight;
 
-            biasAccumulator[c] += error * error;
-            _bias[c] -= _options.LearningRate * error / Math.Sqrt(biasAccumulator[c] + Epsilon);
+        int biasIndex = 0;
+
+        if (classCount >= vectorWidth)
+        {
+            for (; biasIndex <= classCount - vectorWidth; biasIndex += vectorWidth)
+            {
+                Vector<double> errorVector = new(errors, biasIndex);
+                Vector<double> currentBias = new(_bias, biasIndex);
+                Vector<double> accumulated = new(biasAccumulator, biasIndex);
+                accumulated += errorVector * errorVector;
+                currentBias -= rateVector * errorVector / Vector.SquareRoot(accumulated + epsilonVector);
+                currentBias.CopyTo(_bias.AsSpan(biasIndex));
+                accumulated.CopyTo(biasAccumulator.AsSpan(biasIndex));
+            }
         }
 
-        for (int k = 0; k < item.FeatureIds.Length; k++)
+        for (; biasIndex < classCount; biasIndex++)
         {
-            int offset = item.FeatureIds[k] * classCount;
-            double value = item.Values[k];
+            double error = errors[biasIndex];
+            biasAccumulator[biasIndex] += error * error;
+            _bias[biasIndex] -=
+                learningRate * error / Math.Sqrt(biasAccumulator[biasIndex] + Epsilon);
+        }
 
-            for (int c = 0; c < classCount; c++)
+        for (int k = item.FeatureStart; k < end; k++)
+        {
+            int offset = featureIds[k] * classCount;
+            double value = featureValues[k];
+            int c = 0;
+
+            if (classCount >= vectorWidth)
+            {
+                Vector<double> valueVector = new(value);
+
+                for (; c <= classCount - vectorWidth; c += vectorWidth)
+                {
+                    int parameter = offset + c;
+                    Vector<double> errorVector = new(errors, c);
+                    Vector<double> currentWeight = new(_weights, parameter);
+                    Vector<double> accumulated = new(weightAccumulator, parameter);
+                    Vector<double> gradient = (errorVector * valueVector) + (currentWeight * l2Vector);
+                    accumulated += gradient * gradient;
+                    currentWeight -= rateVector * gradient / Vector.SquareRoot(accumulated + epsilonVector);
+                    currentWeight.CopyTo(_weights.AsSpan(parameter));
+                    accumulated.CopyTo(weightAccumulator.AsSpan(parameter));
+                }
+            }
+
+            for (; c < classCount; c++)
             {
                 int parameter = offset + c;
-                double gradient = (errors[c] * value) + (_options.L2 * _weights[parameter]);
+                double gradient = (errors[c] * value) + (l2 * _weights[parameter]);
                 weightAccumulator[parameter] += gradient * gradient;
                 _weights[parameter] -=
-                    _options.LearningRate * gradient / Math.Sqrt(weightAccumulator[parameter] + Epsilon);
+                    learningRate * gradient / Math.Sqrt(weightAccumulator[parameter] + Epsilon);
             }
         }
     }
@@ -895,10 +982,10 @@ public sealed class LinearClassifier<TItem>
 
     private sealed record LearnedItem(string[] Features, string Category, double Weight);
 
-    private sealed record SparseItem(
+    private readonly record struct SparseItem(
         int CategoryIndex,
-        int[] FeatureIds,
-        double[] Values,
+        int FeatureStart,
+        int FeatureCount,
         double Weight);
 }
 
