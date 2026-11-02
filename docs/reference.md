@@ -128,7 +128,8 @@ was designed from:
   and the contextual boost add a bonus whose worth depends on the corpus and on the history they are
   fed; no nDCG figure is claimed for either. `CalibratedScoreConfidence` fits a score → probability
   mapping and derives an abstention threshold from it, and no fitted J is reported for it on
-  labelled data. For the feedback channel the open question is not only whether it pays but from how
+  labelled data. Its isotonic and Platt fits are differential-tested against scikit-learn; the
+  fitted J itself remains unmeasured. For the feedback channel the open question is not only whether it pays but from how
   many recorded associations it starts to. Measure on your own data before relying on either —
   [learning from past choices](ranking.md#learning-from-past-choices-queryfeedbackhistory),
   [fitted confidence](observability.md#fitted-confidence-and-the-abstention-threshold-calibratedscoreconfidence).

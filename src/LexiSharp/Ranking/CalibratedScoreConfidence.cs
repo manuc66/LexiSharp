@@ -22,6 +22,13 @@ public sealed class CalibratedScoreConfidence
     private readonly bool _isTrained;
 
     /// <summary>
+    /// Whether a lookup between two fitted points interpolates. Isotonic regression is a step
+    /// function over the PAVA blocks, so it does not; Platt scaling is a smooth sigmoid sampled on
+    /// a table, so it does.
+    /// </summary>
+    private readonly bool _interpolate;
+
+    /// <summary>
     /// Creates an untrained calibrator. <see cref="PredictProba"/> returns 0.5 and
     /// <see cref="ShouldAbstain"/> returns false until <see cref="Fit"/> is called.
     /// </summary>
@@ -32,19 +39,22 @@ public sealed class CalibratedScoreConfidence
         _abstainScore = 0;
         _abstainThreshold = 0.5;
         _isTrained = false;
+        _interpolate = true;
     }
 
     private CalibratedScoreConfidence(
         double[] thresholds,
         double[] probabilities,
         double abstainScore,
-        double abstainThreshold)
+        double abstainThreshold,
+        bool interpolate)
     {
         _thresholds = thresholds;
         _probabilities = probabilities;
         _abstainScore = abstainScore;
         _abstainThreshold = abstainThreshold;
         _isTrained = true;
+        _interpolate = interpolate;
     }
 
     /// <summary>Whether the calibrator has been fitted on training data.</summary>
@@ -127,7 +137,9 @@ public sealed class CalibratedScoreConfidence
         if (!_isTrained || _thresholds.Length == 0)
             return 0.5;
 
-        return LookupProbability(_thresholds, _probabilities, score);
+        return _interpolate
+            ? LookupProbability(_thresholds, _probabilities, score)
+            : LookupStepProbability(_thresholds, _probabilities, score);
     }
 
     /// <summary>
@@ -166,6 +178,29 @@ public sealed class CalibratedScoreConfidence
     }
 
     /// <summary>
+    /// Step lookup over a fitted isotonic table: the value of the block whose start is at or below
+    /// the score. Isotonic regression is a step function, so a score inside a PAVA block keeps the
+    /// block's mean rather than sliding toward the next block.
+    /// </summary>
+    private static double LookupStepProbability(double[] thresholds, double[] probabilities, double score)
+    {
+        int index = Array.BinarySearch(thresholds, score);
+
+        if (index >= 0)
+            return probabilities[index];
+
+        index = ~index;
+
+        if (index == 0)
+            return probabilities[0];
+
+        if (index >= thresholds.Length)
+            return probabilities[probabilities.Length - 1];
+
+        return probabilities[index - 1];
+    }
+
+    /// <summary>
     /// Whether the system should abstain (return no result / fallback) for a result
     /// with the given raw score. Returns false if the calibrator is not trained.
     /// </summary>
@@ -196,14 +231,24 @@ public sealed class CalibratedScoreConfidence
             .OrderBy(e => e.Score)
             .ToArray();
 
-        int n = sorted.Length;
+        // Aggregate tied scores before PAVA. Processing equal scores in arrival order can split
+        // one tied group across two blocks, and then the step lookup returns one part's mean at
+        // the score every part shares. scikit-learn's IsotonicRegression pools each distinct X
+        // first; doing the same is what makes the differential test agree.
+        var groups = sorted
+            .GroupBy(example => example.Score)
+            .OrderBy(group => group.Key)
+            .ToArray();
 
-        // PAVA: pool adjacent violators to enforce monotonicity
-        var blocks = new List<(double Sum, int Count, double Mean)>();
+        // PAVA: pool adjacent violators to enforce monotonicity. Each block keeps the first
+        // score of the group it started from, which is the step's threshold.
+        var blocks = new List<(double Sum, int Count, double Mean, double Score)>();
 
-        for (int i = 0; i < n; i++)
+        foreach (var group in groups)
         {
-            blocks.Add((sorted[i].Item2, 1, sorted[i].Item2));
+            double sum = group.Sum(example => example.Item2);
+            int count = group.Count();
+            blocks.Add((sum, count, sum / count, group.Key));
 
             // Merge while monotonicity is violated
             while (blocks.Count >= 2)
@@ -213,13 +258,12 @@ public sealed class CalibratedScoreConfidence
 
                 if (secondLast.Mean > last.Mean + double.Epsilon)
                 {
-                    // Merge the two blocks
                     double newSum = secondLast.Sum + last.Sum;
                     int newCount = secondLast.Count + last.Count;
                     double newMean = newSum / newCount;
 
                     blocks.RemoveAt(blocks.Count - 1);
-                    blocks[blocks.Count - 1] = (newSum, newCount, newMean);
+                    blocks[blocks.Count - 1] = (newSum, newCount, newMean, secondLast.Score);
                 }
                 else
                 {
@@ -232,13 +276,10 @@ public sealed class CalibratedScoreConfidence
         var thresholds = new List<double>();
         var probabilities = new List<double>();
 
-        int idx = 0;
         foreach (var block in blocks)
         {
-            // The threshold for this block is the score of its first element
-            thresholds.Add(sorted[idx].Score);
+            thresholds.Add(block.Score);
             probabilities.Add(Math.Clamp(block.Mean, 0.0, 1.0));
-            idx += block.Count;
         }
 
         double youdenScoreThreshold = ComputeYoudenThreshold(sorted);
@@ -251,7 +292,8 @@ public sealed class CalibratedScoreConfidence
             thresholdArray,
             probabilityArray,
             youdenScoreThreshold,
-            LookupProbability(thresholdArray, probabilityArray, youdenScoreThreshold));
+            LookupStepProbability(thresholdArray, probabilityArray, youdenScoreThreshold),
+            interpolate: false);
     }
 
     /// <summary>
@@ -261,39 +303,50 @@ public sealed class CalibratedScoreConfidence
     private static CalibratedScoreConfidence FitPlatt(
         IReadOnlyList<(double Score, bool IsCorrect)> examples)
     {
-        // Platt scaling: fit P(correct | score) = 1 / (1 + exp(A * score + B))
-        // using gradient descent on the negative log-likelihood
-
+        // Platt scaling: fit P(correct | score) = 1 / (1 + exp(A * score + B)) by Newton's
+        // method on the two-parameter log-likelihood. The previous fixed-step gradient descent
+        // did not converge on scores in the retrieval range (a differential test against
+        // scikit-learn's unregularised logistic fit read errors up to 0.43). Newton's method is
+        // exact for this convex two-parameter problem; the tiny ridge only keeps the Hessian
+        // invertible when a label is separable in the sample.
         double a = 0.0;
         double b = 0.0;
-        double learningRate = 0.01;
-        int maxIterations = 1000;
+        const double Ridge = 1e-9;
 
-        for (int iter = 0; iter < maxIterations; iter++)
+        for (int iter = 0; iter < 100; iter++)
         {
             double gradA = 0.0;
             double gradB = 0.0;
+            double hessianAA = Ridge;
+            double hessianAB = 0.0;
+            double hessianBB = Ridge;
 
             for (int i = 0; i < examples.Count; i++)
             {
                 double score = examples[i].Score;
                 double target = examples[i].IsCorrect ? 1.0 : 0.0;
+                double pred = Sigmoid((a * score) + b);
+                double weight = pred * (1.0 - pred);
 
-                double z = a * score + b;
-                double pred = Sigmoid(z);
-                double error = pred - target;
-
-                gradA += error * score;
-                gradB += error;
+                gradA += (pred - target) * score;
+                gradB += pred - target;
+                hessianAA += weight * score * score;
+                hessianAB += weight * score;
+                hessianBB += weight;
             }
 
-            gradA /= examples.Count;
-            gradB /= examples.Count;
+            double determinant = (hessianAA * hessianBB) - (hessianAB * hessianAB);
 
-            a -= learningRate * gradA;
-            b -= learningRate * gradB;
+            if (Math.Abs(determinant) < 1e-18)
+                break;
 
-            if (Math.Abs(gradA) < 1e-6 && Math.Abs(gradB) < 1e-6)
+            double deltaA = ((hessianBB * gradA) - (hessianAB * gradB)) / determinant;
+            double deltaB = ((hessianAA * gradB) - (hessianAB * gradA)) / determinant;
+
+            a -= deltaA;
+            b -= deltaB;
+
+            if (Math.Max(Math.Abs(deltaA), Math.Abs(deltaB)) < 1e-10)
                 break;
         }
 
@@ -334,7 +387,8 @@ public sealed class CalibratedScoreConfidence
             thresholds,
             probabilities,
             youdenScoreThreshold,
-            LookupProbability(thresholds, probabilities, youdenScoreThreshold));
+            LookupProbability(thresholds, probabilities, youdenScoreThreshold),
+            interpolate: true);
     }
 
     /// <summary>
