@@ -135,7 +135,7 @@ public sealed class OnnxCrossEncoderScorer : ICrossEncoderScorer, IDisposable
     /// <exception cref="ArgumentNullException"><paramref name="document"/> is <see langword="null"/>.</exception>
     /// <exception cref="ObjectDisposedException">The scorer has been disposed.</exception>
     public double Score(string query, SearchDocument document) =>
-        ScoreBatch(query, [document])[0];
+        ScoreBatch(query, [document], _disposeCancellation.Token)[0];
 
     /// <summary>
     /// Scores several documents against one query in a single padded session call. The result is

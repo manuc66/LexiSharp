@@ -916,7 +916,10 @@ public sealed class DecisionTreeClassifier<TItem>
 
             for (int i = 0; i < points.Count; i++)
             {
-                if (i == 0 || points[i].Value != points[i - 1].Value)
+                // Exact equality on purpose: a threshold is a value present in the data, and two
+                // points with the same value must yield one boundary rather than two. An epsilon
+                // would merge distinct values and move the candidate away from what was observed.
+                if (i == 0 || points[i].Value != points[i - 1].Value) // NOSONAR:S1244
                     boundaries.Add(points[i].Value);
             }
 
