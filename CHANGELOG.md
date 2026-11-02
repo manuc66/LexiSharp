@@ -2,6 +2,18 @@
 
 ### Changed
 
+- **The blend reuses its prediction scratch per thread and the divider runs on integer feature
+  ids.** A blend prediction allocated a probability dictionary, a trained-category set, a bonus
+  dictionary, a second dictionary to renormalize the priors and a ranking array on every call;
+  those are now one per-thread scratch, reset on rent, so a prediction allocates only its result
+  page. `BlendBenchmarks.TwoLanes` reads **787 ns and 576 B** instead of 870 ns and 1.6 KB. The
+  divider resolves every feature to an id once, reorders the ids into ordinal name order (the
+  split tie-break is then an integer compare), and walks the node frequencies, the postings
+  (compressed sparse row) and the scores as flat integer arrays instead of string-keyed
+  dictionaries and one list per candidate; the per-document slice buffer is rented from
+  `ArrayPool`. `DivideCorpus` reads **5.65 ms instead of 9.58 ms**, and the tree it builds is
+  identical node for node to the previous implementation on a 10 000-document corpus.
+
 - **The classifiers added for 0.9.0 allocate less and use the vector width.** The BM25
   neighbour now carries a postings index for selective queries and keeps each document's sorted
   term frequencies for the scan a broad query uses instead; the estimate that chooses between
@@ -14,7 +26,7 @@
   centroid attains one array of category/vector/norm entries and skips a second validation pass;
   the blend aggregates in place; and the linear model vectorizes its class loop with
   `Vector<double>`. `PredictDenseK5` reads **1.32 ms** instead of **1.58 ms**,
-  `BlendBenchmarks.TwoLanes` **0.87 us** instead of **1.41 us** (1.6 KB instead of 2.4 KB),
+  `BlendBenchmarks.TwoLanes` **0.79 us** instead of **1.41 us** (576 B instead of 2.4 KB),
   `TrainDecisionTree` **36 ms** instead of **50 ms**, and the 25-tree forest's training phase in
   the 20 Newsgroups pin falls from **8.54 s to 6.57 s** with accuracy unchanged. `VectorSimilarity`
   now vectorizes `Center`, `Normalize`, `CenterAndNormalize` and the finite-value check used by
