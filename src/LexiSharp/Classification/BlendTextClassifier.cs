@@ -46,7 +46,7 @@ public sealed record PriorLane(ITextPriorSource Source, double Weight);
 /// lane on one materialized copy of the corpus.
 /// </para>
 /// </remarks>
-public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClassifier
+public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClassifier, IContextualTextClassifier
 {
     private readonly IReadOnlyList<TextClassifierLane> _lanes;
     private readonly IReadOnlyList<CandidateLane> _candidates;

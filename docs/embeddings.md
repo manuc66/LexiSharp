@@ -54,6 +54,14 @@ Default analysis, 300 queries, unweighted expansion at the default budget. A co-
 window measures which terms share a topic, and on a corpus whose vocabulary the query and its
 answer already share, that association is what the lexical terms already carried.
 
+## Empty vectors mean "no embedding"
+
+An `IEmbeddingProvider` may return `ReadOnlyMemory<float>.Empty` for a text it cannot embed. The
+semantic consumers treat that as a declined text, not a zero vector: the centroid classifier skips
+it in training, `Learn` and `Unlearn`, and returns nothing for it at prediction; the dense
+nearest-neighbour path does the same. A provider therefore does not need a sentinel vector, and it
+does not have to make `Dimension` depend on the last vector it produced.
+
 ## In-memory dense retrieval (`InMemoryVectorSearchEngine`, `HashingEmbeddingProvider`)
 
 The dense counterpart of the sparse engine, and the in-process twin of the PostgreSQL
