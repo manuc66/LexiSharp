@@ -77,6 +77,12 @@ internal static class ConcurrencyLane
     private const int SampleCheckInterval = 16;
 
     /// <summary>
+    /// Posting entries the store may hold decoded. Enough for this corpus's head term, so the store
+    /// can lend flat arrays and the caller counts measure the same passes the in-memory index serves.
+    /// </summary>
+    private const int DecodedCacheEntries = 500_000;
+
+    /// <summary>
     /// Unpriced calls each worker makes before the allocation counter starts, so the thread's
     /// <see cref="ArrayPool{T}.Shared"/> partition holds the corpus-sized score buffers it will
     /// reuse. Without it the first rent on a partition allocates 1.3 MB at 100,000 documents and
@@ -89,16 +95,51 @@ internal static class ConcurrencyLane
 
     public static void Run(string[] args)
     {
-        int runs = Parse(args);
+        (int runs, bool store, bool mapped) = Parse(args);
 
-        var index = new InMemoryTextIndex();
+        IReadOnlyTextIndex index;
+        string implementation;
+        SegmentedTextIndex? opened = null;
+        string? directory = null;
+
+        if (store)
+        {
+            directory = Path.Combine(
+                AppContext.BaseDirectory, "concurrency-store-" + Guid.NewGuid().ToString("n"));
+            Directory.CreateDirectory(directory);
+
+            using (var writer = new SegmentedTextIndex(directory, journal: JournalOptions.Disabled))
+            {
+                writer.Index(CorpusFactory.CreateZipfDocuments(DocumentCount, WordsPerDocument, VocabularySize));
+
+                using SegmentedTextIndex committed = writer.Commit();
+            }
+
+            opened = new SegmentedTextIndex(
+                directory,
+                mode: mapped ? SegmentSourceMode.Mapped : SegmentSourceMode.Array,
+                decodedCacheEntries: DecodedCacheEntries);
+
+            index = opened;
+            implementation = mapped ? "store-mapped" : "store-array";
+        }
+        else
+        {
+            var memory = new InMemoryTextIndex();
+            memory.Index(CorpusFactory.CreateZipfDocuments(DocumentCount, WordsPerDocument, VocabularySize));
+
+            index = memory;
+            implementation = "in-memory";
+        }
+
+        try
+        {
         var raw = new RankedTextSearchEngine(index, new Bm25Scorer());
-        raw.Index(CorpusFactory.CreateZipfDocuments(DocumentCount, WordsPerDocument, VocabularySize));
 
         using var sync = new SynchronizedTextSearchEngine(raw);
         var engines = new ITextSearchEngine[] { raw, sync };
 
-        PrintHeader(raw, index, runs);
+        PrintHeader(raw, index, runs, implementation);
 
         var results = new List<RunResult>(CallerCounts.Length * Implementations.Length * runs);
 
@@ -128,6 +169,14 @@ internal static class ConcurrencyLane
 
         Console.WriteLine($"load end  {LoadAverage()}");
         Console.WriteLine($"memory end {Memory()}");
+        }
+        finally
+        {
+            opened?.Dispose();
+
+            if (directory is not null && Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
     }
 
     private static void WarmUp(ITextSearchEngine engine, string implementation, int callers)
@@ -423,7 +472,11 @@ internal static class ConcurrencyLane
         return sortedTicks[rank] * 1_000_000.0 / Stopwatch.Frequency;
     }
 
-    private static void PrintHeader(RankedTextSearchEngine engine, InMemoryTextIndex index, int runs)
+    private static void PrintHeader(
+        RankedTextSearchEngine engine,
+        IReadOnlyTextIndex index,
+        int runs,
+        string implementation)
     {
         var options = new SearchOptions(Limit: 10);
 
@@ -437,7 +490,7 @@ internal static class ConcurrencyLane
         Console.WriteLine($"memory    {Memory()}");
         Console.WriteLine(
             $"corpus    Zipf 1.07 over {Number(VocabularySize)} terms, {WordsPerDocument} words/document, " +
-            $"{Number(DocumentCount)} documents, one index shared by every caller");
+            $"{Number(DocumentCount)} documents, one index shared by every caller; {implementation}");
         Console.WriteLine("options   Limit: 10, default tokenizer, BM25; queries issued round-robin 1:1:1");
 
         for (int q = 0; q < Queries.Length; q++)
@@ -580,9 +633,11 @@ internal static class ConcurrencyLane
                $"({Fixed(perRun[0], 0, 3)}–{Fixed(perRun[^1], 0, 3)})";
     }
 
-    private static int Parse(string[] args)
+    private static (int Runs, bool Store, bool Mapped) Parse(string[] args)
     {
         int runs = DefaultRuns;
+        bool store = false;
+        bool mapped = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -595,11 +650,24 @@ internal static class ConcurrencyLane
                 continue;
             }
 
+            if (args[i] == "--store")
+            {
+                store = true;
+                continue;
+            }
+
+            if (args[i] == "--mapped")
+            {
+                mapped = true;
+                continue;
+            }
+
             throw new ArgumentException(
-                $"Unrecognised concurrency argument '{args[i]}'. Usage: concurrency [--runs N].");
+                $"Unrecognised concurrency argument '{args[i]}'. " +
+                "Usage: concurrency [--runs N] [--store] [--mapped].");
         }
 
-        return runs;
+        return (runs, store, mapped);
     }
 
     private static string CpuModel()

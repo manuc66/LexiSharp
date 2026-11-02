@@ -78,6 +78,17 @@
 
 ### Added
 
+- **The concurrency lane can measure the store a deployment runs.** `concurrency --store` swaps the
+  in-memory index for a committed `SegmentedTextIndex` opened with a decoded cache, and `--mapped` opens
+  it as a mapping; the corpus, the query mix, the worker loop and the warm-up are unchanged, so the row
+  is the same question asked of the deployable path. One run per row at a one-minute load of 3-5:
+  throughput rises **4.1×** across eight callers against the eight that would be free, the mix's median
+  grows 1.9× (array) and 3.1× (mapped), allocation per search is the page decode at 7,176 B in every
+  row, and mapping costs 2.3× the array's median at one caller. The `sync` wrapper stays within 3 % of
+  raw, because with no writers it is a read lock that never waits. It exercises concurrent searches
+  through a mapped store but does not verify their pages — that is `SegmentReaderConcurrencyTests`'
+  job, which drives the copy step through a barrier.
+
 - **`SearchOptions.PruneByBlockBound`: an opt-in that skips a document its block bounds rule out, and
   the measurement that keeps it off.** The bound is the pair every segment block header already carries
   — largest frequency and shortest document per 128-ordinal window — captured on the walk that decodes
