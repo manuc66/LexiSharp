@@ -38,4 +38,35 @@ internal static class PostgresExtensionInstaller
             Lock.Release();
         }
     }
+
+    /// <summary>
+    /// Synchronous <see cref="InstallAsync"/>, for a caller whose own API is synchronous.
+    /// </summary>
+    /// <remarks>
+    /// It shares the same lock as the async overload, so a sync and an async install still cannot
+    /// race. The wait is on the caller's thread rather than on a thread-pool continuation: a
+    /// synchronous constructor must not block a pool thread waiting for work that the pool owes it.
+    /// </remarks>
+    public static void Install(NpgsqlConnection connection, string statements)
+    {
+        Lock.Wait();
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = statements;
+            try
+            {
+                command.ExecuteNonQuery();
+            }
+            catch (PostgresException ex) when (ex.SqlState == "23505")
+            {
+                // Lost a CREATE EXTENSION race against another process or host:
+                // the extension is present, which is all IF NOT EXISTS promises.
+            }
+        }
+        finally
+        {
+            Lock.Release();
+        }
+    }
 }

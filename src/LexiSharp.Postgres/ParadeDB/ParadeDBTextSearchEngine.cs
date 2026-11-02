@@ -75,7 +75,27 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, I
     /// Installs the <c>pg_search</c> extension, the shared documents table and the ParadeDB
     /// (BM25) index. Idempotent.
     /// </summary>
-    public void EnsureSchema() => EnsureSchemaAsync().GetAwaiter().GetResult();
+    public void EnsureSchema()
+    {
+        if (_schemaReady)
+            return;
+
+        using var connection = _dataSource.OpenConnection();
+
+        PostgresExtensionInstaller.Install(connection, "CREATE EXTENSION IF NOT EXISTS pg_search;");
+
+        var baseOptions = new PostgresIndexOptions { Schema = _options.Schema, Table = _options.Table };
+        PostgresSchema.CreateDocumentTable(connection, baseOptions);
+
+        using (var command = connection.CreateCommand())
+        {
+            // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted).
+            command.CommandText = CreateIndexSql(); // NOSONAR:S2077
+            command.ExecuteNonQuery();
+        }
+
+        _schemaReady = true;
+    }
 
     /// <summary>Async variant of <see cref="EnsureSchema"/>.</summary>
     public async Task EnsureSchemaAsync(CancellationToken cancellationToken = default)
@@ -93,20 +113,20 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, I
 
         await using (var command = connection.CreateCommand())
         {
-            string createIndexSql = $"""
-                CREATE INDEX IF NOT EXISTS {_options.QualifiedIndexName}
-                ON {_options.QualifiedTableName}
-                USING paradedb (id, {_options.ContentExpression}, category)
-                WITH (key_field = 'id');
-                """;
-
             // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted).
-            command.CommandText = createIndexSql; // NOSONAR:S2077
+            command.CommandText = CreateIndexSql(); // NOSONAR:S2077
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
         _schemaReady = true;
     }
+
+    private string CreateIndexSql() => $"""
+        CREATE INDEX IF NOT EXISTS {_options.QualifiedIndexName}
+        ON {_options.QualifiedTableName}
+        USING paradedb (id, {_options.ContentExpression}, category)
+        WITH (key_field = 'id');
+        """;
 
     /// <summary>
     /// Drops the documents table (and with it the ParadeDB index). Useful for tests and clean

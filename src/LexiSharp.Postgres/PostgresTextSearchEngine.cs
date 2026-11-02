@@ -89,9 +89,20 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable, I
     }
 
     /// <summary>Installs the extension, table and GIN index if they do not exist yet. Idempotent.</summary>
+    /// <remarks>
+    /// This path is synchronous on purpose: it must not await <see cref="EnsureSchemaAsync"/> and
+    /// block a thread-pool thread on a continuation the same pool has to schedule. Under load that
+    /// wait reaches the connection timeout. Opening the connection and running the DDL
+    /// synchronously removes the dependency.
+    /// </remarks>
     public void EnsureSchema()
     {
-        EnsureSchemaAsync().GetAwaiter().GetResult();
+        if (_schemaReady)
+            return;
+
+        using var connection = _dataSource.OpenConnection();
+        PostgresSchema.CreateDocumentTable(connection, _options);
+        _schemaReady = true;
     }
 
     /// <summary>For tests: the physical table name in use.</summary>
