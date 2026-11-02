@@ -281,6 +281,15 @@ internal static class ClassificationCommand
             case "--linear-tfidf":
                 options.LinearTfIdf = true;
                 return true;
+            case "--linear-ngrams" when i + 1 < args.Length:
+                if (!TryReadPositive(args[++i], out int ngrams) || ngrams > 4)
+                {
+                    Console.Error.WriteLine("classification: --linear-ngrams expects an integer in [1, 4].");
+                    return false;
+                }
+
+                options.LinearNgrams = ngrams;
+                return true;
             case "--text" when i + 1 < args.Length:
                 options.TextMode = args[++i] switch
                 {
@@ -356,9 +365,12 @@ internal static class ClassificationCommand
             IdfWeighting = options.LinearIdf || options.LinearTfIdf,
         };
 
-        Func<LinearClassifierOptions, ITextClassifier> linearFactoryFor = options.LinearTfIdf
-            ? candidate => new LinearClassifier(new TextFeatureSource(emitTermFrequency: true), candidate)
-            : candidate => new LinearClassifier(options: candidate);
+        Func<LinearClassifierOptions, ITextClassifier> linearFactoryFor = candidate =>
+            new LinearClassifier(
+                new TextFeatureSource(
+                    emitTermFrequency: options.LinearTfIdf,
+                    maxNgram: options.LinearNgrams),
+                candidate);
 
         if (options.TuneLinear)
         {
@@ -387,7 +399,7 @@ internal static class ClassificationCommand
             CultureInfo.InvariantCulture,
             $"Linear: epochs={linearOptions.Epochs}, rate={linearOptions.LearningRate:F2}, " +
             $"l2={linearOptions.L2}, min df={linearOptions.MinDocumentFrequency}, " +
-            $"idf={linearOptions.IdfWeighting}, tfidf={options.LinearTfIdf}"));
+            $"idf={linearOptions.IdfWeighting}, tfidf={options.LinearTfIdf}, ngrams={options.LinearNgrams}"));
 
         var naiveBayes = ClassificationEvaluation.MeasureNaiveBayes(corpus.Train, corpus.Test);
         var tree = ClassificationEvaluation.MeasureDecisionTree(corpus.Train, corpus.Test, treeOptions);
@@ -688,6 +700,8 @@ internal static class ClassificationCommand
         public bool LinearIdf { get; set; }
 
         public bool LinearTfIdf { get; set; }
+
+        public int LinearNgrams { get; set; } = 1;
 
         public bool CrossValidate { get; set; }
 
