@@ -620,7 +620,8 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
             if (_documents.ContainsKey(id))
                 throw new ArgumentException($"The document id '{id}' is already in the model.", nameof(id));
 
-            _documents[id] = new Entry(category, vector.ToArray());
+            float[] stored = vector.ToArray();
+            _documents[id] = new Entry(category, stored, VectorSimilarity.Norm(stored));
         }
 
         public bool Remove(string id) => _documents.Remove(id);
@@ -631,6 +632,7 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
             IReadOnlySet<string>? excludedCategories)
         {
             var top = new TopKBuffer(k);
+            float queryNorm = VectorSimilarity.Norm(query.Span);
 
             foreach (var (id, entry) in _documents)
             {
@@ -640,12 +642,12 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
                 top.Add(new Neighbor(
                     id,
                     entry.Category,
-                    VectorSimilarity.CosineSimilarity(query.Span, entry.Vector)));
+                    VectorSimilarity.CosineSimilarity(query.Span, entry.Vector, queryNorm, entry.Norm)));
             }
 
             return top.ToList();
         }
 
-        private sealed record Entry(string Category, float[] Vector);
+        private sealed record Entry(string Category, float[] Vector, float Norm);
     }
 }
