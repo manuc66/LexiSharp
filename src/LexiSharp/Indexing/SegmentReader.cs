@@ -20,7 +20,17 @@ namespace LexiSharp.Indexing;
 /// <para>
 /// The bytes come from a <see cref="SegmentSource"/>, which is what lets the same reader work over a
 /// byte array (where every read is a slice) and over a memory-mapped file (where every read is a copy
-/// into the scratch buffer this reader keeps). A span returned by a read is valid until the next one.
+/// into a scratch buffer). A span returned by a read is valid until the next one.
+/// </para>
+/// <para>
+/// <b>One reader, many searches.</b> A <see cref="SegmentTextIndex"/> opens one reader per segment and
+/// every search over that index goes through it, so anything the reader keeps mutable is shared by
+/// concurrent searches. That is why the fetch buffer is per <b>thread</b> rather than per reader: a
+/// memory-mapped source hands out no spans, so each posting walk copies its block into that buffer and
+/// decodes it in place, and one search overwriting another's bytes would turn a frequency into a
+/// different document's. The format's own rule still applies on top of this — one source-backed walk
+/// at a time on a thread — because two walks on one thread share the buffer exactly as they did when
+/// it belonged to the reader.
 /// </para>
 /// </remarks>
 internal sealed class SegmentReader
@@ -32,7 +42,21 @@ internal sealed class SegmentReader
     private readonly int _documentsTableOffset;
     private readonly int _lengthsOffset;
     private readonly int _termsTableOffset;
-    private byte[] _scratch;
+
+    /// <summary>
+    /// The fetch buffer of the calling thread, created on first use and grown when a read is larger
+    /// than it. 8 KB per thread that searches a source-backed segment; nothing per search.
+    /// </summary>
+    /// <remarks>
+    /// A static field with <see cref="ThreadStaticAttribute"/> rather than an instance field: the
+    /// instance is shared by concurrent searches, the thread is not. The buffer is never handed out
+    /// itself — a read returns a span over it that the format already declares valid only until the
+    /// next read — so nothing outlives the walk that asked for it.
+    /// </remarks>
+    [ThreadStatic]
+    private static byte[]? _scratchByThread;
+
+    private static byte[] Scratch => _scratchByThread ??= new byte[FetchWindow];
 
     /// <summary>Reads the segment in <paramref name="bytes"/>.</summary>
     /// <exception cref="InvalidDataException">The bytes are not a segment this reader knows.</exception>
@@ -59,7 +83,6 @@ internal sealed class SegmentReader
             throw new InvalidDataException($"the segment declares version {version}, and this reader reads {SegmentWriter.Version}");
 
         _source = source;
-        _scratch = new byte[FetchWindow];
 
         DocumentCount = source.ReadInt32(8);
         TermCount = source.ReadInt32(12);
@@ -227,7 +250,7 @@ internal sealed class SegmentReader
                 documentFrequency = entry.DocumentFrequency;
                 postings = _source.TryView(entry.PostingsOffset, entry.PostingsLength, out var view)
                     ? new PostingBlockReader(view)
-                    : new PostingBlockReader(_source, entry.PostingsOffset, entry.PostingsLength, _scratch);
+                    : new PostingBlockReader(_source, entry.PostingsOffset, entry.PostingsLength, Scratch);
 
                 return true;
             }
@@ -340,7 +363,7 @@ internal sealed class SegmentReader
     {
         var postings = _source.TryView(region.PostingsOffset, region.PostingsLength, out var view)
             ? new PostingBlockReader(view)
-            : new PostingBlockReader(_source, region.PostingsOffset, region.PostingsLength, _scratch);
+            : new PostingBlockReader(_source, region.PostingsOffset, region.PostingsLength, Scratch);
 
         if (!postings.AdvanceTo(ordinal))
             return 0;
@@ -404,23 +427,28 @@ internal sealed class SegmentReader
     }
 
     /// <summary>
-    /// The bytes at <c>[at, at + length)</c>, viewed when the source can and copied into the scratch
-    /// when it cannot. <b>Valid until the next read.</b>
+    /// The bytes at <c>[at, at + length)</c>, viewed when the source can and copied into the calling
+    /// thread's scratch when it cannot. <b>Valid until the next read on this thread.</b>
     /// </summary>
     private ReadOnlySpan<byte> Slice(int at, int length, string what)
     {
-        if (at < SegmentWriter.HeaderBytes || length < 0 || at + length > _source.Length)
+        if (at < SegmentWriter.HeaderBytes || length < 0 || length > _source.Length - at)
             throw new InvalidDataException($"a {what} runs outside the segment");
 
         if (_source.TryView(at, length, out var view))
             return view;
 
-        if (_scratch.Length < length)
-            _scratch = new byte[Math.Max(length, _scratch.Length * 2)];
+        var scratch = Scratch;
 
-        _source.Read(at, length, _scratch);
+        if (scratch.Length < length)
+        {
+            scratch = new byte[Math.Max(length, scratch.Length * 2)];
+            _scratchByThread = scratch;
+        }
 
-        return _scratch.AsSpan(0, length);
+        _source.Read(at, length, scratch);
+
+        return scratch.AsSpan(0, length);
     }
 
     private int EntryOffset(int tableOffset, int index) =>
@@ -428,7 +456,10 @@ internal sealed class SegmentReader
 
     private int ReadInt32(int at, string what)
     {
-        if (at < SegmentWriter.HeaderBytes || at + sizeof(int) > _source.Length)
+        // Written as a subtraction, not `at + sizeof(int) > _source.Length`: an offset read from the
+        // segment is an int, so a value near int.MaxValue wraps the addition negative and passes a
+        // check written that way.
+        if (at < SegmentWriter.HeaderBytes || at > _source.Length - sizeof(int))
             throw new InvalidDataException($"a {what} points outside the segment");
 
         return _source.ReadInt32(at);

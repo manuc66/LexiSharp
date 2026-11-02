@@ -80,10 +80,10 @@ namespace LexiSharp.Indexing;
 /// the same contract <c>InMemoryTextIndex</c> documents.
 /// </para>
 /// <para>
-/// <b>One reader at a time over a source-backed segment.</b> A <see cref="SegmentReader"/> that cannot
-/// view its bytes fetches blocks into its own scratch buffer, so two walks interleaved over the same
-/// segment would overwrite each other. The chain folds its segments one at a time and never
-/// interleaves them.
+/// <b>One source-backed walk at a time on a thread.</b> A <see cref="SegmentReader"/> that cannot
+/// view its bytes fetches blocks into the buffer its calling thread keeps, so two walks interleaved on
+/// one thread would overwrite each other. The chain folds its segments one at a time and never
+/// interleaves them; concurrent searches run on different threads and therefore on different buffers.
 /// </para>
 /// </remarks>
 internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICandidateIndex, ICandidateIdIndex, IOrdinalIdIndex, ITermCursorIndex, IVocabularyPrefixIndex, IPostingArrayIndex

@@ -14,11 +14,11 @@ namespace LexiSharp.Indexing;
 /// that cannot still serves every read with a copy.
 /// </para>
 /// <para>
-/// <b>A source-backed reader must not be interleaved with another reader over the same source.</b> A
-/// block reader parses its current block out of the caller's scratch buffer, and a second reader would
-/// overwrite it under the first. The index creates its readers one at a time and finishes with each
-/// before it asks for the next, which is what makes one scratch buffer per index safe — and it is a
-/// property of the callers, not something this type can enforce.
+/// <b>One source-backed walk at a time on a thread.</b> A block reader parses its current block out of
+/// the scratch buffer that thread handed it, and a second walk on the same thread would overwrite it
+/// under the first. The index creates its walks one at a time and finishes with each before it asks
+/// for the next, which is what makes one buffer per thread safe — and it is a property of the callers,
+/// not something this type can enforce. Two <i>threads</i> do not interfere: each has its own buffer.
 /// </para>
 /// </remarks>
 internal abstract class SegmentSource

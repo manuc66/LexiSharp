@@ -174,8 +174,8 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
                 if (!_reader.TryFindTerm(terms[i].AsSpan(), out _, out var postings))
                     continue;
 
-                // A source-backed reader fetches its blocks into the reader's own scratch, so each
-                // term's walk is finished before the next begins and no buffer is aliased.
+                // A source-backed reader fetches its blocks into the calling thread's scratch, so
+                // each term's walk is finished before the next begins and no buffer is aliased.
                 while (postings.MoveNext())
                 {
                     while (postings.TryReadEntry(out int ordinal, out _))
@@ -456,7 +456,7 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     /// The whole walk lives here rather than in the caller, because a <see cref="PostingBlockReader"/>
     /// is a <c>ref struct</c>: a cursor handed out across a call boundary is a copy whose state the
     /// caller cannot safely hold, and a second walk taken while the first is live would disturb the
-    /// reader's scratch buffer.
+    /// thread's scratch buffer.
     /// </remarks>
     internal void AppendGlobalPostings(
         string term,
