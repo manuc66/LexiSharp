@@ -13,6 +13,148 @@ public class BlendTextClassifierTests
     };
 
     [Fact]
+    public void LearnAndUnlearnReachEveryLane()
+    {
+        var first = new IncrementalClassifier();
+        var second = new IncrementalClassifier();
+        var blend = new BlendTextClassifier(new[]
+        {
+            new TextClassifierLane(first, 0.5),
+            new TextClassifierLane(second, 0.5),
+        });
+        var document = new SearchDocument("1", "text", Category: "A");
+
+        blend.Learn(document);
+        Assert.Same(document, Assert.Single(first.Learned));
+        Assert.Same(document, Assert.Single(second.Learned));
+
+        blend.Unlearn(document);
+        Assert.Same(document, Assert.Single(first.Unlearned));
+        Assert.Same(document, Assert.Single(second.Unlearned));
+    }
+
+    [Fact]
+    public void LearnRefusesANonIncrementalLaneBeforeMutatingAnyLane()
+    {
+        var incremental = new IncrementalClassifier();
+        var blend = new BlendTextClassifier(new[]
+        {
+            new TextClassifierLane(incremental, 0.5),
+            new TextClassifierLane(new FixedClassifier(new ClassificationResult("B", 1)), 0.5),
+        });
+
+        Assert.Throws<NotSupportedException>(() =>
+            blend.Learn(new SearchDocument("1", "text", Category: "A")));
+        Assert.Empty(incremental.Learned);
+    }
+
+    [Fact]
+    public void FusedForwardsLearnAndUnlearn()
+    {
+        var first = new IncrementalClassifier();
+        var second = new IncrementalClassifier();
+        var fused = new FusedTextClassifier(first, second);
+        var document = new SearchDocument("1", "text", Category: "A");
+
+        fused.Learn(document);
+        fused.Unlearn(document);
+
+        Assert.Same(document, Assert.Single(first.Learned));
+        Assert.Same(document, Assert.Single(second.Learned));
+        Assert.Same(document, Assert.Single(first.Unlearned));
+        Assert.Same(document, Assert.Single(second.Unlearned));
+    }
+
+    [Fact]
+    public void ARequestContextCanIntroduceACandidateWithoutLeakingIntoTheNextCall()
+    {
+        var blend = new BlendTextClassifier(new[]
+        {
+            new TextClassifierLane(new FixedClassifier(
+                new ClassificationResult("A", 0.6), new ClassificationResult("B", 0.4)), 1),
+        });
+        var context = new BlendContext
+        {
+            Candidates = new[] { new TextEvidence("X", 2) },
+        };
+
+        var withContext = blend.Predict("anything", context, limit: 3);
+        var withoutContext = blend.Predict("anything", limit: 3);
+
+        Assert.Equal("X", withContext[0].Category);
+        Assert.Equal("A", withoutContext[0].Category);
+        Assert.DoesNotContain(withoutContext, result => result.Category == "X");
+    }
+
+    [Fact]
+    public void ARequestContextCanApplyAPrior()
+    {
+        var blend = new BlendTextClassifier(new[]
+        {
+            new TextClassifierLane(new FixedClassifier(
+                new ClassificationResult("A", 0.5), new ClassificationResult("B", 0.5)), 1),
+        });
+        var context = new BlendContext
+        {
+            Priors = new[] { new TextEvidence("A", Math.Log(2)) },
+        };
+
+        var results = blend.Predict("anything", context, limit: 2);
+
+        Assert.Equal(2.0 / 3.0, results[0].Probability, precision: 10);
+    }
+
+    [Fact]
+    public void AnEmptyContextMatchesNoContext()
+    {
+        var blend = new BlendTextClassifier(new[]
+        {
+            new TextClassifierLane(new FixedClassifier(
+                new ClassificationResult("A", 0.7), new ClassificationResult("B", 0.3)), 1),
+        });
+
+        Assert.Equal(
+            blend.Predict("anything", limit: 2).Select(result => (result.Category, result.Probability)),
+            blend.Predict("anything", BlendContext.Empty, limit: 2)
+                .Select(result => (result.Category, result.Probability)));
+    }
+
+    [Fact]
+    public void TheRequestContextIsValidated()
+    {
+        var blend = new BlendTextClassifier(new[]
+        {
+            new TextClassifierLane(new FixedClassifier(new ClassificationResult("A", 1)), 1),
+        });
+
+        Assert.Throws<ArgumentNullException>(() => blend.Predict("anything", (BlendContext)null!));
+        Assert.Throws<ArgumentException>(() => blend.Predict(
+            "anything", new BlendContext { CandidateWeight = -1 }));
+        Assert.Throws<ArgumentException>(() => blend.Predict(
+            "anything", new BlendContext { PriorWeight = double.NaN }));
+        Assert.Throws<ArgumentException>(() => blend.Predict(
+            "anything",
+            new BlendContext { Candidates = new[] { new TextEvidence(string.Empty, 1) } }));
+        Assert.Throws<ArgumentException>(() => blend.Predict(
+            "anything",
+            new BlendContext { Priors = new[] { new TextEvidence("A", double.NaN) } }));
+    }
+
+    [Fact]
+    public void PredictBestAcceptsARequestContext()
+    {
+        var blend = new BlendTextClassifier(new[]
+        {
+            new TextClassifierLane(new FixedClassifier(
+                new ClassificationResult("A", 0.5), new ClassificationResult("B", 0.5)), 1),
+        });
+
+        Assert.Equal("X", blend.PredictBestWithContext(
+            "anything",
+            new BlendContext { Candidates = new[] { new TextEvidence("X", 10) } }));
+    }
+
+    [Fact]
     public void TheLanesAndEvidenceAreExposed()
     {
         var lane = new TextClassifierLane(new FixedClassifier(new ClassificationResult("A", 1)), 1);
@@ -395,6 +537,24 @@ public class BlendTextClassifierTests
 
         public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null) =>
             results.Length > 0 ? results[0].Category : null;
+    }
+
+    private sealed class IncrementalClassifier : ITextClassifier, IIncrementalTextClassifier
+    {
+        public List<SearchDocument> Learned { get; } = new();
+        public List<SearchDocument> Unlearned { get; } = new();
+
+        public void Train(IEnumerable<SearchDocument> documents) { }
+
+        public void Learn(SearchDocument document) => Learned.Add(document);
+
+        public void Unlearn(SearchDocument document) => Unlearned.Add(document);
+
+        public IReadOnlyList<ClassificationResult> Predict(
+            string text, int limit = 3, IReadOnlySet<string>? excludedCategories = null) =>
+            new[] { new ClassificationResult("A", 1.0) };
+
+        public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null) => "A";
     }
 
     private sealed class CountingClassifier : ITextClassifier
