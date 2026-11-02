@@ -1,4 +1,5 @@
 using LexiSharp;
+using LexiSharp.Highlighting;
 using Microsoft.AspNetCore.Http;
 
 namespace LexiSharp.AspNetCore;
@@ -9,7 +10,8 @@ namespace LexiSharp.AspNetCore;
 /// <param name="Document">The original caller document that matched.</param>
 /// <param name="HighlightedText">
 /// The indexed text with query terms wrapped in highlight tags when <c>highlight</c> was
-/// requested; <c>null</c> otherwise.
+/// requested; <c>null</c> otherwise. The document's own characters are HTML-encoded, so the value
+/// can be inserted into an element's content as it is.
 /// </param>
 public sealed record LexiSharpSearchHit<TDocument>(
     string DocumentId,
@@ -74,6 +76,26 @@ public static class LexiSharpSearchEndpoint
     /// </remarks>
     public const int MaxOffset = 10_000;
 
+    /// <summary>
+    /// How this endpoint highlights: the document's own characters are HTML-encoded around the
+    /// <c>&lt;em&gt;</c> the highlighter inserts.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The core's default is <see cref="HighlightOptions.EscapeHtml"/> off, and that default is right
+    /// for the callers it was written for — a console, a log, a desktop control, where the text is
+    /// never interpreted. This endpoint's is not one of them: it answers a web client, and
+    /// <c>highlightedText</c> exists to be rendered. A document is data the service holds — a corpus
+    /// file, a scraped page, a user's comment — so <c>&lt;img src=x onerror=...&gt;</c> inside it
+    /// reached the page as an element, and no option on the route could say otherwise.
+    /// </para>
+    /// <para>
+    /// The encoding is not a query parameter, deliberately: a caller does not get to choose whether
+    /// one document's characters are interpreted, any more than it chooses the page size.
+    /// </para>
+    /// </remarks>
+    private static readonly HighlightOptions EscapedHighlight = new() { EscapeHtml = true };
+
     /// <summary>Runs a search on the index and builds the HTTP response.</summary>
     /// <exception cref="ArgumentNullException"><paramref name="index"/> or <paramref name="parameters"/> is null.</exception>
     public static IResult Handle<TDocument>(
@@ -131,7 +153,10 @@ public static class LexiSharpSearchEndpoint
             Limit: parameters.Limit,
             MinimumScore: parameters.MinimumScore,
             Offset: parameters.Offset,
-            Highlight: parameters.Highlight);
+            Highlight: parameters.Highlight)
+        {
+            HighlightOptions = EscapedHighlight,
+        };
 
         IReadOnlyList<LexiSharpHit<TDocument>> hits;
 

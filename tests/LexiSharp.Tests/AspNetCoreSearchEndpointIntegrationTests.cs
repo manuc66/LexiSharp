@@ -6,13 +6,14 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 using Xunit;
 
 namespace LexiSharp.Tests;
 
 public class AspNetCoreSearchEndpointIntegrationTests
 {
-    private static WebApplication BuildApp()
+    private static WebApplication BuildApp(params SearchDocument[] extra)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -24,7 +25,7 @@ public class AspNetCoreSearchEndpointIntegrationTests
             new SearchDocument("d1", "distributed systems consensus replication"),
             new SearchDocument("d2", "web application security performance"),
             new SearchDocument("d3", "distributed storage fault tolerance"),
-        });
+        }.Concat(extra));
         builder.Services.AddSingleton(index);
 
         var app = builder.Build();
@@ -51,6 +52,48 @@ public class AspNetCoreSearchEndpointIntegrationTests
             Assert.Contains("\"documentId\":\"d1\"", rawBody);
             Assert.Contains("\"documentId\":\"d3\"", rawBody);
             Assert.True(rawBody.Contains("\"highlightedText\":\"<em>distributed</em>"), rawBody);
+        }
+        finally
+        {
+            await app.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Endpoint_EncodesTheCharactersADocumentCarries()
+    {
+        // A document is data the service holds: a corpus file, a scraped page, a comment. The page
+        // this endpoint answers renders `highlightedText` as markup — that is what the field is
+        // for — so the document's own characters have to arrive encoded and only the highlighter's
+        // tags may arrive as tags.
+        var app = BuildApp(new SearchDocument(
+            "hostile",
+            "distributed <img src=x onerror=alert(1)> & \"quoted\""));
+
+        await app.StartAsync();
+
+        try
+        {
+            var client = app.GetTestClient();
+
+            var response = await client.GetAsync("/search?q=distributed&highlight=true");
+            var body = await response.Content.ReadAsStringAsync();
+
+            Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+
+            using var parsed = JsonDocument.Parse(body);
+            var hit = parsed.RootElement.GetProperty("hits")
+                .EnumerateArray()
+                .Single(candidate => candidate.GetProperty("documentId").GetString() == "hostile");
+            string highlighted = hit.GetProperty("highlightedText").GetString()!;
+
+            Assert.Contains("&lt;img src=x onerror=alert(1)&gt;", highlighted);
+            Assert.Contains("&amp;", highlighted);
+            Assert.Contains("&quot;quoted&quot;", highlighted);
+            Assert.DoesNotContain("<img", highlighted);
+            // The tags the caller's own options wrote are not the document's characters, so they
+            // survive: a fix that encoded the whole output would drop the highlight.
+            Assert.StartsWith("<em>distributed</em>", highlighted);
         }
         finally
         {

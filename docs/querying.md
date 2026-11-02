@@ -314,7 +314,8 @@ document used inside an attribute value or a URL, remain the caller's to escape.
 
 `LexiSharpIndex<T>.Search(..., new LexiSharpQueryOptions { Highlight = true, HighlightOptions = ... })`
 reaches the same option through the facade; `LexiSharpHit<T>.HighlightedText` is markup for the
-same reason.
+same reason. The ASP.NET Core endpoint turns it on for every request: its output is for a page, and
+the query string cannot opt out (`LexiSharpSearchEndpoint`).
 
 
 ## Prefix and fuzzy queries
