@@ -287,7 +287,7 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
         if (_embeddings is not null)
             return PredictAsync(text, limit, excludedCategories).GetAwaiter().GetResult();
 
-        TopKBuffer? neighbors = _bm25?.Search(text, _options.K, excludedCategories);
+        TopK<Neighbor>? neighbors = _bm25?.Search(text, _options.K, excludedCategories);
 
         return neighbors is null
             ? Array.Empty<ClassificationResult>()
@@ -326,7 +326,7 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
         if (vector.Length == 0)
             return Array.Empty<ClassificationResult>();
 
-        TopKBuffer neighbors = _dense.Search(vector, _options.K, excludedCategories);
+        TopK<Neighbor> neighbors = _dense.Search(vector, _options.K, excludedCategories);
 
         return BuildResults(neighbors, limit);
     }
@@ -338,7 +338,7 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
         return results.Count > 0 ? results[0].Category : null;
     }
 
-    private IReadOnlyList<ClassificationResult> BuildResults(TopKBuffer neighbors, int limit)
+    private IReadOnlyList<ClassificationResult> BuildResults(TopK<Neighbor> neighbors, int limit)
     {
         int k = neighbors.Count;
 
@@ -464,57 +464,17 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
 
     private readonly record struct Neighbor(string Id, string Category, double Score);
 
-    /// <summary>
-    /// A bounded, sorted top-k buffer. Keeping the best k in a fixed array is what stops a
-    /// prediction from allocating one object per stored document; the insertion is O(k) only when
-    /// a candidate actually beats the current worst, which is rare once the buffer is full.
-    /// </summary>
-    private sealed class TopKBuffer
+    private sealed class NeighborComparer : IComparer<Neighbor>
     {
-        private readonly Neighbor[] _items;
-        private int _count;
+        public static readonly NeighborComparer Instance = new();
 
-        public TopKBuffer(int k) => _items = new Neighbor[k];
-
-        public int Count => _count;
-
-        public Neighbor this[int index] => _items[index];
-
-        /// <summary>The used prefix, which the caller may reorder and overwrite once the search is done.</summary>
-        public Span<Neighbor> Items => _items.AsSpan(0, _count);
-
-        public void Add(Neighbor candidate)
+        public int Compare(Neighbor left, Neighbor right)
         {
-            int index;
-
-            if (_count < _items.Length)
-            {
-                index = _count++;
-            }
-            else
-            {
-                if (!IsBetter(candidate, _items[^1]))
-                    return;
-
-                index = _items.Length - 1;
-            }
-
-            while (index > 0 && IsBetter(candidate, _items[index - 1]))
-            {
-                _items[index] = _items[index - 1];
-                index--;
-            }
-
-            _items[index] = candidate;
-        }
-
-        private static bool IsBetter(Neighbor left, Neighbor right)
-        {
-            int byScore = left.Score.CompareTo(right.Score);
+            int byScore = right.Score.CompareTo(left.Score);
 
             return byScore != 0
-                ? byScore > 0
-                : string.CompareOrdinal(left.Id, right.Id) < 0;
+                ? byScore
+                : string.CompareOrdinal(left.Id, right.Id);
         }
     }
 
@@ -522,14 +482,8 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
     {
         public static readonly ProbabilityComparer Instance = new();
 
-        public int Compare(Neighbor left, Neighbor right)
-        {
-            int byProbability = right.Score.CompareTo(left.Score);
-
-            return byProbability != 0
-                ? byProbability
-                : string.CompareOrdinal(left.Category, right.Category);
-        }
+        public int Compare(Neighbor left, Neighbor right) =>
+            ClassificationRanking.Compare(left.Score, left.Category, right.Score, right.Category);
     }
 
     private sealed class Bm25Store
@@ -614,7 +568,7 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
             return true;
         }
 
-        public TopKBuffer? Search(
+        public TopK<Neighbor>? Search(
             string text,
             int k,
             IReadOnlySet<string>? excludedCategories)
@@ -653,7 +607,7 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
             double b = _options.Bm25.B;
             double fixedPart = k1 * (1 - b);
             double lengthPart = k1 * b / averageLength;
-            var top = new TopKBuffer(k);
+            var top = new TopK<Neighbor>(k, NeighborComparer.Instance);
 
             foreach (var (id, document) in _documents)
             {
@@ -802,15 +756,15 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
             return true;
         }
 
-        public TopKBuffer Search(
+        public TopK<Neighbor> Search(
             ReadOnlyMemory<float> query,
             int k,
             IReadOnlySet<string>? excludedCategories)
         {
             if (k <= 0 || _count == 0)
-                return new TopKBuffer(0);
+                return new TopK<Neighbor>(0, NeighborComparer.Instance);
 
-            var top = new TopKBuffer(k);
+            var top = new TopK<Neighbor>(k, NeighborComparer.Instance);
             ReadOnlySpan<float> querySpan = query.Span;
             float queryNorm = VectorSimilarity.Norm(querySpan);
 

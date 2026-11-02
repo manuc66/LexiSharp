@@ -360,13 +360,7 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
         if (count == 0)
             return Array.Empty<ClassificationResult>();
 
-        ranked.AsSpan(0, count).Sort(static (left, right) =>
-        {
-            int byProbability = right.Probability.CompareTo(left.Probability);
-            return byProbability != 0
-                ? byProbability
-                : string.CompareOrdinal(left.Category, right.Category);
-        });
+        ranked.AsSpan(0, count).Sort(ClassificationRanking.Tuples);
 
         int take = Math.Min(limit, count);
         var results = new ClassificationResult[take];

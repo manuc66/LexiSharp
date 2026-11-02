@@ -248,12 +248,7 @@ public sealed class RandomForestClassifier<TItem>
         if (ranked.Count == 0 || sum <= 0)
             return Array.Empty<ClassificationResult>();
 
-        ranked.Sort(static (left, right) =>
-        {
-            int byProbability = right.Probability.CompareTo(left.Probability);
-
-            return byProbability != 0 ? byProbability : string.CompareOrdinal(left.Category, right.Category);
-        });
+        ranked.Sort(ClassificationRanking.Results);
 
         for (int i = 0; i < ranked.Count; i++)
             ranked[i] = ranked[i] with { Probability = ranked[i].Probability / sum };
