@@ -1560,6 +1560,32 @@ collectors that a concurrent caller must give one instance per search (see
 [observability](observability.md#per-query-cost-sheet-searchcosts)), and the lane attaches neither.
 Correctness under concurrency is `ConcurrentSearchTests`'s job, not this lane's.
 
+**The same callers against the store a deployment runs.** `--store` swaps the `InMemoryTextIndex` for a
+committed `SegmentedTextIndex` opened with a 500,000-entry decoded cache, and `--mapped` opens it as a
+mapping instead of an array; the corpus, the query mix, the worker loop and the warm-up are the ones
+above. One run per row on 2026-11-03 at a one-minute load of 3-5, so these are single readings and not
+the five-run medians the table above uses:
+
+| callers | store, array | store, mapped |
+|---:|---:|---:|
+| 1 | 3,041/s, mix p50 7.36 µs | 2,906/s, 17.13 µs |
+| 2 | 5,884/s, 7.73 µs | 5,117/s, 23.78 µs |
+| 4 | 10,553/s, 8.55 µs | 9,410/s, 21.64 µs |
+| 8 | 12,315/s, 13.99 µs | 11,291/s, 53.58 µs |
+
+Throughput rises **4.1×** across eight callers against the eight it would take to be free, and the mix's
+median grows 1.9× (array) and 3.1× (mapped) from one caller to eight. Allocation per search is 7,176 B
+in every row and both modes, which is the page decode measured in the [store lane](#store-lane-store-what-the-deployable-path-costs-per-query)
+and not a concurrency cost. Mapping costs 2.3× the array's median at one caller, the same direction the
+store lane measures on a tail query and for the same reason: a mapped read is an OS call and a page
+fault per block, which a cheap query feels and a millisecond query does not. The `sync` wrapper stays
+within 3 % of raw in every row, as it does above: with no writers it is a read lock that never has to
+wait for anything.
+
+**What this does not establish.** It exercises concurrent searches through a mapped store — the path
+whose fetch buffer became per thread on 2026-11-02 — but it does **not** verify the pages those searches
+returned; the deterministic test for that is `SegmentReaderConcurrencyTests`, which drives the copy step
+through a barrier rather than hoping for a schedule. A wrong answer would not fail this lane.
 
 ## Tokenizer (`TokenizerBenchmarks`)
 
