@@ -248,7 +248,7 @@ for every config are in
 `dotnet run --project bench/LexiSharp.Eval -- --stem porter`. For another language, implement
 `IStemmer` (or take Snowball) and pass it the same way — or use `FrenchStemmer`, below.
 
-### French stemming and stop words (unreleased)
+### French stemming and stop words
 
 `FrenchStemmer` is the other stemmer shipped in the core, and it takes the same slot:
 

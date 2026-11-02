@@ -212,10 +212,12 @@ is [Scope and limits](https://github.com/manuc66/LexiSharp/blob/main/docs/refere
 - **Not every combination is tested.** Engines, scorers, rerankers and mergers are tested
   individually *and* in the combinations described, but not every pairing — treat an unusual
   one as supported but unproven until you test it on your data.
-- **Version 0.8.0, one maintainer.** The public API may still change between minor versions —
-  pin a version and read the release notes. 0.8.0 breaks two things: `QueryFeatures.Phrases` replaces
-  the pair of `parent`/`child` features on the central record, and `AccumulateFilteredQueries` now
-  defaults to the fast path.
+- **Version 0.9.0.** The public API may still change between minor versions —
+  pin a version and read the release notes. 0.9.0 breaks binary compatibility for
+  `ITextSearchEngine` implementations (`Search` takes a `CancellationToken`), for write-capable
+  engine constructors (they take an `ITextIndex`) and for code compiled against `SearchResult` as
+  a class; the segment format is now version 5 and a store journals by default. The changelog's
+  0.9.0 section carries the migration.
 
 ## Development
 
