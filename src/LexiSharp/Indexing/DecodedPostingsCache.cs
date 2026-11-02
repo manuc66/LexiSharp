@@ -103,5 +103,12 @@ internal sealed class DecodedPostingsCache
         }
     }
 
+    /// <summary>
+    /// Posting entries this cache may hold. A caller that would have to build arrays before knowing
+    /// whether they fit asks this first, because a term larger than the budget is evicted as soon as
+    /// it is stored — the allocation would be paid per query and retained by nothing.
+    /// </summary>
+    public int MaxEntries => _maxEntries;
+
     private sealed record Entry(int[] Ordinals, int[] Frequencies);
 }

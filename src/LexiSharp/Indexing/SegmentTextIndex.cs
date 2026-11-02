@@ -643,10 +643,14 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
         // walk: the same flat arrays, the same ascending entry order, so the sums are bit-identical
         // to a fresh decode. The fill decodes once and reuses; the budget decides what stays.
         // The cache holds segment-local ordinals, so the offset is applied on the way in.
-        if (_decoded is not null)
+        //
+        // A term the cache declines — one larger than its whole budget, which it could never retain —
+        // falls through to the block walk below. Returning here would drop the term from the query
+        // and score an empty page for it, which is what a 200,000-entry cache did to the head term of
+        // a 500,000-document store until this branch was made conditional.
+        if (_decoded is not null && TryGetPostingArrays(weight.Term, out var ordinalsCache, out var frequenciesCache))
         {
-            if (TryGetPostingArrays(weight.Term, out var ordinalsCache, out var frequenciesCache))
-                Fold(ordinalsCache, frequenciesCache, weight, accumulator, offset, lengths);
+            Fold(ordinalsCache, frequenciesCache, weight, accumulator, offset, lengths);
 
             return;
         }
@@ -690,6 +694,13 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
             return true;
 
         if (!_reader.TryFindTerm(term.AsSpan(), out int df, out var postings))
+            return false;
+
+        // A term larger than the whole budget cannot be retained: Store would evict it immediately, so
+        // the decode would allocate two int[df] on every query that asks and keep neither. On a
+        // 500,000-document store with a 200,000-entry budget the head term is 477,361 entries, which is
+        // 3.8 MB a search — a large-object allocation per query, on a path that then declines anyway.
+        if (df > decoded.MaxEntries)
             return false;
 
         ordinals = new int[df];

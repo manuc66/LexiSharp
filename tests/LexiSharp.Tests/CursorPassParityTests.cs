@@ -202,6 +202,62 @@ public class CursorPassParityTests
         }
     }
 
+    /// <summary>
+    /// A term the cache cannot hold is declined instead of decoded and thrown away.
+    /// </summary>
+    /// <remarks>
+    /// The arrays this method hands out must outlive the query, so a term over the budget has no
+    /// answer to give. Decoding it first and evicting it immediately allocates two <c>int[df]</c> per
+    /// search and retains neither: measured on a 500,000-document store with a 200,000-entry cache,
+    /// whose head term has 477,361 entries, that is 3.8 MB allocated a query and 1.4× slower than the
+    /// same store without a cache at all. The budget check belongs before the allocation.
+    /// </remarks>
+    [Fact]
+    public void ATermTheCacheCannotHoldIsDeclinedRatherThanDecoded()
+    {
+        // Two terms of different width against a cache that can hold one of them: the common term is
+        // in every document, the rare one in two.
+        var documents = Enumerable.Range(0, 40)
+            .Select(i => new SearchDocument($"doc-{i:D4}", i < 2 ? "common rare" : "common"))
+            .ToList();
+
+        string directory = Directory.CreateTempSubdirectory("lexisharp-cursor-").FullName;
+
+        try
+        {
+            using var committed = WriteAndCommit(directory, documents, decodedCacheEntries: 2);
+            using var reopened = new SegmentedTextIndex(directory, decodedCacheEntries: 2);
+
+            Assert.Equal(40, reopened.DocumentFrequency("common"));
+            Assert.False(((IPostingArrayIndex)reopened).TryResolvePostingArrays("common", out _));
+
+            // The term that fits is still served, so the refusal is about the budget and not about
+            // declining everything.
+            Assert.True(((IPostingArrayIndex)reopened).TryResolvePostingArrays("rare", out var rare));
+            Assert.Equal(2, rare.Count);
+
+            // And a declined term still scores: the accumulation path has to fall through to the block
+            // walk rather than treat "no arrays" as "this document carries nothing". Before that
+            // fallback existed, a 500,000-document store with a 200,000-entry cache answered the head
+            // term with an empty page.
+            var memory = new InMemoryTextIndex();
+            memory.Index(documents);
+
+            var expected = new RankedTextSearchEngine(memory, new Bm25Scorer());
+            var store = new RankedTextSearchEngine(reopened, new Bm25Scorer());
+
+            IReadOnlyList<SearchResult> storePage = store.Search("common", new SearchOptions(Limit: 10));
+
+            Assert.NotEmpty(storePage);
+            AssertSamePage(expected.Search("common", new SearchOptions(Limit: 10)), storePage, "a declined term");
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public void AStoreWithoutTheDecodedCacheFallsBack()
     {
