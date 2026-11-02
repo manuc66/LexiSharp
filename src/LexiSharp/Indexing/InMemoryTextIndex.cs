@@ -183,13 +183,24 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// and it is why the build is skipped for the tiny lists that gain nothing from it.
     /// </para>
     /// </remarks>
-    private sealed class FlatPosting(int epoch, int[] ordinals, int[] frequencies)
+    private sealed class FlatPosting(
+        int epoch,
+        int[] ordinals,
+        int[] frequencies,
+        int[]? windowMaxFrequencies,
+        int[]? windowMinDocumentLengths)
     {
         public int Epoch { get; } = epoch;
 
         public int[] Ordinals { get; } = ordinals;
 
         public int[] Frequencies { get; } = frequencies;
+
+        /// <summary>Largest frequency per ordinal window, the segment format's block bound.</summary>
+        public int[]? WindowMaxFrequencies { get; } = windowMaxFrequencies;
+
+        /// <summary>Shortest document per ordinal window.</summary>
+        public int[]? WindowMinDocumentLengths { get; } = windowMinDocumentLengths;
 
         public int Count => Ordinals.Length;
     }
@@ -1075,7 +1086,8 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         if (_postings.TryGetValue(term, out var posting))
         {
             var flat = FlatFor(posting);
-            postings = new PostingArrays(flat.Ordinals, flat.Frequencies);
+            postings = new PostingArrays(
+                flat.Ordinals, flat.Frequencies, flat.WindowMaxFrequencies, flat.WindowMinDocumentLengths);
 
             return true;
         }
@@ -1090,7 +1102,8 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         if (_spanPostings.TryGetValue(term, out var posting))
         {
             var flat = FlatFor(posting);
-            postings = new PostingArrays(flat.Ordinals, flat.Frequencies);
+            postings = new PostingArrays(
+                flat.Ordinals, flat.Frequencies, flat.WindowMaxFrequencies, flat.WindowMinDocumentLengths);
 
             return true;
         }
@@ -1181,7 +1194,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// across it. The sort also means the touched-ordinal list a search produces is ascending, so
     /// two runs over the same corpus visit the same documents in the same order.
     /// </remarks>
-    private static FlatPosting BuildFlatPosting(PostingList posting, int epoch)
+    private FlatPosting BuildFlatPosting(PostingList posting, int epoch)
     {
         int count = posting.ByDocument.Count;
         var ordinals = new int[count];
@@ -1198,7 +1211,36 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
 
         Array.Sort(ordinals, frequencies);
 
-        return new FlatPosting(epoch, ordinals, frequencies);
+        // The same pair a segment block header carries — largest frequency and shortest document per
+        // 128-ordinal window — computed on the walk that had to happen anyway. The bounds follow the
+        // flatten, so they are recomputed when the corpus moves under them; a removal can only make
+        // them looser, never wrong, because it leaves a window's recorded maximum where it was.
+        int[]? maxFrequencies = null;
+        int[]? minLengths = null;
+
+        if (count > 0)
+        {
+            int lastWindow = PostingArrays.WindowOf(ordinals[count - 1]);
+            maxFrequencies = new int[lastWindow + 1];
+            minLengths = new int[lastWindow + 1];
+
+            // The lengths are the ones the scorer reads, so a quantized length is the one bounded.
+            int[] lengths = AccumulationLengths();
+
+            for (int at = 0; at < count; at++)
+            {
+                int window = PostingArrays.WindowOf(ordinals[at]);
+                int length = lengths[ordinals[at]];
+
+                if (frequencies[at] > maxFrequencies[window])
+                    maxFrequencies[window] = frequencies[at];
+
+                if (minLengths[window] == 0 || length < minLengths[window])
+                    minLengths[window] = length;
+            }
+        }
+
+        return new FlatPosting(epoch, ordinals, frequencies, maxFrequencies, minLengths);
     }
 
     /// <inheritdoc />

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using LexiSharp.Core;
 
 namespace LexiSharp.Indexing;
 
@@ -41,7 +42,11 @@ internal sealed class DecodedPostingsCache
     }
 
     /// <summary>The term's decoded postings, or <c>false</c>. A hit refreshes the recency order.</summary>
-    public bool TryGet(string term, out int[] ordinals, out int[] frequencies)
+    /// <remarks>
+    /// The plate carries the per-window bounds when it was decoded from a segment, so a cached term
+    /// keeps everything a pruning traversal reads and a second query does not lose the pruning.
+    /// </remarks>
+    public bool TryGet(string term, out PostingArrays postings)
     {
         lock (_byTerm)
         {
@@ -49,44 +54,42 @@ internal sealed class DecodedPostingsCache
             {
                 _recency.Remove(term);
                 _recency.AddLast(term);
-                ordinals = entry.Ordinals;
-                frequencies = entry.Frequencies;
+                postings = entry.Postings;
 
                 return true;
             }
         }
 
-        ordinals = [];
-        frequencies = [];
+        postings = PostingArrays.Empty;
 
         return false;
     }
 
     /// <summary>Stores the term's decoded postings, evicting the least-recently-used while over budget.</summary>
-    public void Store(string term, int[] ordinals, int[] frequencies)
+    public void Store(string term, PostingArrays postings)
     {
         lock (_byTerm)
         {
             if (_byTerm.TryGetValue(term, out var existing))
             {
-                if (ReferenceEquals(existing.Ordinals, ordinals))
+                if (ReferenceEquals(existing.Postings.Ordinals, postings.Ordinals))
                     return;
 
-                _entries -= existing.Ordinals.Length;
+                _entries -= existing.Postings.Count;
                 _byTerm.Remove(term);
                 _recency.Remove(term);
             }
 
-            _byTerm[term] = new Entry(ordinals, frequencies);
+            _byTerm[term] = new Entry(postings);
             _recency.AddLast(term);
-            _entries += ordinals.Length;
+            _entries += postings.Count;
 
             while (_entries > _maxEntries && _recency.First is { } oldest)
             {
                 string evicted = oldest.Value;
 
                 if (_byTerm.Remove(evicted, out var removed))
-                    _entries -= removed.Ordinals.Length;
+                    _entries -= removed.Postings.Count;
 
                 _recency.RemoveFirst();
             }
@@ -110,5 +113,5 @@ internal sealed class DecodedPostingsCache
     /// </summary>
     public int MaxEntries => _maxEntries;
 
-    private sealed record Entry(int[] Ordinals, int[] Frequencies);
+    private sealed record Entry(PostingArrays Postings);
 }

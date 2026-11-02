@@ -114,6 +114,18 @@ internal sealed class TopRankedWindow
     public int Count => _count;
 
     /// <summary>
+    /// The score a candidate has to beat to matter: the worst score retained, or
+    /// <see cref="double.PositiveInfinity"/> while the window is not full.
+    /// </summary>
+    /// <remarks>
+    /// The list is kept worst-first, so this is the entry at zero and costs nothing. It is
+    /// <em>not</em> a strict lower bound on the page: a candidate scoring exactly this can still be
+    /// kept when the tie-break prefers its identifier, which is why a pruning caller compares
+    /// strictly below it rather than at or below.
+    /// </remarks>
+    public double WorstScore => _count < _limit ? double.PositiveInfinity : _entries[0].Score;
+
+    /// <summary>
     /// Offers a candidate to the window. Returns without keeping it when the window is full and the
     /// candidate ranks at or below the current worst.
     /// </summary>

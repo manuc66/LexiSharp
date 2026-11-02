@@ -49,30 +49,30 @@ public class DecodedPostingsCacheTests
 
         engine.Search("needleterm body42");
 
-        Assert.True(cache.TryGet("needleterm", out var needle, out _));
-        Assert.True(cache.TryGet("body42", out var body, out _));
-        Assert.Equal(needle.Length + body.Length, cache.EntryCount);
+        Assert.True(cache.TryGet("needleterm", out var needle));
+        Assert.True(cache.TryGet("body42", out var body));
+        Assert.Equal(needle.Count + body.Count, cache.EntryCount);
 
         // A budget that holds the first term only makes the second fold evict it.
-        var tight = new DecodedPostingsCache(needle.Length);
+        var tight = new DecodedPostingsCache(needle.Count);
         var tightEngine = new RankedSearchWrapper(
             new SegmentTextIndex(new ArraySegmentSource(bytes), tokenizer: null, tight));
 
         tightEngine.Search("needleterm body42");
 
-        Assert.False(tight.TryGet("needleterm", out _, out _), "the oldest term was evicted");
-        Assert.True(tight.TryGet("body42", out _, out _), "the newest term stayed");
+        Assert.False(tight.TryGet("needleterm", out _), "the oldest term was evicted");
+        Assert.True(tight.TryGet("body42", out _), "the newest term stayed");
 
         // Reuse of a held term keeps it: a third fold touches both, and the one used last survives.
-        var recency = new DecodedPostingsCache(needle.Length + body.Length);
+        var recency = new DecodedPostingsCache(needle.Count + body.Count);
         var recencyEngine = new RankedSearchWrapper(
             new SegmentTextIndex(new ArraySegmentSource(bytes), tokenizer: null, recency));
 
         recencyEngine.Search("body42 needleterm");
         recencyEngine.Search("needleterm body42");
 
-        Assert.True(recency.TryGet("needleterm", out _, out _));
-        Assert.True(recency.TryGet("body42", out _, out _));
+        Assert.True(recency.TryGet("needleterm", out _));
+        Assert.True(recency.TryGet("body42", out _));
     }
 
     private static InMemoryTextIndex InMemory()
