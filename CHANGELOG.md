@@ -35,8 +35,10 @@ workflow.
 - **A blend of any number of lanes, with injected evidence.** `BlendTextClassifier` generalizes
   `FusedTextClassifier` (which is now the two-lane facade) and adds `ICandidateTextSource` for
   categories no model learned and `ITextPriorSource` for additive log-prior bonuses on categories
-  that are present. The Jira/neighbour/recency implementations stay in the caller; the core only
-  owns the seams.
+  that are present. It is an `IIncrementalTextClassifier`: `Learn`/`Unlearn` reach every lane and
+  refuse before mutating when one lane cannot learn. A `BlendContext` overload accepts candidates
+  and priors for one request without storing them on the blend. The Jira/neighbour/recency
+  implementations stay in the caller; the core only owns the seams.
 - **Centroid `Learn`/`Unlearn` and centring.** `CentroidClassifier` now carries double-precision
   sums, counts and a global mean, so learning one document is indistinguishable from training on
   the whole corpus, unlearning is exact with a deterministic provider, and a category that loses

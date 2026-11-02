@@ -41,16 +41,18 @@ public sealed record PriorLane(ITextPriorSource Source, double Weight);
 /// ordered by category name (ordinal); only the requested page becomes result objects.
 /// </para>
 /// <para>
-/// Thread-safety: concurrent <see cref="Predict"/> calls are supported if the lanes and sources
+/// Thread-safety: concurrent <see cref="Predict(string, int, IReadOnlySet{string})"/> calls are supported if the lanes and sources
 /// are. <see cref="Train"/> must not overlap a prediction or another training; it trains every
 /// lane on one materialized copy of the corpus.
 /// </para>
 /// </remarks>
-public sealed class BlendTextClassifier : ITextClassifier
+public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClassifier
 {
     private readonly IReadOnlyList<TextClassifierLane> _lanes;
     private readonly IReadOnlyList<CandidateLane> _candidates;
     private readonly IReadOnlyList<PriorLane> _priors;
+    private readonly IReadOnlyList<IIncrementalTextClassifier>? _incrementalLanes;
+    private readonly string? _nonIncrementalLane;
 
     /// <summary>Creates a blend over one or more trained lanes, with optional evidence sources.</summary>
     /// <param name="lanes">The trained lanes; at least one, each non-null with a finite non-negative weight.</param>
@@ -93,6 +95,24 @@ public sealed class BlendTextClassifier : ITextClassifier
         }
 
         _lanes = lanes.ToArray();
+        (_incrementalLanes, _nonIncrementalLane) = FindIncrementalLanes(_lanes);
+    }
+
+    private static (IReadOnlyList<IIncrementalTextClassifier>? Lanes, string? Missing) FindIncrementalLanes(
+        IReadOnlyList<TextClassifierLane> lanes)
+    {
+        var incremental = new List<IIncrementalTextClassifier>(lanes.Count);
+        string? missing = null;
+
+        foreach (TextClassifierLane lane in lanes)
+        {
+            if (lane.Classifier is IIncrementalTextClassifier incrementalLane)
+                incremental.Add(incrementalLane);
+            else
+                missing ??= lane.Classifier.GetType().Name;
+        }
+
+        return (missing is null ? incremental : null, missing);
     }
 
     /// <summary>The trained lanes, in the order they were supplied.</summary>
@@ -117,16 +137,91 @@ public sealed class BlendTextClassifier : ITextClassifier
             lane.Classifier.Train(corpus);
     }
 
+    /// <summary>
+    /// Learns one document in every lane. The lanes are checked before the first mutation, so a
+    /// blend that contains a non-incremental model refuses the whole call instead of leaving half
+    /// of its lanes updated.
+    /// </summary>
+    /// <param name="document">The labelled document to learn.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="document"/> is null.</exception>
+    /// <exception cref="NotSupportedException">
+    /// At least one lane is not an <see cref="IIncrementalTextClassifier"/>.
+    /// </exception>
+    public void Learn(SearchDocument document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        foreach (IIncrementalTextClassifier lane in IncrementalLanes())
+            lane.Learn(document);
+    }
+
+    /// <summary>Removes one document from every lane, with the same all-or-nothing check as <see cref="Learn"/>.</summary>
+    /// <param name="document">The document to retract.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="document"/> is null.</exception>
+    /// <exception cref="NotSupportedException">
+    /// At least one lane is not an <see cref="IIncrementalTextClassifier"/>.
+    /// </exception>
+    public void Unlearn(SearchDocument document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        foreach (IIncrementalTextClassifier lane in IncrementalLanes())
+            lane.Unlearn(document);
+    }
+
+    private IReadOnlyList<IIncrementalTextClassifier> IncrementalLanes()
+    {
+        if (_incrementalLanes is not null)
+            return _incrementalLanes;
+
+        throw new NotSupportedException(
+            $"{_nonIncrementalLane} does not implement {nameof(IIncrementalTextClassifier)}; " +
+            "the blend cannot learn one lane without the others.");
+    }
+
     /// <inheritdoc />
     public IReadOnlyList<ClassificationResult> Predict(
         string text,
         int limit = 3,
+        IReadOnlySet<string>? excludedCategories = null) =>
+        PredictCore(text, context: null, limit, excludedCategories);
+
+    /// <summary>
+    /// Predicts with evidence supplied for this request only, instead of a context configured on
+    /// the blend. The context is read once and never stored.
+    /// </summary>
+    /// <param name="text">The text being classified.</param>
+    /// <param name="context">Request-scoped candidates and priors; <see cref="BlendContext.Empty"/> means none.</param>
+    /// <param name="limit">Maximum number of categories to return.</param>
+    /// <param name="excludedCategories">Optional set of categories to hide.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="text"/> or <paramref name="context"/> is null.</exception>
+    /// <exception cref="ArgumentException">A context weight or evidence entry is invalid.</exception>
+    public IReadOnlyList<ClassificationResult> Predict(
+        string text,
+        BlendContext context,
+        int limit = 3,
         IReadOnlySet<string>? excludedCategories = null)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        return PredictCore(text, context, limit, excludedCategories);
+    }
+
+    private IReadOnlyList<ClassificationResult> PredictCore(
+        string text,
+        BlendContext? context,
+        int limit,
+        IReadOnlySet<string>? excludedCategories)
     {
         ArgumentNullException.ThrowIfNull(text);
 
         if (limit <= 0)
             return Array.Empty<ClassificationResult>();
+
+        if (context is not null)
+        {
+            ValidateWeight(context.CandidateWeight, nameof(context));
+            ValidateWeight(context.PriorWeight, nameof(context));
+        }
 
         var probability = new Dictionary<string, double>(StringComparer.Ordinal);
         var trainedCategories = new HashSet<string>(StringComparer.Ordinal);
@@ -134,11 +229,14 @@ public sealed class BlendTextClassifier : ITextClassifier
         CollectLaneProbabilities(text, excludedCategories, probability, trainedCategories);
         AddCandidateProbabilities(text, excludedCategories, probability);
 
+        if (context?.Candidates is { Count: > 0 } candidates)
+            AddCandidates(candidates, context.CandidateWeight, excludedCategories, probability, nameof(context));
+
         if (probability.Count == 0)
             return Array.Empty<ClassificationResult>();
 
-        if (_priors.Count > 0)
-            ApplyPriors(text, probability, trainedCategories);
+        if (_priors.Count > 0 || context?.Priors is { Count: > 0 })
+            ApplyPriors(text, context, probability, trainedCategories);
 
         return Rank(probability, excludedCategories, limit);
     }
@@ -178,32 +276,45 @@ public sealed class BlendTextClassifier : ITextClassifier
                 continue;
 
             IReadOnlyList<TextEvidence> evidence = lane.Source.Candidates(text);
-            ArgumentNullException.ThrowIfNull(evidence, nameof(lane));
+            AddCandidates(evidence, lane.Weight, excludedCategories, probability, nameof(lane));
+        }
+    }
 
-            double total = 0;
-            var weights = new Dictionary<string, double>(StringComparer.Ordinal);
+    private static void AddCandidates(
+        IReadOnlyList<TextEvidence> evidence,
+        double weight,
+        IReadOnlySet<string>? excludedCategories,
+        Dictionary<string, double> probability,
+        string parameterName)
+    {
+        ArgumentNullException.ThrowIfNull(evidence, parameterName);
 
-            foreach (TextEvidence candidate in evidence)
-            {
-                ArgumentNullException.ThrowIfNull(candidate);
-                ValidateEvidence(candidate, nameof(lane));
+        if (weight == 0)
+            return;
 
-                if (excludedCategories?.Contains(candidate.Category) == true)
-                    continue;
+        double total = 0;
+        var weights = new Dictionary<string, double>(StringComparer.Ordinal);
 
-                weights.TryGetValue(candidate.Category, out double current);
-                weights[candidate.Category] = current + candidate.Score;
-                total += candidate.Score;
-            }
+        foreach (TextEvidence candidate in evidence)
+        {
+            ArgumentNullException.ThrowIfNull(candidate);
+            ValidateEvidence(candidate, parameterName);
 
-            if (total <= 0)
+            if (excludedCategories?.Contains(candidate.Category) == true)
                 continue;
 
-            foreach (var (category, weight) in weights)
-            {
-                probability.TryGetValue(category, out double current);
-                probability[category] = current + (lane.Weight * weight / total);
-            }
+            weights.TryGetValue(candidate.Category, out double current);
+            weights[candidate.Category] = current + candidate.Score;
+            total += candidate.Score;
+        }
+
+        if (total <= 0)
+            return;
+
+        foreach (var (category, candidateWeight) in weights)
+        {
+            probability.TryGetValue(category, out double current);
+            probability[category] = current + (weight * candidateWeight / total);
         }
     }
 
@@ -230,9 +341,6 @@ public sealed class BlendTextClassifier : ITextClassifier
             ranked.Add((category, value / mass));
         }
 
-        if (ranked.Count == 0)
-            return Array.Empty<ClassificationResult>();
-
         ranked.Sort(static (left, right) =>
         {
             int byProbability = right.Probability.CompareTo(left.Probability);
@@ -257,40 +365,85 @@ public sealed class BlendTextClassifier : ITextClassifier
         return results.Count > 0 ? results[0].Category : null;
     }
 
+    /// <summary>Predicts the single best category with request-scoped evidence.</summary>
+    /// <param name="text">The text being classified.</param>
+    /// <param name="context">Request-scoped candidates and priors.</param>
+    /// <param name="excludedCategories">Optional set of categories to hide.</param>
+    public string? PredictBestWithContext(
+        string text,
+        BlendContext context,
+        IReadOnlySet<string>? excludedCategories = null)
+    {
+        var results = Predict(text, context, limit: 1, excludedCategories);
+        return results.Count > 0 ? results[0].Category : null;
+    }
+
     private void ApplyPriors(
         string text,
+        BlendContext? context,
         Dictionary<string, double> probability,
         HashSet<string> trainedCategories)
     {
         var bonus = new Dictionary<string, double>(StringComparer.Ordinal);
 
+        AccumulateConfiguredPriors(text, bonus, trainedCategories);
+
+        if (context?.Priors is { Count: > 0 } priors)
+            AccumulatePriors(priors, context.PriorWeight, bonus, trainedCategories, nameof(context));
+
+        if (bonus.Count == 0)
+            return;
+
+        ApplyBonus(probability, bonus);
+    }
+
+    private void AccumulateConfiguredPriors(
+        string text,
+        Dictionary<string, double> bonus,
+        HashSet<string> trainedCategories)
+    {
         foreach (PriorLane lane in _priors)
         {
             if (lane.Weight == 0)
                 continue;
 
             IReadOnlyList<TextEvidence> evidence = lane.Source.Prior(text);
-            ArgumentNullException.ThrowIfNull(evidence, nameof(lane));
-
-            foreach (TextEvidence prior in evidence)
-            {
-                ArgumentNullException.ThrowIfNull(prior);
-                ValidateEvidence(prior, nameof(lane), allowNegative: true);
-
-                // A prior is about the model's labels, not about evidence the text injected. A
-                // candidate that no lane produced is not eligible, and a prior cannot create it:
-                // exp(bonus) times zero is still zero.
-                if (!trainedCategories.Contains(prior.Category))
-                    continue;
-
-                bonus.TryGetValue(prior.Category, out double current);
-                bonus[prior.Category] = current + (lane.Weight * prior.Score);
-            }
+            AccumulatePriors(evidence, lane.Weight, bonus, trainedCategories, nameof(lane));
         }
+    }
 
-        if (bonus.Count == 0)
+    private static void AccumulatePriors(
+        IReadOnlyList<TextEvidence> evidence,
+        double weight,
+        Dictionary<string, double> bonus,
+        HashSet<string> trainedCategories,
+        string parameterName)
+    {
+        ArgumentNullException.ThrowIfNull(evidence, parameterName);
+
+        if (weight == 0)
             return;
 
+        foreach (TextEvidence prior in evidence)
+        {
+            ArgumentNullException.ThrowIfNull(prior);
+            ValidateEvidence(prior, parameterName, allowNegative: true);
+
+            // A prior is about the model's labels, not about evidence the text injected. A
+            // candidate that no lane produced is not eligible, and a prior cannot create it:
+            // exp(bonus) times zero is still zero.
+            if (!trainedCategories.Contains(prior.Category))
+                continue;
+
+            bonus.TryGetValue(prior.Category, out double current);
+            bonus[prior.Category] = current + (weight * prior.Score);
+        }
+    }
+
+    private static void ApplyBonus(
+        Dictionary<string, double> probability,
+        Dictionary<string, double> bonus)
+    {
         // Work in log space: exp(bonus) can overflow for a large but finite bonus, while
         // exp(log(p) + bonus - max) is the same renormalized distribution without the overflow.
         double highest = double.NegativeInfinity;
