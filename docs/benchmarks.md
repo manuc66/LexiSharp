@@ -1227,12 +1227,38 @@ rather than the index: the store decodes the documents it returns, while the in-
 objects it already holds. Reading the two allocation columns as one comparison would compare what a
 response costs to build against what it costs to borrow.
 
+**The cache's budget is a cliff, and until 2026-11-02 it was a cliff with a 3.8 MB bill.** The lane's
+cache holds 200,000 posting entries per segment, which covers the head term of a 100,000-document corpus
+(95,402 entries) and not that of a 500,000-document one (477,361):
+
+| query | in-memory | store, array | store, array + cache | store, mapped |
+|---|---:|---:|---:|---:|
+| one tail term (df 90) | 4.50 µs | 19.90 µs | **8.40 µs** | 44.60 µs |
+| three tail terms (df 220) | 8.10 µs | 35.80 µs | **13.50 µs** | 93.60 µs |
+| one head term (df 477,361) | 5.55 ms | 8.03 ms | 7.97 ms | 9.13 ms |
+
+The tail still halves, because the cache is what lets the cursor pass run, and the head stops
+benefiting, which is what a budget that cannot cover it should look like. What it looked like before the
+fix was worse in two ways. `SegmentTextIndex` allocated `int[df]` twice before asking the cache whether
+it could keep the result, so the head query allocated **3,825,832 bytes a search** — 3.8 MB in the large
+object heap, 562× the 6,808 the same query costs without a cache. And the accumulation path returned as
+soon as the cache declined, so the term contributed **nothing** and the page came back empty; the lane's
+own "returned no document" check is what found it. Both are fixed — the budget is checked before the
+allocation, and a declined term falls through to the block walk — and `CursorPassParityTests` now pins
+the page against the in-memory index with a cache too small to hold the term, so neither returns
+silently.
+
+The 500,000 latencies above are one run at a one-minute load of about 10, with another session building
+on the same host, so they are inflated and the columns were not measured alternately; the allocation
+figures and the empty page are exact and do not depend on the host.
+
 **What is not measured.** One corpus (Zipf, 50-token documents), one host, `Limit: 10`, the default
 BM25 and tokenizer, and the write with the journal disabled — the journal's per-write cost under each
 flush policy is `docs/indexing.md`'s table, measured by `StoreWriteBenchmarks`. Concurrency is the
 `concurrency` lane's subject and is measured on the in-memory index; the store under 1/2/4/8 callers is
 not measured. Nor are the overlay's read path (`Add` before `Commit`), `Merge`, a store whose segment
-does not fit the page cache, or any corpus larger than 100,000 documents.
+does not fit the page cache, or any corpus larger than 100,000 documents — other than the 500,000 row
+above, which was taken once and is marked as contended.
 
 ## Dense quantisation lane (`quantize`)
 
