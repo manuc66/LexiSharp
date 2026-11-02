@@ -322,6 +322,44 @@ public class NearestNeighborClassifierTests
     }
 
     [Fact]
+    public void DenseSkipsATextWithoutAVector()
+    {
+        var embeddings = new FakeEmbeddings()
+            .Add("A", new[] { 1f, 0f })
+            .Add("empty", Array.Empty<float>());
+
+        var classifier = new NearestNeighborClassifier(embeddings);
+        classifier.Train(new[]
+        {
+            new SearchDocument("a", "A", Category: "A"),
+            new SearchDocument("empty", "empty", Category: "B"),
+        });
+
+        Assert.Equal(1, classifier.Count);
+        Assert.Empty(classifier.Predict("empty"));
+
+        classifier.Learn(new SearchDocument("empty-2", "empty", Category: "B"));
+        Assert.Equal(1, classifier.Count);
+    }
+
+    [Fact]
+    public async Task DenseBatchSkipsATextWithoutAVector()
+    {
+        var embeddings = new BatchEmbeddings()
+            .Add("A", new[] { 1f, 0f })
+            .Add("empty", Array.Empty<float>());
+
+        var classifier = new NearestNeighborClassifier(embeddings);
+        await classifier.TrainAsync(new[]
+        {
+            new SearchDocument("a", "A", Category: "A"),
+            new SearchDocument("empty", "empty", Category: "B"),
+        });
+
+        Assert.Equal(1, classifier.Count);
+    }
+
+    [Fact]
     public void DenseBadVectorIsRejected()
     {
         var embeddings = new FakeEmbeddings(dimension: 3)

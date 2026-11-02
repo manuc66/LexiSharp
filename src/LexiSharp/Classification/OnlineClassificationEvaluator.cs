@@ -2,54 +2,100 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
-using LexiSharp.Classification;
 using LexiSharp.Core;
 
-namespace LexiSharp.Eval;
-
-/// <summary>One labelled document in the stream, with the block (day, period, ...) it belongs to.</summary>
-internal sealed record OnlineExample(SearchDocument Document, int Block);
+namespace LexiSharp.Classification;
 
 /// <summary>
-/// The inputs of a predict-then-learn run. The order of <see cref="Warmup"/> then
-/// <see cref="Stream"/> is the order the model sees; the evaluator never reorders it.
+/// One labelled document in the stream, with the block (day, period, ...) it belongs to and an
+/// optional request context for a contextual classifier.
 /// </summary>
-internal sealed record OnlineEvaluationOptions(
-    Func<ITextClassifier> Factory,
-    IReadOnlyList<SearchDocument> Warmup,
-    IReadOnlyList<OnlineExample> Stream,
-    int TopK = 3,
-    Func<int, bool>? RetrainWhen = null,
-    int BootstrapResamples = 1000,
-    int Seed = 7,
-    double CoverageTarget = 0.5,
-    bool Learn = true,
-    string? Method = null);
+/// <param name="Document">The labelled document; its category is the ground truth.</param>
+/// <param name="Block">The day or period the row belongs to; whole blocks are resampled.</param>
+/// <param name="Context">Optional request evidence passed to an <see cref="IContextualTextClassifier"/>.</param>
+public sealed record OnlineEvaluationExample(
+    SearchDocument Document,
+    int Block,
+    BlendContext? Context = null);
+
+/// <summary>Options for <see cref="OnlineClassificationEvaluator.Evaluate"/>.</summary>
+public sealed record OnlineEvaluationOptions
+{
+    /// <summary>Maximum rank counted as correct. Default: <c>3</c>.</summary>
+    public int TopK { get; init; } = 3;
+
+    /// <summary>
+    /// Retrain when the predicate returns true for the number of stream examples already consumed.
+    /// Null means never; a non-incremental model then requires a predicate.
+    /// </summary>
+    public Func<int, bool>? RetrainWhen { get; init; }
+
+    /// <summary>Number of block-bootstrap resamples. Default: <c>1000</c>.</summary>
+    public int BootstrapResamples { get; init; } = 1000;
+
+    /// <summary>Fixed bootstrap seed. Default: <c>7</c>.</summary>
+    public int Seed { get; init; } = 7;
+
+    /// <summary>Coverage target for the recommended precision point. Default: <c>0.5</c>.</summary>
+    public double CoverageTarget { get; init; } = 0.5;
+
+    /// <summary>Whether the stream mutates the model after each prediction. Default: <c>true</c>.</summary>
+    public bool Learn { get; init; } = true;
+
+    /// <summary>Name reported for the model; null uses the model type name.</summary>
+    public string? Method { get; init; }
+}
 
 /// <summary>Accuracy and macro-F1 for one slice of the stream.</summary>
-internal sealed record OnlineBucketMetrics(
+/// <param name="Bucket">The bucket name, such as <c>text:never-seen</c>.</param>
+/// <param name="Documents">Number of rows in the bucket.</param>
+/// <param name="Accuracy">Top-1 accuracy in the bucket.</param>
+/// <param name="MacroF1">Macro-F1 over the categories present in the bucket.</param>
+/// <param name="Accuracy95">Block-bootstrap accuracy interval.</param>
+/// <param name="MacroF195">Block-bootstrap macro-F1 interval.</param>
+public sealed record OnlineBucketMetrics(
     string Bucket,
     int Documents,
     double Accuracy,
     double MacroF1,
-    ConfidenceInterval Accuracy95,
-    ConfidenceInterval MacroF195);
+    ClassificationInterval Accuracy95,
+    ClassificationInterval MacroF195);
 
 /// <summary>The outcome of one predict-then-learn run.</summary>
-internal sealed record OnlineReport(
+/// <param name="Method">The model name.</param>
+/// <param name="Documents">Number of stream rows.</param>
+/// <param name="TopK">The requested top-k.</param>
+/// <param name="AccuracyAt1">Top-1 accuracy.</param>
+/// <param name="AccuracyAtK">Accuracy within the requested top-k.</param>
+/// <param name="MacroF1">Macro-F1 over the stream.</param>
+/// <param name="AccuracyAt195">Block-bootstrap top-1 interval.</param>
+/// <param name="AccuracyAtK95">Block-bootstrap top-k interval.</param>
+/// <param name="MacroF195">Block-bootstrap macro-F1 interval.</param>
+/// <param name="TextBuckets">Seen/never-seen text buckets.</param>
+/// <param name="CategoryBuckets">Seen/never-seen category buckets.</param>
+/// <param name="Coverage">The precision/coverage curve.</param>
+/// <param name="RecommendedCoverage">The recommended point for the target.</param>
+/// <param name="LearnCalls">Number of incremental Learn calls.</param>
+/// <param name="RetrainCalls">Number of full Train calls.</param>
+/// <param name="WarmupTrainTime">Time spent on the warmup training.</param>
+/// <param name="PredictTime">Time spent predicting.</param>
+/// <param name="LearnTime">Time spent learning.</param>
+/// <param name="RetrainTime">Time spent retraining.</param>
+/// <param name="OrderHash">SHA-256 of the warmup/stream order, for a pin.</param>
+public sealed record OnlineReport(
     string Method,
     int Documents,
     int TopK,
     double AccuracyAt1,
     double AccuracyAtK,
     double MacroF1,
-    ConfidenceInterval AccuracyAt195,
-    ConfidenceInterval AccuracyAtK95,
-    ConfidenceInterval MacroF195,
+    ClassificationInterval AccuracyAt195,
+    ClassificationInterval AccuracyAtK95,
+    ClassificationInterval MacroF195,
     IReadOnlyList<OnlineBucketMetrics> TextBuckets,
     IReadOnlyList<OnlineBucketMetrics> CategoryBuckets,
-    IReadOnlyList<CoveragePoint> Coverage,
-    CoveragePoint RecommendedCoverage,
+    IReadOnlyList<OnlineCoveragePoint> Coverage,
+    OnlineCoveragePoint RecommendedCoverage,
     int LearnCalls,
     int RetrainCalls,
     TimeSpan WarmupTrainTime,
@@ -57,6 +103,19 @@ internal sealed record OnlineReport(
     TimeSpan LearnTime,
     TimeSpan RetrainTime,
     string OrderHash);
+
+/// <summary>One point of the precision/coverage curve.</summary>
+/// <param name="Threshold">Minimum top probability to answer.</param>
+/// <param name="Covered">Documents at or above the threshold.</param>
+/// <param name="Total">Documents in the stream.</param>
+/// <param name="Coverage">Covered / total.</param>
+/// <param name="Precision">Correct / covered.</param>
+public sealed record OnlineCoveragePoint(
+    double Threshold,
+    int Covered,
+    int Total,
+    double Coverage,
+    double Precision);
 
 /// <summary>
 /// Replays a labelled stream through any <see cref="ITextClassifier"/>: predict first, then learn.
@@ -81,37 +140,58 @@ internal sealed record OnlineReport(
 /// keeps that correlation. The seed is fixed, so the interval is reproducible.
 /// </para>
 /// </remarks>
-internal static class OnlineClassificationEvaluation
+public static class OnlineClassificationEvaluator
 {
-    public static OnlineReport Run(OnlineEvaluationOptions options)
+    /// <summary>
+    /// Replays a labelled stream through a classifier: predict first, score the rank, then learn.
+    /// </summary>
+    /// <param name="factory">Creates the model; called once.</param>
+    /// <param name="warmup">Documents the model is trained on before the stream starts.</param>
+    /// <param name="stream">The ordered stream; each row carries its block and optional request context.</param>
+    /// <param name="options">Top-k, retraining schedule, bootstrap and coverage settings; null uses the defaults.</param>
+    /// <returns>The accuracy, buckets, coverage and block-bootstrap intervals.</returns>
+    /// <exception cref="ArgumentNullException">A required argument is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// A stream row has no category, the model is not incremental without a schedule, or an option
+    /// is out of range.
+    /// </exception>
+    public static OnlineReport Evaluate(
+        Func<ITextClassifier> factory,
+        IReadOnlyList<SearchDocument> warmup,
+        IReadOnlyList<OnlineEvaluationExample> stream,
+        OnlineEvaluationOptions? options = null)
     {
-        Validate(options);
-        ITextClassifier model = CreateModel(options);
+        ArgumentNullException.ThrowIfNull(factory);
+        ArgumentNullException.ThrowIfNull(warmup);
+        ArgumentNullException.ThrowIfNull(stream);
+
+        options ??= new OnlineEvaluationOptions();
+        Validate(options, stream);
+        ITextClassifier model = CreateModel(factory, options);
 
         (List<SearchDocument> accumulated, HashSet<string> seenTexts, HashSet<string> seenCategories,
-            TimeSpan warmupTime) = Warmup(model, options);
+            TimeSpan warmupTime) = Warmup(model, warmup, stream.Count);
 
-        StreamResult stream = RunStream(model, options, accumulated, seenTexts, seenCategories);
+        StreamResult result = RunStream(model, stream, options, accumulated, seenTexts, seenCategories);
+        string orderHash = HashOrder(warmup, stream);
 
         return BuildReport(
             options,
             model,
-            stream.Outcomes,
-            stream.LearnCalls,
-            stream.RetrainCalls,
+            result.Outcomes,
+            result.LearnCalls,
+            result.RetrainCalls,
             warmupTime,
-            stream.PredictTime,
-            stream.LearnTime,
-            stream.RetrainTime);
+            result.PredictTime,
+            result.LearnTime,
+            result.RetrainTime,
+            orderHash);
     }
 
-    private static void Validate(OnlineEvaluationOptions options)
+    private static void Validate(
+        OnlineEvaluationOptions options,
+        IReadOnlyList<OnlineEvaluationExample> stream)
     {
-        ArgumentNullException.ThrowIfNull(options);
-        ArgumentNullException.ThrowIfNull(options.Factory);
-        ArgumentNullException.ThrowIfNull(options.Warmup);
-        ArgumentNullException.ThrowIfNull(options.Stream);
-
         if (options.TopK < 1)
             throw new ArgumentOutOfRangeException(nameof(options), "TopK must be at least 1.");
 
@@ -125,19 +205,22 @@ internal static class OnlineClassificationEvaluation
         if (options.BootstrapResamples < 1)
             throw new ArgumentOutOfRangeException(nameof(options), "At least one bootstrap resample is required.");
 
-        foreach (OnlineExample example in options.Stream)
+        foreach (OnlineEvaluationExample example in stream)
         {
+            ArgumentNullException.ThrowIfNull(example, nameof(stream));
             SearchDocument document = example.Document
-                ?? throw new ArgumentException("The stream contains a null document.", nameof(options));
+                ?? throw new ArgumentException("The stream contains a null document.", nameof(stream));
 
             if (string.IsNullOrEmpty(document.Category))
-                throw new ArgumentException($"Stream document '{document.Id}' has no category.", nameof(options));
+                throw new ArgumentException($"Stream document '{document.Id}' has no category.", nameof(stream));
         }
     }
 
-    private static ITextClassifier CreateModel(OnlineEvaluationOptions options)
+    private static ITextClassifier CreateModel(
+        Func<ITextClassifier> factory,
+        OnlineEvaluationOptions options)
     {
-        ITextClassifier model = options.Factory()
+        ITextClassifier model = factory()
             ?? throw new InvalidOperationException("The classifier factory returned null.");
 
         if (options.Learn && options.RetrainWhen is null && model is not IIncrementalTextClassifier)
@@ -145,7 +228,7 @@ internal static class OnlineClassificationEvaluation
             throw new ArgumentException(
                 $"{model.GetType().Name} is not incremental and no retraining schedule was supplied; " +
                 "the stream would never update the model.",
-                nameof(options));
+                nameof(factory));
         }
 
         return model;
@@ -155,16 +238,19 @@ internal static class OnlineClassificationEvaluation
         List<SearchDocument> Accumulated,
         HashSet<string> SeenTexts,
         HashSet<string> SeenCategories,
-        TimeSpan Elapsed) Warmup(ITextClassifier model, OnlineEvaluationOptions options)
+        TimeSpan Elapsed) Warmup(
+        ITextClassifier model,
+        IReadOnlyList<SearchDocument> warmup,
+        int streamCount)
     {
         var watch = Stopwatch.StartNew();
-        model.Train(options.Warmup);
+        model.Train(warmup);
         watch.Stop();
 
         var seenTexts = new HashSet<string>(StringComparer.Ordinal);
         var seenCategories = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (SearchDocument document in options.Warmup)
+        foreach (SearchDocument document in warmup)
         {
             if (document is null)
                 continue;
@@ -175,29 +261,30 @@ internal static class OnlineClassificationEvaluation
                 seenCategories.Add(document.Category);
         }
 
-        var accumulated = new List<SearchDocument>(options.Warmup.Count + options.Stream.Count);
-        accumulated.AddRange(options.Warmup);
+        var accumulated = new List<SearchDocument>(warmup.Count + streamCount);
+        accumulated.AddRange(warmup);
 
         return (accumulated, seenTexts, seenCategories, watch.Elapsed);
     }
 
     private static StreamResult RunStream(
         ITextClassifier model,
+        IReadOnlyList<OnlineEvaluationExample> stream,
         OnlineEvaluationOptions options,
         List<SearchDocument> accumulated,
         HashSet<string> seenTexts,
         HashSet<string> seenCategories)
     {
-        var outcomes = new List<Outcome>(options.Stream.Count);
+        var outcomes = new List<Outcome>(stream.Count);
         var predictWatch = Stopwatch.StartNew();
         var learnWatch = new Stopwatch();
         var retrainWatch = new Stopwatch();
         int learnCalls = 0;
         int retrainCalls = 0;
 
-        for (int i = 0; i < options.Stream.Count; i++)
+        for (int i = 0; i < stream.Count; i++)
         {
-            OnlineExample example = options.Stream[i];
+            OnlineEvaluationExample example = stream[i];
             outcomes.Add(Observe(model, example, options.TopK, seenTexts, seenCategories, predictWatch));
             seenTexts.Add(example.Document.Text);
 
@@ -226,9 +313,19 @@ internal static class OnlineClassificationEvaluation
             retrainWatch.Elapsed);
     }
 
+    private static IReadOnlyList<ClassificationResult> Predict(
+        ITextClassifier model,
+        OnlineEvaluationExample example)
+    {
+        if (example.Context is { } context && model is IContextualTextClassifier contextual)
+            return contextual.Predict(example.Document.Text, context, limit: int.MaxValue);
+
+        return model.Predict(example.Document.Text, limit: int.MaxValue);
+    }
+
     private static Outcome Observe(
         ITextClassifier model,
-        OnlineExample example,
+        OnlineEvaluationExample example,
         int topK,
         HashSet<string> seenTexts,
         HashSet<string> seenCategories,
@@ -238,7 +335,7 @@ internal static class OnlineClassificationEvaluation
         string actual = document.Category!;
 
         predictWatch.Start();
-        IReadOnlyList<ClassificationResult> results = model.Predict(document.Text, limit: int.MaxValue);
+        IReadOnlyList<ClassificationResult> results = Predict(model, example);
         predictWatch.Stop();
 
         string? predicted = results.Count > 0 ? results[0].Category : null;
@@ -327,7 +424,8 @@ internal static class OnlineClassificationEvaluation
         TimeSpan warmupTrainTime,
         TimeSpan predictTime,
         TimeSpan learnTime,
-        TimeSpan retrainTime)
+        TimeSpan retrainTime,
+        string orderHash)
     {
         int topK = options.TopK;
         int total = outcomes.Count;
@@ -341,10 +439,10 @@ internal static class OnlineClassificationEvaluation
         bool[] at1 = outcomes.Select(outcome => outcome.CorrectAt1).ToArray();
         bool[] atK = outcomes.Select(outcome => outcome.CorrectAtK).ToArray();
 
-        BootstrapIntervals intervals = ClassificationStatistics.BootstrapBlocks(
+        EvaluationIntervals intervals = OnlineEvaluationStatistics.BootstrapBlocks(
             blocks, actual, predicted, options.BootstrapResamples, options.Seed);
 
-        ConfidenceInterval atKInterval = ClassificationStatistics.BootstrapAccuracyBlocks(
+        ClassificationInterval atKInterval = OnlineEvaluationStatistics.BootstrapAccuracyBlocks(
             blocks, atK, options.BootstrapResamples, options.Seed);
 
         var textBuckets = new[]
@@ -359,7 +457,7 @@ internal static class OnlineClassificationEvaluation
             BuildBucket("category:never-seen", outcomes.Where(outcome => !outcome.SeenCategory).ToList(), options),
         };
 
-        (IReadOnlyList<CoveragePoint> coverage, CoveragePoint recommended) =
+        (IReadOnlyList<OnlineCoveragePoint> coverage, OnlineCoveragePoint recommended) =
             BuildCoverage(outcomes, options.CoverageTarget);
 
         return new OnlineReport(
@@ -382,7 +480,7 @@ internal static class OnlineClassificationEvaluation
             predictTime,
             learnTime,
             retrainTime,
-            HashOrder(options));
+            orderHash);
     }
 
     private static OnlineBucketMetrics BuildBucket(
@@ -399,7 +497,7 @@ internal static class OnlineClassificationEvaluation
         string[] actual = outcomes.Select(outcome => outcome.Actual).ToArray();
         string?[] predicted = outcomes.Select(outcome => outcome.Predicted).ToArray();
 
-        BootstrapIntervals intervals = ClassificationStatistics.BootstrapBlocks(
+        EvaluationIntervals intervals = OnlineEvaluationStatistics.BootstrapBlocks(
             blocks, actual, predicted, options.BootstrapResamples, options.Seed);
 
         return new OnlineBucketMetrics(
@@ -471,7 +569,7 @@ internal static class OnlineClassificationEvaluation
         return precision + recall == 0 ? 0 : 2 * precision * recall / (precision + recall);
     }
 
-    private static (IReadOnlyList<CoveragePoint> Points, CoveragePoint Recommended) BuildCoverage(
+    private static (IReadOnlyList<OnlineCoveragePoint> Points, OnlineCoveragePoint Recommended) BuildCoverage(
         List<Outcome> outcomes,
         double target)
     {
@@ -479,7 +577,7 @@ internal static class OnlineClassificationEvaluation
 
         if (total == 0)
         {
-            var empty = new CoveragePoint(1, 0, 0, 0, 0);
+            var empty = new OnlineCoveragePoint(1, 0, 0, 0, 0);
             return (new[] { empty }, empty);
         }
 
@@ -487,7 +585,7 @@ internal static class OnlineClassificationEvaluation
             .OrderByDescending(outcome => outcome.TopProbability)
             .ToArray();
 
-        var points = new List<CoveragePoint>();
+        var points = new List<OnlineCoveragePoint>();
         int covered = 0;
         int correct = 0;
         int index = 0;
@@ -506,7 +604,7 @@ internal static class OnlineClassificationEvaluation
                 index++;
             }
 
-            points.Add(new CoveragePoint(
+            points.Add(new OnlineCoveragePoint(
                 threshold,
                 covered,
                 total,
@@ -514,9 +612,9 @@ internal static class OnlineClassificationEvaluation
                 covered == 0 ? 0 : (double)correct / covered));
         }
 
-        CoveragePoint? recommended = null;
+        OnlineCoveragePoint? recommended = null;
 
-        foreach (CoveragePoint point in points)
+        foreach (OnlineCoveragePoint point in points)
         {
             if (point.Coverage < target)
                 continue;
@@ -547,17 +645,19 @@ internal static class OnlineClassificationEvaluation
         return -1;
     }
 
-    private static string HashOrder(OnlineEvaluationOptions options)
+    private static string HashOrder(
+        IReadOnlyList<SearchDocument> warmup,
+        IReadOnlyList<OnlineEvaluationExample> stream)
     {
         var builder = new StringBuilder();
 
-        foreach (SearchDocument document in options.Warmup)
+        foreach (SearchDocument document in warmup)
         {
             builder.Append(document.Id);
             builder.Append('\n');
         }
 
-        foreach (OnlineExample example in options.Stream)
+        foreach (OnlineEvaluationExample example in stream)
         {
             builder.Append(example.Document.Id);
             builder.Append('\t');

@@ -10,7 +10,9 @@ namespace LexiSharp.Classification;
 /// <remarks>
 /// <para>
 /// Training ignores an item whose category is null or empty, exactly as
-/// <see cref="NaiveBayesClassifier"/> does, and replaces any previous model. The centroid of a
+/// <see cref="NaiveBayesClassifier"/> does, and replaces any previous model. An item whose vector
+/// is empty means "no embedding" and is skipped in <see cref="Train"/>, <see cref="Learn"/>,
+/// <see cref="Unlearn"/> and <see cref="Predict"/>; it is not a zero vector. The centroid of a
 /// category is the elementwise mean of its training vectors; a category with no vector is absent,
 /// and a category whose vectors are all zero keeps a zero centroid, which scores <c>0</c> against
 /// everything rather than being dropped silently.
@@ -111,7 +113,7 @@ public sealed class CentroidClassifier<TItem>
     /// <summary>Trains the model on labelled items, replacing any previous model.</summary>
     /// <param name="items">The training items. Unlabelled items are skipped.</param>
     /// <exception cref="ArgumentNullException"><paramref name="items"/> is null or contains null.</exception>
-    /// <exception cref="ArgumentException">A vector is empty, non-finite, or has a length different from the first one.</exception>
+    /// <exception cref="ArgumentException">A non-empty vector is non-finite or has a length different from the first one.</exception>
     public void Train(IEnumerable<TItem> items)
     {
         ArgumentNullException.ThrowIfNull(items);
@@ -131,6 +133,12 @@ public sealed class CentroidClassifier<TItem>
                 continue;
 
             ReadOnlyMemory<float> vector = _vectorOf(item);
+
+            // Empty means "no embedding for this text", not a zero vector: the example is skipped
+            // exactly as an unlabelled item is.
+            if (vector.Length == 0)
+                continue;
+
             ValidateShape(vector, ref dimension, nameof(items));
             ValidateFinite(vector, category, nameof(items));
 
@@ -182,7 +190,7 @@ public sealed class CentroidClassifier<TItem>
     /// </remarks>
     /// <param name="item">The labelled item to learn.</param>
     /// <exception cref="ArgumentNullException"><paramref name="item"/> is null.</exception>
-    /// <exception cref="ArgumentException">The vector is empty, non-finite, or has the wrong length.</exception>
+    /// <exception cref="ArgumentException">A non-empty vector is non-finite or has the wrong length; an empty vector is skipped.</exception>
     public void Learn(TItem item)
     {
         ArgumentNullException.ThrowIfNull(item);
@@ -195,7 +203,7 @@ public sealed class CentroidClassifier<TItem>
         ReadOnlyMemory<float> vector = _vectorOf(item);
 
         if (vector.Length == 0)
-            throw new ArgumentException("The vector source returned an empty vector.", nameof(item));
+            return;
 
         if (_counts.Count == 0 && _dimension == 0)
             _dimension = vector.Length;
@@ -246,7 +254,7 @@ public sealed class CentroidClassifier<TItem>
     /// </remarks>
     /// <param name="item">The item to retract.</param>
     /// <exception cref="ArgumentNullException"><paramref name="item"/> is null.</exception>
-    /// <exception cref="ArgumentException">The vector is empty, non-finite, or has the wrong length.</exception>
+    /// <exception cref="ArgumentException">A non-empty vector is non-finite or has the wrong length; an empty vector is skipped.</exception>
     public void Unlearn(TItem item)
     {
         ArgumentNullException.ThrowIfNull(item);
@@ -257,6 +265,9 @@ public sealed class CentroidClassifier<TItem>
             return;
 
         ReadOnlyMemory<float> vector = _vectorOf(item);
+
+        if (vector.Length == 0)
+            return;
 
         if (vector.Length != _dimension)
         {
@@ -292,7 +303,7 @@ public sealed class CentroidClassifier<TItem>
     /// <param name="vector">The vector to classify; its length must match the training vectors.</param>
     /// <param name="limit">Maximum number of categories to return; a non-positive value returns nothing.</param>
     /// <param name="excludedCategories">Optional set of categories to hide; probabilities are renormalized over the rest.</param>
-    /// <exception cref="ArgumentException">The vector is empty, non-finite, or has the wrong length.</exception>
+    /// <exception cref="ArgumentException">A non-empty vector is non-finite or has the wrong length; an empty vector is skipped.</exception>
     public IReadOnlyList<ClassificationResult> Predict(
         ReadOnlyMemory<float> vector,
         int limit = 3,
@@ -302,6 +313,9 @@ public sealed class CentroidClassifier<TItem>
             return Array.Empty<ClassificationResult>();
 
         EnsureBuilt();
+
+        if (vector.Length == 0)
+            return Array.Empty<ClassificationResult>();
 
         if (vector.Length != _dimension)
         {
@@ -527,9 +541,6 @@ public sealed class CentroidClassifier<TItem>
         ref int dimension,
         string parameterName)
     {
-        if (vector.Length == 0)
-            throw new ArgumentException("The vector source returned an empty vector.", parameterName);
-
         if (dimension < 0)
         {
             dimension = vector.Length;
@@ -919,6 +930,9 @@ public sealed class CentroidClassifier : ITextClassifier, IIncrementalTextClassi
 
     private ReadOnlyMemory<float> Validate(ReadOnlyMemory<float> vector, string? documentId)
     {
+        if (vector.Length == 0)
+            return vector;
+
         if (vector.Length != _embeddings.Dimension)
         {
             string subject = documentId is null ? "the input text" : $"'{documentId}'";
