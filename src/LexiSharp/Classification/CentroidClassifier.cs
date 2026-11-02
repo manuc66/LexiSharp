@@ -579,14 +579,8 @@ public sealed class CentroidClassifier<TItem>
     {
         public static readonly ScoreComparer Instance = new();
 
-        public int Compare(Score left, Score right)
-        {
-            int byCosine = right.Cosine.CompareTo(left.Cosine);
-
-            return byCosine != 0
-                ? byCosine
-                : string.CompareOrdinal(left.Category, right.Category);
-        }
+        public int Compare(Score left, Score right) =>
+            ClassificationRanking.Compare(left.Cosine, left.Category, right.Cosine, right.Category);
     }
 
     private readonly record struct CentroidEntry(
