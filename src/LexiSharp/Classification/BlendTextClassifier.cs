@@ -95,11 +95,16 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
         }
 
         _lanes = lanes.ToArray();
+        (_incrementalLanes, _nonIncrementalLane) = FindIncrementalLanes(_lanes);
+    }
 
-        var incremental = new List<IIncrementalTextClassifier>(_lanes.Count);
+    private static (IReadOnlyList<IIncrementalTextClassifier>? Lanes, string? Missing) FindIncrementalLanes(
+        IReadOnlyList<TextClassifierLane> lanes)
+    {
+        var incremental = new List<IIncrementalTextClassifier>(lanes.Count);
         string? missing = null;
 
-        foreach (TextClassifierLane lane in _lanes)
+        foreach (TextClassifierLane lane in lanes)
         {
             if (lane.Classifier is IIncrementalTextClassifier incrementalLane)
                 incremental.Add(incrementalLane);
@@ -107,8 +112,7 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
                 missing ??= lane.Classifier.GetType().Name;
         }
 
-        _incrementalLanes = missing is null ? incremental : null;
-        _nonIncrementalLane = missing;
+        return (missing is null ? incremental : null, missing);
     }
 
     /// <summary>The trained lanes, in the order they were supplied.</summary>
