@@ -1,0 +1,97 @@
+{
+  "source": "scipy.stats.chi2",
+  "version": "1.18.1",
+  "note": "Asymptotic McNemar with Edwards' continuity correction, one degree of freedom.",
+  "cases": [
+    {
+      "name": "b0-c0",
+      "baselineOnly": 0,
+      "candidateOnly": 0,
+      "expectedPValue": 1.0
+    },
+    {
+      "name": "b1-c0",
+      "baselineOnly": 1,
+      "candidateOnly": 0,
+      "expectedPValue": 1.0
+    },
+    {
+      "name": "b0-c1",
+      "baselineOnly": 0,
+      "candidateOnly": 1,
+      "expectedPValue": 1.0
+    },
+    {
+      "name": "b1-c1",
+      "baselineOnly": 1,
+      "candidateOnly": 1,
+      "expectedPValue": 0.47950012218695337
+    },
+    {
+      "name": "b10-c2",
+      "baselineOnly": 10,
+      "candidateOnly": 2,
+      "expectedPValue": 0.04330814281079206
+    },
+    {
+      "name": "b2-c10",
+      "baselineOnly": 2,
+      "candidateOnly": 10,
+      "expectedPValue": 0.04330814281079206
+    },
+    {
+      "name": "b20-c5",
+      "baselineOnly": 20,
+      "candidateOnly": 5,
+      "expectedPValue": 0.005110260660855866
+    },
+    {
+      "name": "b5-c20",
+      "baselineOnly": 5,
+      "candidateOnly": 20,
+      "expectedPValue": 0.005110260660855866
+    },
+    {
+      "name": "b50-c50",
+      "baselineOnly": 50,
+      "candidateOnly": 50,
+      "expectedPValue": 0.920344325445942
+    },
+    {
+      "name": "b100-c99",
+      "baselineOnly": 100,
+      "candidateOnly": 99,
+      "expectedPValue": 1.0
+    },
+    {
+      "name": "b293-c259",
+      "baselineOnly": 293,
+      "candidateOnly": 259,
+      "expectedPValue": 0.16014820803951565
+    },
+    {
+      "name": "b500-c450",
+      "baselineOnly": 500,
+      "candidateOnly": 450,
+      "expectedPValue": 0.1118866748967887
+    },
+    {
+      "name": "b3-c3",
+      "baselineOnly": 3,
+      "candidateOnly": 3,
+      "expectedPValue": 0.6830913983096086
+    },
+    {
+      "name": "b1-c5",
+      "baselineOnly": 1,
+      "candidateOnly": 5,
+      "expectedPValue": 0.22067136191984324
+    },
+    {
+      "name": "b5-c1",
+      "baselineOnly": 5,
+      "candidateOnly": 1,
+      "expectedPValue": 0.22067136191984324
+    }
+  ]
+}

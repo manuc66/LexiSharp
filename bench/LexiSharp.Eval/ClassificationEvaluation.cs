@@ -619,7 +619,10 @@ internal static class ClassificationEvaluation
         int discordant = baselineOnly + candidateOnly;
         double pValue = discordant == 0
             ? 1.0
-            : Erfc(Math.Sqrt(Math.Pow(Math.Abs(baselineOnly - candidateOnly) - 1, 2) / discordant / 2));
+            : Math.Clamp(
+                Erfc(Math.Sqrt(Math.Pow(Math.Abs(baselineOnly - candidateOnly) - 1, 2) / discordant / 2)),
+                0.0,
+                1.0);
 
         return new McNemarResult(baselineName, candidateName, baselineOnly, candidateOnly, pValue);
     }
