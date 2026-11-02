@@ -223,8 +223,9 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
             ValidateWeight(context.PriorWeight, nameof(context));
         }
 
+        bool hasPriors = _priors.Count > 0 || context?.Priors is { Count: > 0 };
         var probability = new Dictionary<string, double>(StringComparer.Ordinal);
-        var trainedCategories = new HashSet<string>(StringComparer.Ordinal);
+        HashSet<string>? trainedCategories = hasPriors ? new HashSet<string>(StringComparer.Ordinal) : null;
 
         CollectLaneProbabilities(text, excludedCategories, probability, trainedCategories);
         AddCandidateProbabilities(text, excludedCategories, probability);
@@ -235,8 +236,8 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
         if (probability.Count == 0)
             return Array.Empty<ClassificationResult>();
 
-        if (_priors.Count > 0 || context?.Priors is { Count: > 0 })
-            ApplyPriors(text, context, probability, trainedCategories);
+        if (hasPriors)
+            ApplyPriors(text, context, probability, trainedCategories!);
 
         return Rank(probability, excludedCategories, limit);
     }
@@ -245,7 +246,7 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
         string text,
         IReadOnlySet<string>? excludedCategories,
         Dictionary<string, double> probability,
-        HashSet<string> trainedCategories)
+        HashSet<string>? trainedCategories)
     {
         foreach (TextClassifierLane lane in _lanes)
         {
@@ -258,7 +259,7 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
                 if (excludedCategories?.Contains(result.Category) == true)
                     continue;
 
-                trainedCategories.Add(result.Category);
+                trainedCategories?.Add(result.Category);
                 probability.TryGetValue(result.Category, out double current);
                 probability[result.Category] = current + (lane.Weight * result.Probability);
             }

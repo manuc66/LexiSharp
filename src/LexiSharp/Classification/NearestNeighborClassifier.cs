@@ -485,6 +485,7 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
         private readonly NearestNeighborOptions _options;
         private readonly Dictionary<string, Document> _documents = new(StringComparer.Ordinal);
         private readonly Dictionary<string, int> _documentFrequency = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, HashSet<string>> _postings = new(StringComparer.Ordinal);
         private long _totalLength;
 
         public Bm25Store(ITokenizer tokenizer, NearestNeighborOptions options)
@@ -516,6 +517,14 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
             {
                 _documentFrequency.TryGetValue(term, out int frequency);
                 _documentFrequency[term] = frequency + 1;
+
+                if (!_postings.TryGetValue(term, out HashSet<string>? posting))
+                {
+                    posting = new HashSet<string>(StringComparer.Ordinal);
+                    _postings[term] = posting;
+                }
+
+                posting.Add(document.Id);
             }
 
             _documents[document.Id] = new Document(document.Category!, tokens.Count, terms);
@@ -535,6 +544,14 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
                     _documentFrequency.Remove(term);
                 else
                     _documentFrequency[term] = frequency - 1;
+
+                if (_postings.TryGetValue(term, out HashSet<string>? posting))
+                {
+                    posting.Remove(id);
+
+                    if (posting.Count == 0)
+                        _postings.Remove(term);
+                }
             }
 
             _totalLength -= document.Length;
@@ -578,10 +595,23 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
             if (idf.Count == 0)
                 return Array.Empty<Neighbor>();
 
+            var candidates = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (string term in idf.Keys)
+            {
+                if (_postings.TryGetValue(term, out HashSet<string>? posting))
+                    candidates.UnionWith(posting);
+            }
+
+            if (candidates.Count == 0)
+                return Array.Empty<Neighbor>();
+
             var top = new TopKBuffer(k);
 
-            foreach (var (id, document) in _documents)
+            foreach (string id in candidates)
             {
+                Document document = _documents[id];
+
                 if (excludedCategories?.Contains(document.Category) == true)
                     continue;
 
@@ -620,7 +650,8 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
             if (_documents.ContainsKey(id))
                 throw new ArgumentException($"The document id '{id}' is already in the model.", nameof(id));
 
-            _documents[id] = new Entry(category, vector.ToArray());
+            float[] stored = vector.ToArray();
+            _documents[id] = new Entry(category, stored, VectorSimilarity.Norm(stored));
         }
 
         public bool Remove(string id) => _documents.Remove(id);
@@ -631,6 +662,7 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
             IReadOnlySet<string>? excludedCategories)
         {
             var top = new TopKBuffer(k);
+            float queryNorm = VectorSimilarity.Norm(query.Span);
 
             foreach (var (id, entry) in _documents)
             {
@@ -640,12 +672,12 @@ public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTex
                 top.Add(new Neighbor(
                     id,
                     entry.Category,
-                    VectorSimilarity.CosineSimilarity(query.Span, entry.Vector)));
+                    VectorSimilarity.CosineSimilarity(query.Span, entry.Vector, queryNorm, entry.Norm)));
             }
 
             return top.ToList();
         }
 
-        private sealed record Entry(string Category, float[] Vector);
+        private sealed record Entry(string Category, float[] Vector, float Norm);
     }
 }
