@@ -50,15 +50,19 @@ public sealed record OnlineEvaluationOptions
 /// <param name="Bucket">The bucket name, such as <c>text:never-seen</c>.</param>
 /// <param name="Documents">Number of rows in the bucket.</param>
 /// <param name="Accuracy">Top-1 accuracy in the bucket.</param>
+/// <param name="AccuracyAtK">Accuracy within the requested top-k in the bucket.</param>
 /// <param name="MacroF1">Macro-F1 over the categories present in the bucket.</param>
-/// <param name="Accuracy95">Block-bootstrap accuracy interval.</param>
+/// <param name="Accuracy95">Block-bootstrap top-1 accuracy interval.</param>
+/// <param name="AccuracyAtK95">Block-bootstrap top-k accuracy interval.</param>
 /// <param name="MacroF195">Block-bootstrap macro-F1 interval.</param>
 public sealed record OnlineBucketMetrics(
     string Bucket,
     int Documents,
     double Accuracy,
+    double AccuracyAtK,
     double MacroF1,
     ClassificationInterval Accuracy95,
+    ClassificationInterval AccuracyAtK95,
     ClassificationInterval MacroF195);
 
 /// <summary>The outcome of one predict-then-learn run.</summary>
@@ -491,22 +495,27 @@ public static class OnlineClassificationEvaluator
     {
         if (outcomes.Count == 0)
         {
-            return new OnlineBucketMetrics(name, 0, 0, 0, new(0, 0), new(0, 0));
+            return new OnlineBucketMetrics(name, 0, 0, 0, 0, new(0, 0), new(0, 0), new(0, 0));
         }
 
         int[] blocks = outcomes.Select(outcome => outcome.Block).ToArray();
         string[] actual = outcomes.Select(outcome => outcome.Actual).ToArray();
         string?[] predicted = outcomes.Select(outcome => outcome.Predicted).ToArray();
+        bool[] correctAtK = outcomes.Select(outcome => outcome.CorrectAtK).ToArray();
 
         EvaluationIntervals intervals = OnlineEvaluationStatistics.BootstrapBlocks(
             blocks, actual, predicted, options.BootstrapResamples, options.Seed);
+        ClassificationInterval atKInterval = OnlineEvaluationStatistics.BootstrapAccuracyBlocks(
+            blocks, correctAtK, options.BootstrapResamples, options.Seed);
 
         return new OnlineBucketMetrics(
             name,
             outcomes.Count,
             outcomes.Count(outcome => outcome.CorrectAt1) / (double)outcomes.Count,
+            outcomes.Count(outcome => outcome.CorrectAtK) / (double)outcomes.Count,
             PointMacroF1(outcomes),
             intervals.Accuracy,
+            atKInterval,
             intervals.MacroF1);
     }
 

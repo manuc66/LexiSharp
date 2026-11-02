@@ -10,8 +10,11 @@ internal sealed record OnlineBucketPin(
     string Bucket,
     int Documents,
     double Accuracy,
+    double AccuracyAtK,
     double MacroF1,
     double AccuracyLower,
+    double AccuracyAtKLower,
+    double AccuracyAtKUpper,
     double AccuracyUpper,
     double MacroF1Lower,
     double MacroF1Upper);
@@ -197,8 +200,8 @@ internal static class OnlineClassificationCommand
             $"accuracy@{report.TopK} {report.AccuracyAtK:F4} [{report.AccuracyAtK95.Lower:F4}, {report.AccuracyAtK95.Upper:F4}], " +
             $"macro-F1 {report.MacroF1:F4} [{report.MacroF195.Lower:F4}, {report.MacroF195.Upper:F4}]"));
 
-        PrintBuckets("text", report.TextBuckets);
-        PrintBuckets("category", report.CategoryBuckets);
+        PrintBuckets("text", report.TextBuckets, report.TopK);
+        PrintBuckets("category", report.CategoryBuckets, report.TopK);
 
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
@@ -225,7 +228,10 @@ internal static class OnlineClassificationCommand
         return options.VerifyPath is null ? 0 : Verify(pin, options.VerifyPath);
     }
 
-    private static void PrintBuckets(string dimension, IReadOnlyList<OnlineBucketMetrics> buckets)
+    private static void PrintBuckets(
+        string dimension,
+        IReadOnlyList<OnlineBucketMetrics> buckets,
+        int topK)
     {
         foreach (OnlineBucketMetrics bucket in buckets)
         {
@@ -233,6 +239,7 @@ internal static class OnlineClassificationCommand
                 CultureInfo.InvariantCulture,
                 $"  {dimension}:{bucket.Bucket[(bucket.Bucket.IndexOf(':') + 1)..],-14} " +
                 $"n={bucket.Documents,6} acc={bucket.Accuracy:F4} [{bucket.Accuracy95.Lower:F4}, {bucket.Accuracy95.Upper:F4}] " +
+                $"acc@{topK}={bucket.AccuracyAtK:F4} [{bucket.AccuracyAtK95.Lower:F4}, {bucket.AccuracyAtK95.Upper:F4}] " +
                 $"macro-F1={bucket.MacroF1:F4}"));
         }
     }
@@ -429,8 +436,11 @@ internal static class OnlineClassificationCommand
             bucket.Bucket,
             bucket.Documents,
             bucket.Accuracy,
+            bucket.AccuracyAtK,
             bucket.MacroF1,
             bucket.Accuracy95.Lower,
+            bucket.AccuracyAtK95.Lower,
+            bucket.AccuracyAtK95.Upper,
             bucket.Accuracy95.Upper,
             bucket.MacroF195.Lower,
             bucket.MacroF195.Upper);
@@ -519,6 +529,7 @@ internal static class OnlineClassificationCommand
             }
 
             CheckClose(expected[i].Accuracy, actual[i].Accuracy, $"{dimension}:{expected[i].Bucket}:accuracy", mismatches);
+            CheckClose(expected[i].AccuracyAtK, actual[i].AccuracyAtK, $"{dimension}:{expected[i].Bucket}:accuracyAtK", mismatches);
             CheckClose(expected[i].MacroF1, actual[i].MacroF1, $"{dimension}:{expected[i].Bucket}:macroF1", mismatches);
         }
     }
