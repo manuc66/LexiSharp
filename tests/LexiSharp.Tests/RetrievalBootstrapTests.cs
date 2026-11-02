@@ -89,6 +89,51 @@ public class RetrievalBootstrapTests
     }
 
     [Fact]
+    public void BootstrapInterval_CoversTheTrueMeanAtAboutNinetyFivePercent()
+    {
+        // A percentile bootstrap on a Bernoulli mean: the interval should contain the
+        // generating probability in roughly 95 % of replicates. This is a coverage check, not
+        // a bit-for-bit reference comparison; the bounds leave room for 300 replicates.
+        const int replicates = 300;
+        const int queries = 50;
+        const int resamples = 2_000;
+        const double truth = 0.6;
+
+        var random = new Random(20261102);
+        int covered = 0;
+
+        for (int replicate = 0; replicate < replicates; replicate++)
+        {
+            var outcomes = new QueryOutcome[queries];
+
+            for (int query = 0; query < queries; query++)
+            {
+                double value = random.NextDouble() < truth ? 1.0 : 0.0;
+                outcomes[query] = new QueryOutcome(
+                    $"q{query}", Array.Empty<string>(), 0, 1, value, value);
+            }
+
+            var result = new ConfigResult(
+                "A",
+                queries,
+                outcomes.Average(outcome => outcome.NdcgAt10),
+                0,
+                0,
+                0,
+                TimeSpan.Zero,
+                outcomes);
+
+            BootstrapRow row = RetrievalBootstrap.Compare(new[] { result }, "A", resamples).Single();
+
+            if (row.Lower <= truth && truth <= row.Upper)
+                covered++;
+        }
+
+        double coverage = covered / (double)replicates;
+        Assert.InRange(coverage, 0.90, 0.995);
+    }
+
+    [Fact]
     public void DifferentQuerySets_Throw()
     {
         ConfigResult first = Result("A", ("q1", 0.2), ("q2", 0.8));
