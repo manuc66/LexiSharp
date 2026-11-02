@@ -22,6 +22,17 @@
 
 ### Fixed
 
+- **A decoded-postings cache too small for a term no longer allocates 3.8 MB a query, and no longer
+  drops the term.** `SegmentTextIndex` allocated `int[df]` twice before asking the cache whether it
+  could keep the result, so on a 500,000-document store with the 200,000-entry budget the head term
+  (477,361 entries) allocated **3,825,832 bytes per search** — a large-object allocation on every
+  query — and the cache evicted it immediately, retaining nothing. The accumulation path then returned
+  as soon as the cache declined, so the term contributed nothing and the page came back empty. The
+  budget is now checked before the allocation, and a declined term falls through to the block walk.
+  Measured on the store lane: 9.98 ms and 3,825,832 B became 7.97 ms and 6,808 B, and
+  `CursorPassParityTests` pins the page against the in-memory index for a cache smaller than the term,
+  because the empty page is the failure and only a page comparison catches it.
+
 - **The search endpoint encodes the characters a document carries before they reach a page.**
   `highlightedText` is markup — the `<em>` tags sit inside the document's own text — and
   `LexiSharpSearchEndpoint.Handle` built its query options without `HighlightOptions`, so the core's
