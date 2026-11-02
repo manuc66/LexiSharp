@@ -89,7 +89,73 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
     /// non-empty (IVFFlat needs rows to cluster lists). Call <see cref="EnsureSchema"/> again
     /// after your first batch of inserts if you use IVFFlat.
     /// </remarks>
-    public void EnsureSchema() => EnsureSchemaAsync().GetAwaiter().GetResult();
+    public void EnsureSchema()
+    {
+        if (_schemaReady)
+            return;
+
+        using var connection = _dataSource.OpenConnection();
+
+        var baseOptions = new PostgresIndexOptions { Schema = _options.Schema, Table = _options.Table };
+
+        PostgresExtensionInstaller.Install(connection, "CREATE EXTENSION IF NOT EXISTS vector;");
+
+        PostgresSchema.CreateDocumentTable(connection, baseOptions);
+
+        foreach (string column in GetEmbeddingColumnNames())
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = $"ALTER TABLE {_options.QualifiedTableName} ADD COLUMN IF NOT EXISTS {SafeIdentifier.QuoteIdentifier(column)} {_options.VectorType};"; // NOSONAR:S2077
+            command.ExecuteNonQuery();
+        }
+
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = $"ALTER TABLE {_options.QualifiedTableName} ADD COLUMN IF NOT EXISTS text_fields jsonb;"; // NOSONAR:S2077
+            command.ExecuteNonQuery();
+        }
+
+        EnsureEmbeddingSignature(connection);
+
+        // CREATE INDEX runs on its own command: HNSW/IVFFlat builds must not be part of a
+        // multi-statement implicit transaction, and IVFFlat requires rows.
+        if (_options.IndexMethod == VectorIndexMethod.IvfFlat)
+        {
+            long rowCount;
+
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = $"SELECT COUNT(*) FROM {_options.QualifiedTableName}"; // NOSONAR:S2077
+
+                // IVFFlat needs rows before it can build, so the count is the one thing asked of the
+                // server here. A scalar that is not a long is worth naming, and the message is worth
+                // carrying the table: an unchecked cast raises InvalidCastException with neither.
+                var counted = command.ExecuteScalar();
+
+                if (counted is not long rows)
+                    throw new InvalidOperationException(
+                        $"COUNT(*) on '{_options.QualifiedTableName}' returned " +
+                        $"{counted?.ToString() ?? "null"}, which is not a row count.");
+
+                rowCount = rows;
+            }
+
+            if (rowCount == 0)
+                return;
+        }
+
+        foreach (string column in GetEmbeddingColumnNames())
+        {
+            // CTAS/index name derived from the column: embedding -> {table}_embedding_hnsw
+            // (legacy single column keeps its historical name), title_embedding -> {table}_title_embedding_hnsw.
+            string indexBase = column == LegacyEmbeddingColumn
+                ? $"{_options.Table}_embedding"
+                : $"{_options.Table}_{column}";
+            CreateIndex(connection, column, indexBase);
+        }
+
+        _schemaReady = true;
+    }
 
     /// <summary>Async variant of <see cref="EnsureSchema"/>.</summary>
     public async Task EnsureSchemaAsync(CancellationToken cancellationToken = default)
@@ -263,7 +329,109 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    private void EnsureEmbeddingSignature(NpgsqlConnection connection)
+    {
+        if (_embeddings is not IEmbeddingSignatureProvider signed || signed.EmbeddingSignature is null)
+            return;
+
+        string signature = signed.EmbeddingSignature;
+        string meta = MetaTableName;
+
+        // Two processes can create the same table concurrently; the advisory lock serializes the
+        // read-then-write of the signature row without needing the row to exist yet.
+        using NpgsqlTransaction transaction = connection.BeginTransaction();
+
+        Execute(connection, transaction, "SELECT pg_advisory_xact_lock(hashtext(@key));", meta);
+        Execute(connection, transaction, $"CREATE TABLE IF NOT EXISTS {meta} (key text PRIMARY KEY, value text NOT NULL);");
+
+        string? existing = ReadSignature(connection, transaction, meta);
+
+        if (!string.Equals(existing, signature, StringComparison.Ordinal))
+        {
+            if (existing is null)
+            {
+                long rows = CountRows(connection, transaction);
+
+                if (rows > 0 && !_options.AllowSignatureMismatch)
+                    throw new InvalidOperationException(
+                        $"The table '{_options.QualifiedTableName}' has {rows} row(s) but no embedding signature. " +
+                        "Its vectors cannot be tied to the current provider; re-embed the corpus, or set " +
+                        "AllowSignatureMismatch to adopt it knowingly.");
+            }
+            else if (!_options.AllowSignatureMismatch)
+            {
+                throw new InvalidOperationException(
+                    $"The table '{_options.QualifiedTableName}' was built with embedding signature '{existing}', " +
+                    $"not '{signature}'. Re-embed the corpus, or set AllowSignatureMismatch to adopt it knowingly.");
+            }
+
+            WriteSignature(connection, transaction, meta, signature, existing is null);
+        }
+
+        transaction.Commit();
+    }
+
+    private static void Execute(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string sql,
+        string? key = null)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql; // NOSONAR:S2077 (identifiers are validated and quoted; values are parameters)
+        if (key is not null)
+            command.Parameters.AddWithValue("key", key);
+        command.ExecuteNonQuery();
+    }
+
+    private static string? ReadSignature(NpgsqlConnection connection, NpgsqlTransaction transaction, string meta)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"SELECT value FROM {meta} WHERE key = 'embedding_signature';"; // NOSONAR:S2077
+        return (string?)command.ExecuteScalar();
+    }
+
+    private long CountRows(NpgsqlConnection connection, NpgsqlTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"SELECT COUNT(*) FROM {_options.QualifiedTableName};"; // NOSONAR:S2077
+        return (long)command.ExecuteScalar()!;
+    }
+
+    private static void WriteSignature(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string meta,
+        string signature,
+        bool insert)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = insert
+            ? $"INSERT INTO {meta} (key, value) VALUES ('embedding_signature', @signature) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;" // NOSONAR:S2077
+            : $"UPDATE {meta} SET value = @signature WHERE key = 'embedding_signature';"; // NOSONAR:S2077
+        command.Parameters.AddWithValue("signature", signature);
+        command.ExecuteNonQuery();
+    }
+
     private async Task CreateIndexAsync(NpgsqlConnection connection, string column, string indexBase, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = CreateIndexSql(column, indexBase); // NOSONAR:S2077
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private void CreateIndex(NpgsqlConnection connection, string column, string indexBase)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = CreateIndexSql(column, indexBase); // NOSONAR:S2077
+        command.ExecuteNonQuery();
+    }
+
+    private string CreateIndexSql(string column, string indexBase)
     {
         var indexName = SafeIdentifier.QuoteIdentifier($"{indexBase}_{_options.IndexMethod.ToString().ToLowerInvariant()}");
 
@@ -271,9 +439,7 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
             ? $"USING hnsw ({SafeIdentifier.QuoteIdentifier(column)} {_options.OpClass}) WITH (m = {_options.HnswM}, ef_construction = {_options.HnswEfConstruction})"
             : $"USING ivfflat ({SafeIdentifier.QuoteIdentifier(column)} {_options.OpClass}) WITH (lists = {_options.IvfLists})";
 
-        await using var command = connection.CreateCommand();
-        command.CommandText = $"CREATE INDEX IF NOT EXISTS {indexName} ON {_options.QualifiedTableName} {build}"; // NOSONAR:S2077
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        return $"CREATE INDEX IF NOT EXISTS {indexName} ON {_options.QualifiedTableName} {build}";
     }
 
     /// <summary>Drops the documents table (including the ANN and GIN indexes).</summary>

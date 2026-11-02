@@ -45,9 +45,32 @@ public static class PostgresSchema
 
         await using var command = connection.CreateCommand();
 
+        // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted).
+        command.CommandText = CreateDocumentTableSql(options); // NOSONAR:S2077
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Synchronous <see cref="CreateDocumentTableAsync"/>, for callers whose own API is synchronous.
+    /// </summary>
+    /// <param name="connection">An open connection.</param>
+    /// <param name="options">Naming and text-search options.</param>
+    internal static void CreateDocumentTable(NpgsqlConnection connection, PostgresIndexOptions options)
+    {
+        PostgresExtensionInstaller.Install(connection, "CREATE EXTENSION IF NOT EXISTS unaccent;");
+
+        using var command = connection.CreateCommand();
+
+        // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted).
+        command.CommandText = CreateDocumentTableSql(options); // NOSONAR:S2077
+        command.ExecuteNonQuery();
+    }
+
+    private static string CreateDocumentTableSql(PostgresIndexOptions options)
+    {
         string indexName = SafeIdentifier.QuoteIdentifier($"{options.Table}_tsv_gin");
 
-        string createSql = $"""
+        return $"""
             CREATE TABLE IF NOT EXISTS {options.QualifiedTableName} (
                 id       text PRIMARY KEY,
                 content  text NOT NULL,
@@ -58,10 +81,6 @@ public static class PostgresSchema
             );
             CREATE INDEX IF NOT EXISTS {indexName} ON {options.QualifiedTableName} USING GIN (tsv);
             """;
-
-        // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted).
-        command.CommandText = createSql; // NOSONAR:S2077
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

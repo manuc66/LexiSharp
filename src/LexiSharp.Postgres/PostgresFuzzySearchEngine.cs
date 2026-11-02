@@ -76,7 +76,45 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable, 
     /// Installs the required extensions (<c>pg_trgm</c>, optionally <c>fuzzystrmatch</c>), the
     /// shared documents table and the trigram index structures. Idempotent.
     /// </summary>
-    public void EnsureSchema() => EnsureSchemaAsync().GetAwaiter().GetResult();
+    public void EnsureSchema()
+    {
+        if (_schemaReady)
+            return;
+
+        using var connection = _dataSource.OpenConnection();
+
+        var baseOptions = new PostgresIndexOptions { Schema = _options.Schema, Table = _options.Table };
+
+        string extension = _options.UseLevenshteinRefinement || _options.IncludePhonetic
+            ? "CREATE EXTENSION IF NOT EXISTS pg_trgm; CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;"
+            : "CREATE EXTENSION IF NOT EXISTS pg_trgm;";
+
+        PostgresExtensionInstaller.Install(connection, extension);
+
+        PostgresSchema.CreateDocumentTable(connection, baseOptions);
+
+        if (_options.IncludePhonetic)
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = $"ALTER TABLE {_options.QualifiedTableName} ADD COLUMN IF NOT EXISTS metaphone text;"; // NOSONAR:S2077
+            command.ExecuteNonQuery();
+        }
+
+        if (_options.IndexKind is TrgmIndexKind.Gist or TrgmIndexKind.Both)
+            CreateIndex(connection, "gist", "USING GIST");
+
+        if (_options.IndexKind is TrgmIndexKind.Gin or TrgmIndexKind.Both)
+            CreateIndex(connection, "gin", "USING GIN");
+
+        if (_options.IncludePhonetic)
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = $"CREATE INDEX IF NOT EXISTS {SafeIdentifier.QuoteIdentifier($"{_options.Table}_metaphone_idx")} ON {_options.QualifiedTableName} (metaphone);"; // NOSONAR:S2077
+            command.ExecuteNonQuery();
+        }
+
+        _schemaReady = true;
+    }
 
     /// <summary>Async variant of <see cref="EnsureSchema"/>.</summary>
     public async Task EnsureSchemaAsync(CancellationToken cancellationToken = default)
@@ -276,12 +314,24 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable, 
         string accessMethod,
         CancellationToken cancellationToken)
     {
+        await using var command = connection.CreateCommand();
+        command.CommandText = CreateIndexSql(kind, accessMethod); // NOSONAR:S2077 (identifiers only, validated + quoted)
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private void CreateIndex(NpgsqlConnection connection, string kind, string accessMethod)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = CreateIndexSql(kind, accessMethod); // NOSONAR:S2077 (identifiers only, validated + quoted)
+        command.ExecuteNonQuery();
+    }
+
+    private string CreateIndexSql(string kind, string accessMethod)
+    {
         var indexName = SafeIdentifier.QuoteIdentifier($"{_options.Table}_{_options.ContentField}_trgm_{kind}");
         var opClass = kind == "gist" ? "gist_trgm_ops" : "gin_trgm_ops";
 
-        await using var command = connection.CreateCommand();
-command.CommandText = $"CREATE INDEX IF NOT EXISTS {indexName} ON {_options.QualifiedTableName} {accessMethod} ({_options.ContentField} {opClass});"; // NOSONAR:S2077 (identifiers only, validated + quoted)
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        return $"CREATE INDEX IF NOT EXISTS {indexName} ON {_options.QualifiedTableName} {accessMethod} ({_options.ContentField} {opClass});";
     }
 
     private string BuildSearchSql(string filterSql)

@@ -84,7 +84,27 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
     /// Installs the <c>vector</c> extension, the shared documents table (if needed), the
     /// <c>sparse sparsevec(n)</c> column and the HNSW index. Idempotent.
     /// </summary>
-    public void EnsureSchema() => EnsureSchemaAsync().GetAwaiter().GetResult();
+    public void EnsureSchema()
+    {
+        if (_schemaReady)
+            return;
+
+        using var connection = _dataSource.OpenConnection();
+
+        PostgresExtensionInstaller.Install(connection, "CREATE EXTENSION IF NOT EXISTS vector;");
+
+        var baseOptions = new PostgresIndexOptions { Schema = _options.Schema, Table = _options.Table };
+        PostgresSchema.CreateDocumentTable(connection, baseOptions);
+
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = $"ALTER TABLE {_options.QualifiedTableName} ADD COLUMN IF NOT EXISTS sparse {_options.SparseVectorType};"; // NOSONAR:S2077
+            command.ExecuteNonQuery();
+        }
+
+        CreateIndex(connection);
+        _schemaReady = true;
+    }
 
     /// <summary>Async variant of <see cref="EnsureSchema"/>.</summary>
     public async Task EnsureSchemaAsync(CancellationToken cancellationToken = default)
@@ -114,18 +134,31 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
 
     private async Task CreateIndexAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
     {
+        await using var command = connection.CreateCommand();
+
+        // Identifiers and integer options only are interpolated (validated + quoted).
+        command.CommandText = CreateIndexSql(); // NOSONAR:S2077
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private void CreateIndex(NpgsqlConnection connection)
+    {
+        using var command = connection.CreateCommand();
+
+        // Identifiers and integer options only are interpolated (validated + quoted).
+        command.CommandText = CreateIndexSql(); // NOSONAR:S2077
+        command.ExecuteNonQuery();
+    }
+
+    private string CreateIndexSql()
+    {
         var indexName = SafeIdentifier.QuoteIdentifier($"{_options.Table}_sparse_hnsw");
 
-        await using var command = connection.CreateCommand();
-        string createIndexSql = $"""
+        return $"""
             CREATE INDEX IF NOT EXISTS {indexName}
             ON {_options.QualifiedTableName} USING hnsw (sparse {_options.OpClass})
             WITH (m = {_options.HnswM}, ef_construction = {_options.HnswEfConstruction});
             """;
-
-        // Identifiers and integer options only are interpolated (validated + quoted).
-        command.CommandText = createIndexSql; // NOSONAR:S2077
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Drops the documents table (including the sparse HNSW and GIN indexes).</summary>
