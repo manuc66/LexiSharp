@@ -99,6 +99,17 @@ public class RetrievalMetricsTests
     }
 
     [Fact]
+    public void AveragePrecision_NormalizesByAllRelevantDocuments()
+    {
+        // trec_eval map_cut.2 on this qrels/run reads 0.6667, not 1: the denominator is
+        // the three relevant documents, not min(3, 2).
+        var retrieved = new[] { "a", "b", "c" };
+        var relevant = new[] { "a", "b", "c" };
+
+        Assert.Equal(2.0 / 3, RetrievalMetrics.AveragePrecisionAtK(retrieved, relevant, 2), 12);
+    }
+
+    [Fact]
     public void AveragePrecision_PerfectRanking_ScoresOne()
     {
         Assert.Equal(1, RetrievalMetrics.AveragePrecisionAtK(Relevant, Relevant, 3), 12);
@@ -109,8 +120,8 @@ public class RetrievalMetricsTests
     {
         var retrieved = new[] { "a", "b" };
 
-        // Only "b" hits within k=2: precision 1/2, normalized by min(3, 2) = 2.
-        Assert.Equal(0.5 / 2, RetrievalMetrics.AveragePrecisionAtK(retrieved, Relevant, 2), 12);
+        // Only "b" hits within k=2: precision 1/2, normalized by the 3 relevant documents.
+        Assert.Equal(0.5 / 3, RetrievalMetrics.AveragePrecisionAtK(retrieved, Relevant, 2), 12);
     }
 
     [Fact]

@@ -187,7 +187,10 @@ public static class RetrievalMetrics
 
     /// <summary>
     /// Average precision at <c>k</c>: the mean of the precisions observed at every relevant hit
-    /// within the first <c>k</c> positions, normalized by <c>min(|relevant|, k)</c>. Average
+    /// within the first <c>k</c> positions, normalized by the number of relevant documents — the
+    /// <c>trec_eval</c> <c>map_cut</c> and <c>ir_measures</c> convention. A perfect top-k is
+    /// therefore not 1 when more relevant documents sit beyond <c>k</c>, which is the intended
+    /// penalty: the metric measures the whole relevant set, not only the slice it saw. Average
     /// this over a validation set to get MAP (Mean Average Precision).
     /// </summary>
     public static double AveragePrecisionAtK(IReadOnlyCollection<string> retrievedIds, IReadOnlyCollection<string> relevantIds, int k)
@@ -222,7 +225,7 @@ public static class RetrievalMetrics
             rank++;
         }
 
-        return precisionSum / Math.Min(relevantIds.Count, k);
+        return precisionSum / relevantIds.Count;
     }
 
     private static int CountMatches(IReadOnlyCollection<string> retrievedIds, IReadOnlyCollection<string> relevantIds, int k)
