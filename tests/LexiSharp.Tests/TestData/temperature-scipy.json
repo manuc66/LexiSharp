@@ -1,0 +1,3903 @@
+{
+  "source": "scipy.optimize.minimize_scalar",
+  "version": "1.18.1",
+  "note": "Objective: mean negative log-likelihood after softmax(log(p) / T).",
+  "cases": [
+    {
+      "name": "temperature-0",
+      "samples": [
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.8451470839507673
+            },
+            {
+              "category": "c1",
+              "probability": 0.15485291604923276
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.5036263230347479
+            },
+            {
+              "category": "c1",
+              "probability": 0.49637367696525203
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.8608256777672687
+            },
+            {
+              "category": "c1",
+              "probability": 0.1391743222327312
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.9618822482796519
+            },
+            {
+              "category": "c1",
+              "probability": 0.03811775172034811
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.7496573433142202
+            },
+            {
+              "category": "c1",
+              "probability": 0.2503426566857798
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.30421058891428093
+            },
+            {
+              "category": "c1",
+              "probability": 0.695789411085719
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.513886844393344
+            },
+            {
+              "category": "c1",
+              "probability": 0.486113155606656
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.11928358115645872
+            },
+            {
+              "category": "c1",
+              "probability": 0.8807164188435413
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.7873385433011825
+            },
+            {
+              "category": "c1",
+              "probability": 0.21266145669881759
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.04743430730745144
+            },
+            {
+              "category": "c1",
+              "probability": 0.9525656926925485
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.6919807790686793
+            },
+            {
+              "category": "c1",
+              "probability": 0.3080192209313208
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.07290474011329251
+            },
+            {
+              "category": "c1",
+              "probability": 0.9270952598867075
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.8318858137732871
+            },
+            {
+              "category": "c1",
+              "probability": 0.16811418622671292
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.8441824069095185
+            },
+            {
+              "category": "c1",
+              "probability": 0.15581759309048143
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.02287293994252157
+            },
+            {
+              "category": "c1",
+              "probability": 0.9771270600574784
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.311113279170089
+            },
+            {
+              "category": "c1",
+              "probability": 0.688886720829911
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.016132685114705923
+            },
+            {
+              "category": "c1",
+              "probability": 0.9838673148852941
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.4814276677673006
+            },
+            {
+              "category": "c1",
+              "probability": 0.5185723322326994
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.14961440074310214
+            },
+            {
+              "category": "c1",
+              "probability": 0.8503855992568978
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.3134611398702653
+            },
+            {
+              "category": "c1",
+              "probability": 0.6865388601297348
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.6659294056741952
+            },
+            {
+              "category": "c1",
+              "probability": 0.3340705943258048
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.08993099847005204
+            },
+            {
+              "category": "c1",
+              "probability": 0.9100690015299479
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.8947981629665284
+            },
+            {
+              "category": "c1",
+              "probability": 0.10520183703347158
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.3883667616291203
+            },
+            {
+              "category": "c1",
+              "probability": 0.6116332383708798
+            }
+          ]
+        }
+      ],
+      "expectedTemperature": 2.735786940617389,
+      "expectedLogLoss": 0.6375593179218537
+    },
+    {
+      "name": "temperature-1",
+      "samples": [
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.018225940414349072
+            },
+            {
+              "category": "c1",
+              "probability": 0.781441036074182
+            },
+            {
+              "category": "c2",
+              "probability": 0.20033302351146892
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.6574357998829784
+            },
+            {
+              "category": "c1",
+              "probability": 0.24811698816459368
+            },
+            {
+              "category": "c2",
+              "probability": 0.09444721195242796
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.038288706747010355
+            },
+            {
+              "category": "c1",
+              "probability": 0.9483905130884824
+            },
+            {
+              "category": "c2",
+              "probability": 0.013320780164507176
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.2019038229747157
+            },
+            {
+              "category": "c1",
+              "probability": 0.029008789351605276
+            },
+            {
+              "category": "c2",
+              "probability": 0.769087387673679
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.7137980893640818
+            },
+            {
+              "category": "c1",
+              "probability": 0.06314994746319175
+            },
+            {
+              "category": "c2",
+              "probability": 0.2230519631727263
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.3043194329418608
+            },
+            {
+              "category": "c1",
+              "probability": 0.4461622483155484
+            },
+            {
+              "category": "c2",
+              "probability": 0.24951831874259078
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.09284225545589637
+            },
+            {
+              "category": "c1",
+              "probability": 0.03767204958940264
+            },
+            {
+              "category": "c2",
+              "probability": 0.8694856949547011
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.5229749244576817
+            },
+            {
+              "category": "c1",
+              "probability": 0.3388143365465318
+            },
+            {
+              "category": "c2",
+              "probability": 0.13821073899578648
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.3033883215751501
+            },
+            {
+              "category": "c1",
+              "probability": 0.48086426823809064
+            },
+            {
+              "category": "c2",
+              "probability": 0.21574741018675933
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.741281498333918
+            },
+            {
+              "category": "c1",
+              "probability": 0.14197911990411322
+            },
+            {
+              "category": "c2",
+              "probability": 0.1167393817619688
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.9573661598843612
+            },
+            {
+              "category": "c1",
+              "probability": 0.011707985721913434
+            },
+            {
+              "category": "c2",
+              "probability": 0.03092585439372522
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.40716078598631955
+            },
+            {
+              "category": "c1",
+              "probability": 0.16590129737428033
+            },
+            {
+              "category": "c2",
+              "probability": 0.4269379166394001
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.8365018620811944
+            },
+            {
+              "category": "c1",
+              "probability": 0.15173306106581586
+            },
+            {
+              "category": "c2",
+              "probability": 0.011765076852989763
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.22636314591906737
+            },
+            {
+              "category": "c1",
+              "probability": 0.20814920459290848
+            },
+            {
+              "category": "c2",
+              "probability": 0.5654876494880242
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.04268456519053722
+            },
+            {
+              "category": "c1",
+              "probability": 0.15607328612861696
+            },
+            {
+              "category": "c2",
+              "probability": 0.8012421486808459
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.9991921462109956
+            },
+            {
+              "category": "c1",
+              "probability": 0.0007308898125337587
+            },
+            {
+              "category": "c2",
+              "probability": 7.696397647060536e-05
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.03552542095180931
+            },
+            {
+              "category": "c1",
+              "probability": 0.9008700322932868
+            },
+            {
+              "category": "c2",
+              "probability": 0.06360454675490387
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.803612586548839
+            },
+            {
+              "category": "c1",
+              "probability": 0.18766792047851288
+            },
+            {
+              "category": "c2",
+              "probability": 0.008719492972648003
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.21021952701217142
+            },
+            {
+              "category": "c1",
+              "probability": 0.03308866264014824
+            },
+            {
+              "category": "c2",
+              "probability": 0.7566918103476803
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.5992013739421111
+            },
+            {
+              "category": "c1",
+              "probability": 0.3242501096821128
+            },
+            {
+              "category": "c2",
+              "probability": 0.07654851637577592
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.009878960310196474
+            },
+            {
+              "category": "c1",
+              "probability": 0.7601834407603589
+            },
+            {
+              "category": "c2",
+              "probability": 0.22993759892944454
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.054622108034575456
+            },
+            {
+              "category": "c1",
+              "probability": 0.6075148390333551
+            },
+            {
+              "category": "c2",
+              "probability": 0.3378630529320694
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.026935071054315994
+            },
+            {
+              "category": "c1",
+              "probability": 0.058240221659947314
+            },
+            {
+              "category": "c2",
+              "probability": 0.9148247072857366
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.04737606308206498
+            },
+            {
+              "category": "c1",
+              "probability": 0.4136102461997909
+            },
+            {
+              "category": "c2",
+              "probability": 0.5390136907181441
+            }
+          ]
+        }
+      ],
+      "expectedTemperature": 9.99999973840894,
+      "expectedLogLoss": 1.1066564027037462
+    },
+    {
+      "name": "temperature-2",
+      "samples": [
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.6988726147253498
+            },
+            {
+              "category": "c1",
+              "probability": 0.10946960736037498
+            },
+            {
+              "category": "c2",
+              "probability": 0.12740449093471093
+            },
+            {
+              "category": "c3",
+              "probability": 0.06425328697956441
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.023684419690088956
+            },
+            {
+              "category": "c1",
+              "probability": 0.1346604547966117
+            },
+            {
+              "category": "c2",
+              "probability": 0.19096395712063374
+            },
+            {
+              "category": "c3",
+              "probability": 0.6506911683926655
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.0027588538053977124
+            },
+            {
+              "category": "c1",
+              "probability": 0.07403692796338696
+            },
+            {
+              "category": "c2",
+              "probability": 0.8996093344079913
+            },
+            {
+              "category": "c3",
+              "probability": 0.023594883823224142
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.5672396796062417
+            },
+            {
+              "category": "c1",
+              "probability": 0.15312751775010439
+            },
+            {
+              "category": "c2",
+              "probability": 0.032721958644803456
+            },
+            {
+              "category": "c3",
+              "probability": 0.24691084399885055
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.4658030969892488
+            },
+            {
+              "category": "c1",
+              "probability": 0.47518428116771555
+            },
+            {
+              "category": "c2",
+              "probability": 0.02484920124409285
+            },
+            {
+              "category": "c3",
+              "probability": 0.0341634205989429
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.5717356519573573
+            },
+            {
+              "category": "c1",
+              "probability": 0.01698118129300934
+            },
+            {
+              "category": "c2",
+              "probability": 0.39549388696524657
+            },
+            {
+              "category": "c3",
+              "probability": 0.015789279784386847
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.14319166214457468
+            },
+            {
+              "category": "c1",
+              "probability": 0.2919440054464027
+            },
+            {
+              "category": "c2",
+              "probability": 0.4109399709414749
+            },
+            {
+              "category": "c3",
+              "probability": 0.1539243614675478
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.18990611696917925
+            },
+            {
+              "category": "c1",
+              "probability": 0.11141221145924074
+            },
+            {
+              "category": "c2",
+              "probability": 0.05531316815172577
+            },
+            {
+              "category": "c3",
+              "probability": 0.6433685034198542
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.39226094133301276
+            },
+            {
+              "category": "c1",
+              "probability": 0.013535522247194943
+            },
+            {
+              "category": "c2",
+              "probability": 0.022171792081795386
+            },
+            {
+              "category": "c3",
+              "probability": 0.5720317443379969
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.1725908295553593
+            },
+            {
+              "category": "c1",
+              "probability": 0.5585953182025353
+            },
+            {
+              "category": "c2",
+              "probability": 0.13641226839556192
+            },
+            {
+              "category": "c3",
+              "probability": 0.13240158384654355
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.43789777352096043
+            },
+            {
+              "category": "c1",
+              "probability": 0.24494561101275442
+            },
+            {
+              "category": "c2",
+              "probability": 0.06862271877565106
+            },
+            {
+              "category": "c3",
+              "probability": 0.24853389669063405
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.006107163141072095
+            },
+            {
+              "category": "c1",
+              "probability": 0.024794212146375217
+            },
+            {
+              "category": "c2",
+              "probability": 0.7049530529359943
+            },
+            {
+              "category": "c3",
+              "probability": 0.2641455717765584
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.0042284448708747166
+            },
+            {
+              "category": "c1",
+              "probability": 0.003336373685270934
+            },
+            {
+              "category": "c2",
+              "probability": 0.9912416269712249
+            },
+            {
+              "category": "c3",
+              "probability": 0.0011935544726293947
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.34997811790045336
+            },
+            {
+              "category": "c1",
+              "probability": 0.4597039648657091
+            },
+            {
+              "category": "c2",
+              "probability": 0.10602357633741522
+            },
+            {
+              "category": "c3",
+              "probability": 0.08429434089642236
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.0030566258071705603
+            },
+            {
+              "category": "c1",
+              "probability": 0.02839274959882233
+            },
+            {
+              "category": "c2",
+              "probability": 0.9338010682259434
+            },
+            {
+              "category": "c3",
+              "probability": 0.034749556368063726
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.12585857061849356
+            },
+            {
+              "category": "c1",
+              "probability": 0.0202064723718484
+            },
+            {
+              "category": "c2",
+              "probability": 0.843107216332283
+            },
+            {
+              "category": "c3",
+              "probability": 0.010827740677375037
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.12317932720691428
+            },
+            {
+              "category": "c1",
+              "probability": 0.035871409497930676
+            },
+            {
+              "category": "c2",
+              "probability": 0.141543197531842
+            },
+            {
+              "category": "c3",
+              "probability": 0.699406065763313
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.08425319698785723
+            },
+            {
+              "category": "c1",
+              "probability": 0.05518334154939954
+            },
+            {
+              "category": "c2",
+              "probability": 0.1207469981884719
+            },
+            {
+              "category": "c3",
+              "probability": 0.7398164632742714
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.021724145221894118
+            },
+            {
+              "category": "c1",
+              "probability": 0.05291528148212761
+            },
+            {
+              "category": "c2",
+              "probability": 0.8100008381051015
+            },
+            {
+              "category": "c3",
+              "probability": 0.1153597351908769
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.07839404339198008
+            },
+            {
+              "category": "c1",
+              "probability": 0.17706303821500252
+            },
+            {
+              "category": "c2",
+              "probability": 0.1291527696146671
+            },
+            {
+              "category": "c3",
+              "probability": 0.6153901487783503
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.11018911363220155
+            },
+            {
+              "category": "c1",
+              "probability": 0.014686635589521019
+            },
+            {
+              "category": "c2",
+              "probability": 0.8006853290262773
+            },
+            {
+              "category": "c3",
+              "probability": 0.07443892175200016
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.03378363599834471
+            },
+            {
+              "category": "c1",
+              "probability": 0.3742404735482098
+            },
+            {
+              "category": "c2",
+              "probability": 0.5758962582344652
+            },
+            {
+              "category": "c3",
+              "probability": 0.016079632218980344
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.22558568957812838
+            },
+            {
+              "category": "c1",
+              "probability": 0.352494323186848
+            },
+            {
+              "category": "c2",
+              "probability": 0.23892283615536064
+            },
+            {
+              "category": "c3",
+              "probability": 0.182997151079663
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.2694825619911998
+            },
+            {
+              "category": "c1",
+              "probability": 0.48987334827867623
+            },
+            {
+              "category": "c2",
+              "probability": 0.04586276434079347
+            },
+            {
+              "category": "c3",
+              "probability": 0.19478132538933057
+            }
+          ]
+        }
+      ],
+      "expectedTemperature": 3.7427930608544826,
+      "expectedLogLoss": 1.3188737361383402
+    },
+    {
+      "name": "temperature-3",
+      "samples": [
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.8267281360490025
+            },
+            {
+              "category": "c1",
+              "probability": 0.012089462227182803
+            },
+            {
+              "category": "c2",
+              "probability": 0.014752386012607336
+            },
+            {
+              "category": "c3",
+              "probability": 0.14643001571120734
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.5888870741789273
+            },
+            {
+              "category": "c1",
+              "probability": 0.10090654197522309
+            },
+            {
+              "category": "c2",
+              "probability": 0.08008879942463987
+            },
+            {
+              "category": "c3",
+              "probability": 0.23011758442120986
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.020510496318608244
+            },
+            {
+              "category": "c1",
+              "probability": 0.9435303281049846
+            },
+            {
+              "category": "c2",
+              "probability": 0.032271469260172644
+            },
+            {
+              "category": "c3",
+              "probability": 0.003687706316234447
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.49115561759901566
+            },
+            {
+              "category": "c1",
+              "probability": 0.0799622945527524
+            },
+            {
+              "category": "c2",
+              "probability": 0.37470103550495115
+            },
+            {
+              "category": "c3",
+              "probability": 0.054181052343280814
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.01191037045717164
+            },
+            {
+              "category": "c1",
+              "probability": 0.07897356644810022
+            },
+            {
+              "category": "c2",
+              "probability": 0.47637358715155237
+            },
+            {
+              "category": "c3",
+              "probability": 0.4327424759431758
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.012310212044910862
+            },
+            {
+              "category": "c1",
+              "probability": 0.611916001135392
+            },
+            {
+              "category": "c2",
+              "probability": 0.07480563935692892
+            },
+            {
+              "category": "c3",
+              "probability": 0.30096814746276823
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.11387785409528123
+            },
+            {
+              "category": "c1",
+              "probability": 0.027451015708668078
+            },
+            {
+              "category": "c2",
+              "probability": 0.16099201995917292
+            },
+            {
+              "category": "c3",
+              "probability": 0.6976791102368778
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.08158056611440657
+            },
+            {
+              "category": "c1",
+              "probability": 0.11371953317411108
+            },
+            {
+              "category": "c2",
+              "probability": 0.6678170528315296
+            },
+            {
+              "category": "c3",
+              "probability": 0.13688284787995272
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.01036639483554356
+            },
+            {
+              "category": "c1",
+              "probability": 0.33050089379033737
+            },
+            {
+              "category": "c2",
+              "probability": 0.4880988563672862
+            },
+            {
+              "category": "c3",
+              "probability": 0.17103385500683282
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.140037167084447
+            },
+            {
+              "category": "c1",
+              "probability": 0.5237577973423944
+            },
+            {
+              "category": "c2",
+              "probability": 0.22353905878454133
+            },
+            {
+              "category": "c3",
+              "probability": 0.11266597678861727
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.13140821821032367
+            },
+            {
+              "category": "c1",
+              "probability": 0.06694023186388635
+            },
+            {
+              "category": "c2",
+              "probability": 0.7846918857491102
+            },
+            {
+              "category": "c3",
+              "probability": 0.01695966417667976
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.22274954728517118
+            },
+            {
+              "category": "c1",
+              "probability": 0.006023322516412821
+            },
+            {
+              "category": "c2",
+              "probability": 0.29824739951007906
+            },
+            {
+              "category": "c3",
+              "probability": 0.47297973068833693
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.7349544030013206
+            },
+            {
+              "category": "c1",
+              "probability": 0.0968597803845031
+            },
+            {
+              "category": "c2",
+              "probability": 0.02940785114925196
+            },
+            {
+              "category": "c3",
+              "probability": 0.13877796546492435
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.8315391629171721
+            },
+            {
+              "category": "c1",
+              "probability": 0.028792525381991587
+            },
+            {
+              "category": "c2",
+              "probability": 0.1082981458535582
+            },
+            {
+              "category": "c3",
+              "probability": 0.03137016584727816
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.030188327463063203
+            },
+            {
+              "category": "c1",
+              "probability": 0.3399036573986302
+            },
+            {
+              "category": "c2",
+              "probability": 0.11506656746361822
+            },
+            {
+              "category": "c3",
+              "probability": 0.5148414476746884
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.0813444454686842
+            },
+            {
+              "category": "c1",
+              "probability": 0.2144486890295623
+            },
+            {
+              "category": "c2",
+              "probability": 0.6630540758030689
+            },
+            {
+              "category": "c3",
+              "probability": 0.04115278969868459
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.3810029113207878
+            },
+            {
+              "category": "c1",
+              "probability": 0.5421483429367254
+            },
+            {
+              "category": "c2",
+              "probability": 0.028702701013442085
+            },
+            {
+              "category": "c3",
+              "probability": 0.04814604472904479
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.048697017372293434
+            },
+            {
+              "category": "c1",
+              "probability": 0.048789927458801535
+            },
+            {
+              "category": "c2",
+              "probability": 0.3762823272948977
+            },
+            {
+              "category": "c3",
+              "probability": 0.5262307278740073
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.36950454355014684
+            },
+            {
+              "category": "c1",
+              "probability": 0.12588831160447445
+            },
+            {
+              "category": "c2",
+              "probability": 0.012596118800380498
+            },
+            {
+              "category": "c3",
+              "probability": 0.4920110260449983
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.05641491777252309
+            },
+            {
+              "category": "c1",
+              "probability": 0.46537812121958105
+            },
+            {
+              "category": "c2",
+              "probability": 0.30178512635891924
+            },
+            {
+              "category": "c3",
+              "probability": 0.1764218346489766
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.03486754665610797
+            },
+            {
+              "category": "c1",
+              "probability": 0.20503089596089538
+            },
+            {
+              "category": "c2",
+              "probability": 0.08931187670851382
+            },
+            {
+              "category": "c3",
+              "probability": 0.6707896806744829
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.24229760568132053
+            },
+            {
+              "category": "c1",
+              "probability": 0.0612515432143489
+            },
+            {
+              "category": "c2",
+              "probability": 0.6735108529556207
+            },
+            {
+              "category": "c3",
+              "probability": 0.022939998148709922
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.04281023036652634
+            },
+            {
+              "category": "c1",
+              "probability": 0.5852269972292772
+            },
+            {
+              "category": "c2",
+              "probability": 0.25401640713877055
+            },
+            {
+              "category": "c3",
+              "probability": 0.11794636526542598
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.12858830672359375
+            },
+            {
+              "category": "c1",
+              "probability": 0.039617429134274816
+            },
+            {
+              "category": "c2",
+              "probability": 0.443707844566064
+            },
+            {
+              "category": "c3",
+              "probability": 0.38808641957606743
+            }
+          ]
+        }
+      ],
+      "expectedTemperature": 9.999999779001527,
+      "expectedLogLoss": 1.4094675823538199
+    },
+    {
+      "name": "temperature-4",
+      "samples": [
+        {
+          "actual": "c4",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.047465760927477445
+            },
+            {
+              "category": "c1",
+              "probability": 0.12199389376319271
+            },
+            {
+              "category": "c2",
+              "probability": 0.026230480892894092
+            },
+            {
+              "category": "c3",
+              "probability": 0.26083655962710306
+            },
+            {
+              "category": "c4",
+              "probability": 0.5434733047893326
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.12852302976431598
+            },
+            {
+              "category": "c1",
+              "probability": 0.11077587528885541
+            },
+            {
+              "category": "c2",
+              "probability": 0.2659461990451687
+            },
+            {
+              "category": "c3",
+              "probability": 0.4407780498665276
+            },
+            {
+              "category": "c4",
+              "probability": 0.053976846035132364
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.010092168948903189
+            },
+            {
+              "category": "c1",
+              "probability": 0.3613715576386992
+            },
+            {
+              "category": "c2",
+              "probability": 0.2884799609289908
+            },
+            {
+              "category": "c3",
+              "probability": 0.03079955754829471
+            },
+            {
+              "category": "c4",
+              "probability": 0.30925675493511207
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.39500484400373487
+            },
+            {
+              "category": "c1",
+              "probability": 0.10188613409441735
+            },
+            {
+              "category": "c2",
+              "probability": 0.18542303909818558
+            },
+            {
+              "category": "c3",
+              "probability": 0.08009887495769853
+            },
+            {
+              "category": "c4",
+              "probability": 0.2375871078459638
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.059015362176764036
+            },
+            {
+              "category": "c1",
+              "probability": 0.030597494780325318
+            },
+            {
+              "category": "c2",
+              "probability": 0.08146807399590031
+            },
+            {
+              "category": "c3",
+              "probability": 0.821414310534653
+            },
+            {
+              "category": "c4",
+              "probability": 0.007504758512357246
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.07989432076224737
+            },
+            {
+              "category": "c1",
+              "probability": 0.13595347908336744
+            },
+            {
+              "category": "c2",
+              "probability": 0.017982083094578334
+            },
+            {
+              "category": "c3",
+              "probability": 0.7142849821383136
+            },
+            {
+              "category": "c4",
+              "probability": 0.051885134921493235
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.5204281874953479
+            },
+            {
+              "category": "c1",
+              "probability": 0.2626780697220786
+            },
+            {
+              "category": "c2",
+              "probability": 0.10173129133687178
+            },
+            {
+              "category": "c3",
+              "probability": 0.048919101775841425
+            },
+            {
+              "category": "c4",
+              "probability": 0.06624334966986029
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.010096671677114496
+            },
+            {
+              "category": "c1",
+              "probability": 0.050177230430115315
+            },
+            {
+              "category": "c2",
+              "probability": 0.5676479761479116
+            },
+            {
+              "category": "c3",
+              "probability": 0.33246235584733513
+            },
+            {
+              "category": "c4",
+              "probability": 0.03961576589752343
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.015824954741240623
+            },
+            {
+              "category": "c1",
+              "probability": 0.2625639205193381
+            },
+            {
+              "category": "c2",
+              "probability": 0.5952028213728949
+            },
+            {
+              "category": "c3",
+              "probability": 0.037968832397987234
+            },
+            {
+              "category": "c4",
+              "probability": 0.08843947096853914
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.14495818708938424
+            },
+            {
+              "category": "c1",
+              "probability": 0.5757764885223287
+            },
+            {
+              "category": "c2",
+              "probability": 0.03985874763200458
+            },
+            {
+              "category": "c3",
+              "probability": 0.01494300255663143
+            },
+            {
+              "category": "c4",
+              "probability": 0.2244635741996511
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.07305469937001069
+            },
+            {
+              "category": "c1",
+              "probability": 0.6906824575440277
+            },
+            {
+              "category": "c2",
+              "probability": 0.013743000791493144
+            },
+            {
+              "category": "c3",
+              "probability": 0.0378425104947592
+            },
+            {
+              "category": "c4",
+              "probability": 0.18467733179970922
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.08396555987888421
+            },
+            {
+              "category": "c1",
+              "probability": 0.1878310114076105
+            },
+            {
+              "category": "c2",
+              "probability": 0.18784919782713425
+            },
+            {
+              "category": "c3",
+              "probability": 0.47305931860568695
+            },
+            {
+              "category": "c4",
+              "probability": 0.06729491228068404
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.03675115194618251
+            },
+            {
+              "category": "c1",
+              "probability": 0.5680553540217838
+            },
+            {
+              "category": "c2",
+              "probability": 0.10748732420193026
+            },
+            {
+              "category": "c3",
+              "probability": 0.2293014958496116
+            },
+            {
+              "category": "c4",
+              "probability": 0.05840467398049181
+            }
+          ]
+        },
+        {
+          "actual": "c4",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.06728525897251972
+            },
+            {
+              "category": "c1",
+              "probability": 0.24948383264581997
+            },
+            {
+              "category": "c2",
+              "probability": 0.3967696161228817
+            },
+            {
+              "category": "c3",
+              "probability": 0.2267114132518843
+            },
+            {
+              "category": "c4",
+              "probability": 0.05974987900689435
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.7027925606640214
+            },
+            {
+              "category": "c1",
+              "probability": 0.01167332051652503
+            },
+            {
+              "category": "c2",
+              "probability": 0.0011456903956700642
+            },
+            {
+              "category": "c3",
+              "probability": 0.26482192923753217
+            },
+            {
+              "category": "c4",
+              "probability": 0.01956649918625123
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.09603198094293916
+            },
+            {
+              "category": "c1",
+              "probability": 0.048802499076587895
+            },
+            {
+              "category": "c2",
+              "probability": 0.19196801111759582
+            },
+            {
+              "category": "c3",
+              "probability": 0.5697789336062974
+            },
+            {
+              "category": "c4",
+              "probability": 0.09341857525657976
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.2465872223503879
+            },
+            {
+              "category": "c1",
+              "probability": 0.08165708268868799
+            },
+            {
+              "category": "c2",
+              "probability": 0.32896805806725715
+            },
+            {
+              "category": "c3",
+              "probability": 0.22296526100267486
+            },
+            {
+              "category": "c4",
+              "probability": 0.1198223758909921
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.10191601146295767
+            },
+            {
+              "category": "c1",
+              "probability": 0.03385642340702924
+            },
+            {
+              "category": "c2",
+              "probability": 0.6119625550998857
+            },
+            {
+              "category": "c3",
+              "probability": 0.0066444353103389244
+            },
+            {
+              "category": "c4",
+              "probability": 0.24562057471978838
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.07000361722667778
+            },
+            {
+              "category": "c1",
+              "probability": 0.07841953052675235
+            },
+            {
+              "category": "c2",
+              "probability": 0.20713509808038005
+            },
+            {
+              "category": "c3",
+              "probability": 0.5590578950269561
+            },
+            {
+              "category": "c4",
+              "probability": 0.08538385913923364
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.5326944922696404
+            },
+            {
+              "category": "c1",
+              "probability": 0.013088191673661393
+            },
+            {
+              "category": "c2",
+              "probability": 0.3886085793476548
+            },
+            {
+              "category": "c3",
+              "probability": 0.027996569329185976
+            },
+            {
+              "category": "c4",
+              "probability": 0.037612167379857536
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.13063768088015912
+            },
+            {
+              "category": "c1",
+              "probability": 0.24381681976925196
+            },
+            {
+              "category": "c2",
+              "probability": 0.0347579232083093
+            },
+            {
+              "category": "c3",
+              "probability": 0.5110388511214744
+            },
+            {
+              "category": "c4",
+              "probability": 0.07974872502080528
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.05477525040873422
+            },
+            {
+              "category": "c1",
+              "probability": 0.03453493723935608
+            },
+            {
+              "category": "c2",
+              "probability": 0.39858462223005503
+            },
+            {
+              "category": "c3",
+              "probability": 0.4948050313608009
+            },
+            {
+              "category": "c4",
+              "probability": 0.017300158761053765
+            }
+          ]
+        },
+        {
+          "actual": "c4",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.36836975436613606
+            },
+            {
+              "category": "c1",
+              "probability": 0.0073666781887655585
+            },
+            {
+              "category": "c2",
+              "probability": 0.3190276758044228
+            },
+            {
+              "category": "c3",
+              "probability": 0.19538133103650124
+            },
+            {
+              "category": "c4",
+              "probability": 0.10985456060417437
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.26083162509791336
+            },
+            {
+              "category": "c1",
+              "probability": 0.20790201601953298
+            },
+            {
+              "category": "c2",
+              "probability": 0.1986226430376865
+            },
+            {
+              "category": "c3",
+              "probability": 0.3185643840818642
+            },
+            {
+              "category": "c4",
+              "probability": 0.01407933176300303
+            }
+          ]
+        }
+      ],
+      "expectedTemperature": 1.4857925676300863,
+      "expectedLogLoss": 1.358130253859187
+    },
+    {
+      "name": "temperature-5",
+      "samples": [
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.700850302102024
+            },
+            {
+              "category": "c1",
+              "probability": 0.24676664399527673
+            },
+            {
+              "category": "c2",
+              "probability": 0.052383053902699254
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.008649322801675331
+            },
+            {
+              "category": "c1",
+              "probability": 0.966436586011614
+            },
+            {
+              "category": "c2",
+              "probability": 0.02491409118671064
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.802367466875357
+            },
+            {
+              "category": "c1",
+              "probability": 0.15822412118687165
+            },
+            {
+              "category": "c2",
+              "probability": 0.03940841193777136
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.07785238183128569
+            },
+            {
+              "category": "c1",
+              "probability": 0.8943886771618155
+            },
+            {
+              "category": "c2",
+              "probability": 0.027758941006898907
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.45419771830047756
+            },
+            {
+              "category": "c1",
+              "probability": 0.12000923389116071
+            },
+            {
+              "category": "c2",
+              "probability": 0.4257930478083617
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.043938043423244255
+            },
+            {
+              "category": "c1",
+              "probability": 0.871778887867372
+            },
+            {
+              "category": "c2",
+              "probability": 0.08428306870938373
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.8493304579614166
+            },
+            {
+              "category": "c1",
+              "probability": 0.12590250664399075
+            },
+            {
+              "category": "c2",
+              "probability": 0.024767035394592782
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.2378445645242674
+            },
+            {
+              "category": "c1",
+              "probability": 0.17515960346672846
+            },
+            {
+              "category": "c2",
+              "probability": 0.5869958320090042
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.011670885142970298
+            },
+            {
+              "category": "c1",
+              "probability": 0.038278907984876064
+            },
+            {
+              "category": "c2",
+              "probability": 0.9500502068721536
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.9025281317522911
+            },
+            {
+              "category": "c1",
+              "probability": 0.021400578360451613
+            },
+            {
+              "category": "c2",
+              "probability": 0.07607128988725728
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.21888783769318515
+            },
+            {
+              "category": "c1",
+              "probability": 0.34731386692531885
+            },
+            {
+              "category": "c2",
+              "probability": 0.433798295381496
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.5187020483208776
+            },
+            {
+              "category": "c1",
+              "probability": 0.3564261825242651
+            },
+            {
+              "category": "c2",
+              "probability": 0.12487176915485723
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.0240131914803534
+            },
+            {
+              "category": "c1",
+              "probability": 0.5577106446748892
+            },
+            {
+              "category": "c2",
+              "probability": 0.41827616384475746
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.2914538675493035
+            },
+            {
+              "category": "c1",
+              "probability": 0.5647342354984747
+            },
+            {
+              "category": "c2",
+              "probability": 0.1438118969522218
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.14378584654420842
+            },
+            {
+              "category": "c1",
+              "probability": 0.06396389300405897
+            },
+            {
+              "category": "c2",
+              "probability": 0.7922502604517326
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.3889169352691326
+            },
+            {
+              "category": "c1",
+              "probability": 0.4894982866484465
+            },
+            {
+              "category": "c2",
+              "probability": 0.12158477808242078
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.023065106829350278
+            },
+            {
+              "category": "c1",
+              "probability": 0.696416109687027
+            },
+            {
+              "category": "c2",
+              "probability": 0.2805187834836226
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.13966078722834657
+            },
+            {
+              "category": "c1",
+              "probability": 0.13317356258754154
+            },
+            {
+              "category": "c2",
+              "probability": 0.7271656501841118
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.8495866014146269
+            },
+            {
+              "category": "c1",
+              "probability": 0.13331504861362264
+            },
+            {
+              "category": "c2",
+              "probability": 0.017098349971750474
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.5339018705449271
+            },
+            {
+              "category": "c1",
+              "probability": 0.15375987959811185
+            },
+            {
+              "category": "c2",
+              "probability": 0.3123382498569611
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.1866653313277532
+            },
+            {
+              "category": "c1",
+              "probability": 0.20328833945045188
+            },
+            {
+              "category": "c2",
+              "probability": 0.610046329221795
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.06197784131542699
+            },
+            {
+              "category": "c1",
+              "probability": 0.18770179622306885
+            },
+            {
+              "category": "c2",
+              "probability": 0.7503203624615041
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.0018794778519298407
+            },
+            {
+              "category": "c1",
+              "probability": 0.0760403062824285
+            },
+            {
+              "category": "c2",
+              "probability": 0.9220802158656416
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.40071230738958524
+            },
+            {
+              "category": "c1",
+              "probability": 0.5780074374080567
+            },
+            {
+              "category": "c2",
+              "probability": 0.02128025520235805
+            }
+          ]
+        }
+      ],
+      "expectedTemperature": 9.999999785688651,
+      "expectedLogLoss": 1.1252682519828938
+    },
+    {
+      "name": "temperature-6",
+      "samples": [
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.3086396730645436
+            },
+            {
+              "category": "c1",
+              "probability": 0.02663814406569709
+            },
+            {
+              "category": "c2",
+              "probability": 0.44842814064743053
+            },
+            {
+              "category": "c3",
+              "probability": 0.2162940422223287
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.023750815437207657
+            },
+            {
+              "category": "c1",
+              "probability": 0.22172249827566715
+            },
+            {
+              "category": "c2",
+              "probability": 0.03591039478504986
+            },
+            {
+              "category": "c3",
+              "probability": 0.7186162915020753
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.19661644000296669
+            },
+            {
+              "category": "c1",
+              "probability": 0.4480168060289477
+            },
+            {
+              "category": "c2",
+              "probability": 0.3453756766985168
+            },
+            {
+              "category": "c3",
+              "probability": 0.009991077269568837
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.024503862415506127
+            },
+            {
+              "category": "c1",
+              "probability": 0.5069229842983471
+            },
+            {
+              "category": "c2",
+              "probability": 0.3682034632461284
+            },
+            {
+              "category": "c3",
+              "probability": 0.10036969004001833
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.007596986384838716
+            },
+            {
+              "category": "c1",
+              "probability": 0.8588603945623845
+            },
+            {
+              "category": "c2",
+              "probability": 0.05916983857183736
+            },
+            {
+              "category": "c3",
+              "probability": 0.0743727804809393
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.9071197302583245
+            },
+            {
+              "category": "c1",
+              "probability": 0.017296283343290465
+            },
+            {
+              "category": "c2",
+              "probability": 0.05062143165058382
+            },
+            {
+              "category": "c3",
+              "probability": 0.024962554747801256
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.7046550892152531
+            },
+            {
+              "category": "c1",
+              "probability": 0.044389648763062624
+            },
+            {
+              "category": "c2",
+              "probability": 0.10273876229313818
+            },
+            {
+              "category": "c3",
+              "probability": 0.148216499728546
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.01748870769883466
+            },
+            {
+              "category": "c1",
+              "probability": 0.09722580836077338
+            },
+            {
+              "category": "c2",
+              "probability": 0.43231431990418095
+            },
+            {
+              "category": "c3",
+              "probability": 0.45297116403621107
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.059517458432340575
+            },
+            {
+              "category": "c1",
+              "probability": 0.11344543683708497
+            },
+            {
+              "category": "c2",
+              "probability": 0.7252064414680586
+            },
+            {
+              "category": "c3",
+              "probability": 0.10183066326251591
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.5529063022605769
+            },
+            {
+              "category": "c1",
+              "probability": 0.009613874838785025
+            },
+            {
+              "category": "c2",
+              "probability": 0.08215151475614628
+            },
+            {
+              "category": "c3",
+              "probability": 0.3553283081444918
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.14499465719601376
+            },
+            {
+              "category": "c1",
+              "probability": 0.011714041055422031
+            },
+            {
+              "category": "c2",
+              "probability": 0.7330495852084121
+            },
+            {
+              "category": "c3",
+              "probability": 0.11024171654015216
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.0643446564301117
+            },
+            {
+              "category": "c1",
+              "probability": 0.051812633429169294
+            },
+            {
+              "category": "c2",
+              "probability": 0.5888830936432395
+            },
+            {
+              "category": "c3",
+              "probability": 0.29495961649747954
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.047711376374332995
+            },
+            {
+              "category": "c1",
+              "probability": 0.023898001996784508
+            },
+            {
+              "category": "c2",
+              "probability": 0.8391761840153619
+            },
+            {
+              "category": "c3",
+              "probability": 0.08921443761352059
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.8569397401651236
+            },
+            {
+              "category": "c1",
+              "probability": 0.011371809451976755
+            },
+            {
+              "category": "c2",
+              "probability": 0.07754135586737128
+            },
+            {
+              "category": "c3",
+              "probability": 0.05414709451552829
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.6780762118966182
+            },
+            {
+              "category": "c1",
+              "probability": 0.2953839964604661
+            },
+            {
+              "category": "c2",
+              "probability": 0.01994076671631309
+            },
+            {
+              "category": "c3",
+              "probability": 0.00659902492660258
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.08329011700923886
+            },
+            {
+              "category": "c1",
+              "probability": 0.05259449988626133
+            },
+            {
+              "category": "c2",
+              "probability": 0.3006448741585672
+            },
+            {
+              "category": "c3",
+              "probability": 0.5634705089459326
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.4081530748431897
+            },
+            {
+              "category": "c1",
+              "probability": 0.530929310489687
+            },
+            {
+              "category": "c2",
+              "probability": 0.002512181465416537
+            },
+            {
+              "category": "c3",
+              "probability": 0.05840543320170682
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.3568488390917505
+            },
+            {
+              "category": "c1",
+              "probability": 0.10336787475096465
+            },
+            {
+              "category": "c2",
+              "probability": 0.10468981508682974
+            },
+            {
+              "category": "c3",
+              "probability": 0.43509347107045515
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.15251494941947252
+            },
+            {
+              "category": "c1",
+              "probability": 0.05100223761037619
+            },
+            {
+              "category": "c2",
+              "probability": 0.4300648017737442
+            },
+            {
+              "category": "c3",
+              "probability": 0.36641801119640716
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.0763013903407701
+            },
+            {
+              "category": "c1",
+              "probability": 0.3462356098537963
+            },
+            {
+              "category": "c2",
+              "probability": 0.12107583743834065
+            },
+            {
+              "category": "c3",
+              "probability": 0.456387162367093
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.4359252900299924
+            },
+            {
+              "category": "c1",
+              "probability": 0.4125287510852283
+            },
+            {
+              "category": "c2",
+              "probability": 0.08264313161361138
+            },
+            {
+              "category": "c3",
+              "probability": 0.06890282727116782
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.5850880158530501
+            },
+            {
+              "category": "c1",
+              "probability": 0.19082783421133676
+            },
+            {
+              "category": "c2",
+              "probability": 0.03695960976596349
+            },
+            {
+              "category": "c3",
+              "probability": 0.18712454016964955
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.009285291509899516
+            },
+            {
+              "category": "c1",
+              "probability": 0.04332395738170297
+            },
+            {
+              "category": "c2",
+              "probability": 0.2075574654206113
+            },
+            {
+              "category": "c3",
+              "probability": 0.7398332856877862
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.36332418933232424
+            },
+            {
+              "category": "c1",
+              "probability": 0.06013721624551096
+            },
+            {
+              "category": "c2",
+              "probability": 0.5746637999201364
+            },
+            {
+              "category": "c3",
+              "probability": 0.0018747945020284123
+            }
+          ]
+        }
+      ],
+      "expectedTemperature": 9.999999819566236,
+      "expectedLogLoss": 1.3805926978427943
+    },
+    {
+      "name": "temperature-7",
+      "samples": [
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.9169384497320378
+            },
+            {
+              "category": "c1",
+              "probability": 0.029592028241560625
+            },
+            {
+              "category": "c2",
+              "probability": 0.04882883280374245
+            },
+            {
+              "category": "c3",
+              "probability": 0.003220906479539297
+            },
+            {
+              "category": "c4",
+              "probability": 0.001419782743119854
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.700112166235811
+            },
+            {
+              "category": "c1",
+              "probability": 0.14032541212655167
+            },
+            {
+              "category": "c2",
+              "probability": 0.0015311624997984745
+            },
+            {
+              "category": "c3",
+              "probability": 0.06558044189088737
+            },
+            {
+              "category": "c4",
+              "probability": 0.09245081724695153
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.0006738101039351002
+            },
+            {
+              "category": "c1",
+              "probability": 0.30797478820128493
+            },
+            {
+              "category": "c2",
+              "probability": 0.2586734077773524
+            },
+            {
+              "category": "c3",
+              "probability": 0.33066778929558527
+            },
+            {
+              "category": "c4",
+              "probability": 0.10201020462184224
+            }
+          ]
+        },
+        {
+          "actual": "c4",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.4872870654281315
+            },
+            {
+              "category": "c1",
+              "probability": 0.03367151258992297
+            },
+            {
+              "category": "c2",
+              "probability": 0.11511893926857125
+            },
+            {
+              "category": "c3",
+              "probability": 0.3482372356537684
+            },
+            {
+              "category": "c4",
+              "probability": 0.01568524705960598
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.9521699263474643
+            },
+            {
+              "category": "c1",
+              "probability": 0.004463687416029142
+            },
+            {
+              "category": "c2",
+              "probability": 0.013428685646963444
+            },
+            {
+              "category": "c3",
+              "probability": 0.012808411269535065
+            },
+            {
+              "category": "c4",
+              "probability": 0.017129289320007964
+            }
+          ]
+        },
+        {
+          "actual": "c4",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.15967400260079576
+            },
+            {
+              "category": "c1",
+              "probability": 0.07360493951843637
+            },
+            {
+              "category": "c2",
+              "probability": 0.01128380388346431
+            },
+            {
+              "category": "c3",
+              "probability": 0.6429628591893286
+            },
+            {
+              "category": "c4",
+              "probability": 0.11247439480797494
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.04679674097460638
+            },
+            {
+              "category": "c1",
+              "probability": 0.005747914231474664
+            },
+            {
+              "category": "c2",
+              "probability": 0.04209205481677767
+            },
+            {
+              "category": "c3",
+              "probability": 0.8908212392015407
+            },
+            {
+              "category": "c4",
+              "probability": 0.014542050775600722
+            }
+          ]
+        },
+        {
+          "actual": "c4",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.06584595938293923
+            },
+            {
+              "category": "c1",
+              "probability": 0.4992685389702635
+            },
+            {
+              "category": "c2",
+              "probability": 0.05473351101105871
+            },
+            {
+              "category": "c3",
+              "probability": 0.21987849070131735
+            },
+            {
+              "category": "c4",
+              "probability": 0.1602734999344212
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.2860607368254441
+            },
+            {
+              "category": "c1",
+              "probability": 0.05200003264122885
+            },
+            {
+              "category": "c2",
+              "probability": 0.03508163629996481
+            },
+            {
+              "category": "c3",
+              "probability": 0.07104357108939591
+            },
+            {
+              "category": "c4",
+              "probability": 0.5558140231439663
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.11418405946271315
+            },
+            {
+              "category": "c1",
+              "probability": 0.01283587124485647
+            },
+            {
+              "category": "c2",
+              "probability": 0.0728256773516415
+            },
+            {
+              "category": "c3",
+              "probability": 0.13426547017515977
+            },
+            {
+              "category": "c4",
+              "probability": 0.6658889217656292
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.6348515469675613
+            },
+            {
+              "category": "c1",
+              "probability": 0.07184543308686808
+            },
+            {
+              "category": "c2",
+              "probability": 0.2496786710143418
+            },
+            {
+              "category": "c3",
+              "probability": 0.009773732183043737
+            },
+            {
+              "category": "c4",
+              "probability": 0.03385061674818509
+            }
+          ]
+        },
+        {
+          "actual": "c2",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.4018255938788596
+            },
+            {
+              "category": "c1",
+              "probability": 0.005926159408044445
+            },
+            {
+              "category": "c2",
+              "probability": 0.025787482179909903
+            },
+            {
+              "category": "c3",
+              "probability": 0.27280682225260294
+            },
+            {
+              "category": "c4",
+              "probability": 0.29365394228058317
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.037452268770939295
+            },
+            {
+              "category": "c1",
+              "probability": 0.016973610626578695
+            },
+            {
+              "category": "c2",
+              "probability": 0.4912778996658055
+            },
+            {
+              "category": "c3",
+              "probability": 0.23338577425299037
+            },
+            {
+              "category": "c4",
+              "probability": 0.2209104466836862
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.021097556935051522
+            },
+            {
+              "category": "c1",
+              "probability": 0.6916413913763617
+            },
+            {
+              "category": "c2",
+              "probability": 0.229312185870949
+            },
+            {
+              "category": "c3",
+              "probability": 0.04915210922953708
+            },
+            {
+              "category": "c4",
+              "probability": 0.00879675658810059
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.03591618803127224
+            },
+            {
+              "category": "c1",
+              "probability": 0.18592342295855543
+            },
+            {
+              "category": "c2",
+              "probability": 0.4493448486368077
+            },
+            {
+              "category": "c3",
+              "probability": 0.006949208161241789
+            },
+            {
+              "category": "c4",
+              "probability": 0.3218663322121228
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.7523023791576988
+            },
+            {
+              "category": "c1",
+              "probability": 0.004939372058276498
+            },
+            {
+              "category": "c2",
+              "probability": 0.003423680321206338
+            },
+            {
+              "category": "c3",
+              "probability": 0.015574454870645817
+            },
+            {
+              "category": "c4",
+              "probability": 0.2237601135921726
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.3205429264488012
+            },
+            {
+              "category": "c1",
+              "probability": 0.10602294830425057
+            },
+            {
+              "category": "c2",
+              "probability": 0.40709180998714484
+            },
+            {
+              "category": "c3",
+              "probability": 0.14251695354847732
+            },
+            {
+              "category": "c4",
+              "probability": 0.023825361711325953
+            }
+          ]
+        },
+        {
+          "actual": "c4",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.012109535163626076
+            },
+            {
+              "category": "c1",
+              "probability": 0.005651440357941823
+            },
+            {
+              "category": "c2",
+              "probability": 0.0030488456032415627
+            },
+            {
+              "category": "c3",
+              "probability": 0.9761397137999311
+            },
+            {
+              "category": "c4",
+              "probability": 0.003050465075259428
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.31851273676345665
+            },
+            {
+              "category": "c1",
+              "probability": 0.04940830014995974
+            },
+            {
+              "category": "c2",
+              "probability": 0.5932051828561079
+            },
+            {
+              "category": "c3",
+              "probability": 0.015279639633823519
+            },
+            {
+              "category": "c4",
+              "probability": 0.023594140596652224
+            }
+          ]
+        },
+        {
+          "actual": "c0",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.3383044908997708
+            },
+            {
+              "category": "c1",
+              "probability": 0.07835078531188096
+            },
+            {
+              "category": "c2",
+              "probability": 0.0895464003545963
+            },
+            {
+              "category": "c3",
+              "probability": 0.4706831454134879
+            },
+            {
+              "category": "c4",
+              "probability": 0.02311517802026397
+            }
+          ]
+        },
+        {
+          "actual": "c4",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.2696288796176914
+            },
+            {
+              "category": "c1",
+              "probability": 0.030284444926894947
+            },
+            {
+              "category": "c2",
+              "probability": 0.15428974510753668
+            },
+            {
+              "category": "c3",
+              "probability": 0.4860817599839894
+            },
+            {
+              "category": "c4",
+              "probability": 0.05971517036388752
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.058571406693642525
+            },
+            {
+              "category": "c1",
+              "probability": 0.8027501224678713
+            },
+            {
+              "category": "c2",
+              "probability": 0.04885671231226491
+            },
+            {
+              "category": "c3",
+              "probability": 0.005798030111606813
+            },
+            {
+              "category": "c4",
+              "probability": 0.08402372841461447
+            }
+          ]
+        },
+        {
+          "actual": "c1",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.6837430368321268
+            },
+            {
+              "category": "c1",
+              "probability": 0.014633872150960814
+            },
+            {
+              "category": "c2",
+              "probability": 0.2509162385918426
+            },
+            {
+              "category": "c3",
+              "probability": 0.04431798582062846
+            },
+            {
+              "category": "c4",
+              "probability": 0.006388866604441426
+            }
+          ]
+        },
+        {
+          "actual": "c3",
+          "distribution": [
+            {
+              "category": "c0",
+              "probability": 0.7520898244855287
+            },
+            {
+              "category": "c1",
+              "probability": 0.08155716325484588
+            },
+            {
+              "category": "c2",
+              "probability": 0.004223673143586216
+            },
+            {
+              "category": "c3",
+              "probability": 0.011195786317791438
+            },
+            {
+              "category": "c4",
+              "probability": 0.15093355279824774
+            }
+          ]
+        }
+      ],
+      "expectedTemperature": 9.999999794959077,
+      "expectedLogLoss": 1.6617498511931748
+    }
+  ]
+}
