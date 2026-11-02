@@ -1747,12 +1747,16 @@ dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*QueryAl
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- scale
 # tail-query p50/p99, allocation and the cursor pass's density crossing (see the cursor lane above):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- cursor 100000 --sweep --both
+# the same, with the opt-in block-bound pruning timed alongside (see the cursor lane above):
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- cursor 100000 --sweep --both --prune
 # the path a deployment runs: write, commit, reopen and query the same corpus (see the store lane above):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- store 100000
 # posting entries a block bound can skip, per query and corpus size (see the pruning lane above):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- wand 100000
 # one shared index at 1/2/4/8 callers, raw and synchronized (see the concurrency lane above):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- concurrency --runs 5
+# the same callers against a committed store, array and mapped (see the concurrency lane above):
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- concurrency --runs 5 --store --mapped
 ```
 
 The three-corpus-size crossover above is **not** a report from this project: a 1,000,000-document
