@@ -47,7 +47,8 @@ namespace LexiSharp.Classification;
 /// <see cref="SynchronizedTextClassifier"/> provides that lock.
 /// </para>
 /// </remarks>
-public sealed class NearestNeighborClassifier : ITextClassifier, IIncrementalTextClassifier
+public sealed class NearestNeighborClassifier
+    : ITextClassifier, IIncrementalTextClassifier, IIncrementalAsyncTextClassifier
 {
     private readonly ITokenizer? _tokenizer;
     private readonly IEmbeddingProvider? _embeddings;

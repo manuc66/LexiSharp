@@ -8,7 +8,9 @@ namespace LexiSharp.Classification;
 /// <see cref="Predict(string, int, IReadOnlySet{string})"/> and <see cref="PredictBest"/> calls may
 /// run at the same time, while <see cref="Train"/>, <see cref="Learn"/>, <see cref="Unlearn"/>,
 /// <see cref="Reinforce"/>, <see cref="Unreinforce"/> and <see cref="ForgetReinforcement"/> each take
-/// exclusive access and wait for the predictions already in flight to return.
+/// exclusive access and wait for the predictions already in flight to return. The async surface
+/// (<see cref="IAsyncTextClassifier"/> / <see cref="IIncrementalAsyncTextClassifier"/>) is locked the
+/// same way, without pinning the lock to the thread that started the call.
 /// </summary>
 /// <remarks>
 /// The capabilities it forwards are optional and detected on the wrapped instance.
@@ -30,10 +32,11 @@ namespace LexiSharp.Classification;
 /// The lock is not free in principle, but on this hot path it is not measurably expensive. Over 7
 /// interleaved rounds of 200 000 <see cref="PredictBest"/> calls, the wrapped-to-unwrapped median
 /// ratio came out at 0.986x, 1.051x, 1.057x, 0.975x and 1.043x on five separate runs — straddling
-/// 1.0, so the uncontended <see cref="ReaderWriterLockSlim"/> read pair costs nothing a caller can
-/// resolve at this scale. Do not read that as free: it is one atomic operation plus a branch per
-/// prediction, and a caller who needs the last few percent should keep the classifier unwrapped
-/// rather than expect a number.
+/// 1.0. Those figures were taken with the <see cref="ReaderWriterLockSlim"/> implementation this
+/// type shipped first; the async-capable gate that replaced it has not been re-measured, so read
+/// them as an order of magnitude rather than a bound. Do not read the lock as free either: it is a
+/// monitor acquisition plus a branch per prediction, and a caller who needs the last few percent
+/// should keep the classifier unwrapped rather than expect a number.
 /// </para>
 /// <para>
 /// What the lock buys is correctness under overlap, and the churn that needs protecting is on both
@@ -55,11 +58,13 @@ namespace LexiSharp.Classification;
 /// quietly returning something else.
 /// </para>
 /// <para>
-/// The wrapper covers the <see cref="ITextClassifier"/> surface. Concrete async members and
-/// model-specific methods are not on that surface: calling them directly on the wrapped instance
-/// bypasses the lock. Wrap once, and do not also expose the wrapped instance to callers; two
-/// wrappers around the same instance do not share a lock, and wrapping a blend while also wrapping
-/// its lanes nests locks instead of ordering them.
+/// The async members are forwarded when the wrapped classifier implements
+/// <see cref="IAsyncTextClassifier"/> (and <see cref="IIncrementalAsyncTextClassifier"/> for
+/// <c>LearnAsync</c>/<c>UnlearnAsync</c>); otherwise they throw <see cref="NotSupportedException"/>
+/// naming the wrapped type. Model-specific members that are not on either interface still bypass
+/// the lock. Wrap once, and do not also expose the wrapped instance to callers; two wrappers around
+/// the same instance do not share a lock, and wrapping a blend while also wrapping its lanes nests
+/// locks instead of ordering them.
 /// </para>
 /// <para>
 /// Dispose releases the lock. It does not dispose the wrapped classifier, which the caller still
@@ -67,15 +72,14 @@ namespace LexiSharp.Classification;
 /// </para>
 /// </remarks>
 public sealed class SynchronizedTextClassifier
-    : IIncrementalTextClassifier, IReinforceableTextClassifier, IContextualTextClassifier,
-      IWeightedPredictor, IDisposable
+    : IIncrementalTextClassifier, IIncrementalAsyncTextClassifier, IReinforceableTextClassifier,
+      IContextualTextClassifier, IWeightedPredictor, IDisposable
 {
     private readonly ITextClassifier _inner;
 
-    // NoRecursion, so a mistake that re-enters fails loudly instead of deadlocking. Nothing in this
-    // class does re-enter: the locked calls go straight to the wrapped instance, never back through
-    // a member of this one.
-    private readonly ReaderWriterLockSlim _lock = new(LockRecursionPolicy.NoRecursion);
+    // Unlike ReaderWriterLockSlim, this gate is not thread-affine, so the async members may await
+    // the wrapped classifier and release the lock on whichever thread the continuation lands.
+    private readonly AsyncReaderWriterLock _lock = new();
 
     /// <param name="inner">The classifier to synchronize access to. Not owned by this wrapper.</param>
     /// <exception cref="ArgumentNullException"><paramref name="inner"/> is null.</exception>
@@ -90,6 +94,9 @@ public sealed class SynchronizedTextClassifier
 
     /// <summary>Whether the wrapped classifier implements <see cref="IContextualTextClassifier"/>.</summary>
     public bool SupportsContext => ClassifierCapabilities.IsContextual(_inner);
+
+    /// <summary>Whether the wrapped classifier implements <see cref="IAsyncTextClassifier"/>.</summary>
+    public bool SupportsAsync => ClassifierCapabilities.IsAsync(_inner);
 
     /// <inheritdoc />
     public void Train(IEnumerable<SearchDocument> documents)
@@ -150,6 +157,112 @@ public sealed class SynchronizedTextClassifier
 
         throw new NotSupportedException(
             $"{_inner.GetType().Name} does not implement {nameof(IIncrementalTextClassifier)}.");
+    }
+
+    /// <inheritdoc />
+    /// <exception cref="NotSupportedException">
+    /// The wrapped classifier is not an <see cref="IAsyncTextClassifier"/>.
+    /// </exception>
+    public async Task TrainAsync(
+        IEnumerable<SearchDocument> documents,
+        CancellationToken cancellationToken = default)
+    {
+        var asyncInner = AsAsync();
+
+        await _lock.EnterWriteLockAsync().ConfigureAwait(false);
+        try
+        {
+            await asyncInner.TrainAsync(documents, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _lock.ExitWriteLock();
+        }
+    }
+
+    /// <inheritdoc />
+    /// <exception cref="NotSupportedException">
+    /// The wrapped classifier is not an <see cref="IAsyncTextClassifier"/>.
+    /// </exception>
+    public async Task<IReadOnlyList<ClassificationResult>> PredictAsync(
+        string text,
+        int limit = 3,
+        IReadOnlySet<string>? excludedCategories = null,
+        CancellationToken cancellationToken = default)
+    {
+        var asyncInner = AsAsync();
+
+        await _lock.EnterReadLockAsync().ConfigureAwait(false);
+        try
+        {
+            return await asyncInner
+                .PredictAsync(text, limit, excludedCategories, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
+    }
+
+    /// <inheritdoc />
+    /// <exception cref="NotSupportedException">
+    /// The wrapped classifier is not an <see cref="IIncrementalAsyncTextClassifier"/>.
+    /// </exception>
+    public async Task LearnAsync(
+        SearchDocument document,
+        CancellationToken cancellationToken = default)
+    {
+        var incremental = AsIncrementalAsync();
+
+        await _lock.EnterWriteLockAsync().ConfigureAwait(false);
+        try
+        {
+            await incremental.LearnAsync(document, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _lock.ExitWriteLock();
+        }
+    }
+
+    /// <inheritdoc />
+    /// <exception cref="NotSupportedException">
+    /// The wrapped classifier is not an <see cref="IIncrementalAsyncTextClassifier"/>.
+    /// </exception>
+    public async Task UnlearnAsync(
+        SearchDocument document,
+        CancellationToken cancellationToken = default)
+    {
+        var incremental = AsIncrementalAsync();
+
+        await _lock.EnterWriteLockAsync().ConfigureAwait(false);
+        try
+        {
+            await incremental.UnlearnAsync(document, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _lock.ExitWriteLock();
+        }
+    }
+
+    private IAsyncTextClassifier AsAsync()
+    {
+        if (_inner is IAsyncTextClassifier asyncClassifier)
+            return asyncClassifier;
+
+        throw new NotSupportedException(
+            $"{_inner.GetType().Name} does not implement {nameof(IAsyncTextClassifier)}.");
+    }
+
+    private IIncrementalAsyncTextClassifier AsIncrementalAsync()
+    {
+        if (_inner is IIncrementalAsyncTextClassifier incremental)
+            return incremental;
+
+        throw new NotSupportedException(
+            $"{_inner.GetType().Name} does not implement {nameof(IIncrementalAsyncTextClassifier)}.");
     }
 
     /// <inheritdoc />
