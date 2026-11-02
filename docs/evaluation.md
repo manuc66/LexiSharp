@@ -1394,6 +1394,11 @@ regex tokenizer versus this library's UAX29 — but the corpus text, labels, hea
 cross-split deduplication are the same. The in-house linear model is the accuracy leader among the
 four in-house classifiers, not a competitive text classifier.
 
+Bigrams (`--linear-ngrams 2`) were measured and **lost**: **0.8065** accuracy / **0.8016** macro-F1
+against **0.8282** / **0.8224** for the unigram model, with 40 epochs, rate 0.05 and L2 1e-4 selected
+on validation. The external baseline's bigrams are not what closes the 3.7-point gap; the feature
+source now supports n-grams, but the default stays unigram because that is what the split chose.
+
 ```bash
 dotnet run --project bench/LexiSharp.Eval -c Release -- classification --tune-linear --validation 0.15
 python3 bench/LexiSharp.Eval/classification/sklearn_20ng_baseline.py   # needs scikit-learn

@@ -399,16 +399,28 @@ public sealed class TextFeatureSource : IFeatureSource<SearchDocument>
 {
     private readonly ITokenizer _tokenizer;
     private readonly bool _emitTermFrequency;
+    private readonly int _maxNgram;
 
     /// <param name="tokenizer">Tokenizer used to reduce text to terms (default: <see cref="Tokenizer.Default"/>).</param>
     /// <param name="emitTermFrequency">
     /// When true, each term carries its count as a <see cref="FeatureKind.Count"/> feature, so a
     /// linear model can apply sublinear TF-IDF. When false, terms are binary.
     /// </param>
-    public TextFeatureSource(ITokenizer? tokenizer = null, bool emitTermFrequency = false)
+    /// <param name="maxNgram">
+    /// Longest n-gram emitted, in addition to every shorter one. <c>1</c> — the default — emits
+    /// unigrams only. An n-gram feature is named <c>n:term term</c>, so a bigram cannot collide
+    /// with a unigram that happens to contain a space (tokens never do).
+    /// </param>
+    public TextFeatureSource(
+        ITokenizer? tokenizer = null,
+        bool emitTermFrequency = false,
+        int maxNgram = 1)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxNgram);
+
         _tokenizer = tokenizer ?? Tokenizer.Default;
         _emitTermFrequency = emitTermFrequency;
+        _maxNgram = maxNgram;
     }
 
     /// <inheritdoc />
@@ -417,20 +429,38 @@ public sealed class TextFeatureSource : IFeatureSource<SearchDocument>
         ArgumentNullException.ThrowIfNull(item);
 
         IReadOnlyList<string> terms = _tokenizer.Tokenize(item.Text);
+        List<string> features = _maxNgram == 1 ? [.. terms] : Ngrams(terms);
 
         if (!_emitTermFrequency)
-            return new FeatureSet(terms);
+            return new FeatureSet(features);
 
         var counts = new Dictionary<string, double>(StringComparer.Ordinal);
 
-        foreach (string term in terms)
-            counts[term] = counts.TryGetValue(term, out double count) ? count + 1 : 1;
+        foreach (string feature in features)
+            counts[feature] = counts.TryGetValue(feature, out double count) ? count + 1 : 1;
 
         return new FeatureSet(
             counts.Keys,
             numericValues: null,
             unknownFeatures: null,
             countValues: counts);
+    }
+
+    private List<string> Ngrams(IReadOnlyList<string> terms)
+    {
+        var features = new List<string>(terms.Count);
+
+        for (int size = 1; size <= _maxNgram; size++)
+        {
+            for (int start = 0; start + size <= terms.Count; start++)
+            {
+                features.Add(size == 1
+                    ? terms[start]
+                    : size + ":" + string.Join(" ", terms.Skip(start).Take(size)));
+            }
+        }
+
+        return features;
     }
 }
 
