@@ -2,6 +2,19 @@ using System.Globalization;
 
 namespace LexiSharp.Eval;
 
+/// <summary>How the per-configuration p-values are corrected for multiple comparisons.</summary>
+internal enum BootstrapCorrection
+{
+    /// <summary>No correction; each p-value is read on its own.</summary>
+    None,
+
+    /// <summary>Holm-Bonferroni: controls the family-wise error rate.</summary>
+    Holm,
+
+    /// <summary>Benjamini-Hochberg: controls the false-discovery rate.</summary>
+    BenjaminiHochberg,
+}
+
 /// <summary>
 /// One configuration's paired-bootstrap summary against a baseline.
 /// </summary>
@@ -23,7 +36,8 @@ internal sealed record BootstrapRow(
     double Delta,
     double DeltaLower,
     double DeltaUpper,
-    double PValue);
+    double PValue,
+    double AdjustedPValue);
 
 internal static class RetrievalBootstrap
 {
@@ -33,37 +47,40 @@ internal static class RetrievalBootstrap
     public static void Print(
         IReadOnlyList<ConfigResult> results,
         string baselineName,
-        int resamples = DefaultResamples)
+        int resamples = DefaultResamples,
+        BootstrapCorrection correction = BootstrapCorrection.Holm)
     {
         Console.WriteLine();
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
             $"Paired bootstrap over queries ({resamples:N0} resamples, 95 % percentile CI; delta vs {baselineName})."));
 
-        PrintMetric(results, baselineName, resamples, "nDCG@10", outcome => outcome.NdcgAt10);
-        PrintMetric(results, baselineName, resamples, "R@10", outcome => outcome.RecallAt10);
+        PrintMetric(results, baselineName, resamples, correction, "nDCG@10", outcome => outcome.NdcgAt10);
+        PrintMetric(results, baselineName, resamples, correction, "R@10", outcome => outcome.RecallAt10);
 
         Console.WriteLine(
             "p is a two-sided paired sign-flip randomization test on the per-query mean difference; "
-            + "it tests the mean, not the whole ranking, and it is not corrected for multiple comparisons.");
+            + "it tests the mean, not the whole ranking. p adj is the multiple-comparison correction "
+            + $"selected by --bootstrap-correction ({correction}); the baseline is outside the family.");
     }
 
     private static void PrintMetric(
         IReadOnlyList<ConfigResult> results,
         string baselineName,
         int resamples,
+        BootstrapCorrection correction,
         string metricName,
         Func<QueryOutcome, double> metric)
     {
-        IReadOnlyList<BootstrapRow> rows = Compare(results, baselineName, resamples, metric);
+        IReadOnlyList<BootstrapRow> rows = Compare(results, baselineName, resamples, metric, correction);
 
         Console.WriteLine();
         Console.WriteLine(metricName);
         Console.WriteLine(
             "Config".PadRight(46) + " " + "n".PadLeft(5) + " " + "mean".PadLeft(7) + " "
             + "95 % CI".PadLeft(18) + " " + "delta".PadLeft(8) + " " + "95 % CI delta".PadLeft(18)
-            + " " + "p".PadLeft(8));
-        Console.WriteLine(new string('-', 46 + 1 + 5 + 1 + 7 + 1 + 18 + 1 + 8 + 1 + 18 + 1 + 8));
+            + " " + "p".PadLeft(8) + " " + "p adj".PadLeft(8));
+        Console.WriteLine(new string('-', 46 + 1 + 5 + 1 + 7 + 1 + 18 + 1 + 8 + 1 + 18 + 1 + 8 + 1 + 8));
 
         foreach (BootstrapRow row in rows)
         {
@@ -73,7 +90,7 @@ internal static class RetrievalBootstrap
 
             Console.WriteLine(string.Create(
                 CultureInfo.InvariantCulture,
-                $"{row.Name,-46} {row.Queries,5} {row.Mean,7:0.0000} {ci,18} {row.Delta,8:+0.0000;-0.0000;0.0000} {deltaCi,18} {row.PValue,8:0.0000}"));
+                $"{row.Name,-46} {row.Queries,5} {row.Mean,7:0.0000} {ci,18} {row.Delta,8:+0.0000;-0.0000;0.0000} {deltaCi,18} {row.PValue,8:0.0000} {row.AdjustedPValue,8:0.0000}"));
         }
     }
 
@@ -81,7 +98,8 @@ internal static class RetrievalBootstrap
         IReadOnlyList<ConfigResult> results,
         string baselineName,
         int resamples = DefaultResamples,
-        Func<QueryOutcome, double>? metric = null)
+        Func<QueryOutcome, double>? metric = null,
+        BootstrapCorrection correction = BootstrapCorrection.Holm)
     {
         ArgumentNullException.ThrowIfNull(results);
 
@@ -137,6 +155,8 @@ internal static class RetrievalBootstrap
             (double lower, double upper) = BootstrapInterval(values, resamples, random);
             (double deltaLower, double deltaUpper) = BootstrapInterval(deltas, resamples, random);
 
+            double pValue = result.Name == baselineName ? 1.0 : SignFlipPValue(deltas, resamples, random);
+
             rows.Add(new BootstrapRow(
                 result.Name,
                 values.Length,
@@ -146,10 +166,72 @@ internal static class RetrievalBootstrap
                 Mean(deltas),
                 deltaLower,
                 deltaUpper,
-                result.Name == baselineName ? 1.0 : SignFlipPValue(deltas, resamples, random)));
+                pValue,
+                pValue));
         }
 
+        // The baseline is the reference row, not a hypothesis, so it stays at 1 and is excluded
+        // from the family the correction is computed over.
+        int[] tested = Enumerable.Range(0, rows.Count)
+            .Where(index => rows[index].Name != baselineName)
+            .ToArray();
+        double[] adjusted = AdjustPValues(tested.Select(index => rows[index].PValue).ToArray(), correction);
+
+        for (int i = 0; i < tested.Length; i++)
+            rows[tested[i]] = rows[tested[i]] with { AdjustedPValue = adjusted[i] };
+
         return rows;
+    }
+
+    /// <summary>
+    /// Applies the selected multiple-comparison correction to a family of p-values, preserving
+    /// their input order.
+    /// </summary>
+    internal static double[] AdjustPValues(IReadOnlyList<double> pValues, BootstrapCorrection correction)
+    {
+        ArgumentNullException.ThrowIfNull(pValues);
+
+        var adjusted = new double[pValues.Count];
+
+        if (correction == BootstrapCorrection.None || pValues.Count == 0)
+        {
+            for (int i = 0; i < pValues.Count; i++)
+                adjusted[i] = pValues[i];
+
+            return adjusted;
+        }
+
+        int[] order = Enumerable.Range(0, pValues.Count)
+            .OrderBy(index => pValues[index])
+            .ThenBy(index => index)
+            .ToArray();
+
+        if (correction == BootstrapCorrection.Holm)
+        {
+            double running = 0;
+
+            for (int rank = 0; rank < order.Length; rank++)
+            {
+                int index = order[rank];
+                double value = Math.Min(1.0, (order.Length - rank) * pValues[index]);
+                running = Math.Max(running, value);
+                adjusted[index] = running;
+            }
+
+            return adjusted;
+        }
+
+        double runningBh = 1.0;
+
+        for (int rank = order.Length - 1; rank >= 0; rank--)
+        {
+            int index = order[rank];
+            double value = Math.Min(1.0, pValues[index] * order.Length / (rank + 1));
+            runningBh = Math.Min(runningBh, value);
+            adjusted[index] = runningBh;
+        }
+
+        return adjusted;
     }
 
     private static double Mean(double[] values)

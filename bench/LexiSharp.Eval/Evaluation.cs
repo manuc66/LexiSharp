@@ -476,14 +476,17 @@ internal static class Evaluation
         int? limit,
         NdcgGain ndcgGain,
         bool excludeQueryDocument = false,
-        int jobs = 1)
+        int jobs = 1,
+        bool captureOutcomes = false)
     {
         ArgumentNullException.ThrowIfNull(corpus);
         ArgumentNullException.ThrowIfNull(engine);
 
         List<EvaluatedQuery> queries = BuildQueries(corpus, limit, excludeQueryDocument);
 
-        return RunConfig(name, engine, queries, topK, ndcgGain, jobs, parseQuerySyntax: false);
+        return RunConfig(
+            name, engine, queries, topK, ndcgGain, jobs,
+            parseQuerySyntax: false, captureOutcomes: captureOutcomes);
     }
 
     /// <summary>

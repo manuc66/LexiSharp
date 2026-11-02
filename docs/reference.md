@@ -144,7 +144,10 @@ was designed from:
   is generic or excluded. On the standard `20news-bydate` split the single
   tree reads **0.4457** accuracy / **0.4945** macro-F1, the forest **0.6621** / **0.6584**, Naive
   Bayes **0.7573** / **0.7289**, and `LinearClassifier` **0.8085** / **0.8027**: the tree and forest
-  are explainability/ensemble options and the linear model is the accuracy one. Every figure
+  are explainability/ensemble options and the linear model is the accuracy one. Tuned on
+  validation, the linear model reads **0.8282** / **0.8224**; a scikit-learn TF-IDF + LinearSVC
+  baseline on the same split reads **0.8649** / **0.8585**, so the in-house model is the accuracy
+  leader among the four in-house models, not a competitive text classifier. Every figure
   carries a percentile-bootstrap 95 % interval over the test split, and a stratified 5-fold
   cross-validation on the train split reads **0.8918 ± 0.0070** for the linear model and
   **0.8190 ± 0.0063** for Naive Bayes — about eight points above the held-out figures, because

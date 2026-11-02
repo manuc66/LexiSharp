@@ -44,6 +44,12 @@ convention aligned to those the published figures were produced with:
 | SciFact | 0.6789 | 0.6789 | 0.0000 |
 | ArguAna | 0.4005 | 0.3970 | −0.0035 |
 
+These are point estimates. The harness now reports a paired-bootstrap 95 % CI over queries:
+0.3218 [0.2869, 0.3564], 0.6789 [0.6334, 0.7237], 0.4005 [0.3820, 0.4194]. The published values
+fall inside all three intervals, so equality to four decimals is a property of the point estimate,
+not evidence of statistical equivalence. See
+[paired bootstrap](https://github.com/manuc66/LexiSharp/blob/main/docs/evaluation.md#paired-bootstrap-over-queries).
+
 Under this library's own default analysis and parameters the same scorer reads 0.308 / 0.662 /
 0.320; that difference is the configuration, not the ranking. Corpora are md5-verified on
 download, and on ArguAna `trec_eval` — the standard evaluator, not this repository's metric
