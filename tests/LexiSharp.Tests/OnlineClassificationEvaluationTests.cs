@@ -56,8 +56,10 @@ public class OnlineClassificationEvaluationTests
 
         Assert.Equal(1, neverSeen.Documents);
         Assert.Equal(0, neverSeen.Accuracy);
+        Assert.Equal(1, neverSeen.AccuracyAtK);
         Assert.Equal(1, seen.Documents);
         Assert.Equal(1, seen.Accuracy);
+        Assert.Equal(1, seen.AccuracyAtK);
     }
 
     [Fact]
@@ -95,6 +97,10 @@ public class OnlineClassificationEvaluationTests
 
         Assert.Equal(0, report.AccuracyAt1);
         Assert.Equal(1, report.AccuracyAtK);
+
+        OnlineBucketMetrics bucket = Assert.Single(
+            report.TextBuckets, item => item.Bucket == "text:never-seen");
+        Assert.Equal(1, bucket.AccuracyAtK);
     }
 
     [Fact]
@@ -268,6 +274,18 @@ public class OnlineClassificationEvaluationTests
         _ = report.MacroF195;
         _ = report.TextBuckets;
         _ = report.CategoryBuckets;
+
+        foreach (OnlineBucketMetrics bucket in report.TextBuckets.Concat(report.CategoryBuckets))
+        {
+            _ = bucket.Bucket;
+            _ = bucket.Documents;
+            _ = bucket.Accuracy;
+            _ = bucket.AccuracyAtK;
+            _ = bucket.MacroF1;
+            _ = bucket.Accuracy95;
+            _ = bucket.AccuracyAtK95;
+            _ = bucket.MacroF195;
+        }
         _ = report.Coverage;
         _ = report.RecommendedCoverage;
         _ = report.LearnCalls;

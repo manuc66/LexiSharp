@@ -1426,6 +1426,11 @@ The pinned run trains Naive Bayes on 5 262 documents, then streams the remaining
 | Macro-F1 | 0.6787 [0.6480, 0.7010] |
 | Coverage at 50 % target | 0.505, precision **0.873** |
 
+Each bucket reports both top-1 and top-k accuracy, each with its own block-bootstrap interval, so
+a model that ranks the right category second is distinguishable from one that misses it entirely
+inside the bucket. The pinned table above is top-1; the `acc@3` column in the command output is
+the same measure at the requested k.
+
 Every streamed subject is in the `never-seen-text` bucket: the subject split is deduplicated
 globally, so no train subject repeats inside the stream. That is a property of this corpus, not of
 the evaluator; the bucket is meant for streams where a text can reappear, and the CLI labels the

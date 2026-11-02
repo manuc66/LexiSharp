@@ -20,6 +20,10 @@ workflow.
 
 ### Added
 
+- **Online bucket metrics carry top-k accuracy.** `OnlineBucketMetrics` now has `AccuracyAtK` and
+  its own block-bootstrap interval alongside top-1, so "the category was second" is visible inside
+  the never-seen-text bucket and not only in the overall report. The online pin carries the same
+  per-bucket top-k figures.
 - **The predict-then-learn evaluator is a library API.** `OnlineClassificationEvaluator.Evaluate`
   takes any `ITextClassifier`, an ordered `OnlineEvaluationExample` stream with a block per row and
   an optional `BlendContext`, and returns top-k accuracy, seen/never-seen buckets, a
