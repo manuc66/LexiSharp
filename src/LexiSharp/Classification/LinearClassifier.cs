@@ -31,6 +31,15 @@ public sealed record LinearFeatureWeight(string Feature, double Weight);
 /// returns a token that <see cref="Unlearn(long)"/> removes exactly, without retraining; the
 /// coefficients are not rewound.
 /// </para>
+/// <para>
+/// Thread-safety: concurrent <see cref="Predict(TItem, int, IReadOnlySet{string})"/> calls are
+/// supported, including the first call after a mutation: the effective category array and its
+/// index are rebuilt under a private gate and published as one immutable object. The mutating
+/// members (<see cref="Train"/>, <see cref="Learn(TItem)"/>, <see cref="Unlearn(long)"/>,
+/// <see cref="Reinforce(TItem, string, double)"/>, <see cref="Unreinforce(TItem, string, double)"/>
+/// and <see cref="ForgetReinforcement"/>) must not run concurrently with a prediction or another
+/// mutation; <see cref="SynchronizedTextClassifier"/> provides that writer/readers lock.
+/// </para>
 /// </remarks>
 /// <typeparam name="TItem">The item type being classified.</typeparam>
 public sealed class LinearClassifier<TItem>
@@ -55,9 +64,13 @@ public sealed class LinearClassifier<TItem>
         new(StringComparer.Ordinal);
     private readonly Dictionary<long, LearnedItem> _learned = new();
     private readonly SortedSet<string> _virtualCategories = new(StringComparer.Ordinal);
-    private string[]? _effectiveCategories;
-    private Dictionary<string, int>? _effectiveIndex;
-    private bool _effectiveDirty = true;
+
+    // The trained categories plus the virtual ones introduced by Learn. They are published as one
+    // immutable object so concurrent readers cannot see the array from one rebuild and the index
+    // from another. A mutation clears the reference; the first reader rebuilds under _effectiveGate
+    // and publishes both together.
+    private readonly object _effectiveGate = new();
+    private EffectiveState? _effective;
     private long _nextToken;
     private bool _trained;
 
@@ -105,7 +118,7 @@ public sealed class LinearClassifier<TItem>
         for (int i = 0; i < _categories.Count; i++)
             _categoryIndex[_categories[i]] = i;
 
-        _effectiveDirty = true;
+        InvalidateEffective();
 
         SelectVocabulary(featuresById, documentFrequency, pending.Count);
         _numericMeans = new double[_featuresById.Length];
@@ -491,7 +504,8 @@ public sealed class LinearClassifier<TItem>
 
     private (double[] Logits, string[] Categories) ComputeLogits(IFeatureSet features)
     {
-        string[] categories = EffectiveCategories();
+        EffectiveState effective = EffectiveCategories();
+        string[] categories = effective.Categories;
         int trainedCount = _categories.Count;
         var logits = new double[categories.Length];
 
@@ -513,7 +527,7 @@ public sealed class LinearClassifier<TItem>
         }
 
         if (_reinforcement.Count > 0)
-            ApplyReinforcement(features, logits, _effectiveIndex!);
+            ApplyReinforcement(features, logits, effective.Index);
 
         return (logits, categories);
     }
@@ -541,28 +555,43 @@ public sealed class LinearClassifier<TItem>
         }
     }
 
-    private string[] EffectiveCategories()
+    private EffectiveState EffectiveCategories()
     {
-        if (!_effectiveDirty && _effectiveCategories is not null)
-            return _effectiveCategories;
+        EffectiveState? effective = Volatile.Read(ref _effective);
 
-        var categories = new string[_categories.Count + _virtualCategories.Count];
+        if (effective is not null)
+            return effective;
 
-        for (int i = 0; i < _categories.Count; i++)
-            categories[i] = _categories[i];
+        // The first reader after a mutation rebuilds; every later reader sees the published state
+        // without the lock. The array and its index are one object so they cannot come from
+        // different rebuilds.
+        lock (_effectiveGate)
+        {
+            effective = _effective;
 
-        _virtualCategories.CopyTo(categories, _categories.Count);
+            if (effective is not null)
+                return effective;
 
-        var index = new Dictionary<string, int>(categories.Length, StringComparer.Ordinal);
+            var categories = new string[_categories.Count + _virtualCategories.Count];
 
-        for (int i = 0; i < categories.Length; i++)
-            index[categories[i]] = i;
+            for (int i = 0; i < _categories.Count; i++)
+                categories[i] = _categories[i];
 
-        _effectiveCategories = categories;
-        _effectiveIndex = index;
-        _effectiveDirty = false;
-        return categories;
+            _virtualCategories.CopyTo(categories, _categories.Count);
+
+            var index = new Dictionary<string, int>(categories.Length, StringComparer.Ordinal);
+
+            for (int i = 0; i < categories.Length; i++)
+                index[categories[i]] = i;
+
+            effective = new EffectiveState(categories, index);
+            Volatile.Write(ref _effective, effective);
+
+            return effective;
+        }
     }
+
+    private void InvalidateEffective() => Volatile.Write(ref _effective, null);
 
     private IReadOnlyList<ClassificationResult> Rank(
         double[] logits,
@@ -660,7 +689,7 @@ public sealed class LinearClassifier<TItem>
             throw new ArgumentException("The effective correction weight must be finite and positive.", nameof(item));
 
         if (!_categoryIndex.ContainsKey(category) && _virtualCategories.Add(category))
-            _effectiveDirty = true;
+            InvalidateEffective();
 
         IFeatureSet features = _features.FeaturesOf(item);
         var known = features.Features.Where(_featureIds.ContainsKey).ToArray();
@@ -689,7 +718,7 @@ public sealed class LinearClassifier<TItem>
             && !_learned.Values.Any(item => string.Equals(item.Category, learned.Category, StringComparison.Ordinal)))
         {
             if (_virtualCategories.Remove(learned.Category))
-                _effectiveDirty = true;
+                InvalidateEffective();
         }
 
         return true;
@@ -896,7 +925,7 @@ public sealed class LinearClassifier<TItem>
     internal void ReadBody(BinaryReader reader)
     {
         _categories = ModelFormat.ReadStrings(reader);
-        _effectiveDirty = true;
+        InvalidateEffective();
         _categoryIndex = new Dictionary<string, int>(_categories.Count, StringComparer.Ordinal);
 
         for (int i = 0; i < _categories.Count; i++)
@@ -976,6 +1005,8 @@ public sealed class LinearClassifier<TItem>
     private sealed record PendingItem(string Category, IFeatureSet Features, double Weight);
 
     private sealed record LearnedItem(string[] Features, string Category, double Weight);
+
+    private sealed record EffectiveState(string[] Categories, Dictionary<string, int> Index);
 
     private readonly record struct SparseItem(
         int CategoryIndex,

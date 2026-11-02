@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using LexiSharp.Classification;
 using LexiSharp.Core;
 using Xunit;
@@ -376,5 +377,41 @@ public class LinearClassifierTests
         var features = classifier.TopFeatures("A", count: 3);
 
         Assert.Contains(features, feature => feature.Feature == "alpha");
+    }
+
+    // A Learn that introduces a virtual category invalidates the effective category array. The
+    // first readers after that mutation rebuild it concurrently, and the array and its index must
+    // be published as one object rather than as two independent fields.
+    [Fact]
+    public void Predict_IsConsistentWhenReadersRebuildTheEffectiveCategories()
+    {
+        var classifier = Trained();
+        var errors = new ConcurrentQueue<Exception>();
+        long reads = 0;
+
+        for (int round = 0; round < 200; round++)
+        {
+            classifier.Learn(
+                "delta",
+                "Virtual-" + round.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+            Parallel.For(0, 8, _ =>
+            {
+                try
+                {
+                    Interlocked.Increment(ref reads);
+
+                    if (classifier.PredictBest("alpha one") != "A")
+                        throw new InvalidOperationException("A reader observed a torn category table.");
+                }
+                catch (Exception failure)
+                {
+                    errors.Enqueue(failure);
+                }
+            });
+        }
+
+        Assert.Empty(errors);
+        Assert.Equal(200 * 8, reads);
     }
 }

@@ -1,5 +1,7 @@
+using System.Buffers;
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 using LexiSharp.Core;
 using LexiSharp.Linguistics;
@@ -191,336 +193,495 @@ public sealed class CorpusDivider<TItem>
     {
         ArgumentNullException.ThrowIfNull(items);
 
-        var documents = new List<CorpusItem>();
-        var ids = new HashSet<string>(StringComparer.Ordinal);
+        var documents = new List<CorpusItem>(
+            items.TryGetNonEnumeratedCount(out int capacity) ? capacity : 0);
+        var ids = new HashSet<string>(capacity, StringComparer.Ordinal);
+        var featureIds = new Dictionary<string, int>(StringComparer.Ordinal);
+        var featuresById = new List<string>();
+        var documentFrequency = new List<int>();
 
-        foreach (var item in items)
+        // The per-document id slices live in one growable buffer. A List<int> here would grow by
+        // doubling and then hand over a second copy; a pooled array is grown and returned once.
+        int[] flat = ArrayPool<int>.Shared.Rent(Math.Max(64, capacity * 8));
+        int flatCount = 0;
+
+        try
         {
-            string id = _idOf(item);
+            foreach (TItem item in items)
+            {
+                string id = _idOf(item);
 
-            if (string.IsNullOrEmpty(id))
-                throw new ArgumentException("Item ids must be non-empty strings.", nameof(items));
+                if (string.IsNullOrEmpty(id))
+                    throw new ArgumentException("Item ids must be non-empty strings.", nameof(items));
 
-            if (!ids.Add(id))
-                throw new ArgumentException("Item ids must be unique.", nameof(items));
+                if (!ids.Add(id))
+                    throw new ArgumentException("Item ids must be unique.", nameof(items));
 
-            double weight = _weightOf(item);
+                double weight = _weightOf(item);
 
-            if (!double.IsFinite(weight) || weight < 0)
-                throw new ArgumentException("Sample weights must be finite and non-negative.", nameof(items));
+                if (!double.IsFinite(weight) || weight < 0)
+                    throw new ArgumentException("Sample weights must be finite and non-negative.", nameof(items));
 
-            if (weight == 0)
-                continue;
+                if (weight == 0)
+                    continue;
 
-            documents.Add(new CorpusItem(id, _features.FeaturesOf(item), weight));
+                IFeatureSet features = _features.FeaturesOf(item);
+                int start = flatCount;
+
+                // Resolve every feature to an integer once. The node walk, the profile, the
+                // postings and the branch test then compare ints instead of hashing names; that
+                // hashing was the cost of every one of those passes, on every document, at every
+                // node.
+                foreach (string feature in features.Features)
+                {
+                    if (!featureIds.TryGetValue(feature, out int featureId))
+                    {
+                        featureId = featuresById.Count;
+                        featureIds[feature] = featureId;
+                        featuresById.Add(feature);
+                        documentFrequency.Add(0);
+                    }
+
+                    documentFrequency[featureId]++;
+
+                    if (flatCount == flat.Length)
+                        flat = Grow(flat, flatCount);
+
+                    flat[flatCount++] = featureId;
+                }
+
+                documents.Add(new CorpusItem(id, start, flatCount - start, weight));
+            }
+
+            if (documents.Count == 0)
+                return new CorpusDivision(null, Array.Empty<CorpusCluster>(), 0);
+
+            // Ids are assigned in first-seen order, then reordered so id order is ordinal name
+            // order. The split tie-break is "lowest feature name", which is then an int compare,
+            // and the vocabulary array stays the only place a name is read.
+            int vocabulary = featuresById.Count;
+            var order = new int[vocabulary];
+
+            for (int i = 0; i < vocabulary; i++)
+                order[i] = i;
+
+            Array.Sort(order, (left, right) => string.CompareOrdinal(featuresById[left], featuresById[right]));
+
+            var sortedFeatures = new string[vocabulary];
+            var remap = new int[vocabulary];
+
+            for (int newId = 0; newId < vocabulary; newId++)
+            {
+                int oldId = order[newId];
+                remap[oldId] = newId;
+                sortedFeatures[newId] = featuresById[oldId];
+            }
+
+            for (int i = 0; i < flatCount; i++)
+                flat[i] = remap[flat[i]];
+
+            ReadOnlySpan<int> unsortedFrequency = CollectionsMarshal.AsSpan(documentFrequency);
+            var frequency = new int[vocabulary];
+            var idf = new double[vocabulary];
+
+            for (int oldId = 0; oldId < vocabulary; oldId++)
+                frequency[remap[oldId]] = unsortedFrequency[oldId];
+
+            for (int id = 0; id < vocabulary; id++)
+                idf[id] = Math.Log(1 + ((double)documents.Count / frequency[id]));
+
+            var state = new BuildState(vocabulary, flat, sortedFeatures, idf);
+            var clusters = new List<CorpusCluster>();
+            DivisionNode? root = Build(documents, depth: 0, state, clusters);
+
+            return new CorpusDivision(root, clusters, documents.Count);
         }
-
-        if (documents.Count == 0)
-            return new CorpusDivision(null, Array.Empty<CorpusCluster>(), 0);
-
-        var documentFrequency = new Dictionary<string, int>(StringComparer.Ordinal);
-
-        foreach (var document in documents)
+        finally
         {
-            foreach (string feature in document.Features.Features)
-                documentFrequency[feature] = documentFrequency.TryGetValue(feature, out int count) ? count + 1 : 1;
+            ArrayPool<int>.Shared.Return(flat);
         }
+    }
 
-        var idf = new Dictionary<string, double>(StringComparer.Ordinal);
+    private static int[] Grow(int[] array, int count)
+    {
+        int[] bigger = ArrayPool<int>.Shared.Rent(array.Length * 2);
 
-        foreach (var (feature, frequency) in documentFrequency)
-            idf[feature] = Math.Log(1 + ((double)documents.Count / frequency));
+        Array.Copy(array, bigger, count);
+        ArrayPool<int>.Shared.Return(array);
 
-        var clusters = new List<CorpusCluster>();
-        DivisionNode? root = Build(
-            documents,
-            depth: 0,
-            new HashSet<string>(StringComparer.Ordinal),
-            idf,
-            clusters);
-
-        return new CorpusDivision(root, clusters, documents.Count);
+        return bigger;
     }
 
     private DivisionNode Build(
         List<CorpusItem> documents,
         int depth,
-        HashSet<string> used,
-        Dictionary<string, double> idf,
+        BuildState state,
         List<CorpusCluster> clusters)
     {
         int documentCount = documents.Count;
 
         if (depth >= _options.MaxDepth || documentCount < 2 * _options.MinDocumentsPerLeaf)
-            return MakeLeaf(documents, depth, idf, clusters);
+            return MakeLeaf(documents, depth, state, clusters);
 
-        var nodeFrequency = new Dictionary<string, int>(StringComparer.Ordinal);
+        int[] frequency = state.NodeFrequency;
+        List<int> touched = state.Touched;
+        touched.Clear();
 
-        foreach (var document in documents)
+        foreach (CorpusItem document in documents)
         {
-            foreach (string feature in document.Features.Features)
-                nodeFrequency[feature] = nodeFrequency.TryGetValue(feature, out int count) ? count + 1 : 1;
+            foreach (int id in state.Ids.AsSpan(document.Start, document.Count))
+            {
+                if (frequency[id] == 0)
+                    touched.Add(id);
+
+                frequency[id]++;
+            }
         }
 
-        string[] profileFeatures = ProfileFeatures(nodeFrequency);
+        int profileCount = SelectProfile(state);
 
-        if (profileFeatures.Length < 2)
-            return MakeLeaf(documents, depth, idf, clusters);
+        if (profileCount < 2)
+            return ReleaseAndLeaf(state, documents, depth, profileCount, clusters);
 
-        var profileIndex = new Dictionary<string, int>(profileFeatures.Length, StringComparer.Ordinal);
+        EnsureCapacity(ref state.CandidateIds, Math.Min(profileCount, _options.MaxCandidateTerms));
+        int candidateCount = SelectCandidates(state, profileCount, documentCount);
 
-        for (int i = 0; i < profileFeatures.Length; i++)
-            profileIndex[profileFeatures[i]] = i;
+        if (candidateCount == 0)
+            return ReleaseAndLeaf(state, documents, depth, profileCount, clusters);
 
-        List<string> candidates = CandidateFeatures(profileFeatures, nodeFrequency, used, documentCount);
+        EnsureCapacity(ref state.TotalWeights, profileCount);
+        EnsureCapacity(ref state.TrueWeights, profileCount);
+        EnsureCapacity(ref state.PostingOffsets, candidateCount + 1);
+        EnsureCapacity(ref state.PostingCursors, candidateCount);
+        double nodeWeight = TotalWeights(documents, state, profileCount);
 
-        if (candidates.Count == 0)
-            return MakeLeaf(documents, depth, idf, clusters);
+        BuildPostings(documents, state, frequency, candidateCount);
 
-        double[] totalWeights = TotalWeights(documents, profileIndex, out double nodeWeight);
-        Dictionary<string, List<int>> postings = BuildPostings(documents, candidates);
         var (best, bestSeparation) = FindBestSplit(
-            candidates,
-            postings,
             documents,
-            profileFeatures,
-            profileIndex,
-            totalWeights,
+            state,
+            profileCount,
+            candidateCount,
             nodeWeight);
 
         // A zero-separation split asks a question that changes nothing; MinSeparation = 0 must not
         // turn that into a split.
         if (best is null || bestSeparation < Math.Max(_options.MinSeparation, SplitFloor))
-            return MakeLeaf(documents, depth, idf, clusters);
+            return ReleaseAndLeaf(state, documents, depth, profileCount, clusters);
 
         SplitChoice choice = best.Value;
         var trueDocuments = new List<CorpusItem>(choice.DocumentsTrue);
         var falseDocuments = new List<CorpusItem>(choice.DocumentsFalse);
 
-        foreach (var document in documents)
-            (document.Features.Contains(choice.Feature) ? trueDocuments : falseDocuments).Add(document);
+        foreach (CorpusItem document in documents)
+        {
+            (ContainsId(state.Ids.AsSpan(document.Start, document.Count), choice.FeatureId)
+                ? trueDocuments
+                : falseDocuments).Add(document);
+        }
 
-        var usedTrue = new HashSet<string>(used, StringComparer.Ordinal) { choice.Feature };
-        var usedFalse = new HashSet<string>(used, StringComparer.Ordinal) { choice.Feature };
+        // The children read the same node-frequency and profile-slot buffers, so they are clean
+        // before the recursion instead of being cleared after it.
+        ReleaseNode(state, profileCount);
 
-        var metrics = new DivisionSplitMetrics(
-            choice.Separation,
-            choice.Balance,
-            choice.DocumentsTrue,
-            choice.DocumentsFalse,
-            choice.WeightTrue,
-            choice.WeightFalse);
+        // Both children exclude the same path features, so one path is pushed and popped around
+        // the two recursive builds instead of copying a set once per branch.
+        state.UsedPath.Add(choice.FeatureId);
 
-        return new DivisionBranch(
-            new FeaturePresenceQuestion(choice.Feature),
-            Build(trueDocuments, depth + 1, usedTrue, idf, clusters),
-            Build(falseDocuments, depth + 1, usedFalse, idf, clusters),
-            metrics);
+        try
+        {
+            DivisionNode trueBranch = Build(trueDocuments, depth + 1, state, clusters);
+            DivisionNode falseBranch = Build(falseDocuments, depth + 1, state, clusters);
+
+            var metrics = new DivisionSplitMetrics(
+                choice.Separation,
+                choice.Balance,
+                choice.DocumentsTrue,
+                choice.DocumentsFalse,
+                choice.WeightTrue,
+                choice.WeightFalse);
+
+            return new DivisionBranch(
+                new FeaturePresenceQuestion(choice.Feature),
+                trueBranch,
+                falseBranch,
+                metrics);
+        }
+        finally
+        {
+            state.UsedPath.RemoveAt(state.UsedPath.Count - 1);
+        }
     }
 
-    private string[] ProfileFeatures(Dictionary<string, int> nodeFrequency) =>
+    private DivisionLeaf ReleaseAndLeaf(
+        BuildState state,
+        List<CorpusItem> documents,
+        int depth,
+        int profileCount,
+        List<CorpusCluster> clusters)
+    {
+        ReleaseNode(state, profileCount);
+
+        return MakeLeaf(documents, depth, state, clusters);
+    }
+
+    private int SelectProfile(BuildState state)
+    {
         // The profile is local to the node. A global vocabulary would dilute a deep node with
         // features it does not contain, and would make its score depend on the cap rather than on
         // what is actually being separated here.
-        nodeFrequency
-            .Where(pair => pair.Value >= _options.MinDocumentFrequency)
-            .OrderByDescending(pair => pair.Value)
-            .ThenBy(pair => pair.Key, StringComparer.Ordinal)
-            .Take(_options.MaxVocabularyTerms)
-            .Select(pair => pair.Key)
-            .ToArray();
+        int[] frequency = state.NodeFrequency;
+        int[] profile = state.ProfileIds;
+        int count = 0;
 
-    private List<string> CandidateFeatures(
-        string[] profileFeatures,
-        Dictionary<string, int> nodeFrequency,
-        HashSet<string> used,
-        int documentCount) =>
-        profileFeatures
-            .Where(feature => !used.Contains(feature)
-                && nodeFrequency[feature] >= _options.MinDocumentsPerLeaf
-                && documentCount - nodeFrequency[feature] >= _options.MinDocumentsPerLeaf)
-            .Take(_options.MaxCandidateTerms)
-            .ToList();
+        foreach (int id in state.Touched)
+        {
+            if (frequency[id] >= _options.MinDocumentFrequency)
+                profile[count++] = id;
+        }
 
-    private static double[] TotalWeights(
-        List<CorpusItem> documents,
-        Dictionary<string, int> profileIndex,
-        out double nodeWeight)
+        if (count > 1)
+            Array.Sort(profile, 0, count, state.ProfileOrder);
+
+        int take = Math.Min(count, _options.MaxVocabularyTerms);
+
+        // Profile order is count descending, then name ordinal, which is id order.
+        for (int slot = 0; slot < take; slot++)
+            state.SlotOfId[profile[slot]] = slot;
+
+        return take;
+    }
+
+    private int SelectCandidates(BuildState state, int profileCount, int documentCount)
     {
-        var totalWeights = new double[profileIndex.Count];
-        nodeWeight = 0;
+        int[] profile = state.ProfileIds;
+        int[] frequency = state.NodeFrequency;
+        int[] candidates = state.CandidateIds;
+        List<int> used = state.UsedPath;
+        int count = 0;
 
-        foreach (var document in documents)
+        Array.Fill(state.CandidateOfSlot, -1, 0, profileCount);
+
+        foreach (int id in profile.AsSpan(0, profileCount))
+        {
+            if (count == _options.MaxCandidateTerms)
+                break;
+
+            int present = frequency[id];
+
+            if (used.Contains(id)
+                || present < _options.MinDocumentsPerLeaf
+                || documentCount - present < _options.MinDocumentsPerLeaf)
+                continue;
+
+            state.CandidateOfSlot[state.SlotOfId[id]] = count;
+            candidates[count++] = id;
+        }
+
+        return count;
+    }
+
+    private static double TotalWeights(
+        List<CorpusItem> documents,
+        BuildState state,
+        int profileCount)
+    {
+        double[] totalWeights = state.TotalWeights;
+        Array.Clear(totalWeights, 0, profileCount);
+        double nodeWeight = 0;
+
+        foreach (CorpusItem document in documents)
         {
             nodeWeight += document.Weight;
 
-            foreach (string feature in document.Features.Features)
+            foreach (int id in state.Ids.AsSpan(document.Start, document.Count))
             {
-                if (profileIndex.TryGetValue(feature, out int index))
-                    totalWeights[index] += document.Weight;
+                int slot = state.SlotOfId[id];
+
+                if (slot >= 0)
+                    totalWeights[slot] += document.Weight;
             }
         }
 
-        return totalWeights;
+        return nodeWeight;
     }
 
-    private static Dictionary<string, List<int>> BuildPostings(
+    private static void BuildPostings(
         List<CorpusItem> documents,
-        List<string> candidates)
+        BuildState state,
+        int[] frequency,
+        int candidateCount)
     {
-        var candidateSet = candidates.ToHashSet(StringComparer.Ordinal);
-        var postings = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+        int[] offsets = state.PostingOffsets;
+        int[] cursors = state.PostingCursors;
+        int[] candidates = state.CandidateIds;
+
+        offsets[0] = 0;
+
+        for (int candidate = 0; candidate < candidateCount; candidate++)
+        {
+            offsets[candidate + 1] = offsets[candidate] + frequency[candidates[candidate]];
+            cursors[candidate] = offsets[candidate];
+        }
+
+        EnsureCapacity(ref state.PostingIndices, offsets[candidateCount]);
+        int[] positions = state.PostingIndices;
 
         for (int i = 0; i < documents.Count; i++)
         {
-            foreach (string feature in documents[i].Features.Features)
+            CorpusItem document = documents[i];
+
+            foreach (int id in state.Ids.AsSpan(document.Start, document.Count))
             {
-                if (!candidateSet.Contains(feature))
+                int slot = state.SlotOfId[id];
+
+                if (slot < 0)
                     continue;
 
-                if (!postings.TryGetValue(feature, out List<int>? indices))
-                {
-                    indices = new List<int>();
-                    postings[feature] = indices;
-                }
+                int candidate = state.CandidateOfSlot[slot];
 
-                indices.Add(i);
+                if (candidate >= 0)
+                    positions[cursors[candidate]++] = i;
             }
         }
-
-        return postings;
     }
 
     private (SplitChoice? Best, double Separation) FindBestSplit(
-        List<string> candidates,
-        Dictionary<string, List<int>> postings,
         List<CorpusItem> documents,
-        string[] profileFeatures,
-        Dictionary<string, int> profileIndex,
-        double[] totalWeights,
+        BuildState state,
+        int profileCount,
+        int candidateCount,
         double nodeWeight)
     {
         SplitChoice? best = null;
         double bestSeparation = double.NegativeInfinity;
+        double[] totalWeights = state.TotalWeights;
+        double[] trueWeights = state.TrueWeights;
+        int[] offsets = state.PostingOffsets;
+        int[] positions = state.PostingIndices;
 
-        foreach (string feature in candidates)
+        for (int candidate = 0; candidate < candidateCount; candidate++)
         {
-            var scored = ScoreCandidate(
-                feature,
-                postings[feature],
-                documents,
-                profileFeatures,
-                profileIndex,
-                totalWeights,
-                nodeWeight);
+            int featureId = state.CandidateIds[candidate];
+            int start = offsets[candidate];
+            int end = offsets[candidate + 1];
+            double weightTrue = 0;
 
-            if (scored is not { } candidate)
+            Array.Clear(trueWeights, 0, profileCount);
+
+            for (int p = start; p < end; p++)
+            {
+                CorpusItem document = documents[positions[p]];
+                weightTrue += document.Weight;
+
+                foreach (int id in state.Ids.AsSpan(document.Start, document.Count))
+                {
+                    int slot = state.SlotOfId[id];
+
+                    if (slot >= 0)
+                        trueWeights[slot] += document.Weight;
+                }
+            }
+
+            double weightFalse = nodeWeight - weightTrue;
+
+            if (weightTrue <= 0 || weightFalse <= 0)
                 continue;
 
+            // The candidate's own profile is 1 against 0 on every split; counting it would add
+            // the same constant to every score and make MinSeparation depend on it.
+            int candidateIndex = state.SlotOfId[featureId];
+            double sumSquared = 0;
+
+            for (int i = 0; i < profileCount; i++)
+            {
+                if (i == candidateIndex)
+                    continue;
+
+                double probabilityTrue = trueWeights[i] / weightTrue;
+                double probabilityFalse = (totalWeights[i] - trueWeights[i]) / weightFalse;
+                double difference = probabilityTrue - probabilityFalse;
+                sumSquared += difference * difference;
+            }
+
+            int compared = profileCount - 1;
+            double probability = weightTrue / nodeWeight;
+            double balance = probability * (1 - probability);
+            double separation = compared == 0 ? 0 : balance * sumSquared / compared;
+
             bool better = best is null
-                || candidate.Separation > bestSeparation + SplitFloor
-                || (Math.Abs(candidate.Separation - bestSeparation) <= SplitFloor
-                    && string.CompareOrdinal(feature, best.Value.Feature) < 0);
+                || separation > bestSeparation + SplitFloor
+                || (Math.Abs(separation - bestSeparation) <= SplitFloor
+                    && featureId < best.Value.FeatureId);
 
             if (!better)
                 continue;
 
+            int documentsTrue = end - start;
             best = new SplitChoice(
-                feature,
-                candidate.Separation,
-                candidate.Balance,
-                candidate.DocumentsTrue,
-                candidate.DocumentsFalse,
-                candidate.WeightTrue,
-                candidate.WeightFalse);
-            bestSeparation = candidate.Separation;
+                featureId,
+                state.FeaturesById[featureId],
+                separation,
+                balance,
+                documentsTrue,
+                documents.Count - documentsTrue,
+                weightTrue,
+                weightFalse);
+            bestSeparation = separation;
         }
 
         return (best, bestSeparation);
     }
 
-    private static CandidateScore? ScoreCandidate(
-        string feature,
-        List<int> indices,
-        List<CorpusItem> documents,
-        string[] profileFeatures,
-        Dictionary<string, int> profileIndex,
-        double[] totalWeights,
-        double nodeWeight)
+    private static void ReleaseNode(BuildState state, int profileCount)
     {
-        var trueWeights = new double[profileFeatures.Length];
-        double weightTrue = 0;
+        int[] profile = state.ProfileIds;
 
-        foreach (int index in indices)
-        {
-            var document = documents[index];
-            weightTrue += document.Weight;
+        for (int slot = 0; slot < profileCount; slot++)
+            state.SlotOfId[profile[slot]] = -1;
 
-            foreach (string present in document.Features.Features)
-            {
-                if (profileIndex.TryGetValue(present, out int profile))
-                    trueWeights[profile] += document.Weight;
-            }
-        }
+        List<int> touched = state.Touched;
 
-        double weightFalse = nodeWeight - weightTrue;
+        foreach (int id in touched)
+            state.NodeFrequency[id] = 0;
 
-        if (weightTrue <= 0 || weightFalse <= 0)
-            return null;
-
-        // The candidate's own profile is 1 against 0 on every split; counting it would add
-        // the same constant to every score and make MinSeparation depend on it.
-        int candidateIndex = profileIndex[feature];
-        double sumSquared = 0;
-
-        for (int i = 0; i < profileFeatures.Length; i++)
-        {
-            if (i == candidateIndex)
-                continue;
-
-            double probabilityTrue = trueWeights[i] / weightTrue;
-            double probabilityFalse = (totalWeights[i] - trueWeights[i]) / weightFalse;
-            double difference = probabilityTrue - probabilityFalse;
-            sumSquared += difference * difference;
-        }
-
-        int compared = profileFeatures.Length - 1;
-        double probability = weightTrue / nodeWeight;
-        double balance = probability * (1 - probability);
-        double separation = compared == 0 ? 0 : balance * sumSquared / compared;
-
-        return new CandidateScore(
-            separation,
-            balance,
-            indices.Count,
-            documents.Count - indices.Count,
-            weightTrue,
-            weightFalse);
+        touched.Clear();
     }
 
-    private readonly record struct CandidateScore(
-        double Separation,
-        double Balance,
-        int DocumentsTrue,
-        int DocumentsFalse,
-        double WeightTrue,
-        double WeightFalse);
+    private static bool ContainsId(ReadOnlySpan<int> ids, int featureId)
+    {
+        foreach (int id in ids)
+        {
+            if (id == featureId)
+                return true;
+        }
+
+        return false;
+    }
+
+    private static void EnsureCapacity<T>(ref T[] array, int length)
+    {
+        if (array.Length < length)
+            array = new T[Math.Max(length, array.Length * 2)];
+    }
 
     private DivisionLeaf MakeLeaf(
         List<CorpusItem> documents,
         int depth,
-        Dictionary<string, double> idf,
+        BuildState state,
         List<CorpusCluster> clusters)
     {
-        string[] ids = documents
-            .Select(document => document.Id)
-            .OrderBy(id => id, StringComparer.Ordinal)
-            .ToArray();
-        string[] topFeatures = TopFeatures(documents, idf);
+        var ids = new string[documents.Count];
         double weight = 0;
 
-        foreach (var document in documents)
-            weight += document.Weight;
+        for (int i = 0; i < documents.Count; i++)
+        {
+            ids[i] = documents[i].Id;
+            weight += documents[i].Weight;
+        }
+
+        Array.Sort(ids, StringComparer.Ordinal);
+        string[] topFeatures = TopFeatures(documents, state);
 
         var cluster = new CorpusCluster(
             Array.AsReadOnly(ids),
@@ -532,33 +693,118 @@ public sealed class CorpusDivider<TItem>
         return new DivisionLeaf(cluster);
     }
 
-    private string[] TopFeatures(List<CorpusItem> documents, Dictionary<string, double> idf)
+    private string[] TopFeatures(List<CorpusItem> documents, BuildState state)
     {
         if (_options.TopFeaturesPerCluster == 0 || documents.Count == 0)
             return Array.Empty<string>();
 
-        var documentFrequency = new Dictionary<string, int>(StringComparer.Ordinal);
+        int[] frequency = state.NodeFrequency;
+        List<int> touched = state.Touched;
+        touched.Clear();
 
-        foreach (var document in documents)
+        foreach (CorpusItem document in documents)
         {
-            foreach (string feature in document.Features.Features)
-                documentFrequency[feature] = documentFrequency.TryGetValue(feature, out int count) ? count + 1 : 1;
+            foreach (int id in state.Ids.AsSpan(document.Start, document.Count))
+            {
+                if (frequency[id] == 0)
+                    touched.Add(id);
+
+                frequency[id]++;
+            }
         }
 
-        return documentFrequency
-            .Select(pair => (
-                Feature: pair.Key,
-                Score: (double)pair.Value / documents.Count * idf.GetValueOrDefault(pair.Key)))
-            .OrderByDescending(pair => pair.Score)
-            .ThenBy(pair => pair.Feature, StringComparer.Ordinal)
-            .Take(_options.TopFeaturesPerCluster)
-            .Select(pair => pair.Feature)
-            .ToArray();
+        var scored = new List<(int FeatureId, double Score)>(touched.Count);
+
+        foreach (int id in touched)
+        {
+            scored.Add((
+                id,
+                ((double)frequency[id] / documents.Count) * state.Idf[id]));
+        }
+
+        scored.Sort(static (left, right) =>
+        {
+            int byScore = right.Score.CompareTo(left.Score);
+
+            return byScore != 0 ? byScore : left.FeatureId.CompareTo(right.FeatureId);
+        });
+
+        int take = Math.Min(_options.TopFeaturesPerCluster, scored.Count);
+        var top = new string[take];
+
+        for (int i = 0; i < take; i++)
+            top[i] = state.FeaturesById[scored[i].FeatureId];
+
+        foreach (int id in touched)
+            frequency[id] = 0;
+
+        touched.Clear();
+
+        return top;
     }
 
-    private sealed record CorpusItem(string Id, IFeatureSet Features, double Weight);
+    private sealed class BuildState
+    {
+        public BuildState(int vocabulary, int[] ids, string[] featuresById, double[] idf)
+        {
+            Ids = ids;
+            FeaturesById = featuresById;
+            Idf = idf;
+            NodeFrequency = new int[vocabulary];
+            SlotOfId = new int[vocabulary];
+            Array.Fill(SlotOfId, -1);
+            ProfileIds = new int[vocabulary];
+            CandidateOfSlot = new int[vocabulary];
+            ProfileOrder = new FrequencyComparer(NodeFrequency);
+        }
+
+        public int[] Ids { get; }
+
+        public string[] FeaturesById { get; }
+
+        public double[] Idf { get; }
+
+        public int[] NodeFrequency { get; }
+
+        public int[] SlotOfId { get; }
+
+        public int[] ProfileIds { get; }
+
+        public int[] CandidateOfSlot { get; }
+
+        public int[] CandidateIds = Array.Empty<int>();
+
+        public double[] TotalWeights = Array.Empty<double>();
+
+        public double[] TrueWeights = Array.Empty<double>();
+
+        public int[] PostingOffsets = Array.Empty<int>();
+
+        public int[] PostingCursors = Array.Empty<int>();
+
+        public int[] PostingIndices = Array.Empty<int>();
+
+        public List<int> Touched { get; } = new();
+
+        public List<int> UsedPath { get; } = new();
+
+        public FrequencyComparer ProfileOrder { get; }
+    }
+
+    private sealed class FrequencyComparer(int[] frequency) : IComparer<int>
+    {
+        public int Compare(int left, int right)
+        {
+            int byFrequency = frequency[right].CompareTo(frequency[left]);
+
+            return byFrequency != 0 ? byFrequency : left.CompareTo(right);
+        }
+    }
+
+    private sealed record CorpusItem(string Id, int Start, int Count, double Weight);
 
     private readonly record struct SplitChoice(
+        int FeatureId,
         string Feature,
         double Separation,
         double Balance,
