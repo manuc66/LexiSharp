@@ -185,8 +185,9 @@ public sealed record SearchOptions(
     /// </para>
     /// <para>
     /// It is a property rather than a constructor parameter so that no existing call site changes
-    /// behaviour, and it is read where the bound exists: an index that lends flat posting arrays
-    /// without per-window bounds — the in-memory one, today — ignores it.
+    /// behaviour. An index that lends flat posting arrays exposes the per-window bounds; the
+    /// in-memory one builds them lazily on the first pruning query, so a search that leaves this
+    /// false pays neither the arrays nor the pass that fills them.
     /// </para>
     /// </remarks>
     public bool PruneByBlockBound { get; init; }

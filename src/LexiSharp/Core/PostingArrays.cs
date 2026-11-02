@@ -223,9 +223,7 @@ internal static class DocumentAtATime
 
         // Pruning needs every term that holds anything to carry its window bounds; a term with no
         // entries contributes nothing and needs none.
-        bool prune = true;
-
-        prune = sink.Pruning;
+        bool prune = sink.Pruning;
 
         for (int t = 0; prune && t < terms; t++)
         {
