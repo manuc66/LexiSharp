@@ -1,22 +1,6 @@
-# Changelog
-
-All notable changes to LexiSharp are recorded here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the 0.x caveat: **nothing is
-frozen before 1.0.** A minor bump may break the public API, and the notes below say when it did.
-
-Every measured figure lives with the thing that measures it, not here. A number that is only
-written in this file is an assertion; the numbers below are pointers to
-`bench/LexiSharp.Eval/reference/pinned.json`, which is replayed by
-
-```bash
-dotnet run --project bench/LexiSharp.Eval -c Release -- --verify-reference
-```
-
-on every push that touches the library or the harness, and weekly by the `Pinned reference`
-workflow.
-
 ## [Unreleased]
+
+## [0.9.0] — 2026-11-02
 
 ### Added
 
@@ -143,129 +127,6 @@ workflow.
   options, the linear model is the accuracy one. See
   [evaluation](docs/evaluation.md#classification-on-20-newsgroups) and
   [text analysis](docs/text-analysis.md#question-trees-classification-and-corpus-division).
-
-### Changed
-
-- **The docs mark unreleased features.** Anything on `main` but not in the 0.8.0 package is
-  labelled **unreleased** (the classification subsystem, French stemming,
-  `QueryFeedbackHistory`), and `WordJoiners` is documented with its identifier case and its 0.7.0
-  origin.
-- **The store path is timed, which is the path a deployment runs.** A new `store` lane writes a corpus
-  into `SegmentedTextIndex`, commits it, reopens it three ways and measures the same three queries as
-  the cursor lane. At 100,000 documents: building the in-memory index takes **4.5-4.7 s** while opening
-  the committed segment takes **24-29 ms** (57.5 MB, about 170× less), the store costs **3.2-6.3×** the
-  in-memory index on a tail query and **1.1-1.6×** on a head term, a decoded-postings cache halves the
-  tail (6.30 → 3.20 µs) because it is what lets the cursor pass engage at all, and a store search
-  allocates **6.6-7.8 KB** against 0.7-1.0 KB in memory because it decodes the page it returns. Mapping
-  costs **2.0×** on a 1 µs tail query and **1.14×** on a 1.2 ms head one, so the 1.10-1.14× the
-  indexing page records belongs with the query rather than with the mode. Two runs, every p50 within
-  5 %; one corpus, `Limit: 10`, journal disabled for the write, and nothing above 100,000 documents.
-
-- **The sparse knobs are settled: the truncation and budget margins add up, and the 8-bit export loses
-  on two corpora of three.** NFCorpus encoded at 512 tokens with a 128-term budget reads nDCG@10
-  **0.3627**, against 0.3567 at (256, 128), 0.3596 at (256, 256) and 0.3665 at (512, 256): doubling
-  the truncation is worth +0.0060 / +0.0069 whichever budget is set, and halving the budget costs
-  0.0038 / 0.0029 whichever truncation, so on NFCorpus the two choices are priced independently. On
-  ArguAna the quantised export loses **0.0411** nDCG@10 under `--exclude-query-doc` (0.4805 against
-  0.5216) and **0.0311** with the query document kept — four to six times the truncation move, and
-  against the 0.0106 loss on NFCorpus and the 0.0153 gain on SciFact that two corpora alone made look
-  like "no direction". The export is not a cheaper copy of the same ranking, and it is not a free
-  trade either: choosing it needs a check per corpus, and the two corpora this harness could score
-  when the export arrived would both have said yes.
-
-- **The cursor pass's density crossing scales with the corpus, measured on three real ones.** TREC-COVID
-  (171,332 real abstracts) puts the crossing at **df 1,000-2,500** and Quora (522,931 real questions) at
-  **df 2,500-4,984**, against 25-250 at 8,674 to 10,000 documents: the interval rises with the ordinal
-  space, which is what `CursorDensityDivisor` claims. At Quora's size the cursor pass wins 5.68-5.95× at
-  df 50, 2.00-2.04× at df 250, 1.53-1.55× at df 500 and 1.16-1.19× at df 1,002, the two tie at df 2,493,
-  and the accumulator wins 1.08-1.15× at df 4,984. The caps of 856 and 2,614 land on and just past those
-  ties, so the engine gives up the pass where it stops helping; `CursorDensityDivisor` stays at 200. The
-  clear is 9.3-9.6 µs at Quora against 0.10 µs at ArguAna, which is what widens the tail. Two runs each,
-  every row within 5 % of its twin. Both real corpora have degenerate lengths — p50 21 and 9 tokens — so
-  this is not a claim about typical web text.
-
-- **The cursor lane times both accumulating passes, and its sweep runs over a real corpus.** A
-  sweep row used to time only the pass the engine chose, so at a document frequency where the rule
-  says "cursor" the row measured the cursor pass and found it fast — the decision testing itself.
-  `--both` times the accumulator and the cursor pass on one build, one of each per iteration, and
-  prints which pass the rule should have chosen; `--corpus <arguana|nfcorpus|scifact>` runs the same
-  sweep over a BEIR corpus instead of the generated one, so the density axis can be read on
-  documents whose lengths are not all 50 tokens. Measured three runs each: the crossing is an
-  interval, **25 < df < 250**, on the synthetic corpus and on ArguAna's 8,674 real documents alike,
-  with a tie at df 50 and the accumulator ahead from df 250 (1.09-1.11× synthetic, 1.13-1.18×
-  ArguAna). `RankedTextSearchEngine.CursorDensityDivisor` stays at 200, whose cap of 43-50 sits
-  inside that interval, so the constant is not a frequency of the generated corpus.
-
-- **The ASP.NET Core endpoint bounds the page it will build, and answers a refused request with
-  `400`.** `limit` is at most 100 and `offset` at most 10 000 (`LexiSharpSearchEndpoint.MaxLimit`,
-  `MaxOffset`); a query the engine will not run — more than 32 distinct `term*`/`term~` atoms, or
-  syntax the index cannot honor — is a `400` with the reason in `{ "field": "q", "message": ... }`
-  rather than a `500`. Both bounds exist because a page is cut from a working window of
-  `Offset + Limit` entries, so an unbounded request asked the engine to build the whole corpus'
-  window for a page of ten.
-
-- **A query resolves each distinct prefix/fuzzy atom once, and may carry at most
-  `RankedTextSearchEngine.MaxExpansionAtoms` (32) of them.** `catt~` written ten times is one
-  vocabulary walk instead of ten, and `+catt~`/`-catt~` share it; past 32 distinct atoms the query
-  is refused with `ArgumentException` instead of paying one vocabulary walk per atom. `EnableFuzzy`
-  rewrites plain terms into atoms, so a long query on a fuzzy index is bounded by the same number.
-
-- **A saved index is read as untrusted input.** Both MessagePack persistence classes use
-  `MessagePackSecurity.UntrustedData`: SipHash over the keys materialized from the payload (it
-  carries `Dictionary<string, string>` fields read from the file) and a 64 MB ceiling on decompressed
-  output, where the framework's "trusted" defaults cap at `int.MaxValue`. The wire format is
-  unchanged and payloads saved by earlier builds still load.
-
-- **The CLI prints corpus text for a terminal rather than as a byte stream.** Document text,
-  document ids and the query lose their control and format characters before the line is written:
-  `ESC` and the C1 introducers, the bidi overrides and the zero-width characters. A corpus is
-  input — a transcript, a scraped page — and a terminal is an interpreter, so `ESC[2J` in a
-  document reached the screen as a command (clear, retitle, write the clipboard). `segment search
-  --json` is unchanged; that file is machine output and the serializer escapes it.
-
-- **The PostgreSQL engines fetch at most 100 000 rows per query.** The window is `Offset + Limit`
-  from the request, so an offset in the billions used to reach the database as a `LIMIT` of the same
-  size; past the ceiling the page comes back short rather than the table coming back whole.
-
-- **The aligned BM25 rows use the reference's own analyzer.** They read **0.3218** and **0.6789**
-  against the published **0.3218** and **0.6789** — equal to the fourth decimal — where the figures
-  this file withdraws below were the `english` analyzer's 0.3215 and 0.6788. `--analyzer uax29`
-  implements the reference's word segmentation: an apostrophe is kept inside a word, possessives are
-  stripped before the stop list, and its index lands within 0.1 % (NFCorpus) and 0.005 % (SciFact) of
-  the reference's term count, against 2.8 % and 1.5 % for `english`. The four arithmetic options are
-  what close the rest. Both the fingerprints and the scores are pinned, and `--verify-reference`
-  replays them; the regression-pin format gained `referenceIndexStatistics`, `scoreRounding`,
-  `omitSaturationConstant` and `singlePrecision` so a pin can name the configuration it was measured
-  under instead of replaying a different one.
-
-### Withdrawn
-
-- **The 10,000-document reading that the cursor pass won the df 50 point of the density crossing by
-  1.12× (2.80 → 2.50 µs).** It came from alternating two builds, and at that document frequency the
-  two passes were within this host's drift of each other; timing both on one build, one of each per
-  iteration over three runs, reads the point as a tie (cursor 2.70-2.80 µs against accumulator
-  2.70-2.90 µs). The crossing is an interval rather than a pair of points, and the benchmarks page
-  now carries it that way. The same instrument reproduces the accumulator's advantage at df 250
-  (1.09-1.11×), so the interval is unchanged in shape — only that one margin is gone.
-
-- **The ArguAna figure 0.3970 and the claim that all 15,466 returned scores matched the reference's on
-  the raw bits.** Both were carried by a parity row that `--verify-reference` displays and never
-  replays, which is how they survived several corrections elsewhere. The documented configuration —
-  the reference's analyzer, k1=0.9/b=0.4, linear gains, the repeated-term rule, the query document
-  excluded, and the four arithmetic options — measures **0.4005** today, and did so at the commit
-  that recorded 0.3970 as well (checked out and re-run). A gap of 0.0035 is not a rounding
-  difference: it is dozens of scores. The row is now a pinned regression (`arguana/uax29-aligned`)
-  and the pages say the gap is unclosed.
-
-- **The aligned BM25 figures for NFCorpus and SciFact, 0.3215 and 0.6788.** They were published
-  beside the reference's 0.3218 and 0.6789 as equal to the fourth decimal, and they were the
-  `english` analyzer's exponential-gain, distinct-term readings. That analyzer splits a contraction
-  into a stem and a fragment, so its index held 2.8 % and 1.5 % more terms and its scores were not
-  built on the reference's document frequencies; the fourth-decimal agreement was a coincidence.
-  Re-measured with the reference's analyzer and conventions the rows read **0.3218** and **0.6789**,
-  as recorded above.
-
-### Added
 
 - **`OnnxTextEncoder` caches query embeddings and batches 8 texts by default.** The cache keeps
   256 text → vector entries keyed by query/passage role (`EmbeddingCacheCapacity`, `0` disables);
@@ -894,176 +755,95 @@ workflow.
   option was set keep their unweighted vector until they are rewritten. `docs/backends.md` carries
   the `UPDATE` statement that rewrites them for a given map.
 
-### Fixed
-
-- **Every SQL engine breaks a tie by document id, ordinally.** The text, sparse and vector engines
-  ordered on the score (or the distance) alone, so the page among exactly equal scores was whatever
-  the executor produced. Measured on one server and four documents inserted in reverse id order: a
-  `Seq Scan` returns the heap order (`d4,d3,d2,d1`), an `Index Scan` over the HNSW graph returns
-  `d1,d2,d3,d4`, and nothing in the statement names either — the same query can page differently
-  after a plan change. The in-memory engines break ties on `string.CompareOrdinal` under the default
-  `TieBreak.DocumentId`, and the statements now append `id COLLATE "C" ASC`. The C collation is the
-  point: `en_US.utf8` folds case and orders `a` before `A`, while ordinal order puts `A` first. The
-  vector engine also compares the merged multi-column ranking by id, because a per-column tie-break
-  cannot order two documents that are equal in different columns. The fuzzy and ParadeDB statements
-  already carried an `id ASC` tie-break and now use the same ordinal spelling. The collation itself
-  moves no figure: the C and `en_US.utf8` orders of the ids are identical on all three BEIR corpora,
-  checked against every id.
-
-- **The sparse backend's two PostgreSQL rows are re-measured under the tie-break.** They were
-  published as `0.5200` (HNSW) and `0.5202` (exact scan) nDCG@10, with `0.8201` R@10 for the indexed
-  row: the page among equally-scored documents was the executor's. With the ordinal tie-break both
-  read `0.5216` / `0.4300` / `0.8179`, the same page the in-memory row returns. The run, the command
-  and what it still does not cover are on [the evaluation page](docs/evaluation.md).
-
-- **The vector and sparse engines write `tsv` on the insert, not only on a conflict.**
-
-  Both `INSERT` statements listed `tsv` only in their `ON CONFLICT DO UPDATE` clause, so a document
-  added to a fresh table through either engine left `tsv` `NULL` and was invisible to the lexical
-  engine — on the shared table whose whole point is that one row serves both. Both statements now
-  carry the column and `PostgresSchema.TsvExpression` on the way in as well as on the upsert, and an
-  integration test compares the vector the lexical and vector engines store for one document.
-
-- **`Commit` forces the segment to the device before the rename, and refuses an interrupted commit
-  instead of opening an empty store.**
-
-  `WriteToDisk` wrote through `File.WriteAllBytes`, which closes the stream without forcing the bytes
-  to disk. A power loss could therefore leave a correctly named segment whose content was never
-  written: the reader refuses it, correctly, while the generation it replaced had already been
-  deleted — so the store could not be opened at all. The write now goes through a stream with
-  `Flush(flushToDisk: true)` before the rename. The directory entry is still not fsynced (`.NET` has
-  no portable API for it, and this type does not call into libc), and both the class remarks and
-  `docs/indexing.md` now say exactly that instead of describing the commit as durable without
-  qualification.
-
-  A directory holding a temporary segment and no readable generation now throws
-  `InvalidDataException` rather than opening as a new, empty store: answering "no documents" to every
-  query, while the corpus is still on disk, is the one failure worse than an exception. Two tests,
-  one of which pins that an empty directory still opens as a new store, so the refusal cannot spread
-  to the legitimate first-commit case.
-
-  No test observes the fsync itself — it is not visible from a unit test — so the durability claim is
-  stated as what the code does, not asserted.
-
-- **A commit interrupted after its rename served every document twice, and resurrected the deleted
-  ones.**
-
-  `SegmentedTextIndex.Commit` writes the merged segment to a temporary file, renames it into place,
-  and only then deletes the segments it replaced. A crash in that window leaves the previous
-  generation on disk beside its successor, and the constructor chained every `*.lxs` it found — so on
-  the next open each shared document was returned twice, and every document the commit had deleted
-  came back. The constructor now opens the newest generation only: the successor is the flush of
-  everything live at commit time, so the older file is a subset of it by construction. Two tests in
-  `SegmentRecoveryTests` pin it, one of them asserting that a document deleted before the commit stays
-  gone.
-
-  The mapped-mode variant of that path is **unverified on Windows**: Windows refuses to delete a file
-  while a mapping is open, and every CI job here runs on Ubuntu. Stated in `docs/indexing.md` rather
-  than fixed blind, with the workaround — dispose a mapped store before committing it.
-
-- **`TieBreak.InsertionOrder` ordered tied documents by a position that moved with the corpus.**
-
-  The option documents the order documents were added, and what it read was the position the engine
-  *produced* each candidate in — a different quantity on every path. The term-at-a-time pass walks the
-  posting lists and records a document at its first touch, so a query whose two terms alternate
-  through the corpus records every document of the first term before it reaches the second; the
-  per-document loop walks the union of the terms' candidates below the accumulation floor and the
-  whole corpus once that union covers half of it. Which path served a query is a function of corpus
-  size and term frequency, so the same documents, tied the same way, came back in two different
-  orders at two corpus sizes — with nothing the caller did changing.
-
-  Demonstrated on a fixture where documents alternate `alpha` and `beta` at consecutive ordinals and
-  every candidate scores the same double, with ids descending in insertion order: below the
-  accumulation floor the page was `doc-z, doc-y, doc-x, doc-w, doc-v, …` and above it `doc-z, doc-x,
-  doc-v, doc-t, …, doc-y, doc-w, …` — the same scores in a different order. The full scan and a
-  segment's candidate path already produced ordinal order; the three now agree because the tie reads
-  the **document's ordinal**, the position it occupies in the index's ordinal space, which for a text
-  index is the order documents were added.
-
-  `TopRankedWindow` compares those ordinals instead of arrival positions, and no longer allocates the
-  arrival-position array at all for an index that has an ordinal space. Measured on a 200-document
-  corpus whose documents tie, a `Limit: 10` search under this option allocates **784 → 680 bytes** —
-  104 of them the `long[10]` the arrival buffer costs, which is the whole of the difference, the
-  comparison itself reading a field the window already holds. Both builds ran through the same probe
-  in one session on one host, mean of five rounds of 20,000 searches, no spread in either figure. Two
-  behaviours are pinned rather than changed: a document removed frees its ordinal and the next
-  document added takes it, so a re-added document sorts at the slot it was handed rather than at the
-  end; and an index that cannot enumerate its ordinals — a backend, or a caller's own — has no
-  ordinal to read, so the order follows the order it enumerates its documents in, which is the only
-  insertion order such an index can state.
-
-  `InsertionOrderTieBreakTests` covers the accumulation pass, both sides of the candidate boundary,
-  seven corpus sizes over the same tied documents, a filtered and a faceted query, the
-  remove-and-re-add case, a store committed and overlaid, and the ordinal-less fallback. Each fixture
-  asserts the path it exercised before asserting the page, so a fixture that quietly fell back could
-  not pass for the wrong reason.
-
-- **Youden's J was computed on a threshold no classifier can produce.**
-
-  The search walked candidate thresholds and scored each with a suffix over the examples at
-  indices `[i, n)`. But the predicate is `score >= threshold`, and with tied scores that spans the
-  *whole run* of equal scores — including examples at lower indices. One threshold was therefore
-  scored as counting part of a tied group positive and part negative, which no threshold can
-  produce, so the J reported was not one either. The walk now evaluates only where the score
-  changes, where suffix and predicate agree.
-
-  Measured on a fixture built to contain ties: **J = 0.1552 where 0.1591 was achievable** — a
-  threshold chosen as optimal that was not, and a caller abstaining at the wrong point of its own
-  labelled data. A test now asserts the threshold reaches the best J of any threshold, against an
-  O(n²) reference over the same pairs.
-
-- **`BoostedTextSearchEngine` broke ties in a culture the rest of the library does not use.**
-
-  Its `ThenBy(x => x.DocumentId)` passed no comparer, so it took `Comparer<string>.Default` —
-  culture-sensitive for strings. `TieBreak.DocumentId` documents an *ordinal* id ordering and
-  `TopRankedWindow` compares ordinally, so a decorated ranking disagreed with the ranking it was
-  decorating, on ids differing only in accents or letter case. Both decorators now order through
-  `ResultOrdering`, which compares ordinally.
-
-- **A segment's `Documents` enumeration held null elements after a document lookup.**
-
-  A lookup resolves the one slot it needs and leaves the rest of the segment's document array at their
-  defaults, and the getter checked only whether the array existed. Three documents written, one looked
-  up, and two nulls in the enumeration — on a collection the interface types as
-  `IReadOnlyCollection<SearchDocument>`. The getter now asks whether the array is *complete* rather
-  than whether it exists, and resolves whatever is still open, so a slot a lookup already decoded is
-  read rather than re-decoded. The check keeps the getter O(1) after the first fill; it is read once
-  per query on the full-corpus scoring path. `SegmentFileTests.Documents_ResolvesEverySlotALookupLeftOpen`
-  fails with two nulls before the change and passes after it.
-
-- **A window sized past the end of the corpus asked the engine to build a working set no page needed.**
-
-  `SearchOptions.Window` is `Offset + Limit`, two numbers a caller owns, and `TopRankedWindow`
-  allocated its entry array at that size in its constructor — before a document had been considered.
-  `Offset: int.MaxValue` asked for 2 147 483 647 entries, which the CLR refuses outright rather than
-  allocating: `OutOfMemoryException`, "Array dimensions exceeded supported range", in 14 ms, for a
-  page that is empty either way. The minimal-API endpoint binds `Offset` from the query string, so a
-  single request reached it.
-
-  An engine now builds `min(Window, documentCount)`. A window is a working set the page is cut out
-  of, and it cannot usefully be larger than the corpus it is cut from: `Offset + Limit` past the last
-  document still produces the page it always did, an empty one, so the answer is unchanged and only
-  the working set is bounded. `WindowSizeTests` pins both halves — the empty page, and that an
-  oversized limit still returns every document a reachable one returns — for the ranked engine and
-  the vector engine alike.
-
-  Not the same class, and measured rather than assumed: `PostgresDocumentExclusion.FetchLimit` turns
-  the same window into a SQL `LIMIT`, and an upper bound is not a demand — the server sends the rows
-  the corpus holds and no more. Measured against a live `pgvector/pgvector:pg16`: a page requested at
-  `Offset: int.MaxValue` comes back empty, and the same request with no offset returns the whole
-  corpus. Pinned in `PostgresTextSearchEngineTests.Search_Offset_PaginatesTheRanking`.
-
-- **The Youden complexity test timed the host, and the host is not the algorithm.**
-
-  `YoudenThreshold_searchIsLinearNotQuadratic` compared two stopwatches — 2 000 pairs
-  against 20 000 — and failed on a shared CI runner: 68.5 ms against 3.7 ms for the same
-  input locally, a ratio read as a quadratic search that does not exist. Measured here,
-  best-of-5: 0.51 ms at 2 000 pairs, 3.67 ms at 20 000, 22.3 ms at 100 000 — the walk is one
-  pass in each direction. `ComputeYoudenThreshold` now reports the examples it looked at,
-  and the test asserts `2n` and `10×` at 10× the input; a mutation that recomputes the
-  suffix per threshold fails it.
-
 ### Changed
+
+- **The store path is timed, which is the path a deployment runs.** A new `store` lane writes a corpus
+  into `SegmentedTextIndex`, commits it, reopens it three ways and measures the same three queries as
+  the cursor lane. At 100,000 documents: building the in-memory index takes **4.5-4.7 s** while opening
+  the committed segment takes **24-29 ms** (57.5 MB, about 170× less), the store costs **3.2-6.3×** the
+  in-memory index on a tail query and **1.1-1.6×** on a head term, a decoded-postings cache halves the
+  tail (6.30 → 3.20 µs) because it is what lets the cursor pass engage at all, and a store search
+  allocates **6.6-7.8 KB** against 0.7-1.0 KB in memory because it decodes the page it returns. Mapping
+  costs **2.0×** on a 1 µs tail query and **1.14×** on a 1.2 ms head one, so the 1.10-1.14× the
+  indexing page records belongs with the query rather than with the mode. Two runs, every p50 within
+  5 %; one corpus, `Limit: 10`, journal disabled for the write, and nothing above 100,000 documents.
+
+- **The sparse knobs are settled: the truncation and budget margins add up, and the 8-bit export loses
+  on two corpora of three.** NFCorpus encoded at 512 tokens with a 128-term budget reads nDCG@10
+  **0.3627**, against 0.3567 at (256, 128), 0.3596 at (256, 256) and 0.3665 at (512, 256): doubling
+  the truncation is worth +0.0060 / +0.0069 whichever budget is set, and halving the budget costs
+  0.0038 / 0.0029 whichever truncation, so on NFCorpus the two choices are priced independently. On
+  ArguAna the quantised export loses **0.0411** nDCG@10 under `--exclude-query-doc` (0.4805 against
+  0.5216) and **0.0311** with the query document kept — four to six times the truncation move, and
+  against the 0.0106 loss on NFCorpus and the 0.0153 gain on SciFact that two corpora alone made look
+  like "no direction". The export is not a cheaper copy of the same ranking, and it is not a free
+  trade either: choosing it needs a check per corpus, and the two corpora this harness could score
+  when the export arrived would both have said yes.
+
+- **The cursor pass's density crossing scales with the corpus, measured on three real ones.** TREC-COVID
+  (171,332 real abstracts) puts the crossing at **df 1,000-2,500** and Quora (522,931 real questions) at
+  **df 2,500-4,984**, against 25-250 at 8,674 to 10,000 documents: the interval rises with the ordinal
+  space, which is what `CursorDensityDivisor` claims. At Quora's size the cursor pass wins 5.68-5.95× at
+  df 50, 2.00-2.04× at df 250, 1.53-1.55× at df 500 and 1.16-1.19× at df 1,002, the two tie at df 2,493,
+  and the accumulator wins 1.08-1.15× at df 4,984. The caps of 856 and 2,614 land on and just past those
+  ties, so the engine gives up the pass where it stops helping; `CursorDensityDivisor` stays at 200. The
+  clear is 9.3-9.6 µs at Quora against 0.10 µs at ArguAna, which is what widens the tail. Two runs each,
+  every row within 5 % of its twin. Both real corpora have degenerate lengths — p50 21 and 9 tokens — so
+  this is not a claim about typical web text.
+
+- **The cursor lane times both accumulating passes, and its sweep runs over a real corpus.** A
+  sweep row used to time only the pass the engine chose, so at a document frequency where the rule
+  says "cursor" the row measured the cursor pass and found it fast — the decision testing itself.
+  `--both` times the accumulator and the cursor pass on one build, one of each per iteration, and
+  prints which pass the rule should have chosen; `--corpus <arguana|nfcorpus|scifact>` runs the same
+  sweep over a BEIR corpus instead of the generated one, so the density axis can be read on
+  documents whose lengths are not all 50 tokens. Measured three runs each: the crossing is an
+  interval, **25 < df < 250**, on the synthetic corpus and on ArguAna's 8,674 real documents alike,
+  with a tie at df 50 and the accumulator ahead from df 250 (1.09-1.11× synthetic, 1.13-1.18×
+  ArguAna). `RankedTextSearchEngine.CursorDensityDivisor` stays at 200, whose cap of 43-50 sits
+  inside that interval, so the constant is not a frequency of the generated corpus.
+
+- **The ASP.NET Core endpoint bounds the page it will build, and answers a refused request with
+  `400`.** `limit` is at most 100 and `offset` at most 10 000 (`LexiSharpSearchEndpoint.MaxLimit`,
+  `MaxOffset`); a query the engine will not run — more than 32 distinct `term*`/`term~` atoms, or
+  syntax the index cannot honor — is a `400` with the reason in `{ "field": "q", "message": ... }`
+  rather than a `500`. Both bounds exist because a page is cut from a working window of
+  `Offset + Limit` entries, so an unbounded request asked the engine to build the whole corpus'
+  window for a page of ten.
+
+- **A query resolves each distinct prefix/fuzzy atom once, and may carry at most
+  `RankedTextSearchEngine.MaxExpansionAtoms` (32) of them.** `catt~` written ten times is one
+  vocabulary walk instead of ten, and `+catt~`/`-catt~` share it; past 32 distinct atoms the query
+  is refused with `ArgumentException` instead of paying one vocabulary walk per atom. `EnableFuzzy`
+  rewrites plain terms into atoms, so a long query on a fuzzy index is bounded by the same number.
+
+- **A saved index is read as untrusted input.** Both MessagePack persistence classes use
+  `MessagePackSecurity.UntrustedData`: SipHash over the keys materialized from the payload (it
+  carries `Dictionary<string, string>` fields read from the file) and a 64 MB ceiling on decompressed
+  output, where the framework's "trusted" defaults cap at `int.MaxValue`. The wire format is
+  unchanged and payloads saved by earlier builds still load.
+
+- **The CLI prints corpus text for a terminal rather than as a byte stream.** Document text,
+  document ids and the query lose their control and format characters before the line is written:
+  `ESC` and the C1 introducers, the bidi overrides and the zero-width characters. A corpus is
+  input — a transcript, a scraped page — and a terminal is an interpreter, so `ESC[2J` in a
+  document reached the screen as a command (clear, retitle, write the clipboard). `segment search
+  --json` is unchanged; that file is machine output and the serializer escapes it.
+
+- **The PostgreSQL engines fetch at most 100 000 rows per query.** The window is `Offset + Limit`
+  from the request, so an offset in the billions used to reach the database as a `LIMIT` of the same
+  size; past the ceiling the page comes back short rather than the table coming back whole.
+
+- **The aligned BM25 rows use the reference's own analyzer.** They read **0.3218** and **0.6789**
+  against the published **0.3218** and **0.6789** — equal to the fourth decimal — where the figures
+  this file withdraws below were the `english` analyzer's 0.3215 and 0.6788. `--analyzer uax29`
+  implements the reference's word segmentation: an apostrophe is kept inside a word, possessives are
+  stripped before the stop list, and its index lands within 0.1 % (NFCorpus) and 0.005 % (SciFact) of
+  the reference's term count, against 2.8 % and 1.5 % for `english`. The four arithmetic options are
+  what close the rest. Both the fingerprints and the scores are pinned, and `--verify-reference`
+  replays them; the regression-pin format gained `referenceIndexStatistics`, `scoreRounding`,
+  `omitSaturationConstant` and `singlePrecision` so a pin can name the configuration it was measured
+  under instead of replaying a different one.
 
 - **A sparse query is scored document-at-a-time on the cursor pass, and no ranking changes.**
 
@@ -1504,7 +1284,201 @@ workflow.
   Not a behaviour change for any existing caller — nothing in the repository returned
   `default(ScoreBoost)` from a boost, and a caller who did was excluding its documents already.
 
+### Fixed
+
+- **Every SQL engine breaks a tie by document id, ordinally.** The text, sparse and vector engines
+  ordered on the score (or the distance) alone, so the page among exactly equal scores was whatever
+  the executor produced. Measured on one server and four documents inserted in reverse id order: a
+  `Seq Scan` returns the heap order (`d4,d3,d2,d1`), an `Index Scan` over the HNSW graph returns
+  `d1,d2,d3,d4`, and nothing in the statement names either — the same query can page differently
+  after a plan change. The in-memory engines break ties on `string.CompareOrdinal` under the default
+  `TieBreak.DocumentId`, and the statements now append `id COLLATE "C" ASC`. The C collation is the
+  point: `en_US.utf8` folds case and orders `a` before `A`, while ordinal order puts `A` first. The
+  vector engine also compares the merged multi-column ranking by id, because a per-column tie-break
+  cannot order two documents that are equal in different columns. The fuzzy and ParadeDB statements
+  already carried an `id ASC` tie-break and now use the same ordinal spelling. The collation itself
+  moves no figure: the C and `en_US.utf8` orders of the ids are identical on all three BEIR corpora,
+  checked against every id.
+
+- **The sparse backend's two PostgreSQL rows are re-measured under the tie-break.** They were
+  published as `0.5200` (HNSW) and `0.5202` (exact scan) nDCG@10, with `0.8201` R@10 for the indexed
+  row: the page among equally-scored documents was the executor's. With the ordinal tie-break both
+  read `0.5216` / `0.4300` / `0.8179`, the same page the in-memory row returns. The run, the command
+  and what it still does not cover are on [the evaluation page](docs/evaluation.md).
+
+- **The vector and sparse engines write `tsv` on the insert, not only on a conflict.**
+
+  Both `INSERT` statements listed `tsv` only in their `ON CONFLICT DO UPDATE` clause, so a document
+  added to a fresh table through either engine left `tsv` `NULL` and was invisible to the lexical
+  engine — on the shared table whose whole point is that one row serves both. Both statements now
+  carry the column and `PostgresSchema.TsvExpression` on the way in as well as on the upsert, and an
+  integration test compares the vector the lexical and vector engines store for one document.
+
+- **`Commit` forces the segment to the device before the rename, and refuses an interrupted commit
+  instead of opening an empty store.**
+
+  `WriteToDisk` wrote through `File.WriteAllBytes`, which closes the stream without forcing the bytes
+  to disk. A power loss could therefore leave a correctly named segment whose content was never
+  written: the reader refuses it, correctly, while the generation it replaced had already been
+  deleted — so the store could not be opened at all. The write now goes through a stream with
+  `Flush(flushToDisk: true)` before the rename. The directory entry is still not fsynced (`.NET` has
+  no portable API for it, and this type does not call into libc), and both the class remarks and
+  `docs/indexing.md` now say exactly that instead of describing the commit as durable without
+  qualification.
+
+  A directory holding a temporary segment and no readable generation now throws
+  `InvalidDataException` rather than opening as a new, empty store: answering "no documents" to every
+  query, while the corpus is still on disk, is the one failure worse than an exception. Two tests,
+  one of which pins that an empty directory still opens as a new store, so the refusal cannot spread
+  to the legitimate first-commit case.
+
+  No test observes the fsync itself — it is not visible from a unit test — so the durability claim is
+  stated as what the code does, not asserted.
+
+- **A commit interrupted after its rename served every document twice, and resurrected the deleted
+  ones.**
+
+  `SegmentedTextIndex.Commit` writes the merged segment to a temporary file, renames it into place,
+  and only then deletes the segments it replaced. A crash in that window leaves the previous
+  generation on disk beside its successor, and the constructor chained every `*.lxs` it found — so on
+  the next open each shared document was returned twice, and every document the commit had deleted
+  came back. The constructor now opens the newest generation only: the successor is the flush of
+  everything live at commit time, so the older file is a subset of it by construction. Two tests in
+  `SegmentRecoveryTests` pin it, one of them asserting that a document deleted before the commit stays
+  gone.
+
+  The mapped-mode variant of that path is **unverified on Windows**: Windows refuses to delete a file
+  while a mapping is open, and every CI job here runs on Ubuntu. Stated in `docs/indexing.md` rather
+  than fixed blind, with the workaround — dispose a mapped store before committing it.
+
+- **`TieBreak.InsertionOrder` ordered tied documents by a position that moved with the corpus.**
+
+  The option documents the order documents were added, and what it read was the position the engine
+  *produced* each candidate in — a different quantity on every path. The term-at-a-time pass walks the
+  posting lists and records a document at its first touch, so a query whose two terms alternate
+  through the corpus records every document of the first term before it reaches the second; the
+  per-document loop walks the union of the terms' candidates below the accumulation floor and the
+  whole corpus once that union covers half of it. Which path served a query is a function of corpus
+  size and term frequency, so the same documents, tied the same way, came back in two different
+  orders at two corpus sizes — with nothing the caller did changing.
+
+  Demonstrated on a fixture where documents alternate `alpha` and `beta` at consecutive ordinals and
+  every candidate scores the same double, with ids descending in insertion order: below the
+  accumulation floor the page was `doc-z, doc-y, doc-x, doc-w, doc-v, …` and above it `doc-z, doc-x,
+  doc-v, doc-t, …, doc-y, doc-w, …` — the same scores in a different order. The full scan and a
+  segment's candidate path already produced ordinal order; the three now agree because the tie reads
+  the **document's ordinal**, the position it occupies in the index's ordinal space, which for a text
+  index is the order documents were added.
+
+  `TopRankedWindow` compares those ordinals instead of arrival positions, and no longer allocates the
+  arrival-position array at all for an index that has an ordinal space. Measured on a 200-document
+  corpus whose documents tie, a `Limit: 10` search under this option allocates **784 → 680 bytes** —
+  104 of them the `long[10]` the arrival buffer costs, which is the whole of the difference, the
+  comparison itself reading a field the window already holds. Both builds ran through the same probe
+  in one session on one host, mean of five rounds of 20,000 searches, no spread in either figure. Two
+  behaviours are pinned rather than changed: a document removed frees its ordinal and the next
+  document added takes it, so a re-added document sorts at the slot it was handed rather than at the
+  end; and an index that cannot enumerate its ordinals — a backend, or a caller's own — has no
+  ordinal to read, so the order follows the order it enumerates its documents in, which is the only
+  insertion order such an index can state.
+
+  `InsertionOrderTieBreakTests` covers the accumulation pass, both sides of the candidate boundary,
+  seven corpus sizes over the same tied documents, a filtered and a faceted query, the
+  remove-and-re-add case, a store committed and overlaid, and the ordinal-less fallback. Each fixture
+  asserts the path it exercised before asserting the page, so a fixture that quietly fell back could
+  not pass for the wrong reason.
+
+- **Youden's J was computed on a threshold no classifier can produce.**
+
+  The search walked candidate thresholds and scored each with a suffix over the examples at
+  indices `[i, n)`. But the predicate is `score >= threshold`, and with tied scores that spans the
+  *whole run* of equal scores — including examples at lower indices. One threshold was therefore
+  scored as counting part of a tied group positive and part negative, which no threshold can
+  produce, so the J reported was not one either. The walk now evaluates only where the score
+  changes, where suffix and predicate agree.
+
+  Measured on a fixture built to contain ties: **J = 0.1552 where 0.1591 was achievable** — a
+  threshold chosen as optimal that was not, and a caller abstaining at the wrong point of its own
+  labelled data. A test now asserts the threshold reaches the best J of any threshold, against an
+  O(n²) reference over the same pairs.
+
+- **`BoostedTextSearchEngine` broke ties in a culture the rest of the library does not use.**
+
+  Its `ThenBy(x => x.DocumentId)` passed no comparer, so it took `Comparer<string>.Default` —
+  culture-sensitive for strings. `TieBreak.DocumentId` documents an *ordinal* id ordering and
+  `TopRankedWindow` compares ordinally, so a decorated ranking disagreed with the ranking it was
+  decorating, on ids differing only in accents or letter case. Both decorators now order through
+  `ResultOrdering`, which compares ordinally.
+
+- **A segment's `Documents` enumeration held null elements after a document lookup.**
+
+  A lookup resolves the one slot it needs and leaves the rest of the segment's document array at their
+  defaults, and the getter checked only whether the array existed. Three documents written, one looked
+  up, and two nulls in the enumeration — on a collection the interface types as
+  `IReadOnlyCollection<SearchDocument>`. The getter now asks whether the array is *complete* rather
+  than whether it exists, and resolves whatever is still open, so a slot a lookup already decoded is
+  read rather than re-decoded. The check keeps the getter O(1) after the first fill; it is read once
+  per query on the full-corpus scoring path. `SegmentFileTests.Documents_ResolvesEverySlotALookupLeftOpen`
+  fails with two nulls before the change and passes after it.
+
+- **A window sized past the end of the corpus asked the engine to build a working set no page needed.**
+
+  `SearchOptions.Window` is `Offset + Limit`, two numbers a caller owns, and `TopRankedWindow`
+  allocated its entry array at that size in its constructor — before a document had been considered.
+  `Offset: int.MaxValue` asked for 2 147 483 647 entries, which the CLR refuses outright rather than
+  allocating: `OutOfMemoryException`, "Array dimensions exceeded supported range", in 14 ms, for a
+  page that is empty either way. The minimal-API endpoint binds `Offset` from the query string, so a
+  single request reached it.
+
+  An engine now builds `min(Window, documentCount)`. A window is a working set the page is cut out
+  of, and it cannot usefully be larger than the corpus it is cut from: `Offset + Limit` past the last
+  document still produces the page it always did, an empty one, so the answer is unchanged and only
+  the working set is bounded. `WindowSizeTests` pins both halves — the empty page, and that an
+  oversized limit still returns every document a reachable one returns — for the ranked engine and
+  the vector engine alike.
+
+  Not the same class, and measured rather than assumed: `PostgresDocumentExclusion.FetchLimit` turns
+  the same window into a SQL `LIMIT`, and an upper bound is not a demand — the server sends the rows
+  the corpus holds and no more. Measured against a live `pgvector/pgvector:pg16`: a page requested at
+  `Offset: int.MaxValue` comes back empty, and the same request with no offset returns the whole
+  corpus. Pinned in `PostgresTextSearchEngineTests.Search_Offset_PaginatesTheRanking`.
+
+- **The Youden complexity test timed the host, and the host is not the algorithm.**
+
+  `YoudenThreshold_searchIsLinearNotQuadratic` compared two stopwatches — 2 000 pairs
+  against 20 000 — and failed on a shared CI runner: 68.5 ms against 3.7 ms for the same
+  input locally, a ratio read as a quadratic search that does not exist. Measured here,
+  best-of-5: 0.51 ms at 2 000 pairs, 3.67 ms at 20 000, 22.3 ms at 100 000 — the walk is one
+  pass in each direction. `ComputeYoudenThreshold` now reports the examples it looked at,
+  and the test asserts `2n` and `10×` at 10× the input; a mutation that recomputes the
+  suffix per threshold fails it.
+
 ### Withdrawn
+
+- **The 10,000-document reading that the cursor pass won the df 50 point of the density crossing by
+  1.12× (2.80 → 2.50 µs).** It came from alternating two builds, and at that document frequency the
+  two passes were within this host's drift of each other; timing both on one build, one of each per
+  iteration over three runs, reads the point as a tie (cursor 2.70-2.80 µs against accumulator
+  2.70-2.90 µs). The crossing is an interval rather than a pair of points, and the benchmarks page
+  now carries it that way. The same instrument reproduces the accumulator's advantage at df 250
+  (1.09-1.11×), so the interval is unchanged in shape — only that one margin is gone.
+
+- **The ArguAna figure 0.3970 and the claim that all 15,466 returned scores matched the reference's on
+  the raw bits.** Both were carried by a parity row that `--verify-reference` displays and never
+  replays, which is how they survived several corrections elsewhere. The documented configuration —
+  the reference's analyzer, k1=0.9/b=0.4, linear gains, the repeated-term rule, the query document
+  excluded, and the four arithmetic options — measures **0.4005** today, and did so at the commit
+  that recorded 0.3970 as well (checked out and re-run). A gap of 0.0035 is not a rounding
+  difference: it is dozens of scores. The row is now a pinned regression (`arguana/uax29-aligned`)
+  and the pages say the gap is unclosed.
+
+- **The aligned BM25 figures for NFCorpus and SciFact, 0.3215 and 0.6788.** They were published
+  beside the reference's 0.3218 and 0.6789 as equal to the fourth decimal, and they were the
+  `english` analyzer's exponential-gain, distinct-term readings. That analyzer splits a contraction
+  into a stem and a fragment, so its index held 2.8 % and 1.5 % more terms and its scores were not
+  built on the reference's document frequencies; the fourth-decimal agreement was a coincidence.
+  Re-measured with the reference's analyzer and conventions the rows read **0.3218** and **0.6789**,
+  as recorded above.
 
 - **A segment write at 40,000 documents costing 2.9 GB allocated.** The figure is named because
   `docs/indexing.md` carried it and a reader may have planned a batch around it. It was measured on the
@@ -2121,7 +2095,8 @@ commit messages carry the measurements.
   posting entries that exist, and applies the filter to the ordinals it recorded.
 
 
-[unreleased]: https://github.com/manuc66/LexiSharp/compare/v0.8.0...HEAD
+[unreleased]: https://github.com/manuc66/LexiSharp/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/manuc66/LexiSharp/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/manuc66/LexiSharp/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/manuc66/LexiSharp/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/manuc66/LexiSharp/releases/tag/v0.6.0

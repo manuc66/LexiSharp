@@ -158,10 +158,9 @@ twice. Every figure below is reproducible with a command on the
 
 ## Scope
 
-Version 0.8.0, one maintainer, and the public API may still change between minor versions —
-pin a version and read the release notes. A feature marked **unreleased** is on `main` and is
-not in the latest package (0.8.0); it ships in the next minor version, and the changelog's
-`[Unreleased]` section lists it. The techniques implemented (BM25 and its variants,
+Version 0.9.0, and the public API may still change between minor versions —
+pin a version and read the release notes. The changelog records what changed in each release.
+The techniques implemented (BM25 and its variants,
 RRF, SPLADE-style sparse retrieval, MaxSim) follow published information-retrieval
 literature; what is here is a small, dependency-free .NET implementation of them, not new
 research. [Full scope and limits](reference.md#scope-and-limits).

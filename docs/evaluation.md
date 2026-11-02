@@ -1252,7 +1252,7 @@ from a shared or contended machine are not publishable, and none are quoted from
 What *does* gate a build is deterministic and clock-free: `lexisharp verify`, which replays
 the reference corpus against a committed baseline.
 
-## Classification on 20 Newsgroups (unreleased)
+## Classification on 20 Newsgroups
 
 The classifiers have their own corpus and their own verb, because accuracy is not nDCG and a
 labelled document is not a query. The run downloads the standard `20news-bydate` split (11 314
