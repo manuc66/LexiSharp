@@ -64,6 +64,12 @@ public static class Program
         string analyzeBaseline = "BM25 (k1=1.5, b=0.75)";
         string? analyzeCandidate = null;
 
+        // Paired bootstrap over queries: opt-in because it captures every ranking and resamples it,
+        // which a default table does not need.
+        bool bootstrap = false;
+        int bootstrapResamples = 10_000;
+        string bootstrapBaseline = "BM25 (k1=1.5, b=0.75)";
+
         // The pair the disagreement columns are measured between — normally the lexical row and a
         // dense row, because the signal exists to explain what a third stage adds on top of two
         // retrievers that answer differently. Two flags and not one comma-separated value: the
@@ -249,6 +255,15 @@ public static class Program
                 case "--analyze-disagreement-right" when i + 1 < args.Length:
                     disagreementRight = args[++i];
                     break;
+                case "--bootstrap":
+                    bootstrap = true;
+                    break;
+                case "--bootstrap-resamples" when i + 1 < args.Length:
+                    bootstrapResamples = ParsePositive(args[++i], "--bootstrap-resamples");
+                    break;
+                case "--bootstrap-baseline" when i + 1 < args.Length:
+                    bootstrapBaseline = args[++i];
+                    break;
                 case "--ann-ef" when i + 1 < args.Length:
                     annEfValues.AddRange(ParsePositiveInts(args[++i], "--ann-ef"));
                     break;
@@ -339,6 +354,16 @@ public static class Program
             Console.Error.WriteLine(
                 "--heldout cannot run with --analyze: the analysis file expects every configuration to " +
                 "score every query, and a held-out run scores its tuned rows on the fit set only.");
+            return 2;
+        }
+
+        // The bootstrap compares configurations on the same query set; a held-out run scores its
+        // tuned rows on the fit set only, so there is no single paired set to resample.
+        if (heldOutFraction is not null && bootstrap)
+        {
+            Console.Error.WriteLine(
+                "--heldout cannot run with --bootstrap: the bootstrap compares configurations on one " +
+                "query set, and a held-out run scores its tuned rows on the fit set only.");
             return 2;
         }
 
@@ -586,7 +611,7 @@ public static class Program
                 analyzePath, analyzeBaseline, analyzeCandidate,
                 disagreementLeft, disagreementRight,
                 expandDensities, expandRankings, annEfValues, annConnection, backendLane, rerankCacheDir,
-                heldOutFraction, sparseLane);
+                heldOutFraction, sparseLane, bootstrap, bootstrapResamples, bootstrapBaseline);
             Console.WriteLine();
         }
 
@@ -717,7 +742,8 @@ public static class Program
         string? disagreementLeft, string? disagreementRight,
         IReadOnlyList<double> expandDensities, IReadOnlyList<ExpansionRanking> expandRankings,
         IReadOnlyList<int> annEfValues, string? annConnection, BackendLane? backendLane,
-        string? rerankCacheDir, double? heldOutFraction, SparseLane? sparseLane)
+        string? rerankCacheDir, double? heldOutFraction, SparseLane? sparseLane,
+        bool bootstrap, int bootstrapResamples, string bootstrapBaseline)
     {
         Console.WriteLine($"== {dataset.Name} ==");
 
@@ -849,7 +875,7 @@ public static class Program
             corpus, runIndex, topK, limit, tokenizer, excludeQueryDocument, gain, referenceBm25,
             queryFrequency, scoreRounding, saturationConstant, singlePrecision, denseVectors, tuned, reranker,
             rerankCandidates,
-            jobs, parseQuerySyntax, captureOutcomes: analyzePath is not null, queryExpansions: queryExpansions,
+            jobs, parseQuerySyntax, captureOutcomes: analyzePath is not null || bootstrap, queryExpansions: queryExpansions,
             tuneBm25F: tuneBm25F,
             tuningSearchOptions: tuneSearchOptions
                 ? new SearchOptions(ParseQuerySyntax: parseQuerySyntax)
@@ -871,6 +897,10 @@ public static class Program
         }
 
         PrintTable(results, topK, jobs);
+
+        if (bootstrap)
+            RetrievalBootstrap.Print(results, bootstrapBaseline, bootstrapResamples);
+
         PrintReference(dataset, analysisDescription, gain);
 
         Console.WriteLine(heldOut is null
@@ -1784,6 +1814,14 @@ public static class Program
                                 sparsevec engine on the same vectors: with both flags the run prints
                                 the in-memory row and the SQL rows, and the difference between them
                                 is the index rather than the model.
+              --bootstrap       Print paired-bootstrap 95 % CIs over queries for every configuration,
+                                and the paired difference against --bootstrap-baseline. Captures
+                                per-query outcomes, so it costs one extra array per query.
+              --bootstrap-resamples <n>
+                                Resamples for the percentile CI and the sign-flip test (default: 10000).
+              --bootstrap-baseline <name>
+                                Configuration the paired difference is measured against
+                                (default: "BM25 (k1=1.5, b=0.75)").
               --analyze <file>  Write one row per query per configuration: the query's lexical coverage
                                 of its own judged documents, the metrics, and the per-query deltas
                                 against --analyze-baseline. Off by default — capturing a ranking per
