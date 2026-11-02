@@ -412,9 +412,12 @@ no-op.
 
 On the dense path an empty vector means "no embedding": training and `Learn` skip the document and
 `Predict` returns nothing. On the lexical path an empty text is simply a document with no terms.
-Both paths are exact scans: BM25 costs O(N × query terms) per prediction, dense costs O(N × dim),
-and the dense store holds N × dim floats. There is no inverted index, no ANN and no persistence
-for this model in v1; the centroid remains the O(categories × dim) alternative. On the
+The lexical path carries a postings index: a selective query scores only the documents that contain
+its terms, while a query whose terms sit in most of the corpus falls back to a scan of the sorted
+per-document term frequencies. Both compute the same BM25 score, so the hybrid changes cost, not
+ranking. The dense path is an exact O(N × dim) scan and the dense store holds N × dim floats.
+Neither path uses an ANN, and this model has no persistence in v1; the centroid remains the
+O(categories × dim) alternative. On the
 subject-only 20 Newsgroups split, BM25 KNN selected `K = 3` on a 15 % validation slice and read
 **0.5073 / 0.4890** on test, against Naive Bayes's **0.5624 / 0.5293**; McNemar says Naive Bayes
 is better (**p = 1.29e-12**, 318 documents KNN fixes against 525 it breaks). The run is pinned in
