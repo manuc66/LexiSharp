@@ -1260,6 +1260,26 @@ not measured. Nor are the overlay's read path (`Add` before `Commit`), `Merge`, 
 does not fit the page cache, or any corpus larger than 100,000 documents — other than the 500,000 row
 above, which was taken once and is marked as contended.
 
+**Block-bound pruning, opt-in (`--prune`), does not pay here.** `SearchOptions.PruneByBlockBound` lets
+the document-at-a-time pass skip a document whose summed block bounds cannot reach the page. It changes
+no result — `CursorPassParityTests` asserts the same page for seven scorers at three page sizes on both
+indexes — and on the queries the cursor pass actually serves it costs:
+
+| query | unpruned | pruned | |
+|---|---:|---:|---|
+| one tail term (df 9) | 1.00 µs | 1.40 µs | **1.4× slower** |
+| three tail terms (df 29) | 2.20 µs | 5.70 µs | **2.6× slower** |
+| one head term, cursor pass forced (df 95,402) | 1.70 ms | 1.65 ms | 3.2 % faster |
+
+The reason is the one the pruning lane above counted in entries: a sparse query's candidates all tie at
+the top of the page, so no document is strictly below tenth place, none may be skipped, and the bound is
+computed for every candidate of every term anyway. The head query is where a bound has something to
+skip — and it is the query the cursor pass never serves, its reach of 95,402 being far over the cap of
+500. Forcing that pass onto it makes pruning 3.2 % faster than not pruning **and still 1.4× slower than
+the accumulator**, which is the pass the engine picks. So the option stays off, and the default path is
+untouched by it: the rows above still read 1.00 and 2.20 µs on the same build, because the traversal
+skips computing bounds whenever the sink has not opted in.
+
 ## Dense quantisation lane (`quantize`)
 
 `InMemoryVectorSearchEngine` holds its vectors in one contiguous float32 block: 384 components is

@@ -78,6 +78,18 @@
 
 ### Added
 
+- **`SearchOptions.PruneByBlockBound`: an opt-in that skips a document its block bounds rule out, and
+  the measurement that keeps it off.** The bound is the pair every segment block header already carries
+  — largest frequency and shortest document per 128-ordinal window — captured on the walk that decodes
+  the entries, and on the in-memory index computed when its flat postings are built. It changes no
+  result: `CursorPassParityTests` asserts the same page for seven scorers at three page sizes on both
+  indexes, and the comparison is strict so a tie is never skipped. Measured at 100,000 documents it
+  **costs 1.4× and 2.6×** on the two tail queries the cursor pass serves, because their candidates all
+  tie at the top of the page and nothing is skippable while every candidate of every term still gets a
+  bound; and it saves **3.2 %** on a head query forced onto that pass, where the accumulator remains
+  1.4× faster. Off by default, and being off costs one boolean test: the published rows re-measure at
+  1.00 and 2.20 µs unchanged.
+
 - **Online bucket metrics carry top-k accuracy.** `OnlineBucketMetrics` now has `AccuracyAtK` and
   its own block-bootstrap interval alongside top-1, so "the category was second" is visible inside
   the never-seen-text bucket and not only in the overall report. The online pin carries the same

@@ -82,7 +82,7 @@ internal static class CursorLane
         }
 
         foreach (int documents in options.Sizes)
-            Measure(documents, options.Sweep, options.Both);
+            Measure(documents, options.Sweep, options.Both, options.Prune);
     }
 
     private static void WarmUp()
@@ -96,7 +96,7 @@ internal static class CursorLane
         Console.WriteLine("warm-up   1,000 documents indexed and one search served (not measured)");
     }
 
-    private static void Measure(int documentCount, bool sweep, bool both)
+    private static void Measure(int documentCount, bool sweep, bool both, bool prune)
     {
         var generation = Stopwatch.StartNew();
         var documents = CorpusFactory.CreateZipfDocuments(documentCount, WordsPerDocument, VocabularySize);
@@ -134,7 +134,7 @@ internal static class CursorLane
                           $"{Number(index.OrdinalSpace)} bytes (best of 7)");
 
         foreach (var query in Queries)
-            MeasureQuery(index, engine, accumulatorEngine, cursorEngine, query, documentCount, clearNanoseconds, both);
+            MeasureQuery(index, engine, accumulatorEngine, cursorEngine, query, documentCount, clearNanoseconds, both, prune);
 
         if (!sweep)
             return;
@@ -149,7 +149,8 @@ internal static class CursorLane
                 new QueryShape($"df {Number(df)} sweep", term),
                 documentCount,
                 clearNanoseconds,
-                both);
+                both,
+                prune);
         }
     }
 
@@ -279,7 +280,8 @@ internal static class CursorLane
                 new QueryShape($"df {Number(df)} sweep", term),
                 corpus.Documents.Count,
                 clearNanoseconds,
-                both: options.Both);
+                both: options.Both,
+                prune: options.Prune);
         }
     }
 
@@ -324,9 +326,11 @@ internal static class CursorLane
         QueryShape query,
         int documentCount,
         long clearNanoseconds,
-        bool both = false)
+        bool both = false,
+        bool prune = false)
     {
         var options = new SearchOptions(Limit: Limit);
+        var pruned = options with { PruneByBlockBound = true };
         int iterations = MeasuredIterations(documentCount);
 
         // Every engine that will be timed is warmed inside the same window. A pass timed cold is a
@@ -411,6 +415,34 @@ internal static class CursorLane
 
         if (both && cursorMicroseconds is not null && accumulatorMicroseconds is not null)
             Console.WriteLine(ForcedComparison(cursorMicroseconds, accumulatorMicroseconds, iterations, pass));
+
+        if (prune)
+        {
+            double[] prunedMicroseconds = TimePasses(engine, accumulatorEngine, cursorEngine, query.Text, pruned, iterations, both: false).Default;
+            double withPruning = prunedMicroseconds[iterations / 2];
+
+            Console.WriteLine(
+                $"      pruned p50  {Time(withPruning),9}  against {Time(p50),9} unpruned  " +
+                (withPruning < p50
+                    ? $"→ {Percent((p50 - withPruning) / p50, 1)} faster"
+                    : $"→ {(p50 / withPruning).ToString("N2", CultureInfo.InvariantCulture)}× slower or equal"));
+
+            // The mechanism's ceiling rather than its shipped effect: the cursor pass serves sparse
+            // queries, where every candidate ties at the top and nothing may be skipped. Forcing that
+            // pass onto this query with pruning on is what says whether the bound is worth anything
+            // where it would have work to do.
+            if (both && cursorMicroseconds is not null)
+            {
+                double[] forcedPruned = TimePasses(cursorEngine, accumulatorEngine, cursorEngine, query.Text, pruned, iterations, both: false).Default;
+                double cursorUnpruned = cursorMicroseconds[iterations / 2];
+
+                Console.WriteLine(
+                    $"      cursor pass, pruned {Time(forcedPruned[iterations / 2]),9}  against {Time(cursorUnpruned),9} unpruned  " +
+                    (forcedPruned[iterations / 2] < cursorUnpruned
+                        ? $"→ {Percent((cursorUnpruned - forcedPruned[iterations / 2]) / cursorUnpruned, 1)} faster"
+                        : "→ no gain"));
+            }
+        }
     }
 
     /// <summary>
@@ -580,6 +612,7 @@ internal static class CursorLane
         var sizes = new List<int>();
         bool sweep = false;
         bool both = false;
+        bool prune = false;
         string? corpus = null;
         string? data = null;
 
@@ -596,6 +629,12 @@ internal static class CursorLane
             if (arg == "--both")
             {
                 both = true;
+                continue;
+            }
+
+            if (arg == "--prune")
+            {
+                prune = true;
                 continue;
             }
 
@@ -627,7 +666,7 @@ internal static class CursorLane
             sizes.AddRange(DefaultDocumentCounts);
 
         sizes.Sort();
-        return new LaneOptions([.. sizes], sweep, both, corpus, ResolveDataDirectory(data));
+        return new LaneOptions([.. sizes], sweep, both, prune, corpus, ResolveDataDirectory(data));
     }
 
     /// <summary>The value after a switch, or a message naming the switch rather than an index error.</summary>
@@ -740,5 +779,5 @@ internal static class CursorLane
 
     /// <summary>What the command line asked for. <see cref="Corpus"/> replaces the generated corpus.</summary>
     private sealed record LaneOptions(
-        int[] Sizes, bool Sweep, bool Both, string? Corpus, string DataDirectory);
+        int[] Sizes, bool Sweep, bool Both, bool Prune, string? Corpus, string DataDirectory);
 }
