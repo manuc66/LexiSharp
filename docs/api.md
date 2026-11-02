@@ -135,7 +135,8 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
-| `BlendTextClassifier` | class | `ITextClassifier` | Blends any number of text classifiers, then optionally injects candidate categories and log-prior bonuses. |
+| `BlendContext` | record | — | Evidence supplied for one prediction, instead of being configured as a source on the blend. |
+| `BlendTextClassifier` | class | `IIncrementalTextClassifier`, `ITextClassifier` | Blends any number of text classifiers, then optionally injects candidate categories and log-prior bonuses. |
 | `CalibratedClassifier` | class | `ITextClassifier` | Wraps an ITextClassifier with a fitted temperature, so Predict returns the calibrated distribution and PredictBest the same top category. |
 | `CalibrationSample` | record | — | One validation observation for calibration: the distribution a model produced and the category that was actually right. |
 | `CandidateLane` | record | — | One source of categories no model learned, and the weight of its evidence. |
@@ -167,7 +168,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `FeatureQuestion` | record | — | A yes/no question asked of an item's features — the unit a question tree is built from. |
 | `FeatureSet` | class | `IFeatureSet` | The default IFeatureSet: a set of names with ordinal comparison, optionally with a numeric value attached to some of them. |
 | `FeatureState` | enum | — | What a feature set knows about one feature: it is present, it is known to be absent, or the source could not determine it. A binary question answers no for both… |
-| `FusedTextClassifier` | class | `ITextClassifier` | Blends two text classifiers by probability: (1 - w) · P(first) + w · P(second). |
+| `FusedTextClassifier` | class | `IIncrementalTextClassifier`, `ITextClassifier` | Blends two text classifiers by probability: (1 - w) · P(first) + w · P(second). |
 | `IdfMode` | enum | — | How term evidence is scaled by corpus rarity during classification. Term frequency is always counted from the training corpus; this knob decides whether (and… |
 | `LinearClassifier` | class | `ITextClassifier` | The text convenience over LinearClassifier: a SearchDocument model over Text. |
 | `LinearClassifier<TItem>` | class | — | A multinomial logistic regression over the same IFeatureSource seam as the question trees, trained with AdaGrad and a deterministic shuffle. |
