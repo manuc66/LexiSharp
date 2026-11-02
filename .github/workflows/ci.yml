@@ -258,8 +258,14 @@ jobs:
         run: dotnet build LexiSharp.slnx -c Release
 
       - name: Test with coverage (lexical + vector + sparse + fuzzy)
+        # MaxParallelThreads is capped by integration.runsettings. The suite now mixes
+        # CPU-heavy classification tests with the Postgres ones; at the default thread count
+        # the test process starved the runner's Docker port proxy, and a batch of DDL commands
+        # sat in the proxy until their 60 s command timeout. Two threads leave CPU for the
+        # proxy and the service container, and the suite runs faster as well.
         run: >
           dotnet test tests/LexiSharp.Tests -c Release
+          --settings tests/LexiSharp.Tests/integration.runsettings
           -p:CollectCoverage=true -p:CoverletOutputFormat=cobertura
           -p:CoverletOutput=../../TestResults/coverage-postgres-
 
@@ -301,7 +307,11 @@ jobs:
         run: dotnet build LexiSharp.slnx -c Release
 
       - name: Test (lexical + ParadeDB BM25 + fuzzy)
-        run: dotnet test tests/LexiSharp.Tests -c Release --no-build
+        # Same thread cap as the pgvector job: the contention is between the test process and
+        # the runner's port proxy, not between the two database images.
+        run: >
+          dotnet test tests/LexiSharp.Tests -c Release --no-build
+          --settings tests/LexiSharp.Tests/integration.runsettings
 
   aot:
     # Publish a real consumer with ILC, then run it. The IsAotCompatible analyzers catch most
