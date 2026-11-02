@@ -23,7 +23,7 @@ namespace LexiSharp.Indexing;
 /// <para>
 /// A fetched block lands in the scratch buffer the caller passed, so <b>two source-backed readers over
 /// the same buffer must not be interleaved</b>. The index creates one at a time and finishes with each
-/// before it asks for the next, which is what makes one buffer per index safe.
+/// before it asks for the next, which is what keeps the thread's buffer free of a second walk.
 /// </para>
 /// </remarks>
 internal ref struct PostingBlockReader

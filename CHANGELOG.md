@@ -32,6 +32,24 @@
   façade can still choose either. The endpoint's test sends a document carrying an element, an
   ampersand and a quote, and reads `highlightedText` back out of the JSON.
 
+- **A memory-mapped segment is searched concurrently without one search decoding another's block.**
+  The fetch buffer belonged to the `SegmentReader`, and a `SegmentTextIndex` opens one reader per
+  segment that every search over the segment shares. A mapped source hands out no spans, so each
+  posting walk copies its block into that buffer and parses it there: two concurrent searches wrote
+  the same bytes and the later copy won, which returned a different document's frequency for the
+  ordinal asked — a wrong score and a wrong page, or a block that did not parse. The buffer is now
+  per thread (8 KB, created on first use, nothing per search), which leaves the format's own rule
+  in place: one source-backed walk at a time on a thread. `SegmentReaderConcurrencyTests` makes the
+  interleave a fact with a barrier in the copy step rather than a scheduling accident; against the
+  shared buffer it reads `1` where the document holds `4`.
+
+- **A length read from a segment is checked without overflowing the check.** `Slice` and
+  `ReadInt32` compared `offset + length` against the segment's size in 32-bit arithmetic, so a
+  four-byte field holding `int.MaxValue` wrapped the sum negative and passed. On a viewed source
+  that surfaced as `ArgumentOutOfRangeException` instead of `InvalidDataException`; on a mapped
+  one it reached a buffer sized from the length. Both now compare `length > size - offset`, which
+  cannot wrap, and `SegmentRoundTripTests` corrupts the table slot and the length field in turn.
+
 ## [0.9.0] — 2026-11-02
 
 ### Added

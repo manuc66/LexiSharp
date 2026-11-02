@@ -155,6 +155,31 @@ public class SegmentRoundTripTests
         Assert.Throws<InvalidDataException>(() => new SegmentReader(bytes[..(bytes.Length - 8)]));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AnOffsetThatWouldOverflowTheBoundsCheckIsRefused(bool corruptTableSlot)
+    {
+        var bytes = SegmentWriter.Write(Build(20));
+
+        // The documents table offset is the int64 at 16. The int at that offset points at document
+        // 0's entry, and the first int of the entry is its id length. int.MaxValue in either place
+        // makes `offset + length` wrap in 32-bit arithmetic — which is how a bounds check written
+        // that way lets a four-byte field through to a buffer sized from it.
+        long table = System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(bytes.AsSpan(16));
+        Assert.InRange(table, SegmentWriter.HeaderBytes, bytes.Length - sizeof(int));
+
+        int entryOffset = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan((int)table));
+        Assert.InRange(entryOffset, SegmentWriter.HeaderBytes, bytes.Length - sizeof(int));
+
+        int at = corruptTableSlot ? (int)table : entryOffset;
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(at), int.MaxValue);
+
+        var reader = new SegmentReader(bytes);
+
+        Assert.Throws<InvalidDataException>(() => reader.Document(0));
+    }
+
     private static void AssertSamePage(
         System.Collections.Generic.IReadOnlyList<SearchResult> expected,
         System.Collections.Generic.IReadOnlyList<SearchResult> actual,
