@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <!--
+    Used only by the CI jobs that run against a PostgreSQL service container.
+
+    The suite mixes CPU-heavy classification tests with the Postgres integration tests. At the
+    default thread count the test process keeps every core busy, and the runner's Docker port
+    proxy does not get scheduled often enough to forward the DDL commands: the server stays idle
+    while a batch of CREATE TABLE statements waits in the proxy, and the client's 60 s command
+    timeout expires. Two threads leave CPU for the proxy and the container; measured locally,
+    the suite also finishes faster because the tests stop contending with each other.
+  -->
+  <xUnit>
+    <MaxParallelThreads>2</MaxParallelThreads>
+  </xUnit>
+</RunSettings>
