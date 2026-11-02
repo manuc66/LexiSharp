@@ -1217,6 +1217,11 @@ query: a mapped read is an OS call and a page fault per block, which is the whol
 takes a microsecond and a rounding on one that takes a millisecond. The multiplier belongs with the
 query, not with the mode.
 
+**Re-measured after the fetch buffer became per thread** (`3f5e1f5`, 2026-11-02), because that fix
+changed what the mapped path does per block. Two runs read 12.80 / 27.40 µs and 1.87 ms mapped against
+the 12.90 / 27.70 µs and 1.90 ms above, so a fix that removed a wrong answer under concurrency cost the
+mapped mode nothing at this resolution.
+
 **A store search allocates 6.6-7.8 KB per query against 0.7-1.0 KB in memory**, and that is the page
 rather than the index: the store decodes the documents it returns, while the in-memory index hands back
 objects it already holds. Reading the two allocation columns as one comparison would compare what a
