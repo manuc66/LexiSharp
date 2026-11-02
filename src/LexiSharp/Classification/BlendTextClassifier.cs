@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 using LexiSharp.Core;
 
 namespace LexiSharp.Classification;
@@ -228,7 +230,10 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
         }
 
         var probability = new Dictionary<string, double>(StringComparer.Ordinal);
-        var trainedCategories = new HashSet<string>(StringComparer.Ordinal);
+        bool hasPriors = _priors.Count > 0 || context?.Priors is { Count: > 0 };
+        HashSet<string>? trainedCategories = hasPriors
+            ? new HashSet<string>(StringComparer.Ordinal)
+            : null;
 
         CollectLaneProbabilities(text, excludedCategories, probability, trainedCategories);
         AddCandidateProbabilities(text, excludedCategories, probability);
@@ -239,8 +244,8 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
         if (probability.Count == 0)
             return Array.Empty<ClassificationResult>();
 
-        if (_priors.Count > 0 || context?.Priors is { Count: > 0 })
-            ApplyPriors(text, context, probability, trainedCategories);
+        if (hasPriors)
+            ApplyPriors(text, context, probability, trainedCategories!);
 
         return Rank(probability, excludedCategories, limit);
     }
@@ -249,7 +254,7 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
         string text,
         IReadOnlySet<string>? excludedCategories,
         Dictionary<string, double> probability,
-        HashSet<string> trainedCategories)
+        HashSet<string>? trainedCategories)
     {
         foreach (TextClassifierLane lane in _lanes)
         {
@@ -262,9 +267,10 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
                 if (excludedCategories?.Contains(result.Category) == true)
                     continue;
 
-                trainedCategories.Add(result.Category);
-                probability.TryGetValue(result.Category, out double current);
-                probability[result.Category] = current + (lane.Weight * result.Probability);
+                trainedCategories?.Add(result.Category);
+                ref double value = ref CollectionsMarshal.GetValueRefOrAddDefault(
+                    probability, result.Category, out _);
+                value += lane.Weight * result.Probability;
             }
         }
     }
@@ -297,7 +303,6 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
             return;
 
         double total = 0;
-        var weights = new Dictionary<string, double>(StringComparer.Ordinal);
 
         foreach (TextEvidence candidate in evidence)
         {
@@ -307,18 +312,24 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
             if (excludedCategories?.Contains(candidate.Category) == true)
                 continue;
 
-            weights.TryGetValue(candidate.Category, out double current);
-            weights[candidate.Category] = current + candidate.Score;
             total += candidate.Score;
         }
 
         if (total <= 0)
             return;
 
-        foreach (var (category, candidateWeight) in weights)
+        double scale = weight / total;
+
+        // A second pass replaces the category-to-weight dictionary this method used to build:
+        // the evidence list is short, and normalizing on the fly adds the same linear sums.
+        foreach (TextEvidence candidate in evidence)
         {
-            probability.TryGetValue(category, out double current);
-            probability[category] = current + (weight * candidateWeight / total);
+            if (excludedCategories?.Contains(candidate.Category) == true)
+                continue;
+
+            ref double value = ref CollectionsMarshal.GetValueRefOrAddDefault(
+                probability, candidate.Category, out _);
+            value += candidate.Score * scale;
         }
     }
 
@@ -335,17 +346,21 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
         if (!(mass > 0) || double.IsNaN(mass) || double.IsInfinity(mass))
             return Array.Empty<ClassificationResult>();
 
-        var ranked = new List<(string Category, double Probability)>(probability.Count);
+        var ranked = new (string Category, double Probability)[probability.Count];
+        int count = 0;
 
         foreach (var (category, value) in probability)
         {
             if (excludedCategories?.Contains(category) == true)
                 continue;
 
-            ranked.Add((category, value / mass));
+            ranked[count++] = (category, value / mass);
         }
 
-        ranked.Sort(static (left, right) =>
+        if (count == 0)
+            return Array.Empty<ClassificationResult>();
+
+        ranked.AsSpan(0, count).Sort(static (left, right) =>
         {
             int byProbability = right.Probability.CompareTo(left.Probability);
             return byProbability != 0
@@ -353,7 +368,7 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
                 : string.CompareOrdinal(left.Category, right.Category);
         });
 
-        int take = Math.Min(limit, ranked.Count);
+        int take = Math.Min(limit, count);
         var results = new ClassificationResult[take];
 
         for (int i = 0; i < take; i++)

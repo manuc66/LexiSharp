@@ -1,4 +1,5 @@
 using LexiSharp.Core;
+using LexiSharp.Hybrid;
 using LexiSharp.Linguistics;
 
 namespace LexiSharp.Embeddings;
@@ -109,7 +110,7 @@ public sealed class HashingEmbeddingProvider : IEmbeddingProvider, ITokenEmbeddi
         for (int i = 0; i < terms.Count; i++)
             AddToken(vector, terms[i]);
 
-        Normalize(vector);
+        VectorSimilarity.Normalize(vector, vector);
         return vector;
     }
 
@@ -118,7 +119,7 @@ public sealed class HashingEmbeddingProvider : IEmbeddingProvider, ITokenEmbeddi
     {
         var vector = new float[_dimension];
         AddToken(vector, term);
-        Normalize(vector);
+        VectorSimilarity.Normalize(vector, vector);
         return vector;
     }
 
@@ -128,23 +129,6 @@ public sealed class HashingEmbeddingProvider : IEmbeddingProvider, ITokenEmbeddi
         ulong hash = Fnv1a(term);
         int index = (int)(hash % (ulong)_dimension);
         vector[index] += (hash >> 63) == 0 ? 1f : -1f;
-    }
-
-    /// <summary>Scales the vector to unit L2 norm so cosine degenerates to a dot product.</summary>
-    private static void Normalize(float[] vector)
-    {
-        float norm = 0;
-
-        for (int i = 0; i < vector.Length; i++)
-            norm += vector[i] * vector[i];
-
-        if (norm == 0)
-            return;
-
-        float inverse = 1f / MathF.Sqrt(norm);
-
-        for (int i = 0; i < vector.Length; i++)
-            vector[i] *= inverse;
     }
 
     /// <summary>Deterministic 64-bit FNV-1a over the token's UTF-16 code units (little-endian).</summary>

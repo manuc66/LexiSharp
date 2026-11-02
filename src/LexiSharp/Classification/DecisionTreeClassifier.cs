@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 using LexiSharp.Core;
 using LexiSharp.Linguistics;
@@ -263,7 +264,8 @@ public sealed class DecisionTreeClassifier<TItem>
 
     private List<PendingItem> Materialize(IEnumerable<TItem> items, SortedSet<string> categories)
     {
-        var pending = new List<PendingItem>();
+        var pending = new List<PendingItem>(
+            items.TryGetNonEnumeratedCount(out int capacity) ? capacity : 0);
 
         foreach (var item in items)
         {
@@ -306,9 +308,9 @@ public sealed class DecisionTreeClassifier<TItem>
         // The corpus vocabulary is assigned an integer id once. The split search then compares
         // ints in its innermost loop instead of hashing feature names per occurrence; the name is
         // recovered only when a split is chosen or a tie is broken.
-        var featureIds = new Dictionary<string, int>(StringComparer.Ordinal);
-        var featuresById = new List<string>();
-        var documentFrequency = new List<int>();
+        var featureIds = new Dictionary<string, int>(pending.Count, StringComparer.Ordinal);
+        var featuresById = new List<string>(pending.Count);
+        var documentFrequency = new List<int>(pending.Count);
 
         foreach (var item in pending)
         {
@@ -317,10 +319,11 @@ public sealed class DecisionTreeClassifier<TItem>
                 if (featureSubset is not null && !featureSubset.Contains(feature))
                     continue;
 
-                if (!featureIds.TryGetValue(feature, out int id))
+                ref int id = ref CollectionsMarshal.GetValueRefOrAddDefault(featureIds, feature, out bool exists);
+
+                if (!exists)
                 {
                     id = featuresById.Count;
-                    featureIds[feature] = id;
                     featuresById.Add(feature);
                     documentFrequency.Add(0);
                 }
@@ -1272,9 +1275,9 @@ public sealed class DecisionTreeClassifier<TItem>
         string Category,
         double Weight);
 
-    private sealed record PendingItem(string Category, IFeatureSet Features, double Weight);
+    private readonly record struct PendingItem(string Category, IFeatureSet Features, double Weight);
 
-    private sealed record TrainingItem(
+    private readonly record struct TrainingItem(
         int CategoryIndex,
         int FeatureStart,
         int FeatureCount,

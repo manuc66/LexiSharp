@@ -225,7 +225,20 @@ public static class VectorSimilarity
             throw new ArgumentException(
                 $"Vector ({vector.Length}), mean ({mean.Length}) and destination ({destination.Length}) must match.");
 
-        for (int i = 0; i < vector.Length; i++)
+        int width = Vector<float>.Count;
+        int i = 0;
+        ref float source = ref MemoryMarshal.GetReference(vector);
+        ref float offset = ref MemoryMarshal.GetReference(mean);
+        ref float target = ref MemoryMarshal.GetReference(destination);
+
+        for (; i <= vector.Length - width; i += width)
+        {
+            Vector<float> value = Vector.LoadUnsafe(ref Unsafe.Add(ref source, i));
+            Vector<float> center = Vector.LoadUnsafe(ref Unsafe.Add(ref offset, i));
+            Vector.StoreUnsafe(value - center, ref Unsafe.Add(ref target, i));
+        }
+
+        for (; i < vector.Length; i++)
             destination[i] = vector[i] - mean[i];
     }
 
@@ -252,8 +265,19 @@ public static class VectorSimilarity
         }
 
         float scale = 1 / norm;
+        Vector<float> factor = new(scale);
+        int width = Vector<float>.Count;
+        int i = 0;
+        ref float source = ref MemoryMarshal.GetReference(vector);
+        ref float target = ref MemoryMarshal.GetReference(destination);
 
-        for (int i = 0; i < vector.Length; i++)
+        for (; i <= vector.Length - width; i += width)
+        {
+            Vector<float> value = Vector.LoadUnsafe(ref Unsafe.Add(ref source, i));
+            Vector.StoreUnsafe(value * factor, ref Unsafe.Add(ref target, i));
+        }
+
+        for (; i < vector.Length; i++)
             destination[i] = vector[i] * scale;
     }
 
@@ -283,9 +307,25 @@ public static class VectorSimilarity
             throw new ArgumentException(
                 $"Vector ({vector.Length}), mean ({mean.Length}) and destination ({destination.Length}) must match.");
 
-        float normSquared = 0;
+        int width = Vector<float>.Count;
+        int i = 0;
+        Vector<float> squares = Vector<float>.Zero;
+        ref float source = ref MemoryMarshal.GetReference(vector);
+        ref float offset = ref MemoryMarshal.GetReference(mean);
+        ref float target = ref MemoryMarshal.GetReference(destination);
 
-        for (int i = 0; i < vector.Length; i++)
+        for (; i <= vector.Length - width; i += width)
+        {
+            Vector<float> value = Vector.LoadUnsafe(ref Unsafe.Add(ref source, i));
+            Vector<float> center = Vector.LoadUnsafe(ref Unsafe.Add(ref offset, i));
+            Vector<float> centered = value - center;
+            Vector.StoreUnsafe(centered, ref Unsafe.Add(ref target, i));
+            squares += centered * centered;
+        }
+
+        float normSquared = Vector.Sum(squares);
+
+        for (; i < vector.Length; i++)
         {
             float centered = vector[i] - mean[i];
             destination[i] = centered;
@@ -296,8 +336,16 @@ public static class VectorSimilarity
             return;
 
         float scale = 1 / MathF.Sqrt(normSquared);
+        Vector<float> factor = new(scale);
+        i = 0;
 
-        for (int i = 0; i < destination.Length; i++)
+        for (; i <= destination.Length - width; i += width)
+        {
+            Vector<float> value = Vector.LoadUnsafe(ref Unsafe.Add(ref target, i));
+            Vector.StoreUnsafe(value * factor, ref Unsafe.Add(ref target, i));
+        }
+
+        for (; i < destination.Length; i++)
             destination[i] *= scale;
     }
 

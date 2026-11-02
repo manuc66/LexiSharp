@@ -58,6 +58,10 @@ public sealed class CentroidClassifier<TItem>
     private IReadOnlyDictionary<string, float> _centroidNorms =
         new Dictionary<string, float>(StringComparer.Ordinal);
 
+    // The hot prediction loop reads category, vector and norm together; a dictionary lookup for
+    // the norm per category per query was pure overhead, and the array is ordered by category.
+    private CentroidEntry[] _centroidEntries = Array.Empty<CentroidEntry>();
+
     private int _dimension;
     private bool _dirty;
 
@@ -326,6 +330,27 @@ public sealed class CentroidClassifier<TItem>
 
         ValidateFinite(vector, null, nameof(vector));
 
+        return PredictValidated(vector, limit, excludedCategories);
+    }
+
+    /// <summary>
+    /// The ranking half of <see cref="Predict"/>, for a caller that has already checked the length
+    /// and finiteness of the vector. The text wrapper validates the provider's output once and
+    /// then calls this, rather than scanning the same vector a second time.
+    /// </summary>
+    internal IReadOnlyList<ClassificationResult> PredictValidated(
+        ReadOnlyMemory<float> vector,
+        int limit,
+        IReadOnlySet<string>? excludedCategories)
+    {
+        if (limit <= 0 || vector.Length == 0)
+            return Array.Empty<ClassificationResult>();
+
+        EnsureBuilt();
+
+        if (_centroidEntries.Length == 0)
+            return Array.Empty<ClassificationResult>();
+
         ReadOnlySpan<float> query = vector.Span;
         float[]? centered = null;
 
@@ -334,59 +359,50 @@ public sealed class CentroidClassifier<TItem>
             centered = new float[_dimension];
 
             for (int i = 0; i < centered.Length; i++)
-                centered[i] = vector.Span[i] - _globalMean[i];
+                centered[i] = query[i] - _globalMean[i];
 
             query = centered;
         }
 
-        var scores = new List<Score>(_centroids.Count);
+        var scores = new Score[_centroidEntries.Length];
+        int count = 0;
         double highest = double.NegativeInfinity;
         float queryNorm = VectorSimilarity.Norm(query);
 
-        foreach (var (category, centroid) in _centroids)
+        foreach (CentroidEntry entry in _centroidEntries)
         {
-            if (excludedCategories?.Contains(category) == true)
+            if (excludedCategories?.Contains(entry.Category) == true)
                 continue;
 
             double cosine = VectorSimilarity.CosineSimilarity(
                 query,
-                centroid.Span,
+                entry.Vector.Span,
                 queryNorm,
-                _centroidNorms[category]);
+                entry.Norm);
 
-            scores.Add(new Score(category, cosine));
-
-            if (cosine > highest)
-                highest = cosine;
+            scores[count++] = new Score(entry.Category, cosine, 0);
+            highest = Math.Max(highest, cosine);
         }
 
-        if (scores.Count == 0)
+        if (count == 0)
             return Array.Empty<ClassificationResult>();
 
         double total = 0;
 
-        foreach (var score in scores)
+        for (int i = 0; i < count; i++)
         {
-            total += Math.Exp((score.Cosine - highest) / _options.Temperature);
+            double weight = Math.Exp((scores[i].Cosine - highest) / _options.Temperature);
+            scores[i] = scores[i] with { Weight = weight };
+            total += weight;
         }
 
-        scores.Sort(static (left, right) =>
-        {
-            int byCosine = right.Cosine.CompareTo(left.Cosine);
-            return byCosine != 0
-                ? byCosine
-                : string.CompareOrdinal(left.Category, right.Category);
-        });
+        scores.AsSpan(0, count).Sort(ScoreComparer.Instance);
 
-        int take = Math.Min(limit, scores.Count);
+        int take = Math.Min(limit, count);
         var ranked = new ClassificationResult[take];
 
         for (int i = 0; i < take; i++)
-        {
-            ranked[i] = new ClassificationResult(
-                scores[i].Category,
-                Math.Exp((scores[i].Cosine - highest) / _options.Temperature) / total);
-        }
+            ranked[i] = new ClassificationResult(scores[i].Category, scores[i].Weight / total);
 
         return ranked;
     }
@@ -407,6 +423,7 @@ public sealed class CentroidClassifier<TItem>
 
         var centroids = new Dictionary<string, ReadOnlyMemory<float>>(_sums.Count, StringComparer.Ordinal);
         var norms = new Dictionary<string, float>(_sums.Count, StringComparer.Ordinal);
+        var entries = new List<CentroidEntry>(_sums.Count);
         _globalMean = new float[_dimension];
 
         if (_options.CenterOnGlobalMean && _globalCount > 0)
@@ -435,12 +452,15 @@ public sealed class CentroidClassifier<TItem>
                 mean[i] = (float)value;
             }
 
+            float norm = VectorSimilarity.Norm(mean);
             centroids[category] = mean;
-            norms[category] = VectorSimilarity.Norm(mean);
+            norms[category] = norm;
+            entries.Add(new CentroidEntry(category, mean, norm));
         }
 
         _centroids = centroids;
         _centroidNorms = norms;
+        _centroidEntries = entries.ToArray();
         _dirty = false;
     }
 
@@ -553,7 +573,26 @@ public sealed class CentroidClassifier<TItem>
         }
     }
 
-    private readonly record struct Score(string Category, double Cosine);
+    private readonly record struct Score(string Category, double Cosine, double Weight);
+
+    private sealed class ScoreComparer : IComparer<Score>
+    {
+        public static readonly ScoreComparer Instance = new();
+
+        public int Compare(Score left, Score right)
+        {
+            int byCosine = right.Cosine.CompareTo(left.Cosine);
+
+            return byCosine != 0
+                ? byCosine
+                : string.CompareOrdinal(left.Category, right.Category);
+        }
+    }
+
+    private readonly record struct CentroidEntry(
+        string Category,
+        ReadOnlyMemory<float> Vector,
+        float Norm);
 
     private static void ValidateFinite(ReadOnlyMemory<float> vector, string? category, string parameterName)
     {
@@ -787,8 +826,24 @@ public sealed class CentroidClassifier : ITextClassifier, IIncrementalTextClassi
     public IReadOnlyList<ClassificationResult> Predict(
         string text,
         int limit = 3,
-        IReadOnlySet<string>? excludedCategories = null) =>
-        PredictAsync(text, limit, excludedCategories).GetAwaiter().GetResult();
+        IReadOnlySet<string>? excludedCategories = null)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        // An untrained model has nothing to embed, so it must not pay for a provider call.
+        if (limit <= 0 || _inner.CategoryCount == 0)
+            return Array.Empty<ClassificationResult>();
+
+        Task<ReadOnlyMemory<float>> embedding = _embeddings.GetTextEmbeddingAsync(
+            text, _options.PredictionUse, CancellationToken.None);
+
+        // A provider that answers synchronously (the hashing baseline, a cached embedding) does
+        // not need the async state machine or a thread-pool hop to reach the ranking.
+        if (embedding.IsCompletedSuccessfully)
+            return Rank(embedding.Result, limit, excludedCategories);
+
+        return PredictAsyncCore(embedding, limit, excludedCategories).GetAwaiter().GetResult();
+    }
 
     /// <summary>Embeds a text and ranks the category centroids by cosine similarity.</summary>
     /// <param name="text">Raw text to classify.</param>
@@ -807,12 +862,26 @@ public sealed class CentroidClassifier : ITextClassifier, IIncrementalTextClassi
         if (limit <= 0 || _inner.CategoryCount == 0)
             return Array.Empty<ClassificationResult>();
 
-        ReadOnlyMemory<float> vector = await _embeddings
-            .GetTextEmbeddingAsync(text, _options.PredictionUse, cancellationToken)
-            .ConfigureAwait(false);
+        Task<ReadOnlyMemory<float>> embedding = _embeddings.GetTextEmbeddingAsync(
+            text, _options.PredictionUse, cancellationToken);
 
-        return _inner.Predict(Validate(vector, documentId: null), limit, excludedCategories);
+        return await PredictAsyncCore(embedding, limit, excludedCategories).ConfigureAwait(false);
     }
+
+    private async Task<IReadOnlyList<ClassificationResult>> PredictAsyncCore(
+        Task<ReadOnlyMemory<float>> embedding,
+        int limit,
+        IReadOnlySet<string>? excludedCategories)
+    {
+        ReadOnlyMemory<float> vector = await embedding.ConfigureAwait(false);
+        return Rank(vector, limit, excludedCategories);
+    }
+
+    private IReadOnlyList<ClassificationResult> Rank(
+        ReadOnlyMemory<float> vector,
+        int limit,
+        IReadOnlySet<string>? excludedCategories) =>
+        _inner.PredictValidated(Validate(vector, documentId: null), limit, excludedCategories);
 
     /// <inheritdoc />
     public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null)
