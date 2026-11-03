@@ -123,7 +123,12 @@
   the traversal computed the bound before asking whether a threshold existed, so a tail query, whose
   candidates are fewer than the page holds, computed a bound for every candidate and skipped none;
   `IDocumentScoreSink.HasThreshold` is asked first now, which halved the lane's penalty. No density
-  gains: the sweep reads it slower at all nine frequencies from 10 to 19,914.
+  gains: the sweep reads it slower at all nine frequencies from 10 to 19,914. **And on the workload
+  it was built for it loses too:** `cursor --wide K --depth N` — the K most frequent terms at a deep
+  page — reads the accumulator at 3.64 / 4.82 / 18.28 ms against the cursor pass's 9.81 / 17.94 /
+  48.27 ms, and pruning makes that pass **36-58 % slower** because it evaluates a bound per document
+  per term whether or not it skips. It is not block-max WAND: there is no pivot, and a pivot is what
+  turns a bound into a skip without visiting the document.
 
 
 - **Online bucket metrics carry top-k accuracy.** `OnlineBucketMetrics` now has `AccuracyAtK` and
