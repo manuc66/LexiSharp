@@ -250,11 +250,13 @@ internal static class DocumentAtATime
         // One int per term, reused by every pivot: the live terms in ascending current-ordinal order.
         Span<int> order = prune ? stackalloc int[terms] : [];
 
-        // A cutoff for "this query never skips" was tried twice and rejected: at thirty-two consecutive
-        // barren pivots it cut the mixed query before its first skip (the page cannot fill any earlier
-        // than its own depth), and at four thousand it let the all-heavy query pay twice the unpruned
-        // cost because it does skip, just far too rarely to pay for the pivot. A rate rather than a count
-        // is what would separate them, and no rate has been measured.
+        // No controller decides whether this query is worth pruning, and that is a measured decision.
+        // Five observables were tried: barren pivots at 32 and at 4096, entries skipped per pivot at
+        // 8, at 2 and at one document's worth, and the fraction of pivots that cross on the first term
+        // at 75 % and at 50 %. Every one either kept both shapes or disabled both: a heavy query skips
+        // entries too, just short ranges, and its pile crosses late often enough to look like a mixed
+        // one. Nothing cheap separates 2x slower from 40 % faster here, so nothing ships; the option is
+        // the caller's decision and its page states which shapes each side of that line is on.
 
         while (true)
         {
