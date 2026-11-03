@@ -1325,11 +1325,24 @@ accumulator on every row above, so even the 42 % win leaves it at 2.5× the accu
 what the engine picks. The pruning would matter in an engine where the document-at-a-time pass is the fast
 one; here it is not.
 
-**A cutoff for "this query never skips" was tried and rejected.** At thirty-two consecutive barren pivots
-it cut the mixed query before its first skip, because the page cannot fill any earlier than its own depth;
-at four thousand it let the heavy query pay twice the cost, because it does skip — just far too rarely to
-pay for the pivot. A rate rather than a count is what would separate the two, and no rate has been
-measured. The option therefore stays off, and the page says which side of that line each shape is on.
+**Could the engine decide this itself? Not with anything it can observe cheaply — tried, five ways.**
+The obvious idea is a controller: measure how much the pruning is saving and turn it off when the economy
+is wrong. Every observable the traversal can compute was tried against the two shapes above, and every
+threshold either kept both or disabled both:
+
+| signal | threshold | result |
+|---|---|---|
+| consecutive barren pivots | 32 | cut the mixed query before its first skip |
+| consecutive barren pivots | 4 096 | let the heavy query pay twice the cost |
+| entries skipped per pivot | 8, 2, one document's worth | kept both, or disabled both |
+| pivots whose pile crosses at the first term | 75 %, 50 % | kept both |
+
+The reason is the same each time: a heavy query does skip — short ranges, occasionally — and its pile
+does cross late often enough to look like a mixed one. Nothing cheap separates "twice as slow" from
+"40 % faster" on these queries, so no controller ships and the option stays the caller's decision. What
+*would* separate them is running the query twice and comparing, which pays the loss to learn it; that is
+a speculative execution, and it is not worth it for a mechanism the pass selection already makes
+irrelevant.
 
 ## Dense quantisation lane (`quantize`)
 

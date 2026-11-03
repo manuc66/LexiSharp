@@ -129,7 +129,11 @@
   document before that ordinal without visiting it — 8.33 -> 4.84 ms on 20 mixed terms at 100,000
   documents, 34.28 -> 19.89 ms on Quora at 522,931, and no gain on TREC-COVID or on the ten heaviest
   terms, where it costs twice the pass. The pass itself remains 2.5-4.3× behind the accumulator on every
-  shape, so the option still ships off.
+  shape, so the option still ships off. **A controller that decides from what the engine observes was
+  tried and rejected**: five signals (barren pivots at 32 and 4096, entries skipped per pivot at three
+  thresholds, the fraction of pivots crossing at the first term at 75 % and 50 %) each either kept both
+  shapes or disabled both, because a heavy query skips short ranges occasionally and crosses late often
+  enough to look mixed. Nothing cheap separates twice-as-slow from forty-percent-faster here.
 
 - **Online bucket metrics carry top-k accuracy.** `OnlineBucketMetrics` now has `AccuracyAtK` and
   its own block-bootstrap interval alongside top-1, so "the category was second" is visible inside
