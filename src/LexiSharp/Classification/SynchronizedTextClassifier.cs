@@ -67,6 +67,14 @@ namespace LexiSharp.Classification;
 /// locks instead of ordering them.
 /// </para>
 /// <para>
+/// The gate is not reentrant and does not detect reentrancy: a callback that calls back into the
+/// same wrapper while a writer is queued can deadlock instead of failing loudly. It is also a
+/// blocking gate for the synchronous members: do not mix blocking
+/// <see cref="Predict(string, int, IReadOnlySet{string})"/> calls on a
+/// capped thread pool with an async writer that awaits I/O, because the writer needs a pool thread
+/// to release the lock. Use the async surface end-to-end in that shape.
+/// </para>
+/// <para>
 /// Dispose releases the lock. It does not dispose the wrapped classifier, which the caller still
 /// owns, and it does not drain operations already in flight: a granted prediction or write may
 /// still be running when <c>Dispose</c> returns. Await those operations before disposing the model
