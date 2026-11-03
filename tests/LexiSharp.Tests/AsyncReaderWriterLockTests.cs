@@ -94,7 +94,13 @@ public class AsyncReaderWriterLockTests
 
         gate.ExitWriteLock();
 
-        // The cancelled waiter must not block the queue for the next caller.
+        // A leaked reader count would let another reader in but would keep every writer out:
+        // require the write lock, which is only grantable when _readers is back to zero.
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        await gate.EnterWriteLockAsync(timeout.Token);
+        gate.ExitWriteLock();
+
+        // The cancelled waiter must not block the queue for the next caller either.
         await gate.EnterReadLockAsync();
         gate.ExitReadLock();
     }
