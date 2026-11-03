@@ -1260,89 +1260,48 @@ not measured. Nor are the overlay's read path (`Add` before `Commit`), `Merge`, 
 does not fit the page cache, or any corpus larger than 100,000 documents — other than the 500,000 row
 above, which was taken once and is marked as contended.
 
-**Block-bound pruning, opt-in (`--prune`), is correct and costs about 9 % where it is asked to work.**
-`SearchOptions.PruneByBlockBound` lets the document-at-a-time pass skip a document whose summed block
-bounds cannot reach the page. It changes no result — `CursorPassParityTests` asserts the same page for
-seven scorers at three page sizes on both indexes — and what it costs is a rate, not a p50:
+**Block-bound pruning was built, measured, and removed.** `SearchOptions.PruneByBlockBound` let the
+document-at-a-time pass skip a document whose summed block bounds could not reach the page; it was
+correct — the same page for seven scorers at three page sizes on both indexes — and it was removed on
+2026-11-03 after the measurements below, because on no shape did it beat the pass the engine already
+chooses. The figures stay here as the record, and the pruning lane above stays as the instrument that
+priced the skips in entries before any of it was written.
 
-| three tail terms, 100,000 documents | unpruned | pruned | |
-|---|---:|---:|---|
-| steady state, aggregate over millions of calls | 2 503.7 ns | 2 717.8 ns | **1 056 B → 1 056 B** |
+| shape, depth 100 | accumulator | cursor pass | cursor pass + prune |
+|---|---:|---:|---:|
+| 100,000 docs, 20 mixed terms | **2.45 ms** | 8.33 ms | 4.84 ms (−42 %) |
+| Quora, 522,931 docs, 20 mixed terms | **8.08 ms** | 34.28 ms | 19.89 ms (−42 %) |
+| 500,000 docs, 20 mixed terms | **12.13 ms** | 44.01 ms | 16.09 ms (−63 %) |
+| TREC-COVID, 171,332 docs, 20 mixed terms | **3.96 ms** | 14.73 ms | 15.10 ms |
+| 100,000 docs, 10 heaviest terms | **3.62 ms** | 9.70 ms | 19.17 ms (+98 %) |
+| 500,000 docs, 10 heaviest terms | **17.50 ms** | 44.67 ms | 86.38 ms (+93 %) |
 
-**+8.6 % and no allocation.** The aggregate is the number and the lane's `p50` is not: a median over
-three hundred samples of a two-microsecond operation reads 2.20 → 4.20 µs for the same pair, which is
-the resolution of the instrument rather than a rate. The lane's `--prune` rows are useful for the
-direction on a slow query and misleading on a fast one.
+**What the numbers establish.** A pivot — order the live terms by their current ordinal, accumulate
+their window bounds until the pile can reach the page, skip everything before that ordinal — does what
+the technique promises on a query of mixed terms: **42 % off the pass at 100,000 and at 522,931
+documents, 63 % at 500,000**. It loses on a query of heavy terms, where the pile crosses on the first
+term and nothing can be skipped, and there the ordering costs twice the pass. And the pass it
+accelerates is **2.5-4.3× behind the accumulator** on every row, so even the 63 % ends **1.33× behind
+the accumulator at 500,000** — the engine's choice, on every shape measured.
 
-**A defect the profile found, and the fix.** The traversal computed the bound *before* asking whether a
-threshold existed, and a page that is not full cannot be beaten: on a tail query, whose candidates are
-fewer than the page holds, that was a bound for every candidate and a skip for none. `IDocumentScoreSink`
-now answers `HasThreshold` and the traversal asks it first, which halved the penalty on the three-term
-query (5.70 → 4.20 µs in the lane). `dotnet-trace`'s `dotnet-sampled-thread-time` profile of the two
-runs — twenty seconds each, the same query in a loop — shows **no new frame and no allocation**:
-`TryScoreSpanDocuments` holds 74.7 % of the search thread's samples unpruned and 40.4 % pruned, with
-`RunQuery` and `CreateSpanPlan` absorbing the rest, which is the inlining moving rather than work
-appearing. That is the same reason a sampling profile cannot price a frame, stated on this page's
-method section.
+**Why it cannot win here, in one sentence per reason.** The accumulator folds ten posting lists once
+into a rented buffer; the document-at-a-time pass pays a per-document scan instead, and pruning has to
+recover 3× before it recovers anything. The bounds have no slack: all-heavy terms sum far above any
+document's score, a mixed query's one heavy term dominates the sum, and a tail query's candidates tie
+exactly at the top of the page, where the tie-break forbids skipping. And what a skip saves here is
+arithmetic, not I/O — the postings are already flat arrays or decoded into the cache — so a skipped
+document buys nanoseconds while the pivot costs as much as scoring one.
 
-**And it is not a question of density.** The sweep reads the cursor pass pruned and unpruned on the same
-query at one term near each of nine document frequencies, and pruning is slower at every one of them
-after the fix: 1.20 → 1.20 µs at df 10, 6.40 → 8.20 at df 50, 10.30 → 13.50 at df 250, 48.70 → 64.10 at
-df 1,002, 68.90 → 81.10 at df 2,501. A single row could be a window that had not filled; nine across four
-orders of magnitude is a mechanism with nothing to win. The in-memory index accordingly builds the bound
-on the first query that asks for it and not at index time, so a search that does not opt in pays neither
-the two arrays a term nor the pass that fills them.
+**A controller was tried and rejected, five ways**: barren pivots at 32 and 4 096, entries skipped per
+pivot at three thresholds, and the fraction of pivots crossing on the first term at 75 % and 50 %. Each
+either kept both shapes or disabled both — a heavy query skips short ranges occasionally and crosses
+late often enough to look mixed. Nothing cheap separates "twice as slow" from "42 % faster"; running
+the query twice would, and that pays the loss to learn it.
 
-```bash
-# the A/B under a sampler, which is where the aggregate above comes from
-dotnet run --project bench/LexiSharp.Benchmarks -c Release -- profile prune on 20
-dotnet run --project bench/LexiSharp.Benchmarks -c Release -- profile prune off 20
-```
-
-**The workload it was built for: a pivot finally wins, and loses.** `--wide K` builds a query from the K
-most frequent terms, `--mixed K` from terms at ranks 1, 2, 4, 8, … — the two extremes — and `--depth N`
-deepens the page so the threshold stands above a typical document's score. Measured 2026-11-03 at load
-1.0-2.4, the pruning having become a **pivot**: the live terms are ordered by their current ordinal, their
-window bounds are accumulated in that order, and the traversal stops at the first term whose pile can
-reach the page. Every document before that ordinal is skipped without being visited.
-
-| shape | accumulator | cursor pass | cursor pass + prune | |
-|---|---:|---:|---:|---|
-| 100,000 docs, 20 mixed terms, depth 100 | 2.45 ms | 8.33 ms | **4.84 ms** | **41.8 % faster than the pass** |
-| Quora, 522,931 docs, 20 mixed terms, depth 100 | 8.08 ms | 34.28 ms | **19.89 ms** | **42.0 % faster** |
-| TREC-COVID, 171,332 docs, 20 mixed terms, depth 100 | 3.96 ms | 14.73 ms | 15.10 ms | no gain |
-| 100,000 docs, 10 heaviest terms, depth 100 | 3.62 ms | 9.70 ms | 19.17 ms | **1.98× the pass** |
-| 500,000 docs, 10 heaviest terms, depth 100 | 17.50 ms | 44.67 ms | 86.38 ms | **1.93×** |
-
-**What the pivot needs, and what it cannot do.** A mixed query skips: a prefix of two or three rare terms
-is held below the page, and everything before the first heavy term's document is skipped without being
-visited — 42 % off the pass on two corpora, one synthetic and one real. A query of the ten heaviest terms
-skips almost never, and there the ordering and one contribution per document are paid for a skip that
-does not come: twice the unpruned cost.
-
-**And the pass it accelerates is still the wrong pass.** The cursor pass is 2.5-4.3× behind the
-accumulator on every row above, so even the 42 % win leaves it at 2.5× the accumulator's cost — which is
-what the engine picks. The pruning would matter in an engine where the document-at-a-time pass is the fast
-one; here it is not.
-
-**Could the engine decide this itself? Not with anything it can observe cheaply — tried, five ways.**
-The obvious idea is a controller: measure how much the pruning is saving and turn it off when the economy
-is wrong. Every observable the traversal can compute was tried against the two shapes above, and every
-threshold either kept both or disabled both:
-
-| signal | threshold | result |
-|---|---|---|
-| consecutive barren pivots | 32 | cut the mixed query before its first skip |
-| consecutive barren pivots | 4 096 | let the heavy query pay twice the cost |
-| entries skipped per pivot | 8, 2, one document's worth | kept both, or disabled both |
-| pivots whose pile crosses at the first term | 75 %, 50 % | kept both |
-
-The reason is the same each time: a heavy query does skip — short ranges, occasionally — and its pile
-does cross late often enough to look like a mixed one. Nothing cheap separates "twice as slow" from
-"40 % faster" on these queries, so no controller ships and the option stays the caller's decision. What
-*would* separate them is running the query twice and comparing, which pays the loss to learn it; that is
-a speculative execution, and it is not worth it for a mechanism the pass selection already makes
-irrelevant.
+The cursor lane keeps `--wide K`, `--mixed K` and `--depth N`, which measure the passes themselves and
+are how the table above was taken; the `wand` lane keeps counting the entries a block bound could skip.
+What does not exist is a way to ask the engine to prune, because there is no shape in this repository
+where that would be the better request.
 
 ## Dense quantisation lane (`quantize`)
 
@@ -1805,8 +1764,8 @@ dotnet run --project bench/LexiSharp.Benchmarks -c Release -- --filter '*QueryAl
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- scale
 # tail-query p50/p99, allocation and the cursor pass's density crossing (see the cursor lane above):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- cursor 100000 --sweep --both
-# the same, with the opt-in block-bound pruning timed alongside (see the cursor lane above):
-dotnet run --project bench/LexiSharp.Benchmarks -c Release -- cursor 100000 --sweep --both --prune
+# the many-terms and deep-page shapes the passes are compared on (see the cursor lane above):
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- cursor 100000 --mixed 20 --depth 100 --both
 # the path a deployment runs: write, commit, reopen and query the same corpus (see the store lane above):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- store 100000
 # posting entries a block bound can skip, per query and corpus size (see the pruning lane above):

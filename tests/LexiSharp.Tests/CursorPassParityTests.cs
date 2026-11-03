@@ -157,100 +157,6 @@ public class CursorPassParityTests
         }
     }
 
-    /// <summary>
-    /// The in-memory index carries the same bound, computed when its flat postings are built, and
-    /// pruning on it changes no page either.
-    /// </summary>
-    [Theory]
-    [MemberData(nameof(Scorers))]
-    public void PruningOnTheInMemoryIndexServesTheSamePage(string scorerKind)
-    {
-        var memory = new InMemoryTextIndex();
-        memory.Index(Corpus());
-
-        Assert.True(((IPostingArrayIndex)memory).TryResolvePostingArrays("ranking", out var plate));
-        Assert.True(plate.HasWindowBounds);
-
-        var exhaustive = new RankedTextSearchEngine(memory, Build(scorerKind));
-        var cursor = new RankedTextSearchEngine(memory, Build(scorerKind))
-        {
-            ForcedPass = RankedTextSearchEngine.ScoringPass.Cursor,
-        };
-
-        foreach (string query in new[] { "term", "term statistics", "ranking", "ranking filler statistics" })
-        {
-            foreach (int limit in new[] { 1, 10, 25 })
-            {
-                var plain = cursor.Search(query, new SearchOptions(Limit: limit));
-                var pruned = cursor.Search(query, new SearchOptions(Limit: limit) { PruneByBlockBound = true });
-
-                AssertSamePage(plain, pruned, $"in-memory pruned '{query}' at {limit}");
-                AssertSamePage(
-                    exhaustive.Search(query, new SearchOptions(Limit: limit)),
-                    pruned,
-                    $"in-memory pruned against the exhaustive pass, '{query}' at {limit}");
-            }
-        }
-    }
-
-    /// <summary>
-    /// Block-bound pruning changes no page, for every scorer the cursor pass serves.
-    /// </summary>
-    /// <remarks>
-    /// Compared two ways: against the same pass without the option, which is the pruning's own
-    /// contract, and against the in-memory index's exhaustive answer, which is what "the same page"
-    /// means here. The corpus ties heavily — every document carries "ranking" — so a comparison at or
-    /// below the page's worst score would show up as a displaced row, which is why the traversal prunes
-    /// strictly below it.
-    /// </remarks>
-    [Theory]
-    [MemberData(nameof(Scorers))]
-    public void PruningByBlockBoundServesTheSamePage(string scorerKind)
-    {
-        var documents = Corpus();
-        string directory = Directory.CreateTempSubdirectory("lexisharp-prune-").FullName;
-
-        try
-        {
-            using var committed = WriteAndCommit(directory, documents, decodedCacheEntries: 1_000_000);
-            using var reopened = new SegmentedTextIndex(directory, decodedCacheEntries: 1_000_000);
-
-            var memory = new InMemoryTextIndex();
-            memory.Index(documents);
-
-            var exhaustive = new RankedTextSearchEngine(memory, Build(scorerKind));
-            var cursor = new RankedTextSearchEngine(reopened, Build(scorerKind))
-            {
-                ForcedPass = RankedTextSearchEngine.ScoringPass.Cursor,
-            };
-
-            foreach (string query in new[] { "term", "term statistics", "ranking", "ranking filler statistics" })
-            {
-                foreach (int limit in new[] { 1, 10, 25 })
-                {
-                    var plain = cursor.Search(query, new SearchOptions(Limit: limit));
-                    var pruned = cursor.Search(query, new SearchOptions(Limit: limit) { PruneByBlockBound = true });
-
-                    AssertSamePage(plain, pruned, $"pruned '{query}' at {limit}");
-                    AssertSamePage(
-                        exhaustive.Search(query, new SearchOptions(Limit: limit)),
-                        pruned,
-                        $"pruned against the exhaustive pass, '{query}' at {limit}");
-                }
-            }
-        }
-        finally
-        {
-            if (Directory.Exists(directory))
-                Directory.Delete(directory, recursive: true);
-        }
-    }
-
-    /// <summary>
-    /// A committed store with the decoded-postings cache lends arrays, and the cursor pass then serves
-    /// the same page the in-memory index serves. Without the cache the store declines and the engine
-    /// keeps the accumulator — the fallback, not a failure.
-    /// </summary>
     [Fact]
     public void ACommittedStoreLendsPostingsAndServesTheSamePage()
     {
@@ -270,9 +176,6 @@ public class CursorPassParityTests
             Assert.Equal(reopened.DocumentFrequency("ranking"), postings.Count);
             Assert.NotNull(((IPostingArrayIndex)reopened).LengthsByOrdinal);
 
-            // And the plate carries the block bounds the pruning traversal reads, captured from the
-            // block headers on the same walk that decoded the entries.
-            Assert.True(postings.HasWindowBounds);
 
             var memory = new InMemoryTextIndex();
             memory.Index(documents);

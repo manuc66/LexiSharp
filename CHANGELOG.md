@@ -43,6 +43,19 @@
   now vectorizes `Center`, `Normalize`, `CenterAndNormalize` and the finite-value check used by
   the centroid and neighbour validators, and the hashing provider uses that shared normalize.
 
+### Removed
+
+- **`SearchOptions.PruneByBlockBound` and the block-bound pruning path.** Built, measured, and removed the
+  same week. It was correct — the same page for seven scorers at three page sizes on both indexes — and on
+  no shape did it beat the pass the engine already chooses. As a pivot it skips for real: **42 % off the
+  document-at-a-time pass on a query of 20 mixed terms at 100,000 documents and on Quora's 522,931, 63 %
+  at 500,000**. But that pass is 2.5-4.3× behind the accumulator on every shape, so the best row still
+  ends **1.33× behind the accumulator**, and on a query of the corpus's heaviest terms the pivot costs
+  **twice** the pass because nothing can be skipped. A controller that would decide from what the engine
+  observes was tried five ways and rejected: every signal either kept both shapes or disabled both. The
+  measurements and the reasoning stay on the benchmarks page; the code does not, and the `wand` lane
+  remains as the instrument that prices the skips in entries.
+
 ### Fixed
 
 - **The first prediction after a centroid or linear-classifier mutation no longer races another
@@ -110,30 +123,6 @@
   raw, because with no writers it is a read lock that never waits. It exercises concurrent searches
   through a mapped store but does not verify their pages — that is `SegmentReaderConcurrencyTests`'
   job, which drives the copy step through a barrier.
-
-- **`SearchOptions.PruneByBlockBound`: an opt-in that skips a document its block bounds rule out, and
-  what it costs.** The bound is the pair every segment block header already carries — largest frequency
-  and shortest document per 128-ordinal window — captured on the walk that decodes the entries, and on
-  the in-memory index built the first time a pruning query asks for it. It changes no result:
-  `CursorPassParityTests` asserts the same page for seven scorers at three page sizes on both indexes,
-  and the comparison is strict so a tie is never skipped. Steady state over millions of calls on the
-  three-term tail query: **2 503.7 ns unpruned against 2 717.8 ns pruned, +8.6 %, 1 056 bytes either
-  way**. The cursor lane's `p50` reads 2.20 → 4.20 µs for the same pair and is not a rate — three
-  hundred samples of a two-microsecond operation. **A defect was found and fixed while measuring it**:
-  the traversal computed the bound before asking whether a threshold existed, so a tail query, whose
-  candidates are fewer than the page holds, computed a bound for every candidate and skipped none;
-  `IDocumentScoreSink.HasThreshold` is asked first now, which halved the lane's penalty. No density
-  gains: the sweep reads it slower at all nine frequencies from 10 to 19,914. **On the workload it was
-  built for it is now a pivot, and a pivot wins where a range end could not.** Ordering the live terms by
-  their current ordinal and accumulating their window bounds until the pile can reach the page skips every
-  document before that ordinal without visiting it — 8.33 -> 4.84 ms on 20 mixed terms at 100,000
-  documents, 34.28 -> 19.89 ms on Quora at 522,931, and no gain on TREC-COVID or on the ten heaviest
-  terms, where it costs twice the pass. The pass itself remains 2.5-4.3× behind the accumulator on every
-  shape, so the option still ships off. **A controller that decides from what the engine observes was
-  tried and rejected**: five signals (barren pivots at 32 and 4096, entries skipped per pivot at three
-  thresholds, the fraction of pivots crossing at the first term at 75 % and 50 %) each either kept both
-  shapes or disabled both, because a heavy query skips short ranges occasionally and crosses late often
-  enough to look mixed. Nothing cheap separates twice-as-slow from forty-percent-faster here.
 
 - **Online bucket metrics carry top-k accuracy.** `OnlineBucketMetrics` now has `AccuracyAtK` and
   its own block-bootstrap interval alongside top-1, so "the category was second" is visible inside

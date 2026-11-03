@@ -705,37 +705,10 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
         var ordinals = new int[df];
         var frequencies = new int[df];
 
-        // The block header already carries the bound — largest frequency and shortest document per
-        // ordinal window — so capturing it here is free: this walk is the one that decodes the entries
-        // anyway. A window with no block stays zero, which is the right bound for a term that holds
-        // nothing there.
-        int[]? maxFrequencies = null;
-        int[]? minLengths = null;
-
         int index = 0;
 
         while (postings.MoveNext())
         {
-            int window = postings.WindowIndex;
-
-            if (window >= 0)
-            {
-                if (maxFrequencies is null)
-                {
-                    maxFrequencies = new int[window + 1];
-                    minLengths = new int[window + 1];
-                }
-                else if (window >= maxFrequencies.Length)
-                {
-                    int size = Math.Max(window + 1, maxFrequencies.Length * 2);
-                    Array.Resize(ref maxFrequencies, size);
-                    Array.Resize(ref minLengths, size);
-                }
-
-                maxFrequencies[window] = postings.MaxFrequency;
-                minLengths![window] = postings.MinDocumentLength;
-            }
-
             while (postings.TryReadEntry(out int ordinal, out int frequency))
             {
                 ordinals[index] = ordinal;
@@ -744,7 +717,7 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
             }
         }
 
-        resolved = new PostingArrays(ordinals, frequencies, maxFrequencies, minLengths);
+        resolved = new PostingArrays(ordinals, frequencies);
         decoded.Store(term, resolved);
 
         return true;

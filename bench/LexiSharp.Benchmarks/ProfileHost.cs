@@ -14,50 +14,6 @@ namespace LexiSharp.Benchmarks;
 /// </remarks>
 internal static class ProfileHost
 {
-    /// <summary>
-    /// The block-bound pruning A/B under a sampler: one query in a loop, pruned or not, on the corpus
-    /// the cursor lane uses, so a profile reads the traversal rather than the harness.
-    /// </summary>
-    /// <remarks>
-    /// Both sides run the same corpus, the same query and the same engine, and only
-    /// <see cref="SearchOptions.PruneByBlockBound"/> differs, so a difference between the two profiles
-    /// is the bound's arithmetic and nothing else. The warm-up matters more here than in a timed run:
-    /// a sampler that lands on tier-0 code reads the JIT, not the pass.
-    /// </remarks>
-    public static void RunPruning(bool prune, int seconds)
-    {
-        var index = new InMemoryTextIndex();
-        var engine = new RankedTextSearchEngine(index, new Bm25Scorer());
-
-        engine.Index(CorpusFactory.CreateZipfDocuments(100_000, 50, 30_000));
-
-        var options = new SearchOptions(Limit: 10) { PruneByBlockBound = prune };
-        const string query = "w20000x w25000x w29000x";
-
-        var warmUp = System.Diagnostics.Stopwatch.StartNew();
-        long sink = 0;
-
-        while (warmUp.Elapsed.TotalSeconds < 5)
-            sink += engine.Search(query, options).Count;
-
-        var run = System.Diagnostics.Stopwatch.StartNew();
-        long calls = 0;
-
-        long before = GC.GetAllocatedBytesForCurrentThread();
-
-        while (run.Elapsed.TotalSeconds < seconds)
-        {
-            sink += engine.Search(query, options).Count;
-            calls++;
-        }
-
-        long allocated = (GC.GetAllocatedBytesForCurrentThread() - before) / Math.Max(calls, 1);
-
-        Console.WriteLine(
-            $"prune={prune} calls={calls} ns/call={run.Elapsed.TotalNanoseconds / calls:N1} " +
-            $"bytes/call={allocated} sink={sink}");
-    }
-
     public static void Run(int iterations)
     {
         var random = new Random(7);
