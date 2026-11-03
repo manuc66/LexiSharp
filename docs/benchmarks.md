@@ -1299,42 +1299,37 @@ dotnet run --project bench/LexiSharp.Benchmarks -c Release -- profile prune on 2
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- profile prune off 20
 ```
 
-**The workload it was built for, where it also loses.** `--wide K` builds a query from the K most
-frequent terms and `--mixed K` from terms at ranks 1, 2, 4, 8, … — the two extremes a query can have.
-`--depth N` deepens the page so the threshold stands above a typical document's score. Measured
-2026-11-03 at load 1.0-1.5:
+**The workload it was built for: a pivot finally wins, and loses.** `--wide K` builds a query from the K
+most frequent terms, `--mixed K` from terms at ranks 1, 2, 4, 8, … — the two extremes — and `--depth N`
+deepens the page so the threshold stands above a typical document's score. Measured 2026-11-03 at load
+1.0-2.4, the pruning having become a **pivot**: the live terms are ordered by their current ordinal, their
+window bounds are accumulated in that order, and the traversal stops at the first term whose pile can
+reach the page. Every document before that ordinal is skipped without being visited.
 
-| shape | accumulator | cursor pass | cursor pass + prune | prune / pass |
-|---|---:|---:|---:|---:|
-| 100,000 docs, 10 heaviest terms | **3.19 ms** | 9.73 ms (3.05×) | 12.95 ms | 1.33× |
-| 100,000 docs, 20 heaviest terms | **4.90 ms** | 17.18 ms (3.51×) | 25.08 ms | 1.46× |
-| 100,000 docs, 10 mixed terms | **2.34 ms** | 6.24 ms (2.67×) | 9.95 ms | 1.59× |
-| 100,000 docs, 20 mixed terms | **2.30 ms** | 8.33 ms (3.62×) | 14.68 ms | 1.76× |
-| 500,000 docs, 10 heaviest terms | **16.51 ms** | 48.78 ms (2.95×) | 66.28 ms | 1.36× |
+| shape | accumulator | cursor pass | cursor pass + prune | |
+|---|---:|---:|---:|---|
+| 100,000 docs, 20 mixed terms, depth 100 | 2.45 ms | 8.33 ms | **4.84 ms** | **41.8 % faster than the pass** |
+| Quora, 522,931 docs, 20 mixed terms, depth 100 | 8.08 ms | 34.28 ms | **19.89 ms** | **42.0 % faster** |
+| TREC-COVID, 171,332 docs, 20 mixed terms, depth 100 | 3.96 ms | 14.73 ms | 15.10 ms | no gain |
+| 100,000 docs, 10 heaviest terms, depth 100 | 3.62 ms | 9.70 ms | 19.17 ms | **1.98× the pass** |
+| 500,000 docs, 10 heaviest terms, depth 100 | 17.50 ms | 44.67 ms | 86.38 ms | **1.93×** |
 
-**What the pruning costs is now a constant per query, not a term evaluation per range.** Each term's
-bound — its largest single contribution over every window — is evaluated once when the traversal starts
-and summed as a `double` for a range decision. That took the traversal from **1.9-2.2× the pass it
-prunes to 1.33-1.76×**, and it is looser than the per-window bound the cursor sits in, which the
-measurement says does not matter: the tighter bound never fell below the page on any of these shapes
-either, so it bought zero skips and cost a division per term per range.
+**What the pivot needs, and what it cannot do.** A mixed query skips: a prefix of two or three rare terms
+is held below the page, and everything before the first heavy term's document is skipped without being
+visited — 42 % off the pass on two corpora, one synthetic and one real. A query of the ten heaviest terms
+skips almost never, and there the ordering and one contribution per document are paid for a skip that
+does not come: twice the unpruned cost.
 
-Three findings, and the last is the one that settles it.
+**And the pass it accelerates is still the wrong pass.** The cursor pass is 2.5-4.3× behind the
+accumulator on every row above, so even the 42 % win leaves it at 2.5× the accumulator's cost — which is
+what the engine picks. The pruning would matter in an engine where the document-at-a-time pass is the fast
+one; here it is not.
 
-1. The document-at-a-time pass is **2.7-3.6× behind the accumulator** on every wide shape. That is the
-   density divisor working from the other side: a wide query reaches most of the corpus and the pass pays
-   a per-document scan for it. Pruning cannot win a race the pass loses by three times before it starts.
-2. **The bound has no slack on either extreme.** With all-heavy terms the sum is far above any document's
-   score; with mixed terms one heavy term is present in nearly every document and dominates the sum by
-   itself. A bound pays when several *moderate* terms sum below the threshold, and neither shape produces
-   that.
-3. **No range was ever skipped on these five shapes**, which is why the remaining gap is pure overhead
-   and why the option stays off.
-
-This is not block-max WAND either: the range end is a block boundary rather than a pivot ordinal, the
-terms are not ordered by bound, and there is no early exit in the accumulation. What the five shapes
-establish is narrower and still useful: **on this engine, with these bounds, over these shapes, the
-mechanism costs 1.3-1.8× the pass it prunes and the pass itself is three times behind the alternative.**
+**A cutoff for "this query never skips" was tried and rejected.** At thirty-two consecutive barren pivots
+it cut the mixed query before its first skip, because the page cannot fill any earlier than its own depth;
+at four thousand it let the heavy query pay twice the cost, because it does skip — just far too rarely to
+pay for the pivot. A rate rather than a count is what would separate the two, and no rate has been
+measured. The option therefore stays off, and the page says which side of that line each shape is on.
 
 ## Dense quantisation lane (`quantize`)
 

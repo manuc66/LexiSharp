@@ -247,25 +247,14 @@ internal static class DocumentAtATime
                 prune = false;
         }
 
-        // The bound of a term does not change from one range to the next, so it is evaluated once per
-        // query instead of once per term per range. A window bound is a contribution, and a term's
-        // largest one is the contribution at its largest frequency and shortest document taken over its
-        // windows: the weight function is monotone in the first and anti-monotone in the second, so that
-        // pair is the maximum. The sum of these over a range is then an addition each, not a division.
-        // On the stack when the query is small, which it always is, so paying for the bounds does not
-        // allocate. Computed on the first range decision rather than up front: a tail query fills its
-        // page at its last candidate, and paying for ten terms before that was a measurable regression
-        // on the one workload where the mechanism is already known to be useless.
-        Span<double> bounds = prune ? stackalloc double[terms] : [];
-        bool boundsReady = false;
+        // One int per term, reused by every pivot: the live terms in ascending current-ordinal order.
+        Span<int> order = prune ? stackalloc int[terms] : [];
 
-        // The decision is made once per range, not once per document: a block bound is what the name
-        // says, and recomputing it for every document inside the same block was three passes over the
-        // terms per document for a verdict that could not change. The cached verdict stays sound while
-        // the smallest ordinal is still inside the range it was computed for, because cursors only
-        // advance — so the set of contributing terms only shrinks and the old sum only overstates.
-        int rangeEnd = -1;
-        bool rangeSkippable = false;
+        // A cutoff for "this query never skips" was tried twice and rejected: at thirty-two consecutive
+        // barren pivots it cut the mixed query before its first skip (the page cannot fill any earlier
+        // than its own depth), and at four thousand it let the all-heavy query pay twice the unpruned
+        // cost because it does skip, just far too rarely to pay for the pivot. A rate rather than a count
+        // is what would separate them, and no rate has been measured.
 
         while (true)
         {
@@ -283,47 +272,31 @@ internal static class DocumentAtATime
             if (smallest == int.MaxValue)
                 return;
 
-            // Block-max skipping: prove a whole range of ordinals cannot reach the page, then advance
-            // past it without visiting the documents inside. The range ends at the earliest window end
-            // among the live terms, so every term with a cursor at or before that end is still in the
-            // window its cursor points into, and its window bound is a bound on any document there. A
-            // term whose cursor sits past the end holds nothing inside the range at all.
+            // Block-max WAND. The live terms are ordered by their current ordinal and their window
+            // bounds are accumulated in that order, stopping at the first term whose accumulated bound
+            // can reach the page. That term's ordinal is the pivot: every document before it is held
+            // only by terms whose bounds together cannot get there, so the cursors advance past them
+            // without any of those documents being visited.
+            //
+            // What this has over a range end taken from the earliest block boundary is what it must
+            // prove. A range needs the sum of *all* the terms below the page — on a real corpus that is
+            // never true, because one common term's bound alone exceeds it. A prefix of two or three
+            // rare terms often is, and the pivot skips exactly up to the first term that is not.
             if (prune && sink.HasThreshold)
             {
-                if (smallest >= rangeEnd)
-                {
-                    if (!boundsReady)
-                    {
-                        GlobalBounds(weights, postings, lengths, bounds);
-                        boundsReady = true;
-                    }
+                int pivot = NextPivot(weights, postings, cursors, order, sink);
 
-                    rangeEnd = int.MaxValue;
+                if (pivot == int.MaxValue)
+                    return; // nothing from here on can reach the page
 
-                    for (int t = 0; t < terms; t++)
-                    {
-                        int at = cursors[t];
-
-                        if (at >= postings[t].Count)
-                            continue;
-
-                        int end = PostingArrays.WindowEndOf(postings[t].Ordinals[at]);
-
-                        if (end < rangeEnd)
-                            rangeEnd = end;
-                    }
-
-                    rangeSkippable = sink.CanPrune(RangeBound(bounds, postings, cursors, rangeEnd));
-                }
-
-                if (rangeSkippable)
+                if (pivot > smallest)
                 {
                     for (int t = 0; t < terms; t++)
                     {
                         PostingArrays term = postings[t];
                         int at = cursors[t];
 
-                        while (at < term.Count && term.Ordinals[at] < rangeEnd)
+                        while (at < term.Count && term.Ordinals[at] < pivot)
                             at++;
 
                         cursors[t] = at;
@@ -367,110 +340,64 @@ internal static class DocumentAtATime
     }
 
     /// <summary>
-    /// Each term's largest single contribution, over every window of its postings.
+    /// The first ordinal at which the terms' accumulated window bounds can reach the page, or
+    /// <see cref="int.MaxValue"/> when no document from here on can.
     /// </summary>
     /// <remarks>
-    /// Evaluated once per query. It is looser than the window the cursor currently sits in — which is
-    /// what a block bound would use — and the measurement says that does not matter: on five query
-    /// shapes the tighter bound never fell below the page either, and it cost a contribution
-    /// evaluation per term per range, which is what made the traversal twice as slow as the pass it
-    /// prunes. The loose bound buys the same zero skips for an addition.
+    /// The terms are visited in ascending current-ordinal order, and the pile of bounds only grows, so
+    /// the first ordinal whose pile is no longer provably below the page is the pivot. When the pile
+    /// never gets there, nothing left in the query can reach the page and the caller stops.
     /// </remarks>
-    private static void GlobalBounds<TWeight>(
+    private static int NextPivot<TWeight>(
         ReadOnlySpan<TWeight> weights,
         Span<PostingArrays> postings,
-        int[] lengths,
-        Span<double> bounds)
+        int[] cursors,
+        Span<int> order,
+        IDocumentScoreSink sink)
         where TWeight : struct, IWeightFunction
     {
+        int live = 0;
+
         for (int t = 0; t < weights.Length; t++)
-        {
-            PostingArrays term = postings[t];
-
-            if (term.Count == 0 || term.WindowMaxFrequencies is not { } frequencies || frequencies.Length == 0)
-                continue;
-
-            // Two ways to the same pair, and the corpus decides which is cheaper: a rare term has a few
-            // entries spread over hundreds of mostly-empty windows, a head term has tens of thousands of
-            // entries in a few windows. Scanning the wrong one is the difference between 9 iterations and
-            // 782 — which, on a two-microsecond query, was a 6x regression when this scanned windows
-            // unconditionally.
-            int peak;
-            int shortest;
-
-            if (term.Count <= frequencies.Length)
-            {
-                peak = 0;
-                shortest = int.MaxValue;
-
-                for (int at = 0; at < term.Count; at++)
-                {
-                    if (term.Frequencies[at] > peak)
-                        peak = term.Frequencies[at];
-
-                    int length = lengths[term.Ordinals[at]];
-
-                    if (length > 0 && length < shortest)
-                        shortest = length;
-                }
-            }
-            else
-            {
-                peak = Max(frequencies);
-                shortest = int.MaxValue;
-
-                for (int window = 0; window < frequencies.Length; window++)
-                {
-                    if (frequencies[window] == 0)
-                        continue;
-
-                    int length = term.WindowMinDocumentLengths![window];
-
-                    if (length > 0 && length < shortest)
-                        shortest = length;
-                }
-            }
-
-            bounds[t] = shortest == int.MaxValue ? 0 : weights[t].Weight(peak, shortest);
-        }
-    }
-
-    /// <summary>The largest window frequency in an array: the term's peak.</summary>
-    private static int Max(int[] frequencies)
-    {
-        int max = 0;
-
-        for (int i = 0; i < frequencies.Length; i++)
-        {
-            if (frequencies[i] > max)
-                max = frequencies[i];
-        }
-
-        return max;
-    }
-
-    /// <summary>
-    /// An upper bound on the score of any document below <paramref name="windowEnd"/>: the sum of the
-    /// precomputed term bounds over the terms whose cursor sits before that end.
-    /// </summary>
-    private static double RangeBound(
-        Span<double> bounds,
-        Span<PostingArrays> postings,
-        int[] cursors,
-        int windowEnd)
-    {
-        double bound = 0;
-
-        for (int t = 0; t < bounds.Length; t++)
         {
             int at = cursors[t];
 
-            if (at >= postings[t].Count || postings[t].Ordinals[at] >= windowEnd)
+            if (at >= postings[t].Count)
                 continue;
 
-            bound += bounds[t];
+            int ordinal = postings[t].Ordinals[at];
+            int at_ = live++;
+
+            // Insertion by ordinal: a query has a handful of terms, and the array is reused.
+            while (at_ > 0 && postings[order[at_ - 1]].Ordinals[cursors[order[at_ - 1]]] > ordinal)
+            {
+                order[at_] = order[at_ - 1];
+                at_--;
+            }
+
+            order[at_] = t;
         }
 
-        return bound;
+        double piled = 0;
+
+        for (int i = 0; i < live; i++)
+        {
+            int t = order[i];
+            PostingArrays term = postings[t];
+            int at = cursors[t];
+            int window = PostingArrays.WindowOf(term.Ordinals[at]);
+
+            // A term whose bounds do not cover its window makes the pile unprovable, which is what
+            // positive infinity means here: no skipping for this step.
+            if (term.WindowMaxFrequencies is not { } frequencies || window >= frequencies.Length)
+                return term.Ordinals[at];
+
+            piled += weights[t].Weight(frequencies[window], term.WindowMinDocumentLengths![window]);
+
+            if (!sink.CanPrune(piled))
+                return term.Ordinals[at];
+        }
+
+        return int.MaxValue;
     }
 }

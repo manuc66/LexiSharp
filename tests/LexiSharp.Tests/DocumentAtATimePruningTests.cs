@@ -107,16 +107,17 @@ public class DocumentAtATimePruningTests
     }
 
     /// <summary>
-    /// The bound costs one evaluation per term per query, and nothing per document.
+    /// A page that cannot be beaten yet must not be bounded for: the pivot block is gated on the sink
+    /// having a threshold, and until the page fills it has none.
     /// </summary>
     /// <remarks>
-    /// A per-document bound that is thrown away is what made the pruned tail query slower than the
-    /// unpruned one on a 100,000-document corpus; the first fix stopped computing it while the page was
-    /// empty, and the second moved it out of the loop altogether. This asserts the shape of the cost
-    /// rather than one number: the overhead is the same at two documents and at twenty.
+    /// Asserted as "no contribution evaluation at all", which is stronger than "no bound": the traversal
+    /// must not pay for a verdict it cannot act on. Ten terms over two documents is the shape where a
+    /// per-document bound made the pruned tail query slower than the unpruned one, before either the
+    /// pivot or the gate existed.
     /// </remarks>
     [Fact]
-    public void TheBoundCostsOneEvaluationPerTermAndNothingPerDocument()
+    public void NoBoundIsEvaluatedWhileThePageCannotBeBeaten()
     {
         foreach (int documents in new[] { 2, 20 })
         {
@@ -136,8 +137,7 @@ public class DocumentAtATimePruningTests
             var pruning = new CountingSink(limit: 100) { Pruning = true };
             DocumentAtATime.Score([new CountingWeight()], postings, Lengths(256), pruning);
 
-            // One term: one evaluation for its bound, whatever the corpus size.
-            Assert.Equal(unpruned + 1, CountingWeight.Calls);
+            Assert.Equal(unpruned, CountingWeight.Calls);
             Assert.Equal(plain.Offered, pruning.Offered);
         }
     }
