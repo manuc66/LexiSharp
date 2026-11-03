@@ -247,6 +247,13 @@ internal static class DocumentAtATime
                 prune = false;
         }
 
+        // The bound of a term does not change from one range to the next, so it is evaluated once per
+        // query instead of once per term per range. A window bound is a contribution, and a term's
+        // largest one is the contribution at its largest frequency and shortest document taken over its
+        // windows: the weight function is monotone in the first and anti-monotone in the second, so that
+        // pair is the maximum. The sum of these over a range is then an addition each, not a division.
+        double[] bounds = prune ? GlobalBounds(weights, postings) : [];
+
         while (true)
         {
             int smallest = int.MaxValue;
@@ -285,7 +292,7 @@ internal static class DocumentAtATime
                         windowEnd = end;
                 }
 
-                if (sink.CanPrune(RangeBound(weights, postings, cursors, windowEnd)))
+                if (sink.CanPrune(RangeBound(bounds, postings, cursors, windowEnd)))
                 {
                     for (int t = 0; t < terms; t++)
                     {
@@ -336,39 +343,80 @@ internal static class DocumentAtATime
     }
 
     /// <summary>
-    /// An upper bound on the score of any document below <paramref name="windowEnd"/>: the sum of the
-    /// current window bounds over the terms whose cursor sits before that end.
+    /// Each term's largest single contribution, over every window of its postings.
     /// </summary>
     /// <remarks>
-    /// A term's cursor and every ordinal up to the range end are inside one window — the end is the
-    /// earliest window end among the live terms — so the window's largest frequency and shortest
-    /// document bound each entry there. A term whose cursor is past the end holds nothing inside the
-    /// range, which is why it is not summed. Contributions are non-negative, so the sum bounds the sum
-    /// the scorer would produce for the same document, and rounding cannot invert that.
+    /// Evaluated once per query. It is looser than the window the cursor currently sits in — which is
+    /// what a block bound would use — and the measurement says that does not matter: on five query
+    /// shapes the tighter bound never fell below the page either, and it cost a contribution
+    /// evaluation per term per range, which is what made the traversal twice as slow as the pass it
+    /// prunes. The loose bound buys the same zero skips for an addition.
     /// </remarks>
-    private static double RangeBound<TWeight>(
-        ReadOnlySpan<TWeight> weights,
-        Span<PostingArrays> postings,
-        int[] cursors,
-        int windowEnd)
+    private static double[] GlobalBounds<TWeight>(ReadOnlySpan<TWeight> weights, Span<PostingArrays> postings)
         where TWeight : struct, IWeightFunction
     {
-        double bound = 0;
+        var bounds = new double[weights.Length];
 
         for (int t = 0; t < weights.Length; t++)
         {
             PostingArrays term = postings[t];
-            int at = cursors[t];
 
-            if (at >= term.Count || term.Ordinals[at] >= windowEnd)
+            if (term.Count == 0 || term.WindowMaxFrequencies is not { } frequencies || frequencies.Length == 0)
                 continue;
 
-            int window = PostingArrays.WindowOf(term.Ordinals[at]);
+            int shortest = int.MaxValue;
 
-            if (term.WindowMaxFrequencies is not { } frequencies || window >= frequencies.Length)
-                return double.PositiveInfinity;
+            for (int window = 0; window < frequencies.Length; window++)
+            {
+                if (frequencies[window] == 0)
+                    continue;
 
-            bound += weights[t].Weight(frequencies[window], term.WindowMinDocumentLengths![window]);
+                int length = term.WindowMinDocumentLengths![window];
+
+                if (length > 0 && length < shortest)
+                    shortest = length;
+            }
+
+            bounds[t] = shortest == int.MaxValue ? 0 : weights[t].Weight(Max(frequencies), shortest);
+        }
+
+        return bounds;
+    }
+
+    /// <summary>The largest window frequency in an array: the term's peak.</summary>
+    private static int Max(int[] frequencies)
+    {
+        int max = 0;
+
+        for (int i = 0; i < frequencies.Length; i++)
+        {
+            if (frequencies[i] > max)
+                max = frequencies[i];
+        }
+
+        return max;
+    }
+
+    /// <summary>
+    /// An upper bound on the score of any document below <paramref name="windowEnd"/>: the sum of the
+    /// precomputed term bounds over the terms whose cursor sits before that end.
+    /// </summary>
+    private static double RangeBound(
+        double[] bounds,
+        Span<PostingArrays> postings,
+        int[] cursors,
+        int windowEnd)
+    {
+        double bound = 0;
+
+        for (int t = 0; t < bounds.Length; t++)
+        {
+            int at = cursors[t];
+
+            if (at >= postings[t].Count || postings[t].Ordinals[at] >= windowEnd)
+                continue;
+
+            bound += bounds[t];
         }
 
         return bound;
