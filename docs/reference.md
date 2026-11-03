@@ -122,6 +122,10 @@ was designed from:
     [BM25F](ranking.md#bm25f-field-weighted-bm25).
   - *Proximity* is neutral at quarter strength and negative at full strength. See
     [Proximity](ranking.md#proximity).
+- **The neural rows are not contamination-free.** BEIR is public and e5, SPLADE and the
+  cross-encoder are pretrained on public web data; BM25 is the clean baseline. The neural gains are
+  upper bounds under possible memorisation, not a general claim that dense retrieval beats BM25.
+  See [contamination](evaluation.md#what-the-neural-rows-do-not-establish-contamination).
 - **Corpus-derived expansion is a measured loss** where it has been measured (0.8469 against BM25's
   0.8751 on the reference corpus) and is not a default for that reason.
 - **The learned and fitted channels have no measured value here.** `FeedbackAwareTextSearchEngine`

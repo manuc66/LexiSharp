@@ -854,6 +854,27 @@ export arrived, would have shipped it.
   two rows over the same ArguAna vectors, and what separates them is the index.
 
 
+## What the neural rows do not establish: contamination
+
+The dense, SPLADE and cross-encoder rows are not a contamination-free comparison. BEIR is public,
+and the checkpoints are pretrained on public web data; e5, SPLADE-v3 and the cross-encoder may have
+seen the corpora, their documents or close paraphrases during training. This repository cannot rule
+that out: it has no training-set manifest for those checkpoints and no temporal or private corpus in
+the harness.
+
+BM25 is the clean baseline in every table. It has no training data, so its numbers cannot include
+memorisation. The neural rows are therefore upper bounds under contamination, not estimates of what
+a model trained without BEIR would score. The gains are real for these checkpoints on these
+corpora; they are not evidence that a different, uncontaminated model would reproduce them.
+
+The Lucene rows are a lexical external baseline, not a neural one: they are useful for the ranking
+engine, but they say nothing about contamination. A clean neural comparison needs a corpus the
+checkpoints could not have seen — a private collection, or a temporal split after the model's
+training cutoff — with the same qrels and metric code as every other row. Neither is measured here.
+
+What is pinned is nDCG@10; no contamination test is pinned. Read the neural rows as "this
+checkpoint, on this public corpus", never as "dense beats BM25" in general.
+
 ## Metrics
 
 `RetrievalMetrics` covers the standard set, so a number means here what it means in the
