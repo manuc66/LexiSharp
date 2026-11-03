@@ -123,15 +123,14 @@
   the traversal computed the bound before asking whether a threshold existed, so a tail query, whose
   candidates are fewer than the page holds, computed a bound for every candidate and skipped none;
   `IDocumentScoreSink.HasThreshold` is asked first now, which halved the lane's penalty. No density
-  gains: the sweep reads it slower at all nine frequencies from 10 to 19,914. **And on the workload
-  it was built for it loses too.** Upgraded to a range skip — prove a block of ordinals cannot reach
-  the page and advance past it without visiting the documents inside — it still reads 1.9-2.2× the
-  pass it prunes across five shapes: 10 and 20 heaviest terms and 10 and 20 mixed terms at depth 100 on
-  100,000 documents, and 10 heaviest at 500,000. The pass itself is 2.5-3.9× behind the accumulator on
-  every one of them, so pruning is defending a race already lost by three times; and the bound has no
-  slack either way, because all-heavy terms sum far above any score and a mixed query's one heavy term
-  dominates the sum by itself.
-
+  gains: the sweep reads it slower at all nine frequencies from 10 to 19,914. **And on the workload it
+  was built for it loses too.** Three optimisations later — a range skip instead of a per-document
+  check, one bound evaluation per term per query instead of per range, and a looser bound that costs an
+  addition — it reads **1.33-1.76× the pass it prunes** across five shapes (10 and 20 heaviest, 10 and
+  20 mixed at depth 100 on 100,000 documents, and 10 heaviest at 500,000), having skipped no range at
+  all. The pass itself is 2.7-3.6× behind the accumulator on every one, so pruning defends a race lost
+  by three times before it starts; and the bound has no slack either way, since all-heavy terms sum far
+  above any score and a mixed query's one heavy term dominates the sum alone.
 
 - **Online bucket metrics carry top-k accuracy.** `OnlineBucketMetrics` now has `AccuracyAtK` and
   its own block-bootstrap interval alongside top-1, so "the category was second" is visible inside

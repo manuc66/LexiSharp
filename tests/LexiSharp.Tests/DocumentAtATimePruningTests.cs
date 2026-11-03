@@ -107,33 +107,39 @@ public class DocumentAtATimePruningTests
     }
 
     /// <summary>
-    /// A page that is not full cannot be beaten, so the traversal must not compute a bound for it: a
-    /// bound per term per candidate that is thrown away is what made the pruned tail query slower than
-    /// the unpruned one on a 100,000-document corpus.
+    /// The bound costs one evaluation per term per query, and nothing per document.
     /// </summary>
+    /// <remarks>
+    /// A per-document bound that is thrown away is what made the pruned tail query slower than the
+    /// unpruned one on a 100,000-document corpus; the first fix stopped computing it while the page was
+    /// empty, and the second moved it out of the loop altogether. This asserts the shape of the cost
+    /// rather than one number: the overhead is the same at two documents and at twenty.
+    /// </remarks>
     [Fact]
-    public void ItComputesNoBoundWhileThePageIsNotFull()
+    public void TheBoundCostsOneEvaluationPerTermAndNothingPerDocument()
     {
-        PostingArrays[] postings =
-        [
-            Plate([0, 200], [1, 1], maxFrequencies: [1, 1], minLengths: [1, 1]),
-        ];
+        foreach (int documents in new[] { 2, 20 })
+        {
+            int[] ordinals = [.. Enumerable.Range(0, documents)];
+            int[] frequencies = [.. Enumerable.Repeat(1, documents)];
+            PostingArrays[] postings = [Plate(ordinals, frequencies, maxFrequencies: [1], minLengths: [1])];
 
-        // A page of ten over two candidates: the threshold never exists, so nothing may be bounded.
-        CountingWeight.Calls = 0;
+            CountingWeight.Calls = 0;
 
-        var plain = new CountingSink(limit: 10);
-        DocumentAtATime.Score([new CountingWeight()], postings, Lengths(256), plain);
+            var plain = new CountingSink(limit: 100);
+            DocumentAtATime.Score([new CountingWeight()], postings, Lengths(256), plain);
 
-        int unpruned = CountingWeight.Calls;
+            int unpruned = CountingWeight.Calls;
 
-        CountingWeight.Calls = 0;
+            CountingWeight.Calls = 0;
 
-        var pruning = new CountingSink(limit: 10) { Pruning = true };
-        DocumentAtATime.Score([new CountingWeight()], postings, Lengths(256), pruning);
+            var pruning = new CountingSink(limit: 100) { Pruning = true };
+            DocumentAtATime.Score([new CountingWeight()], postings, Lengths(256), pruning);
 
-        Assert.Equal(unpruned, CountingWeight.Calls);
-        Assert.Equal(plain.Offered, pruning.Offered);
+            // One term: one evaluation for its bound, whatever the corpus size.
+            Assert.Equal(unpruned + 1, CountingWeight.Calls);
+            Assert.Equal(plain.Offered, pruning.Offered);
+        }
     }
 
     private static PostingArrays Plate(int[] ordinals, int[] frequencies, int[]? maxFrequencies, int[]? minLengths) =>
