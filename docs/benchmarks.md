@@ -1299,24 +1299,42 @@ dotnet run --project bench/LexiSharp.Benchmarks -c Release -- profile prune on 2
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- profile prune off 20
 ```
 
-**The workload it was built for, where it also loses.** `--wide K --depth N` builds the query a
-block-max traversal exists to serve: the K most frequent terms, a page deep enough that the threshold
-stands above a typical document's score. Three shapes, 2026-11-03, load 0.9-1.5:
+**The workload it was built for, where it also loses.** `--wide K` builds a query from the K most
+frequent terms and `--mixed K` from terms at ranks 1, 2, 4, 8, … — the two extremes a query can have.
+`--depth N` deepens the page so the threshold stands above a typical document's score. Measured
+2026-11-03 at load 1.0-1.5, the pruning having been upgraded meanwhile from a per-document check to a
+**range skip**: it now proves a whole block of ordinals cannot reach the page and advances past it
+without visiting the documents inside, which is the pivot's job done with a block end instead of a
+pivot ordinal.
 
 | shape | accumulator | cursor pass | cursor pass + prune |
 |---|---:|---:|---:|
-| 100,000 docs, 10 terms, depth 100 | **3.64 ms** | 9.81 ms (2.70×) | 13.38 ms (**36 % worse than the pass it prunes**) |
-| 100,000 docs, 20 terms, depth 100 | **4.82 ms** | 17.94 ms (3.72×) | 28.33 ms (**58 % worse**) |
-| 500,000 docs, 10 terms, depth 100 | **18.28 ms** | 48.27 ms (2.64×) | 65.99 ms (**37 % worse**) |
+| 100,000 docs, 10 heaviest terms, depth 100 | **3.20 ms** | 9.75 ms (3.04×) | 19.34 ms (**1.98× the pass it prunes**) |
+| 100,000 docs, 20 heaviest terms, depth 100 | **4.44 ms** | 17.50 ms (3.94×) | 35.12 ms (**2.01×**) |
+| 100,000 docs, 10 mixed terms, depth 100 | **2.37 ms** | 6.42 ms (2.71×) | 13.92 ms (**2.17×**) |
+| 100,000 docs, 20 mixed terms, depth 100 | **2.23 ms** | 8.26 ms (3.70×) | 17.61 ms (**2.13×**) |
+| 500,000 docs, 10 heaviest terms, depth 100 | **18.34 ms** | 45.00 ms (2.45×) | 85.73 ms (**1.91×**) |
 
-Two things follow, and only the second is about pruning. The cursor pass is **2.6-3.7× behind the
-accumulator** on every one of these shapes, which is the density divisor doing its job from the other
-side: a wide query's reach is enormous and the document-at-a-time pass pays a per-document scan for it.
-And pruning makes that pass *slower*, by 36-58 %, on the very shape where the bound has the most slack —
-because this traversal computes a bound per document per holding term before deciding, so it pays for
-every document whether it skips it or not. **That is not block-max WAND**: there is no pivot, and a pivot
-is what turns a bound into a skip without visiting the document. The measurement condemns this
-implementation, not the technique, and it is the reason the option ships off.
+Three findings, and the last is the one that settles it.
+
+1. The document-at-a-time pass is **2.5-3.9× behind the accumulator** on every wide shape. That is the
+   density divisor working from the other side: a wide query reaches most of the corpus and the
+   pass pays a per-document scan for it. Pruning cannot win a race the pass loses by 3× before it
+   starts.
+2. **The bound has no slack on either extreme.** With all-heavy terms the sum is far above any
+   document's score; with mixed terms one heavy term is present in nearly every document and dominates
+   the sum by itself. A bound is useful when several *moderate* terms sum below the threshold, and
+   neither query shape produces that.
+3. **Skipping ranges costs 1.9-2.2×** rather than saving anything, because deciding to skip is O(terms)
+   with a contribution evaluation per term, and it is decided once per range rather than once per
+   document — so the traversal got slower while skipping nothing.
+
+This is not block-max WAND either, though it is closer: the range end is a block boundary, not a pivot
+ordinal chosen from the accumulated bounds, and the accumulator orders terms by current ordinal rather
+than by bound. What the five shapes establish is narrower and still useful: **on this engine, with
+these bounds, over these shapes, the mechanism costs twice the pass it prunes and the pass itself is
+three times behind the alternative.** The option ships off, and the dense-query question is the
+accumulator's to answer.
 
 ## Dense quantisation lane (`quantize`)
 

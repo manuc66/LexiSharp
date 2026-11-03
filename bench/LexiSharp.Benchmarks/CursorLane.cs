@@ -86,7 +86,7 @@ internal static class CursorLane
         }
 
         foreach (int documents in options.Sizes)
-            Measure(documents, options.Sweep, options.Both, options.Prune, options.Wide);
+            Measure(documents, options.Sweep, options.Both, options.Prune, options.Wide, options.Mixed);
     }
 
     private static void WarmUp()
@@ -100,7 +100,7 @@ internal static class CursorLane
         Console.WriteLine("warm-up   1,000 documents indexed and one search served (not measured)");
     }
 
-    private static void Measure(int documentCount, bool sweep, bool both, bool prune, int wide)
+    private static void Measure(int documentCount, bool sweep, bool both, bool prune, int wide, int mixed)
     {
         var generation = Stopwatch.StartNew();
         var documents = CorpusFactory.CreateZipfDocuments(documentCount, WordsPerDocument, VocabularySize);
@@ -137,12 +137,17 @@ internal static class CursorLane
         Console.WriteLine($"accumulator clear       {Time(clearNanoseconds / 1_000.0)} isolated Array.Clear of " +
                           $"{Number(index.OrdinalSpace)} bytes (best of 7)");
 
-        QueryShape[] shapes = wide > 0 ? [WideQuery(index, wide)] : [.. Queries];
+        QueryShape[] shapes = (wide, mixed) switch
+        {
+            (> 0, _) => [WideQuery(index, wide)],
+            (_, > 0) => [MixedQuery(index, mixed)],
+            _ => [.. Queries],
+        };
 
         foreach (var query in shapes)
             MeasureQuery(index, engine, accumulatorEngine, cursorEngine, query, documentCount, clearNanoseconds, both, prune);
 
-        if (!sweep || wide > 0)
+        if (!sweep || wide > 0 || mixed > 0)
             return;
 
         foreach (var (term, df) in SweepTerms(index))
@@ -306,6 +311,35 @@ internal static class CursorLane
             .Take(terms)];
 
         return new QueryShape($"{terms} most frequent terms", string.Join(" ", widest));
+    }
+
+    /// <summary>
+    /// A query whose terms are spread over the frequency range instead of taken from its head: the
+    /// shape a real query has, and the one block-max pruning is actually built for.
+    /// </summary>
+    /// <remarks>
+    /// The K most frequent terms are the <em>worst</em> case for a bound: every term is heavy, so the
+    /// sum of the contributions is far above any document's score and the bound has no slack. A real
+    /// query is heterogeneous — a few heavy terms and a long tail of rare ones — and the bound of a
+    /// rare term is small enough for the pivot to rule a range out. The terms are picked at ranks
+    /// 1, 2, 4, 8, … so the tail dominates, as it does in a query typed by a person.
+    /// </remarks>
+    private static QueryShape MixedQuery(InMemoryTextIndex index, int terms)
+    {
+        string[] ranked = [.. index.Vocabulary.OrderByDescending(index.DocumentFrequency)];
+
+        var picked = new List<string>(terms);
+
+        for (int i = 0; i < terms; i++)
+        {
+            // Ranks 0, 1, 3, 7, 15, ... — doubling, so the tail dominates and no rank repeats.
+            int rank = (int)Math.Min(ranked.Length - 1, Math.Pow(2, i) - 1);
+
+            if (picked.Count == 0 || !string.Equals(picked[^1], ranked[rank], StringComparison.Ordinal))
+                picked.Add(ranked[rank]);
+        }
+
+        return new QueryShape($"{terms} terms spread over the frequency range", string.Join(" ", picked));
     }
 
     /// <summary>
@@ -637,6 +671,7 @@ internal static class CursorLane
         bool both = false;
         bool prune = false;
         int wide = 0;
+        int mixed = 0;
         int depth = 10;
         string? corpus = null;
         string? data = null;
@@ -666,6 +701,12 @@ internal static class CursorLane
             if (arg == "--wide")
             {
                 wide = int.Parse(Next(args, ref i, "--wide"), CultureInfo.InvariantCulture);
+                continue;
+            }
+
+            if (arg == "--mixed")
+            {
+                mixed = int.Parse(Next(args, ref i, "--mixed"), CultureInfo.InvariantCulture);
                 continue;
             }
 
@@ -706,7 +747,7 @@ internal static class CursorLane
         _limit = depth;
 
         return new LaneOptions(
-            [.. sizes], sweep, both, prune, wide, depth, corpus, ResolveDataDirectory(data));
+            [.. sizes], sweep, both, prune, wide, mixed, depth, corpus, ResolveDataDirectory(data));
     }
 
     /// <summary>The value after a switch, or a message naming the switch rather than an index error.</summary>
@@ -772,7 +813,9 @@ internal static class CursorLane
             : "sweep     off (pass --sweep for one query per document-frequency target)");
         Console.WriteLine(options.Wide > 0
             ? $"wide      one query of the {options.Wide} most frequent terms, page depth {_limit}"
-            : $"wide      off (pass --wide K for the many-terms shape pruning is built for)");
+            : options.Mixed > 0
+                ? $"mixed     one query of {options.Mixed} terms at ranks 1, 2, 4, 8, …, page depth {_limit}"
+                : "wide      off (pass --wide K for all-heavy terms or --mixed K for a real spread)");
         Console.WriteLine(options.Both
             ? "both      on: every query is timed through the accumulator and the cursor pass as well as the chosen one"
             : "both      off (pass --both to time both passes and see which the rule should have chosen)");
@@ -827,6 +870,7 @@ internal static class CursorLane
         bool Both,
         bool Prune,
         int Wide,
+        int Mixed,
         int Depth,
         string? Corpus,
         string DataDirectory);

@@ -75,6 +75,9 @@ internal readonly struct PostingArrays
     /// <summary>The ordinal window an ordinal belongs to, the alignment the segment format writes.</summary>
     public static int WindowOf(int ordinal) => ordinal / PostingBlocks.BlockSpan;
 
+    /// <summary>The first ordinal of the window after the one <paramref name="ordinal"/> falls in.</summary>
+    public static int WindowEndOf(int ordinal) => (WindowOf(ordinal) + 1) * PostingBlocks.BlockSpan;
+
     /// <summary>Number of posting entries.</summary>
     public int Count => Ordinals.Length;
 
@@ -260,19 +263,43 @@ internal static class DocumentAtATime
             if (smallest == int.MaxValue)
                 return;
 
-            // Before scoring: every term holding this document is bounded by its window's largest
-            // frequency and shortest document, so the sum of those contributions is an upper bound on
-            // the score. The sink compares it against the page, in the space its own finalisation
-            // produces; strictly, because an equal score can still be ordered by its identifier.
-            if (prune && sink.HasThreshold && sink.CanPrune(UpperBound(weights, postings, cursors, smallest)))
+            // Block-max skipping: prove a whole range of ordinals cannot reach the page, then advance
+            // past it without visiting the documents inside. The range ends at the earliest window end
+            // among the live terms, so every term with a cursor at or before that end is still in the
+            // window its cursor points into, and its window bound is a bound on any document there. A
+            // term whose cursor sits past the end holds nothing inside the range at all.
+            if (prune && sink.HasThreshold)
             {
+                int windowEnd = int.MaxValue;
+
                 for (int t = 0; t < terms; t++)
                 {
-                    if (cursors[t] < postings[t].Count && postings[t].Ordinals[cursors[t]] == smallest)
-                        cursors[t]++;
+                    int at = cursors[t];
+
+                    if (at >= postings[t].Count)
+                        continue;
+
+                    int end = PostingArrays.WindowEndOf(postings[t].Ordinals[at]);
+
+                    if (end < windowEnd)
+                        windowEnd = end;
                 }
 
-                continue;
+                if (sink.CanPrune(RangeBound(weights, postings, cursors, windowEnd)))
+                {
+                    for (int t = 0; t < terms; t++)
+                    {
+                        PostingArrays term = postings[t];
+                        int at = cursors[t];
+
+                        while (at < term.Count && term.Ordinals[at] < windowEnd)
+                            at++;
+
+                        cursors[t] = at;
+                    }
+
+                    continue;
+                }
             }
 
             double score = 0;
@@ -309,23 +336,23 @@ internal static class DocumentAtATime
     }
 
     /// <summary>
-    /// An upper bound on the score of <paramref name="ordinal"/> from the window bounds of the terms
-    /// that hold it, or positive infinity when a window is out of the bound's range.
+    /// An upper bound on the score of any document below <paramref name="windowEnd"/>: the sum of the
+    /// current window bounds over the terms whose cursor sits before that end.
     /// </summary>
     /// <remarks>
-    /// A term whose cursor sits past the ordinal does not hold it — postings ascend and carry one entry
-    /// per document — so it contributes nothing and is not bounded by anything. Every contribution is
-    /// non-negative, so the sum is monotone under addition and rounding cannot make it fall below the
-    /// score the same terms produce.
+    /// A term's cursor and every ordinal up to the range end are inside one window — the end is the
+    /// earliest window end among the live terms — so the window's largest frequency and shortest
+    /// document bound each entry there. A term whose cursor is past the end holds nothing inside the
+    /// range, which is why it is not summed. Contributions are non-negative, so the sum bounds the sum
+    /// the scorer would produce for the same document, and rounding cannot invert that.
     /// </remarks>
-    private static double UpperBound<TWeight>(
+    private static double RangeBound<TWeight>(
         ReadOnlySpan<TWeight> weights,
         Span<PostingArrays> postings,
         int[] cursors,
-        int ordinal)
+        int windowEnd)
         where TWeight : struct, IWeightFunction
     {
-        int window = PostingArrays.WindowOf(ordinal);
         double bound = 0;
 
         for (int t = 0; t < weights.Length; t++)
@@ -333,8 +360,10 @@ internal static class DocumentAtATime
             PostingArrays term = postings[t];
             int at = cursors[t];
 
-            if (at >= term.Count || term.Ordinals[at] != ordinal)
+            if (at >= term.Count || term.Ordinals[at] >= windowEnd)
                 continue;
+
+            int window = PostingArrays.WindowOf(term.Ordinals[at]);
 
             if (term.WindowMaxFrequencies is not { } frequencies || window >= frequencies.Length)
                 return double.PositiveInfinity;
