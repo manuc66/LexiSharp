@@ -124,11 +124,13 @@
   candidates are fewer than the page holds, computed a bound for every candidate and skipped none;
   `IDocumentScoreSink.HasThreshold` is asked first now, which halved the lane's penalty. No density
   gains: the sweep reads it slower at all nine frequencies from 10 to 19,914. **And on the workload
-  it was built for it loses too:** `cursor --wide K --depth N` — the K most frequent terms at a deep
-  page — reads the accumulator at 3.64 / 4.82 / 18.28 ms against the cursor pass's 9.81 / 17.94 /
-  48.27 ms, and pruning makes that pass **36-58 % slower** because it evaluates a bound per document
-  per term whether or not it skips. It is not block-max WAND: there is no pivot, and a pivot is what
-  turns a bound into a skip without visiting the document.
+  it was built for it loses too.** Upgraded to a range skip — prove a block of ordinals cannot reach
+  the page and advance past it without visiting the documents inside — it still reads 1.9-2.2× the
+  pass it prunes across five shapes: 10 and 20 heaviest terms and 10 and 20 mixed terms at depth 100 on
+  100,000 documents, and 10 heaviest at 500,000. The pass itself is 2.5-3.9× behind the accumulator on
+  every one of them, so pruning is defending a race already lost by three times; and the bound has no
+  slack either way, because all-heavy terms sum far above any score and a mixed query's one heavy term
+  dominates the sum by itself.
 
 
 - **Online bucket metrics carry top-k accuracy.** `OnlineBucketMetrics` now has `AccuracyAtK` and
