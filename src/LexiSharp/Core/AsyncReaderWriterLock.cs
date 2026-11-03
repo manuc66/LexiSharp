@@ -15,8 +15,12 @@ namespace LexiSharp.Core;
 /// </para>
 /// <para>
 /// Synchronous waiters block on <see cref="Monitor.Wait(object)"/> rather than on a task, so a
-/// contended synchronous prediction does not need a thread-pool thread to be unblocked. Async
-/// waiters use a <see cref="TaskCompletionSource{TResult}"/> created with
+/// contended synchronous prediction does not allocate a completion source, but it still occupies
+/// the thread that blocks. Do not mix a capped thread pool, blocking <c>Predict</c> calls and an
+/// async writer that awaits I/O: the writer's continuation needs a pool thread to release the
+/// lock, and a saturated pool turns that into a latency spike or a deadlock. Use the async surface
+/// end-to-end when that shape is possible. Async waiters use a
+/// <see cref="TaskCompletionSource{TResult}"/> created with
 /// <see cref="TaskCreationOptions.RunContinuationsAsynchronously"/>, so no continuation runs while
 /// the state lock is held. The uncontended path is one monitor acquisition and two field updates.
 /// </para>
@@ -25,6 +29,12 @@ namespace LexiSharp.Core;
 /// a writer already queued is admitted before readers that arrive after it. That is the ordering a
 /// mixed prediction/feedback workload needs; the alternative — always admitting a waiting writer —
 /// measured as near-reader starvation under the stress test.
+/// </para>
+/// <para>
+/// Async acquisition accepts a cancellation token. A cancelled waiter is removed from the queue
+/// under the state lock and its task is completed as cancelled, so a request behind a long writer
+/// can abandon the wait without waiting for the writer to finish. Synchronous acquisition has no
+/// token: the synchronous API has nowhere to report cancellation before the lock is held.
 /// </para>
 /// <para>
 /// It does not detect reentrancy. The wrapper's locked calls go straight to the wrapped instance
@@ -36,7 +46,7 @@ namespace LexiSharp.Core;
 internal sealed class AsyncReaderWriterLock : IDisposable
 {
     private readonly object _sync = new();
-    private readonly Queue<Waiter> _waiters = new();
+    private readonly LinkedList<Waiter> _waiters = new();
     private int _readers;
     private bool _writer;
     private bool _disposed;
@@ -55,7 +65,7 @@ internal sealed class AsyncReaderWriterLock : IDisposable
             }
 
             var waiter = new Waiter(isWriter: false);
-            _waiters.Enqueue(waiter);
+            waiter.Node = _waiters.AddLast(waiter);
 
             while (!waiter.Granted)
             {
@@ -68,8 +78,11 @@ internal sealed class AsyncReaderWriterLock : IDisposable
     }
 
     /// <summary>Acquires the read lock, waiting asynchronously when it is contended.</summary>
-    public ValueTask EnterReadLockAsync()
+    public ValueTask EnterReadLockAsync(CancellationToken cancellationToken = default)
     {
+        if (cancellationToken.IsCancellationRequested)
+            return ValueTask.FromCanceled(cancellationToken);
+
         lock (_sync)
         {
             ThrowIfDisposed();
@@ -80,10 +93,7 @@ internal sealed class AsyncReaderWriterLock : IDisposable
                 return ValueTask.CompletedTask;
             }
 
-            var waiter = NewAsyncWaiter(isWriter: false);
-            _waiters.Enqueue(waiter);
-
-            return new ValueTask(waiter.Async!.Task);
+            return EnqueueAsyncWaiter(isWriter: false, cancellationToken);
         }
     }
 
@@ -116,7 +126,7 @@ internal sealed class AsyncReaderWriterLock : IDisposable
             }
 
             var waiter = new Waiter(isWriter: true);
-            _waiters.Enqueue(waiter);
+            waiter.Node = _waiters.AddLast(waiter);
 
             while (!waiter.Granted)
             {
@@ -129,8 +139,11 @@ internal sealed class AsyncReaderWriterLock : IDisposable
     }
 
     /// <summary>Acquires the write lock, waiting asynchronously when it is contended.</summary>
-    public ValueTask EnterWriteLockAsync()
+    public ValueTask EnterWriteLockAsync(CancellationToken cancellationToken = default)
     {
+        if (cancellationToken.IsCancellationRequested)
+            return ValueTask.FromCanceled(cancellationToken);
+
         lock (_sync)
         {
             ThrowIfDisposed();
@@ -141,10 +154,7 @@ internal sealed class AsyncReaderWriterLock : IDisposable
                 return ValueTask.CompletedTask;
             }
 
-            var waiter = NewAsyncWaiter(isWriter: true);
-            _waiters.Enqueue(waiter);
-
-            return new ValueTask(waiter.Async!.Task);
+            return EnqueueAsyncWaiter(isWriter: true, cancellationToken);
         }
     }
 
@@ -174,14 +184,17 @@ internal sealed class AsyncReaderWriterLock : IDisposable
                 return;
 
             _disposed = true;
-            var exception = new ObjectDisposedException(nameof(AsyncReaderWriterLock));
 
-            while (_waiters.Count > 0)
+            while (_waiters.First is { } node)
             {
-                Waiter waiter = _waiters.Dequeue();
+                _waiters.RemoveFirst();
+                Waiter waiter = node.Value;
+                waiter.Cancelled = true;
+                waiter.Node = null;
+                waiter.Registration.Unregister();
 
                 if (waiter.Async is { } async)
-                    async.TrySetException(exception);
+                    async.TrySetException(new ObjectDisposedException(nameof(AsyncReaderWriterLock)));
             }
 
             // Synchronous waiters re-check the state after waking, so a pulse is enough.
@@ -189,37 +202,75 @@ internal sealed class AsyncReaderWriterLock : IDisposable
         }
     }
 
-    private static Waiter NewAsyncWaiter(bool isWriter) =>
-        new(isWriter)
+    private ValueTask EnqueueAsyncWaiter(bool isWriter, CancellationToken cancellationToken)
+    {
+        var waiter = new Waiter(isWriter)
         {
             Async = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously),
         };
+        waiter.Node = _waiters.AddLast(waiter);
+
+        if (cancellationToken.CanBeCanceled)
+        {
+            waiter.Registration = cancellationToken.Register(
+                () => CancelWaiter(waiter, cancellationToken));
+        }
+
+        return new ValueTask(waiter.Async.Task);
+    }
+
+    private void CancelWaiter(Waiter waiter, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            if (waiter.Granted || waiter.Cancelled || waiter.Async is null)
+                return;
+
+            waiter.Cancelled = true;
+
+            if (waiter.Node is { } node)
+            {
+                _waiters.Remove(node);
+                waiter.Node = null;
+            }
+
+            waiter.Async.TrySetCanceled(cancellationToken);
+
+            // If the cancelled waiter was at the front, the next one may now be grantable.
+            GrantNext();
+        }
+    }
 
     private void GrantNext()
     {
-        if (_writer || _disposed || _waiters.Count == 0)
+        if (_writer || _disposed || _waiters.First is null)
             return;
 
-        if (_waiters.Peek().IsWriter)
+        if (_waiters.First.Value.IsWriter)
         {
             if (_readers > 0)
                 return;
 
+            LinkedListNode<Waiter> node = _waiters.First;
+            _waiters.RemoveFirst();
             _writer = true;
-            Grant(_waiters.Dequeue());
+            Grant(node.Value);
             return;
         }
 
-        while (_waiters.Count > 0 && !_waiters.Peek().IsWriter)
+        while (_waiters.First is { } node && !node.Value.IsWriter)
         {
+            _waiters.RemoveFirst();
             _readers++;
-            Grant(_waiters.Dequeue());
+            Grant(node.Value);
         }
     }
 
     private void Grant(Waiter waiter)
     {
         waiter.Granted = true;
+        waiter.Node = null;
+        waiter.Registration.Unregister();
 
         if (waiter.Async is { } async)
             async.TrySetResult(true);
@@ -239,6 +290,12 @@ internal sealed class AsyncReaderWriterLock : IDisposable
 
         public bool Granted { get; set; }
 
+        public bool Cancelled { get; set; }
+
         public TaskCompletionSource<bool>? Async { get; init; }
+
+        public LinkedListNode<Waiter>? Node { get; set; }
+
+        public CancellationTokenRegistration Registration { get; set; }
     }
 }

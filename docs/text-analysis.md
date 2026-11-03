@@ -221,7 +221,9 @@ write lock for `Train`/`Learn`/`Unlearn`/`Reinforce`/… and their async counter
 for the predictions already in flight and blocks new ones for the duration of the write. The async
 members are available when the wrapped model implements `IAsyncTextClassifier` (the centroid and
 nearest-neighbour classifiers do); a synchronous model throws `NotSupportedException` naming the
-type instead of silently blocking.
+type instead of silently blocking. `SupportsIncrementalAsync` separately reports whether
+`LearnAsync`/`UnlearnAsync` exist, and an async call cancelled while it waits for the lock leaves
+the queue instead of waiting behind a long writer.
 
 If a retrain is frequent enough that waiting is a problem, build a fresh model off-lock and publish
 it atomically instead:
@@ -236,12 +238,12 @@ var best = model.PredictBest(text);
 // Retrain thread — build first, then swap:
 var next = new NaiveBayesClassifier();
 next.Train(newCorpus);
-var retired = reference.Swap(next);   // caller owns and retires `retired`
+var displaced = reference.Swap(next); // do not mutate or dispose it: a reader may still hold it
 ```
 
 Do not clone the model for every `Learn`: one `Learn` is under a microsecond, while copying the
 corpus or the vocabulary is orders of magnitude larger. The snapshot path is for retraining, which
-already builds a new model.
+already builds a new model, and it assumes a single writer owns the swaps.
 
 Two things stay outside the wrapper: `ClassificationModelSerializer.Save`, which needs a quiescent
 or snapshot model, and the generic models (`LinearClassifier<TItem>`, `CentroidClassifier<TItem>`,

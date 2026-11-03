@@ -68,7 +68,11 @@ namespace LexiSharp.Classification;
 /// </para>
 /// <para>
 /// Dispose releases the lock. It does not dispose the wrapped classifier, which the caller still
-/// owns. Every member throws <see cref="ObjectDisposedException"/> afterwards.
+/// owns, and it does not drain operations already in flight: a granted prediction or write may
+/// still be running when <c>Dispose</c> returns. Await those operations before disposing the model
+/// or the provider they use. Once disposed, every member that takes the lock throws
+/// <see cref="ObjectDisposedException"/>; the capability properties still report the wrapped
+/// model's interfaces.
 /// </para>
 /// </remarks>
 public sealed class SynchronizedTextClassifier
@@ -97,6 +101,12 @@ public sealed class SynchronizedTextClassifier
 
     /// <summary>Whether the wrapped classifier implements <see cref="IAsyncTextClassifier"/>.</summary>
     public bool SupportsAsync => ClassifierCapabilities.IsAsync(_inner);
+
+    /// <summary>
+    /// Whether the wrapped classifier implements <see cref="IIncrementalAsyncTextClassifier"/>, and
+    /// therefore supports <see cref="LearnAsync"/> and <see cref="UnlearnAsync"/>.
+    /// </summary>
+    public bool SupportsIncrementalAsync => ClassifierCapabilities.IsIncrementalAsync(_inner);
 
     /// <inheritdoc />
     public void Train(IEnumerable<SearchDocument> documents)
@@ -169,7 +179,7 @@ public sealed class SynchronizedTextClassifier
     {
         var asyncInner = AsAsync();
 
-        await _lock.EnterWriteLockAsync().ConfigureAwait(false);
+        await _lock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             await asyncInner.TrainAsync(documents, cancellationToken).ConfigureAwait(false);
@@ -192,7 +202,7 @@ public sealed class SynchronizedTextClassifier
     {
         var asyncInner = AsAsync();
 
-        await _lock.EnterReadLockAsync().ConfigureAwait(false);
+        await _lock.EnterReadLockAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             return await asyncInner
@@ -215,7 +225,7 @@ public sealed class SynchronizedTextClassifier
     {
         var incremental = AsIncrementalAsync();
 
-        await _lock.EnterWriteLockAsync().ConfigureAwait(false);
+        await _lock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             await incremental.LearnAsync(document, cancellationToken).ConfigureAwait(false);
@@ -236,7 +246,7 @@ public sealed class SynchronizedTextClassifier
     {
         var incremental = AsIncrementalAsync();
 
-        await _lock.EnterWriteLockAsync().ConfigureAwait(false);
+        await _lock.EnterWriteLockAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             await incremental.UnlearnAsync(document, cancellationToken).ConfigureAwait(false);
