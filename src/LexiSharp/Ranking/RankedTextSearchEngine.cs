@@ -1172,30 +1172,6 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         /// <summary>Documents whose relevance score was computed, zero scores included.</summary>
         public long Scored { get; private set; }
 
-        public bool Pruning => options.PruneByBlockBound;
-
-        /// <inheritdoc />
-        public bool HasThreshold => double.IsFinite(top.WorstScore);
-
-        /// <summary>
-        /// Whether a document bounded above by <paramref name="upperBound"/> cannot reach the page.
-        /// </summary>
-        /// <remarks>
-        /// Off unless the caller opted in, and false while the window is not full — its worst score is
-        /// positive infinity then, which is what <see cref="double.IsFinite"/> rules out. The bound is
-        /// finalised before the comparison because the window holds finalised scores and BM25 in single
-        /// precision rounds, which can round a raw bound down past a score it should have kept.
-        /// </remarks>
-        public bool CanPrune(double upperBound)
-        {
-            if (!options.PruneByBlockBound)
-                return false;
-
-            double worst = top.WorstScore;
-
-            return double.IsFinite(worst) && finisher.Finalise(upperBound) < worst;
-        }
-
         public AccumulatedCounts Counts => new(Ordinal, Scored);
 
         public void Score(int ordinal, double score)

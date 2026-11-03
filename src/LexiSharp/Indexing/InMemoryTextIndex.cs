@@ -185,9 +185,6 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// </remarks>
     private sealed class FlatPosting(int epoch, int[] ordinals, int[] frequencies)
     {
-        private int[]? _windowMaxFrequencies;
-        private int[]? _windowMinDocumentLengths;
-
         public int Epoch { get; } = epoch;
 
         public int[] Ordinals { get; } = ordinals;
@@ -196,47 +193,6 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
 
         public int Count => Ordinals.Length;
 
-        /// <summary>
-        /// The block bound — largest frequency and shortest document per ordinal window — built the
-        /// first time a pruning pass asks for it.
-        /// </summary>
-        /// <remarks>
-        /// Lazily, because it is only useful to a caller that opted into
-        /// <see cref="SearchOptions.PruneByBlockBound"/>, and every other query would pay two arrays a
-        /// term for a bound it never reads. Measured over nine densities the bound is never a gain on
-        /// this engine, so paying for it by default would be paying for nothing. The build is
-        /// idempotent and races benignly: two concurrent first askers compute the same arrays and one
-        /// reference wins, exactly as <see cref="PostingList.PublishFlat"/> already behaves.
-        /// </remarks>
-        public (int[]? Max, int[]? Min) WindowBounds(int[] lengths)
-        {
-            if (_windowMaxFrequencies is not null && _windowMinDocumentLengths is not null)
-                return (_windowMaxFrequencies, _windowMinDocumentLengths);
-
-            if (Ordinals.Length == 0)
-                return (null, null);
-
-            int lastWindow = Core.PostingArrays.WindowOf(Ordinals[^1]);
-            var max = new int[lastWindow + 1];
-            var min = new int[lastWindow + 1];
-
-            for (int at = 0; at < Ordinals.Length; at++)
-            {
-                int window = Core.PostingArrays.WindowOf(Ordinals[at]);
-                int length = lengths[Ordinals[at]];
-
-                if (Frequencies[at] > max[window])
-                    max[window] = Frequencies[at];
-
-                if (min[window] == 0 || length < min[window])
-                    min[window] = length;
-            }
-
-            _windowMaxFrequencies = max;
-            _windowMinDocumentLengths = min;
-
-            return (max, min);
-        }
     }
 
     // Per-field statistics, populated from SearchDocument.TextFields. The document's main Text is
@@ -1120,9 +1076,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         if (_postings.TryGetValue(term, out var posting))
         {
             var flat = FlatFor(posting);
-            var (max, min) = flat.WindowBounds(AccumulationLengths());
-
-            postings = new PostingArrays(flat.Ordinals, flat.Frequencies, max, min);
+            postings = new PostingArrays(flat.Ordinals, flat.Frequencies);
 
             return true;
         }
@@ -1137,9 +1091,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         if (_spanPostings.TryGetValue(term, out var posting))
         {
             var flat = FlatFor(posting);
-            var (max, min) = flat.WindowBounds(AccumulationLengths());
-
-            postings = new PostingArrays(flat.Ordinals, flat.Frequencies, max, min);
+            postings = new PostingArrays(flat.Ordinals, flat.Frequencies);
 
             return true;
         }

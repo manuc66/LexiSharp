@@ -7,14 +7,6 @@ public static class Program
     public static void Main(string[] args)
     {
         // A host with no harness in it, for a sampler. See ProfileHost.
-        if (args.Length > 2 && args[0] == "profile" && args[1] == "prune")
-        {
-            ProfileHost.RunPruning(
-                prune: args[2] == "on",
-                seconds: args.Length > 3 && int.TryParse(args[3], out int seconds) ? seconds : 20);
-            return;
-        }
-
         if (args.Length > 0 && args[0] == "profile")
         {
             ProfileHost.Run(args.Length > 1 && int.TryParse(args[1], out int n) ? n : 4);
