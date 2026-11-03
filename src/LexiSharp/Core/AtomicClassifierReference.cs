@@ -47,10 +47,14 @@ public sealed class AtomicClassifierReference
     public ITextClassifier Current => Volatile.Read(ref _classifier);
 
     /// <summary>
-    /// Atomically replaces the published classifier and returns the previous one, so a writer can
-    /// retire the instance readers have stopped seeing. The new classifier must be fully trained
-    /// before the call.
+    /// Atomically replaces the published classifier and returns the previous one. The new
+    /// classifier must be fully trained before the call.
     /// </summary>
+    /// <remarks>
+    /// The returned instance may still be used by a reader that captured it just before the swap.
+    /// Do not mutate or dispose it; leave it to the garbage collector. A single writer should own
+    /// the swaps, because two concurrent writers can displace each other's models with no ordering.
+    /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="classifier"/> is null.</exception>
     public ITextClassifier Swap(ITextClassifier classifier)
     {

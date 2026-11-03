@@ -53,7 +53,8 @@ public class AtomicClassifierReferenceTests
 
         var observed = new ConcurrentBag<int>();
 
-        using var writerStop = new CancellationTokenSource();
+        // The deadline is a watchdog: a starved writer must not leave the readers looping forever.
+        using var writerStop = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
         var writer = Task.Run(() =>
         {
@@ -63,7 +64,7 @@ public class AtomicClassifierReferenceTests
             writerStop.Cancel();
         });
 
-        var readers = Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
+        var readers = Enumerable.Range(0, 8).Select(_ => Task.Run(async () =>
         {
             while (!writerStop.IsCancellationRequested)
             {
@@ -75,6 +76,8 @@ public class AtomicClassifierReferenceTests
                 observed.Add(stub.Tag);
 
                 Assert.Equal($"cat-{stub.Tag}", classifier.PredictBest("query"));
+
+                await Task.Yield();
             }
         })).ToArray();
 
