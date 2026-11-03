@@ -661,23 +661,31 @@ Two properties the shipped design carries, both of which the shape above forced:
 
 A posting entry costs ~13 ns at the head, and the divisions in it are not what fills that time. BM25
 evaluates one division per entry for the length normalization — `1 − b + b·dl/avgdl`, identical for
-every document of the same length — and a second for the saturation. Replacing the first with a
-length-keyed table built once per query measures **0.1980 ms against 0.1984 ms** on a query that
-folds 9 525 entries: seven launches of each build alternated in one loop, on minima that vary by
-2.5 % between launches of the same build. The table also costs 440 B per query, 65 % of the search's
-steady-state allocation, so the division stays.
+every document of the same length — and a second for the saturation.
 
-What the entry does cost is one dependent read of `lengths[ordinal]` and one write into
-`_scores[ordinal]`, scattered across a corpus-sized buffer, plus the per-entry bookkeeping. The
-out-of-order engine overlaps arithmetic with those reads, so an operation that is expensive in
-isolation is free in context.
+The ceiling is measurable, and it is small. Replacing the normalization with a length-keyed table
+that an exact score can use measures **0.1980 ms against 0.1984 ms** on a query that folds 9 525
+entries (minima of seven launches of each build, alternated), and costs 440 B per query, 65 % of the
+search's steady-state allocation, so the division stays. Removing the division *entirely* — a wrong
+score, so it is an upper bound rather than a candidate — takes the same query from **124.8 to
+122.3 µs, about 2 %**, with overlapping distributions. Removing the normalization **and** the
+`lengths[ordinal]` read the compiler can then drop takes it to **112.9 µs, about 9 %**.
+
+So the difference between 2 % and 9 % is one load, and that load is not removable: a weight needs the
+document's length, and the table replaced a division with a second, *dependent* load
+(`table[lengths[ordinal]]`) of the same order as the operation it removed. What the entry does cost
+is that dependent read of `lengths[ordinal]` and one write into `_scores[ordinal]`, scattered across
+a corpus-sized buffer, plus the per-entry bookkeeping. The out-of-order engine overlaps arithmetic
+with those reads, so an operation that is expensive in isolation is free in context.
 
 The same holds one level down, and the same measurement shape says so. The dense scan takes the
 square root of a document's stored squared norm once per document per query; storing the norm itself
 is bit-identical and removes 10 000 square roots per query, which measures inside the noise at 384
 dimensions (2.71 against 2.66 ms over 10 000 documents, distributions overlapping) and inside it
 again at 8 dimensions, where a document costs ~50 ns and the loop's branches and window insertion
-dominate an eight-wide dot product.
+dominate an eight-wide dot product. The upper bound agrees: removing the square root *and* the norm
+supply takes 907 to 879 µs at 384 dimensions and 196 to 190 µs at 8, about 3 % in both, against ~0 %
+for the exact change. The `DenseSearchBenchmarks` rows are the ones to re-measure it on.
 
 So the distinction that decides these changes is not "arithmetic is cheap" but **how many times the
 operand repeats**: an operation once per iteration is overlapped and invisible, an operation once per
