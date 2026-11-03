@@ -1260,31 +1260,44 @@ not measured. Nor are the overlay's read path (`Add` before `Commit`), `Merge`, 
 does not fit the page cache, or any corpus larger than 100,000 documents — other than the 500,000 row
 above, which was taken once and is marked as contended.
 
-**Block-bound pruning, opt-in (`--prune`), does not pay here.** `SearchOptions.PruneByBlockBound` lets
-the document-at-a-time pass skip a document whose summed block bounds cannot reach the page. It changes
-no result — `CursorPassParityTests` asserts the same page for seven scorers at three page sizes on both
-indexes — and on the queries the cursor pass actually serves it costs:
+**Block-bound pruning, opt-in (`--prune`), is correct and costs about 9 % where it is asked to work.**
+`SearchOptions.PruneByBlockBound` lets the document-at-a-time pass skip a document whose summed block
+bounds cannot reach the page. It changes no result — `CursorPassParityTests` asserts the same page for
+seven scorers at three page sizes on both indexes — and what it costs is a rate, not a p50:
 
-| query | unpruned | pruned | |
+| three tail terms, 100,000 documents | unpruned | pruned | |
 |---|---:|---:|---|
-| one tail term (df 9) | 1.00 µs | 1.40 µs | **1.4× slower** |
-| three tail terms (df 29) | 2.20 µs | 5.70 µs | **2.6× slower** |
-| one head term, cursor pass forced (df 95,402) | 1.70 ms | 1.65 ms | 3.2 % faster |
+| steady state, aggregate over millions of calls | 2 503.7 ns | 2 717.8 ns | **1 056 B → 1 056 B** |
 
-The reason is the one the pruning lane above counted in entries: a sparse query's candidates all tie at
-the top of the page, so no document is strictly below tenth place, none may be skipped, and the bound is
-computed for every candidate of every term anyway. The head query is where a bound has something to
-skip — and it is the query the cursor pass never serves, its reach of 95,402 being far over the cap of
-500. Forcing that pass onto it makes pruning 3.2 % faster than not pruning **and still 1.4× slower than
-the accumulator**, which is the pass the engine picks.
+**+8.6 % and no allocation.** The aggregate is the number and the lane's `p50` is not: a median over
+three hundred samples of a two-microsecond operation reads 2.20 → 4.20 µs for the same pair, which is
+the resolution of the instrument rather than a rate. The lane's `--prune` rows are useful for the
+direction on a slow query and misleading on a fast one.
+
+**A defect the profile found, and the fix.** The traversal computed the bound *before* asking whether a
+threshold existed, and a page that is not full cannot be beaten: on a tail query, whose candidates are
+fewer than the page holds, that was a bound for every candidate and a skip for none. `IDocumentScoreSink`
+now answers `HasThreshold` and the traversal asks it first, which halved the penalty on the three-term
+query (5.70 → 4.20 µs in the lane). `dotnet-trace`'s `dotnet-sampled-thread-time` profile of the two
+runs — twenty seconds each, the same query in a loop — shows **no new frame and no allocation**:
+`TryScoreSpanDocuments` holds 74.7 % of the search thread's samples unpruned and 40.4 % pruned, with
+`RunQuery` and `CreateSpanPlan` absorbing the rest, which is the inlining moving rather than work
+appearing. That is the same reason a sampling profile cannot price a frame, stated on this page's
+method section.
 
 **And it is not a question of density.** The sweep reads the cursor pass pruned and unpruned on the same
-query at one term near each of nine document frequencies, from 10 to 19,914, and pruning is slower at
-every one of them: 1.20 → 1.30 µs at df 10, 9.90 → 12.60 at df 250, 47.80 → 56.80 at df 1,002, 373 →
-424 at df 19,914. A single row could be a window that had not filled; nine rows across four orders of
-magnitude is a mechanism with nothing to win. The in-memory index accordingly builds the bound on the
-first query that asks for it and not at index time, so a search that does not opt in pays neither the
-two arrays a term nor the pass that fills them — which is why the rows above re-measure unchanged.
+query at one term near each of nine document frequencies, and pruning is slower at every one of them
+after the fix: 1.20 → 1.20 µs at df 10, 6.40 → 8.20 at df 50, 10.30 → 13.50 at df 250, 48.70 → 64.10 at
+df 1,002, 68.90 → 81.10 at df 2,501. A single row could be a window that had not filled; nine across four
+orders of magnitude is a mechanism with nothing to win. The in-memory index accordingly builds the bound
+on the first query that asks for it and not at index time, so a search that does not opt in pays neither
+the two arrays a term nor the pass that fills them.
+
+```bash
+# the A/B under a sampler, which is where the aggregate above comes from
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- profile prune on 20
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- profile prune off 20
+```
 
 ## Dense quantisation lane (`quantize`)
 

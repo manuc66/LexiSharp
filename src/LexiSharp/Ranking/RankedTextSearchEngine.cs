@@ -1174,6 +1174,9 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
         public bool Pruning => options.PruneByBlockBound;
 
+        /// <inheritdoc />
+        public bool HasThreshold => double.IsFinite(top.WorstScore);
+
         /// <summary>
         /// Whether a document bounded above by <paramref name="upperBound"/> cannot reach the page.
         /// </summary>
