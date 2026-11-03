@@ -252,7 +252,20 @@ internal static class DocumentAtATime
         // largest one is the contribution at its largest frequency and shortest document taken over its
         // windows: the weight function is monotone in the first and anti-monotone in the second, so that
         // pair is the maximum. The sum of these over a range is then an addition each, not a division.
-        double[] bounds = prune ? GlobalBounds(weights, postings) : [];
+        // On the stack when the query is small, which it always is, so paying for the bounds does not
+        // allocate. Computed on the first range decision rather than up front: a tail query fills its
+        // page at its last candidate, and paying for ten terms before that was a measurable regression
+        // on the one workload where the mechanism is already known to be useless.
+        Span<double> bounds = prune ? stackalloc double[terms] : [];
+        bool boundsReady = false;
+
+        // The decision is made once per range, not once per document: a block bound is what the name
+        // says, and recomputing it for every document inside the same block was three passes over the
+        // terms per document for a verdict that could not change. The cached verdict stays sound while
+        // the smallest ordinal is still inside the range it was computed for, because cursors only
+        // advance — so the set of contributing terms only shrinks and the old sum only overstates.
+        int rangeEnd = -1;
+        bool rangeSkippable = false;
 
         while (true)
         {
@@ -277,29 +290,40 @@ internal static class DocumentAtATime
             // term whose cursor sits past the end holds nothing inside the range at all.
             if (prune && sink.HasThreshold)
             {
-                int windowEnd = int.MaxValue;
-
-                for (int t = 0; t < terms; t++)
+                if (smallest >= rangeEnd)
                 {
-                    int at = cursors[t];
+                    if (!boundsReady)
+                    {
+                        GlobalBounds(weights, postings, lengths, bounds);
+                        boundsReady = true;
+                    }
 
-                    if (at >= postings[t].Count)
-                        continue;
+                    rangeEnd = int.MaxValue;
 
-                    int end = PostingArrays.WindowEndOf(postings[t].Ordinals[at]);
+                    for (int t = 0; t < terms; t++)
+                    {
+                        int at = cursors[t];
 
-                    if (end < windowEnd)
-                        windowEnd = end;
+                        if (at >= postings[t].Count)
+                            continue;
+
+                        int end = PostingArrays.WindowEndOf(postings[t].Ordinals[at]);
+
+                        if (end < rangeEnd)
+                            rangeEnd = end;
+                    }
+
+                    rangeSkippable = sink.CanPrune(RangeBound(bounds, postings, cursors, rangeEnd));
                 }
 
-                if (sink.CanPrune(RangeBound(bounds, postings, cursors, windowEnd)))
+                if (rangeSkippable)
                 {
                     for (int t = 0; t < terms; t++)
                     {
                         PostingArrays term = postings[t];
                         int at = cursors[t];
 
-                        while (at < term.Count && term.Ordinals[at] < windowEnd)
+                        while (at < term.Count && term.Ordinals[at] < rangeEnd)
                             at++;
 
                         cursors[t] = at;
@@ -352,11 +376,13 @@ internal static class DocumentAtATime
     /// evaluation per term per range, which is what made the traversal twice as slow as the pass it
     /// prunes. The loose bound buys the same zero skips for an addition.
     /// </remarks>
-    private static double[] GlobalBounds<TWeight>(ReadOnlySpan<TWeight> weights, Span<PostingArrays> postings)
+    private static void GlobalBounds<TWeight>(
+        ReadOnlySpan<TWeight> weights,
+        Span<PostingArrays> postings,
+        int[] lengths,
+        Span<double> bounds)
         where TWeight : struct, IWeightFunction
     {
-        var bounds = new double[weights.Length];
-
         for (int t = 0; t < weights.Length; t++)
         {
             PostingArrays term = postings[t];
@@ -364,23 +390,49 @@ internal static class DocumentAtATime
             if (term.Count == 0 || term.WindowMaxFrequencies is not { } frequencies || frequencies.Length == 0)
                 continue;
 
-            int shortest = int.MaxValue;
+            // Two ways to the same pair, and the corpus decides which is cheaper: a rare term has a few
+            // entries spread over hundreds of mostly-empty windows, a head term has tens of thousands of
+            // entries in a few windows. Scanning the wrong one is the difference between 9 iterations and
+            // 782 — which, on a two-microsecond query, was a 6x regression when this scanned windows
+            // unconditionally.
+            int peak;
+            int shortest;
 
-            for (int window = 0; window < frequencies.Length; window++)
+            if (term.Count <= frequencies.Length)
             {
-                if (frequencies[window] == 0)
-                    continue;
+                peak = 0;
+                shortest = int.MaxValue;
 
-                int length = term.WindowMinDocumentLengths![window];
+                for (int at = 0; at < term.Count; at++)
+                {
+                    if (term.Frequencies[at] > peak)
+                        peak = term.Frequencies[at];
 
-                if (length > 0 && length < shortest)
-                    shortest = length;
+                    int length = lengths[term.Ordinals[at]];
+
+                    if (length > 0 && length < shortest)
+                        shortest = length;
+                }
+            }
+            else
+            {
+                peak = Max(frequencies);
+                shortest = int.MaxValue;
+
+                for (int window = 0; window < frequencies.Length; window++)
+                {
+                    if (frequencies[window] == 0)
+                        continue;
+
+                    int length = term.WindowMinDocumentLengths![window];
+
+                    if (length > 0 && length < shortest)
+                        shortest = length;
+                }
             }
 
-            bounds[t] = shortest == int.MaxValue ? 0 : weights[t].Weight(Max(frequencies), shortest);
+            bounds[t] = shortest == int.MaxValue ? 0 : weights[t].Weight(peak, shortest);
         }
-
-        return bounds;
     }
 
     /// <summary>The largest window frequency in an array: the term's peak.</summary>
@@ -402,7 +454,7 @@ internal static class DocumentAtATime
     /// precomputed term bounds over the terms whose cursor sits before that end.
     /// </summary>
     private static double RangeBound(
-        double[] bounds,
+        Span<double> bounds,
         Span<PostingArrays> postings,
         int[] cursors,
         int windowEnd)
