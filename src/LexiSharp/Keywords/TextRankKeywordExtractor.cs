@@ -60,12 +60,12 @@ public sealed class TextRankKeywordExtractor : IKeywordExtractor
         if (tokens.Count == 0)
             return Array.Empty<Keyword>();
 
-        var (nodes, weights) = BuildGraph(tokens);
+        var (nodes, rows) = BuildGraph(tokens);
 
         if (nodes.Count == 1)
             return new[] { new Keyword(nodes[0], 1.0) };
 
-        var scores = PageRank(weights, nodes.Count);
+        var scores = PageRank(rows, nodes.Count);
 
         // Node order = first appearance order, so ranking is deterministic: first appearance wins ties.
         return Enumerable.Range(0, nodes.Count)
@@ -76,7 +76,7 @@ public sealed class TextRankKeywordExtractor : IKeywordExtractor
             .ToList();
     }
 
-    private (List<string> Nodes, double[][] Weights) BuildGraph(IReadOnlyList<string> tokens)
+    private (List<string> Nodes, Row[] Rows) BuildGraph(IReadOnlyList<string> tokens)
     {
         // Node order = first appearance order, for deterministic iteration and tie-breaking.
         var nodes = new List<string>();
@@ -92,11 +92,11 @@ public sealed class TextRankKeywordExtractor : IKeywordExtractor
             }
         }
 
-        // Symmetric weighted adjacency from the sliding co-occurrence window.
-        var weights = new double[nodes.Count][];
-
-        for (int i = 0; i < nodes.Count; i++)
-            weights[i] = new double[nodes.Count];
+        // Symmetric weighted adjacency from the sliding co-occurrence window, aggregated per pair.
+        // A text's graph is sparse — a term co-occurs with its window neighbours, not with the
+        // vocabulary — so a dense n × n matrix makes the sweep walk zeroes: 8 MB of them at a
+        // thousand terms, visited once per node per iteration.
+        var weights = new Dictionary<long, double>();
 
         for (int i = 0; i < tokens.Count; i++)
         {
@@ -109,18 +109,53 @@ public sealed class TextRankKeywordExtractor : IKeywordExtractor
 
                 if (a != b)
                 {
-                    weights[a][b] += 1;
-                    weights[b][a] += 1;
+                    AddEdge(weights, a, b);
+                    AddEdge(weights, b, a);
                 }
             }
         }
 
-        return (nodes, weights);
+        var rows = new List<(int Target, double Weight)>[nodes.Count];
+
+        for (int i = 0; i < rows.Length; i++)
+            rows[i] = [];
+
+        foreach (var (pair, weight) in weights)
+            rows[(int)(pair >> 32)].Add(((int)(pair & 0xFFFFFFFF), weight));
+
+        var built = new Row[rows.Length];
+
+        for (int i = 0; i < rows.Length; i++)
+        {
+            // Ascending destination, which is the order the dense form walked and the order the
+            // out-degree is summed in — so the two forms produce the same doubles.
+            rows[i].Sort(static (left, right) => left.Target.CompareTo(right.Target));
+
+            var targets = new int[rows[i].Count];
+            var values = new double[rows[i].Count];
+
+            for (int e = 0; e < rows[i].Count; e++)
+            {
+                targets[e] = rows[i][e].Target;
+                values[e] = rows[i][e].Weight;
+            }
+
+            built[i] = new Row(targets, values);
+        }
+
+        return (nodes, built);
     }
 
-    private double[] PageRank(double[][] weights, int nodeCount)
+    /// <summary>Adds one occurrence to the edge <paramref name="source"/> → <paramref name="target"/>.</summary>
+    private static void AddEdge(Dictionary<long, double> weights, int source, int target)
     {
-        var outWeights = ComputeOutDegrees(weights, nodeCount);
+        long pair = ((long)source << 32) | (uint)target;
+        weights[pair] = weights.GetValueOrDefault(pair) + 1;
+    }
+
+    private double[] PageRank(Row[] rows, int nodeCount)
+    {
+        var outWeights = ComputeOutDegrees(rows);
 
         // PageRank from a uniform distribution.
         var scores = new double[nodeCount];
@@ -129,7 +164,7 @@ public sealed class TextRankKeywordExtractor : IKeywordExtractor
 
         for (int iteration = 0; iteration < _maxIterations; iteration++)
         {
-            double totalChange = Sweep(weights, outWeights, scores, next);
+            double totalChange = Sweep(rows, outWeights, scores, next);
 
             (scores, next) = (next, scores);
 
@@ -140,30 +175,31 @@ public sealed class TextRankKeywordExtractor : IKeywordExtractor
         return scores;
     }
 
-    private static double[] ComputeOutDegrees(double[][] weights, int nodeCount)
+    private static double[] ComputeOutDegrees(Row[] rows)
     {
-        var outWeights = new double[nodeCount];
+        var outWeights = new double[rows.Length];
 
-        for (int i = 0; i < nodeCount; i++)
+        for (int i = 0; i < rows.Length; i++)
         {
-            for (int j = 0; j < nodeCount; j++)
-                outWeights[i] += weights[i][j];
+            double total = 0;
+
+            foreach (double weight in rows[i].Weights)
+                total += weight;
+
+            outWeights[i] = total;
         }
 
         return outWeights;
     }
 
-    private double Sweep(double[][] weights, double[] outWeights, double[] scores, double[] next)
+    private double Sweep(Row[] rows, double[] outWeights, double[] scores, double[] next)
     {
         int count = scores.Length;
         double baseScore = (1 - _damping) / count;
 
-        // Accumulated by source node, so the inner loop walks one contiguous row of the adjacency
-        // matrix. The destination-outer form read a *column* of a jagged matrix once per node —
-        // n rows touched at one offset each, which on a graph of a few hundred terms is a strided
-        // walk over megabytes and misses on most of them. The sums are unchanged: for a given
-        // destination the contributions still arrive in ascending source order, and the text still
-        // multiplies the same quotient by the same score, so the result is the same double.
+        // Accumulated by source, over the edges each node actually has. For a given destination the
+        // contributions still arrive in ascending source order, and each still multiplies the same
+        // quotient by the same score, so the sums are the same doubles the dense walk produced.
         Array.Clear(next);
 
         for (int source = 0; source < count; source++)
@@ -174,18 +210,11 @@ public sealed class TextRankKeywordExtractor : IKeywordExtractor
                 continue;
 
             double score = scores[source];
-            double[] row = weights[source];
+            int[] targets = rows[source].Targets;
+            double[] weights = rows[source].Weights;
 
-            for (int destination = 0; destination < count; destination++)
-            {
-                if (destination == source)
-                    continue;
-
-                double weight = row[destination];
-
-                if (weight > 0)
-                    next[destination] += score * (weight / outWeight);
-            }
+            for (int e = 0; e < targets.Length; e++)
+                next[targets[e]] += score * (weights[e] / outWeight);
         }
 
         double totalChange = 0;
@@ -197,5 +226,13 @@ public sealed class TextRankKeywordExtractor : IKeywordExtractor
         }
 
         return totalChange;
+    }
+
+    /// <summary>One node's outgoing edges, ascending by destination.</summary>
+    private readonly struct Row(int[] targets, double[] weights)
+    {
+        public int[] Targets => targets;
+
+        public double[] Weights => weights;
     }
 }

@@ -10,10 +10,12 @@ namespace LexiSharp.Benchmarks;
 /// </summary>
 /// <remarks>
 /// The graph has one node per distinct term in the text, so a long document with a large vocabulary
-/// is a graph of hundreds of nodes; the sweep visits every ordered pair once per iteration, up to a
-/// hundred iterations, and the matrix is <c>nodes²</c> doubles — 720 KB at 300 terms, 8 MB at 1 000.
-/// That is the number these rows are about: the sweep's cost tracks the matrix's footprint rather
-/// than the number of nonzero edges, because the accumulation walks the matrix.
+/// is a graph of hundreds of nodes; the sweep visits every edge once per iteration, up to a hundred
+/// iterations. The representation decides what that costs: a dense <c>nodes²</c> matrix is 720 KB at
+/// 300 terms and 8 MB at 1 000, and the sweep walks its zeroes, while an adjacency list holds only
+/// the co-occurrences a text actually produces. Both the time and the allocation of an extraction
+/// therefore track the graph's shape rather than the node count alone, which is what the three rows
+/// below are for.
 /// <para>
 /// The text is fixed-seed and drawn uniformly from a fixed vocabulary, so each row's graph has the
 /// size its label says. Uniform terms are denser than natural language — every pair in the window
