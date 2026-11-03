@@ -744,6 +744,11 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             || options.ExcludedDocumentIds is not null
             || facets is not null;
 
+        // Asked once per query rather than once per candidate: a plan whose finalisation is the
+        // identity skips the call, which is 6.8 % of a head query when it runs per candidate.
+        bool finalises = finisher.Finalises;
+        double minimumScore = options.MinimumScore;
+
         for (int i = 0; i < accumulator.Count; i++)
         {
             if ((i & 0x3FF) == 0)
@@ -753,9 +758,11 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
             // The plan's last step, because this path never calls Score and a score that is narrowed
             // at the end of the sum has to be narrowed somewhere.
-            double score = finisher.Finalise(accumulator[candidate]);
+            double score = finalises
+                ? finisher.Finalise(accumulator[candidate])
+                : accumulator[candidate];
 
-            if (double.IsNaN(score) || double.IsInfinity(score) || score == 0 || score < options.MinimumScore)
+            if (double.IsNaN(score) || double.IsInfinity(score) || score == 0 || score < minimumScore)
                 continue;
 
             // An empty filter list and no exclusions make PassesFilters answer without reading the

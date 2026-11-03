@@ -503,6 +503,10 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
         public double Finalise(double accumulated) => _shape.Round(accumulated);
 
         /// <inheritdoc />
+        /// <remarks>Double precision does not narrow the total, so the call is the identity.</remarks>
+        public bool Finalises => _shape.IsSinglePrecision;
+
+        /// <inheritdoc />
         public bool TryAccumulate(IAccumulatingIndex index, ScoreAccumulator accumulator)
         {
             // The guards Score applies per document, hoisted: with no corpus or no average length
@@ -555,6 +559,10 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
     {
         /// <inheritdoc />
         public double Finalise(double accumulated) => shape.Round(accumulated);
+
+        /// <inheritdoc />
+        /// <remarks>Double precision does not narrow the total, so the call is the identity.</remarks>
+        public bool Finalises => shape.IsSinglePrecision;
 
         /// <inheritdoc />
         public bool TryAccumulateSpans(
