@@ -112,19 +112,19 @@
   job, which drives the copy step through a barrier.
 
 - **`SearchOptions.PruneByBlockBound`: an opt-in that skips a document its block bounds rule out, and
-  the measurement that keeps it off.** The bound is the pair every segment block header already carries
-  — largest frequency and shortest document per 128-ordinal window — captured on the walk that decodes
-  the entries, and on the in-memory index computed when its flat postings are built. It changes no
-  result: `CursorPassParityTests` asserts the same page for seven scorers at three page sizes on both
-  indexes, and the comparison is strict so a tie is never skipped. Measured at 100,000 documents it
-  **costs 1.4× and 2.6×** on the two tail queries the cursor pass serves, because their candidates all
-  tie at the top of the page and nothing is skippable while every candidate of every term still gets a
-  bound; and it saves **3.2 %** on a head query forced onto that pass, where the accumulator remains
-  1.4× faster. Off by default, and being off costs one boolean test and no memory: the bound is built on
-  the first query that asks for it, so a search that does not opt in pays neither the two arrays a term
-  nor the pass that fills them, and the published rows re-measure at 1.00 and 2.20 µs unchanged. The
-  sweep says the same thing at nine densities from df 10 to 19,914, where pruning is slower at every
-  one of them.
+  what it costs.** The bound is the pair every segment block header already carries — largest frequency
+  and shortest document per 128-ordinal window — captured on the walk that decodes the entries, and on
+  the in-memory index built the first time a pruning query asks for it. It changes no result:
+  `CursorPassParityTests` asserts the same page for seven scorers at three page sizes on both indexes,
+  and the comparison is strict so a tie is never skipped. Steady state over millions of calls on the
+  three-term tail query: **2 503.7 ns unpruned against 2 717.8 ns pruned, +8.6 %, 1 056 bytes either
+  way**. The cursor lane's `p50` reads 2.20 → 4.20 µs for the same pair and is not a rate — three
+  hundred samples of a two-microsecond operation. **A defect was found and fixed while measuring it**:
+  the traversal computed the bound before asking whether a threshold existed, so a tail query, whose
+  candidates are fewer than the page holds, computed a bound for every candidate and skipped none;
+  `IDocumentScoreSink.HasThreshold` is asked first now, which halved the lane's penalty. No density
+  gains: the sweep reads it slower at all nine frequencies from 10 to 19,914.
+
 
 - **Online bucket metrics carry top-k accuracy.** `OnlineBucketMetrics` now has `AccuracyAtK` and
   its own block-bootstrap interval alongside top-1, so "the category was second" is visible inside

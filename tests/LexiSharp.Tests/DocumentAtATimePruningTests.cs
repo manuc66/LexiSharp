@@ -24,6 +24,18 @@ public class DocumentAtATimePruningTests
         public double Weight(int termFrequency, int documentLength) => termFrequency;
     }
 
+    /// <summary>Counts the contributions it is asked to evaluate, so "no bound was computed" is an assertion.</summary>
+    private struct CountingWeight : IWeightFunction
+    {
+        public static int Calls;
+
+        public double Weight(int termFrequency, int documentLength)
+        {
+            Calls++;
+            return termFrequency;
+        }
+    }
+
     [Fact]
     public void ItSkipsADocumentWhoseBoundCannotReachThePage()
     {
@@ -94,6 +106,36 @@ public class DocumentAtATimePruningTests
         Assert.Equal(exhaustive.Offered, pruned.Offered);
     }
 
+    /// <summary>
+    /// A page that is not full cannot be beaten, so the traversal must not compute a bound for it: a
+    /// bound per term per candidate that is thrown away is what made the pruned tail query slower than
+    /// the unpruned one on a 100,000-document corpus.
+    /// </summary>
+    [Fact]
+    public void ItComputesNoBoundWhileThePageIsNotFull()
+    {
+        PostingArrays[] postings =
+        [
+            Plate([0, 200], [1, 1], maxFrequencies: [1, 1], minLengths: [1, 1]),
+        ];
+
+        // A page of ten over two candidates: the threshold never exists, so nothing may be bounded.
+        CountingWeight.Calls = 0;
+
+        var plain = new CountingSink(limit: 10);
+        DocumentAtATime.Score([new CountingWeight()], postings, Lengths(256), plain);
+
+        int unpruned = CountingWeight.Calls;
+
+        CountingWeight.Calls = 0;
+
+        var pruning = new CountingSink(limit: 10) { Pruning = true };
+        DocumentAtATime.Score([new CountingWeight()], postings, Lengths(256), pruning);
+
+        Assert.Equal(unpruned, CountingWeight.Calls);
+        Assert.Equal(plain.Offered, pruning.Offered);
+    }
+
     private static PostingArrays Plate(int[] ordinals, int[] frequencies, int[]? maxFrequencies, int[]? minLengths) =>
         new(ordinals, frequencies, maxFrequencies, minLengths);
 
@@ -130,6 +172,8 @@ public class DocumentAtATimePruningTests
             _kept.Sort();
             _kept[0] = Math.Max(_kept[0], score);
         }
+
+        public bool HasThreshold => _kept.Count >= limit;
 
         public bool CanPrune(double upperBound) =>
             Pruning && _kept.Count >= limit && upperBound < _kept.Min();
