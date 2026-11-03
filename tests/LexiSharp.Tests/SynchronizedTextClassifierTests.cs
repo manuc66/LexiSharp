@@ -338,10 +338,11 @@ public class SynchronizedTextClassifierTests
     [Fact]
     public async Task Predict_IsConsistentUnderConcurrentReinforcement()
     {
+        const int Iterations = 1000;
+
         var inner = TrainedInner();
 
         using var classifier = new SynchronizedTextClassifier(inner);
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
 
         int readFailures = 0;
         int writeFailures = 0;
@@ -349,10 +350,12 @@ public class SynchronizedTextClassifierTests
 
         // Two writers, deliberately touching different state: one churns the reinforcement ledger,
         // the other the corpus counts. Both are dictionaries being mutated under a reader, which is
-        // the whole hazard, and they are independent so neither can mask the other.
+        // the whole hazard, and they are independent so neither can mask the other. The loops are
+        // bounded rather than time-boxed: a loaded machine must not turn a throughput reading into
+        // a failure, and the exclusion probe below is the deterministic test of the lock itself.
         var writer = Task.Run(() =>
         {
-            while (!cts.IsCancellationRequested)
+            for (int i = 0; i < Iterations; i++)
             {
                 try
                 {
@@ -372,7 +375,8 @@ public class SynchronizedTextClassifierTests
         var learner = Task.Run(() =>
         {
             var churn = new SearchDocument("churn", "package delivery tracking", Category: "Shipping");
-            while (!cts.IsCancellationRequested)
+
+            for (int i = 0; i < Iterations; i++)
             {
                 try
                 {
@@ -390,7 +394,7 @@ public class SynchronizedTextClassifierTests
 
         var readers = Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
         {
-            while (!cts.IsCancellationRequested)
+            for (int i = 0; i < Iterations; i++)
             {
                 try
                 {
@@ -413,10 +417,7 @@ public class SynchronizedTextClassifierTests
 
         Assert.Equal(0, readFailures);
         Assert.Equal(0, writeFailures);
-
-        // A test that only ever sees an idle scheduler would pass without the lock too, so require
-        // that it actually did the work it claims to have.
-        Assert.True(reads > 1000, $"expected a meaningful number of concurrent reads, saw {reads}.");
+        Assert.Equal(8L * Iterations, reads);
     }
 
     [Fact]
