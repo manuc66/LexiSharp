@@ -1299,6 +1299,25 @@ dotnet run --project bench/LexiSharp.Benchmarks -c Release -- profile prune on 2
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- profile prune off 20
 ```
 
+**The workload it was built for, where it also loses.** `--wide K --depth N` builds the query a
+block-max traversal exists to serve: the K most frequent terms, a page deep enough that the threshold
+stands above a typical document's score. Three shapes, 2026-11-03, load 0.9-1.5:
+
+| shape | accumulator | cursor pass | cursor pass + prune |
+|---|---:|---:|---:|
+| 100,000 docs, 10 terms, depth 100 | **3.64 ms** | 9.81 ms (2.70×) | 13.38 ms (**36 % worse than the pass it prunes**) |
+| 100,000 docs, 20 terms, depth 100 | **4.82 ms** | 17.94 ms (3.72×) | 28.33 ms (**58 % worse**) |
+| 500,000 docs, 10 terms, depth 100 | **18.28 ms** | 48.27 ms (2.64×) | 65.99 ms (**37 % worse**) |
+
+Two things follow, and only the second is about pruning. The cursor pass is **2.6-3.7× behind the
+accumulator** on every one of these shapes, which is the density divisor doing its job from the other
+side: a wide query's reach is enormous and the document-at-a-time pass pays a per-document scan for it.
+And pruning makes that pass *slower*, by 36-58 %, on the very shape where the bound has the most slack —
+because this traversal computes a bound per document per holding term before deciding, so it pays for
+every document whether it skips it or not. **That is not block-max WAND**: there is no pivot, and a pivot
+is what turns a bound into a skip without visiting the document. The measurement condemns this
+implementation, not the technique, and it is the reason the option ships off.
+
 ## Dense quantisation lane (`quantize`)
 
 `InMemoryVectorSearchEngine` holds its vectors in one contiguous float32 block: 384 components is
