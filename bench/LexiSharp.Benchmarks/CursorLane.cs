@@ -273,6 +273,30 @@ internal static class CursorLane
                 $"p95 {Number(sorted[(int)(sorted.Length * 0.95)])}, max {Number(sorted[^1])} tokens");
         }
 
+        // A real corpus answers a different question than the sweep: its document frequencies are the
+        // ones a query typed by a person produces, spread over four orders of magnitude instead of a
+        // Zipf head and a tail with nothing between. That is the shape a bound has slack on, if any
+        // corpus does.
+        if (options.Wide > 0 || options.Mixed > 0)
+        {
+            QueryShape shape = options.Wide > 0
+                ? WideQuery(index, options.Wide)
+                : MixedQuery(index, options.Mixed);
+
+            MeasureQuery(
+                index,
+                engine,
+                accumulatorEngine,
+                cursorEngine,
+                shape,
+                corpus.Documents.Count,
+                clearNanoseconds,
+                both: options.Both,
+                prune: options.Prune);
+
+            return;
+        }
+
         if (!options.Sweep)
         {
             Console.WriteLine(

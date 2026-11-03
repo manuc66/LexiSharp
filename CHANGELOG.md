@@ -123,14 +123,13 @@
   the traversal computed the bound before asking whether a threshold existed, so a tail query, whose
   candidates are fewer than the page holds, computed a bound for every candidate and skipped none;
   `IDocumentScoreSink.HasThreshold` is asked first now, which halved the lane's penalty. No density
-  gains: the sweep reads it slower at all nine frequencies from 10 to 19,914. **And on the workload it
-  was built for it loses too.** Three optimisations later — a range skip instead of a per-document
-  check, one bound evaluation per term per query instead of per range, and a looser bound that costs an
-  addition — it reads **1.33-1.76× the pass it prunes** across five shapes (10 and 20 heaviest, 10 and
-  20 mixed at depth 100 on 100,000 documents, and 10 heaviest at 500,000), having skipped no range at
-  all. The pass itself is 2.7-3.6× behind the accumulator on every one, so pruning defends a race lost
-  by three times before it starts; and the bound has no slack either way, since all-heavy terms sum far
-  above any score and a mixed query's one heavy term dominates the sum alone.
+  gains: the sweep reads it slower at all nine frequencies from 10 to 19,914. **On the workload it was
+  built for it is now a pivot, and a pivot wins where a range end could not.** Ordering the live terms by
+  their current ordinal and accumulating their window bounds until the pile can reach the page skips every
+  document before that ordinal without visiting it — 8.33 -> 4.84 ms on 20 mixed terms at 100,000
+  documents, 34.28 -> 19.89 ms on Quora at 522,931, and no gain on TREC-COVID or on the ten heaviest
+  terms, where it costs twice the pass. The pass itself remains 2.5-4.3× behind the accumulator on every
+  shape, so the option still ships off.
 
 - **Online bucket metrics carry top-k accuracy.** `OnlineBucketMetrics` now has `AccuracyAtK` and
   its own block-bootstrap interval alongside top-1, so "the category was second" is visible inside
