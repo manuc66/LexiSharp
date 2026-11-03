@@ -66,6 +66,7 @@ public static class Program
             typeof(CandidateSearchBenchmarks),
             typeof(ScoringPathBenchmarks),
             typeof(RerankBenchmarks),
+            typeof(DenseSearchBenchmarks),
             typeof(TextRankBenchmarks),
             typeof(LevenshteinBenchmarks),
             typeof(ClassificationBenchmarks),
