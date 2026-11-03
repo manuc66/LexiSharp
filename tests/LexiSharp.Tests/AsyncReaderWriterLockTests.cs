@@ -5,8 +5,9 @@ namespace LexiSharp.Tests;
 
 /// <summary>
 /// The async-capable gate behind <see cref="Classification.SynchronizedTextClassifier"/>: readers
-/// overlap, one writer excludes them, writers are preferred, and the lock can be released on a
-/// different thread from the one that acquired it.
+/// overlap, one writer excludes them, waiters are served FIFO with a writer already queued taking
+/// precedence over readers that arrive after it, and the lock can be released on a different thread
+/// from the one that acquired it.
 /// </summary>
 public class AsyncReaderWriterLockTests
 {
@@ -75,6 +76,62 @@ public class AsyncReaderWriterLockTests
         gate.ExitWriteLock();
         await reader;
 
+        gate.ExitReadLock();
+    }
+
+    [Fact]
+    public async Task ACancelledReaderLeavesTheQueue()
+    {
+        using var gate = new AsyncReaderWriterLock();
+        await gate.EnterWriteLockAsync();
+
+        using var cancellation = new CancellationTokenSource();
+        ValueTask reader = gate.EnterReadLockAsync(cancellation.Token);
+        Assert.False(reader.IsCompleted);
+
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await reader);
+
+        gate.ExitWriteLock();
+
+        // The cancelled waiter must not block the queue for the next caller.
+        await gate.EnterReadLockAsync();
+        gate.ExitReadLock();
+    }
+
+    [Fact]
+    public async Task CancellingTheHeadWaiterLetsTheNextOneRun()
+    {
+        using var gate = new AsyncReaderWriterLock();
+        gate.EnterReadLock();
+
+        using var cancellation = new CancellationTokenSource();
+        ValueTask writer = gate.EnterWriteLockAsync(cancellation.Token);
+        ValueTask reader = gate.EnterReadLockAsync();
+
+        Assert.False(writer.IsCompleted);
+        Assert.False(reader.IsCompleted);
+
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await writer);
+
+        gate.ExitReadLock();
+        await reader;
+
+        gate.ExitReadLock();
+    }
+
+    [Fact]
+    public async Task AnAlreadyCancelledTokenDoesNotEnterTheQueue()
+    {
+        using var gate = new AsyncReaderWriterLock();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await gate.EnterReadLockAsync(cancellation.Token));
+
+        await gate.EnterReadLockAsync();
         gate.ExitReadLock();
     }
 

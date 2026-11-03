@@ -33,4 +33,10 @@ internal static class ClassifierCapabilities
         SynchronizedTextClassifier synchronized => synchronized.SupportsAsync,
         _ => model is IAsyncTextClassifier,
     };
+
+    public static bool IsIncrementalAsync(ITextClassifier model) => model switch
+    {
+        SynchronizedTextClassifier synchronized => synchronized.SupportsIncrementalAsync,
+        _ => model is IIncrementalAsyncTextClassifier,
+    };
 }

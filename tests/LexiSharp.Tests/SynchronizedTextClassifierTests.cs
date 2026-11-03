@@ -338,10 +338,11 @@ public class SynchronizedTextClassifierTests
     [Fact]
     public async Task Predict_IsConsistentUnderConcurrentReinforcement()
     {
+        const int Iterations = 1000;
+
         var inner = TrainedInner();
 
         using var classifier = new SynchronizedTextClassifier(inner);
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
 
         int readFailures = 0;
         int writeFailures = 0;
@@ -349,10 +350,12 @@ public class SynchronizedTextClassifierTests
 
         // Two writers, deliberately touching different state: one churns the reinforcement ledger,
         // the other the corpus counts. Both are dictionaries being mutated under a reader, which is
-        // the whole hazard, and they are independent so neither can mask the other.
+        // the whole hazard, and they are independent so neither can mask the other. The loops are
+        // bounded rather than time-boxed: a loaded machine must not turn a throughput reading into
+        // a failure, and the exclusion probe below is the deterministic test of the lock itself.
         var writer = Task.Run(() =>
         {
-            while (!cts.IsCancellationRequested)
+            for (int i = 0; i < Iterations; i++)
             {
                 try
                 {
@@ -372,7 +375,8 @@ public class SynchronizedTextClassifierTests
         var learner = Task.Run(() =>
         {
             var churn = new SearchDocument("churn", "package delivery tracking", Category: "Shipping");
-            while (!cts.IsCancellationRequested)
+
+            for (int i = 0; i < Iterations; i++)
             {
                 try
                 {
@@ -390,7 +394,7 @@ public class SynchronizedTextClassifierTests
 
         var readers = Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
         {
-            while (!cts.IsCancellationRequested)
+            for (int i = 0; i < Iterations; i++)
             {
                 try
                 {
@@ -413,10 +417,7 @@ public class SynchronizedTextClassifierTests
 
         Assert.Equal(0, readFailures);
         Assert.Equal(0, writeFailures);
-
-        // A test that only ever sees an idle scheduler would pass without the lock too, so require
-        // that it actually did the work it claims to have.
-        Assert.True(reads > 1000, $"expected a meaningful number of concurrent reads, saw {reads}.");
+        Assert.Equal(8L * Iterations, reads);
     }
 
     [Fact]
@@ -437,6 +438,20 @@ public class SynchronizedTextClassifierTests
         var addition = new SearchDocument("3", "package delivery tracking", Category: "Shipping");
         await classifier.LearnAsync(addition);
         await classifier.UnlearnAsync(addition);
+    }
+
+    [Fact]
+    public async Task SupportsIncrementalAsync_IsReportedSeparately()
+    {
+        using var classifier = new SynchronizedTextClassifier(new AsyncNonIncrementalClassifier());
+        var document = new SearchDocument("9", "package delivery", Category: "Shipping");
+
+        Assert.True(classifier.SupportsAsync);
+        Assert.False(classifier.SupportsIncrementalAsync);
+
+        var failure = await Assert.ThrowsAsync<NotSupportedException>(() => classifier.LearnAsync(document));
+
+        Assert.Contains(nameof(AsyncNonIncrementalClassifier), failure.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -470,6 +485,7 @@ public class SynchronizedTextClassifierTests
 
         Task<IReadOnlyList<ClassificationResult>> predict = classifier.PredictAsync("invoice");
         Assert.False(predict.IsCompleted);
+        Assert.False(inner.PredictEntered.Task.IsCompleted);
 
         inner.LearnRelease.SetResult(true);
         await learn;
@@ -478,6 +494,33 @@ public class SynchronizedTextClassifierTests
         inner.PredictRelease.SetResult(true);
 
         Assert.Equal("A", (await predict)[0].Category);
+    }
+
+    [Fact]
+    public async Task ACancelledPredictionLeavesTheLockQueue()
+    {
+        var inner = new BlockingAsyncClassifier();
+        using var classifier = new SynchronizedTextClassifier(inner);
+        var document = new SearchDocument("9", "package delivery", Category: "Shipping");
+
+        Task learn = classifier.LearnAsync(document);
+        await inner.LearnEntered.Task;
+
+        using var cancellation = new CancellationTokenSource();
+        Task<IReadOnlyList<ClassificationResult>> predict =
+            classifier.PredictAsync("invoice", cancellationToken: cancellation.Token);
+
+        Assert.False(predict.IsCompleted);
+        Assert.False(inner.PredictEntered.Task.IsCompleted);
+
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => predict);
+
+        inner.LearnRelease.SetResult(true);
+        await learn;
+
+        // The cancelled prediction never entered the model.
+        Assert.False(inner.PredictEntered.Task.IsCompleted);
     }
 
     [Fact]
@@ -492,6 +535,7 @@ public class SynchronizedTextClassifierTests
 
         Task learn = classifier.LearnAsync(document);
         Assert.False(learn.IsCompleted);
+        Assert.False(inner.LearnEntered.Task.IsCompleted);
 
         inner.PredictRelease.SetResult(true);
         await predict;
@@ -519,6 +563,167 @@ public class SynchronizedTextClassifierTests
         inner.PredictRelease.SetResult(true);
 
         await Task.WhenAll(first, second);
+    }
+
+    // The two blocking tests above can only show that the wrapper's task is not finished; they
+    // cannot show that the inner classifier was not entered, because the fake blocks either way.
+    // This probe records actual overlap inside the model, which is the property the lock exists for.
+    [Fact]
+    public async Task AsyncReadersAndWriters_AreExclusive()
+    {
+        var inner = new ExclusionProbeClassifier();
+        using var classifier = new SynchronizedTextClassifier(inner);
+        var document = new SearchDocument("9", "package delivery", Category: "Shipping");
+
+        Task[] readers = Enumerable.Range(0, 8)
+            .Select(_ => Task.Run(async () =>
+            {
+                for (int i = 0; i < 2000; i++)
+                    await classifier.PredictAsync("invoice");
+            }))
+            .ToArray();
+
+        Task[] writers = Enumerable.Range(0, 2)
+            .Select(_ => Task.Run(async () =>
+            {
+                for (int i = 0; i < 500; i++)
+                {
+                    await classifier.LearnAsync(document);
+                    await classifier.UnlearnAsync(document);
+                }
+            }))
+            .ToArray();
+
+        await Task.WhenAll([.. readers, .. writers]);
+
+        Assert.Equal(0, inner.Violations);
+        Assert.True(inner.MaxConcurrentReaders > 1, "the read lock did not admit overlapping readers");
+    }
+
+    /// <summary>
+    /// Async prediction and synchronous incremental learning, but no async incremental capability:
+    /// the wrapper must report that distinction rather than claim <c>LearnAsync</c> works.
+    /// </summary>
+    private sealed class AsyncNonIncrementalClassifier : IAsyncTextClassifier, IIncrementalTextClassifier
+    {
+        public void Train(IEnumerable<SearchDocument> documents) { }
+
+        public IReadOnlyList<ClassificationResult> Predict(
+            string text, int limit = 3, IReadOnlySet<string>? excludedCategories = null) =>
+            [new ClassificationResult("A", 1)];
+
+        public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null) => "A";
+
+        public Task TrainAsync(
+            IEnumerable<SearchDocument> documents,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task<IReadOnlyList<ClassificationResult>> PredictAsync(
+            string text,
+            int limit = 3,
+            IReadOnlySet<string>? excludedCategories = null,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<ClassificationResult>>([new ClassificationResult("A", 1)]);
+
+        public void Learn(SearchDocument document) { }
+
+        public void Unlearn(SearchDocument document) { }
+    }
+
+    /// <summary>
+    /// Records whether a reader and a writer, or two writers, were ever inside the model at once.
+    /// The counters are the test's own oracle; the wrapper cannot make them lie.
+    /// </summary>
+    private sealed class ExclusionProbeClassifier : IIncrementalAsyncTextClassifier
+    {
+        private int _readersInside;
+        private int _writerInside;
+        private int _violations;
+        private int _maxConcurrentReaders;
+
+        public int Violations => Volatile.Read(ref _violations);
+
+        public int MaxConcurrentReaders => Volatile.Read(ref _maxConcurrentReaders);
+
+        public void Train(IEnumerable<SearchDocument> documents) { }
+
+        public IReadOnlyList<ClassificationResult> Predict(
+            string text, int limit = 3, IReadOnlySet<string>? excludedCategories = null) =>
+            [new ClassificationResult("A", 1)];
+
+        public string? PredictBest(string text, IReadOnlySet<string>? excludedCategories = null) => "A";
+
+        public Task TrainAsync(
+            IEnumerable<SearchDocument> documents,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public async Task<IReadOnlyList<ClassificationResult>> PredictAsync(
+            string text,
+            int limit = 3,
+            IReadOnlySet<string>? excludedCategories = null,
+            CancellationToken cancellationToken = default)
+        {
+            int readers = Interlocked.Increment(ref _readersInside);
+
+            if (Volatile.Read(ref _writerInside) != 0)
+                Interlocked.Increment(ref _violations);
+
+            RecordReaderCount(readers);
+
+            try
+            {
+                await Task.Yield();
+                return [new ClassificationResult("A", 1)];
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _readersInside);
+            }
+        }
+
+        public Task LearnAsync(
+            SearchDocument document,
+            CancellationToken cancellationToken = default) => WriteAsync();
+
+        public Task UnlearnAsync(
+            SearchDocument document,
+            CancellationToken cancellationToken = default) => WriteAsync();
+
+        private async Task WriteAsync()
+        {
+            bool ownsWriter = Interlocked.CompareExchange(ref _writerInside, 1, 0) == 0;
+
+            if (!ownsWriter)
+                Interlocked.Increment(ref _violations);
+
+            if (Volatile.Read(ref _readersInside) != 0)
+                Interlocked.Increment(ref _violations);
+
+            try
+            {
+                await Task.Yield();
+            }
+            finally
+            {
+                if (ownsWriter)
+                    Volatile.Write(ref _writerInside, 0);
+            }
+        }
+
+        private void RecordReaderCount(int readers)
+        {
+            int current = Volatile.Read(ref _maxConcurrentReaders);
+
+            while (readers > current)
+            {
+                int observed = Interlocked.CompareExchange(ref _maxConcurrentReaders, readers, current);
+
+                if (observed == current)
+                    return;
+
+                current = observed;
+            }
+        }
     }
 
     /// <summary>
