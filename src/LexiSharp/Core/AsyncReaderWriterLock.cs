@@ -191,7 +191,7 @@ internal sealed class AsyncReaderWriterLock : IDisposable
                 Waiter waiter = node.Value;
                 waiter.Cancelled = true;
                 waiter.Node = null;
-                waiter.Registration.Unregister();
+                Unregister(waiter);
 
                 if (waiter.Async is { } async)
                     async.TrySetException(new ObjectDisposedException(nameof(AsyncReaderWriterLock)));
@@ -212,8 +212,25 @@ internal sealed class AsyncReaderWriterLock : IDisposable
 
         if (cancellationToken.CanBeCanceled)
         {
-            waiter.Registration = cancellationToken.Register(
-                () => CancelWaiter(waiter, cancellationToken));
+            try
+            {
+                waiter.Registration = cancellationToken.Register(
+                    () => CancelWaiter(waiter, cancellationToken));
+            }
+            catch
+            {
+                // Register can refuse a token whose source is already disposed. Never leave the
+                // waiter in the queue: a later grant would reserve a reader/writer slot that no
+                // caller will ever release.
+                if (waiter.Node is { } node)
+                {
+                    _waiters.Remove(node);
+                    waiter.Node = null;
+                }
+
+                waiter.Cancelled = true;
+                throw;
+            }
         }
 
         return new ValueTask(waiter.Async.Task);
@@ -270,12 +287,20 @@ internal sealed class AsyncReaderWriterLock : IDisposable
     {
         waiter.Granted = true;
         waiter.Node = null;
-        waiter.Registration.Unregister();
+        Unregister(waiter);
 
         if (waiter.Async is { } async)
             async.TrySetResult(true);
         else
             Monitor.PulseAll(_sync);
+    }
+
+    private static void Unregister(Waiter waiter)
+    {
+        // Deliberately Unregister, not Dispose: Dispose waits for a running cancellation callback,
+        // and that callback may be waiting for _sync, which this caller holds. Unregister only
+        // detaches the callback and lets a running one observe Granted/Cancelled and return.
+        waiter.Registration.Unregister();
     }
 
     private void ThrowIfDisposed()

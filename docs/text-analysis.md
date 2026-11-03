@@ -250,7 +250,10 @@ or snapshot model, and the generic models (`LinearClassifier<TItem>`, `CentroidC
 the question trees), which do not implement `ITextClassifier`. Calling those directly on the
 wrapped instance bypasses the lock; use a snapshot, or the same external synchronization. Wrap the
 model once: two wrappers around the same instance have two independent locks, and wrapping a blend
-while also wrapping its lanes nests locks rather than ordering them.
+while also wrapping its lanes nests locks rather than ordering them. The gate is not reentrant — a
+callback that calls back into the same wrapper can deadlock — and the synchronous members block a
+thread, so do not mix blocking `Predict` calls on a capped thread pool with an async writer that
+awaits I/O; use the async surface end-to-end there.
 
 ## Centroids over embeddings
 
