@@ -6,7 +6,9 @@
   and `IIncrementalAsyncTextClassifier` name the async train/predict/learn surface that
   `CentroidClassifier` and `NearestNeighborClassifier` already implemented, and
   `SynchronizedTextClassifier` now forwards it under the same lock as the synchronous members — so a
-  caller mixing `PredictAsync`, `LearnAsync` and `Predict` no longer bypasses synchronization.
+  caller mixing `PredictAsync`, `LearnAsync` and `Predict` no longer bypasses synchronization. A
+  cancelled async call leaves the lock queue instead of waiting behind a long writer, and
+  `SupportsIncrementalAsync` reports whether `LearnAsync`/`UnlearnAsync` are actually available.
   `AtomicClassifierReference` is the classifier counterpart of `AtomicEngineReference` for the
   retrain-and-swap path: build a fresh model off-lock, publish it atomically, and let each reader
   capture one model per prediction.
