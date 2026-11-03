@@ -27,22 +27,33 @@ namespace LexiSharp.Tests;
 public class ScoreAccumulatorTests
 {
     /// <summary>
-    /// A rented accumulator must not inherit the recorded flags of whatever used the array before.
+    /// A rented accumulator must not inherit anything the pool hands it — and the array that can
+    /// hurt is not the one the old flag design used.
     /// </summary>
+    /// <remarks>
+    /// The stamp array must come from a pool only this class writes to. The bug this guards is that
+    /// <c>_ordinals</c> is also an <c>int[]</c>: an ordinal list returned to the shared pool arrives
+    /// holding 0, 1, 2, …, and if stamps were rented from the same pool one of those values lands on
+    /// the generation of the pass that just rented it. The ordinal is then treated as already
+    /// touched and never recorded — one document silently missing from the page, on some runs. It
+    /// reproduced on the 252nd sequential rent, with the missing ordinal equal to the round number.
+    /// </remarks>
     [Fact]
-    public void Rent_IgnoresTheFlagsTheArrayCameBackWith()
+    public void Rent_IgnoresTheOrdinalsTheArrayCameBackWith()
     {
         const int Capacity = 512;
         var expected = new double[Capacity];
 
-        for (int attempt = 0; attempt < 200; attempt++)
+        for (int attempt = 0; attempt < 300; attempt++)
         {
-            // Return a deliberately poisoned buffer to the pool first: a flag array where every
-            // byte is 1 is the worst case, and it is exactly what a previous pass leaves behind
-            // when it is disposed without being reset.
-            var poison = ArrayPool<byte>.Shared.Rent(Capacity);
-            Array.Fill(poison, (byte)1);
-            ArrayPool<byte>.Shared.Return(poison);
+            // An ordinal list is exactly what the shared int pool recycles: 0, 1, 2, … up to the
+            // capacity, which is the sequence that collided with a generation.
+            var poison = ArrayPool<int>.Shared.Rent(Capacity);
+
+            for (int i = 0; i < poison.Length; i++)
+                poison[i] = i;
+
+            ArrayPool<int>.Shared.Return(poison);
 
             using var accumulator = ScoreAccumulator.Rent(Capacity);
 
