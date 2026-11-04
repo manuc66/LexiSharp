@@ -529,20 +529,38 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         //
         // The body and the text fields come from one layout, PositionedFields, so this index, the
         // store's overlay and a segment all place a field's tokens at the same positions.
-        var runs = PositionedFields.Runs(_tokenizer, document);
         var allTerms = new List<string>();
         int length = 0;
 
-        foreach (var run in runs)
+        // Body run, then every text field, laid out in the same position space
+        // PositionedFields defines (body first, then each field after a gap).
         {
-            var terms = new List<string>(run.Terms.Count);
+            var bodyTerms = TokenizeRunIntoTerms(_tokenizer, document.Text ?? string.Empty, document.Id, ordinal, 0);
+            int bodyCount = bodyTerms.Count;
+            RecordField(TextFields.Default, ordinal, 0, bodyTerms);
+            allTerms.AddRange(bodyTerms);
+            length += bodyTerms.Count;
 
-            for (int i = 0; i < run.Terms.Count; i++)
-                terms.Add(Post(document.Id, ordinal, run.Terms[i], run.Start + i));
+            if (document.TextFields is { Count: > 0 } fields)
+            {
+                int next = bodyCount;
 
-            RecordField(run.Field, ordinal, run.Start, terms);
-            allTerms.AddRange(terms);
-            length += terms.Count;
+                foreach (var (field, text) in fields)
+                {
+                    TextFields.Validate(field, nameof(SearchDocument.TextFields));
+
+                    next += TextFields.PositionGap;
+                    int start = next;
+
+                    var terms = TokenizeRunIntoTerms(_tokenizer, text ?? string.Empty, document.Id, ordinal, start);
+                    var fieldTerms = terms;
+                    RecordField(field, ordinal, start, terms);
+                    allTerms.AddRange(terms);
+                    length += terms.Count;
+
+                    next += terms.Count;
+                }
+            }
         }
 
         // Counted once, here, so the flat corpus total is right: every length-normalized scorer
@@ -557,16 +575,29 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// <paramref name="position"/>, and returns the index's shared instance of the term — which is
     /// what callers must store, not the string they were handed.
     /// </summary>
-    private string Post(string documentId, int ordinal, string term, int position)
+    private string Post(string documentId, int ordinal, string term, int position) =>
+        Post(documentId, ordinal, term.AsSpan(), position);
+
+    /// <summary>
+    /// Span-keyed variant: resolves the term through <see cref="_spanPostings"/> and only
+    /// materializes a string when the term is new to the vocabulary. Falls back to the string
+    /// path's behaviour otherwise.
+    /// </summary>
+    private string Post(string documentId, int ordinal, ReadOnlySpan<char> term, int position)
     {
-        // The lookup the index had to do anyway, carrying the shared instance along: the first
-        // occurrence of a value defines the instance, and every later occurrence is rewritten to it
-        // at no extra hashing cost. Assigned before the Add rather than inside it, so the statement
-        // says one thing — the list is stored under `term` — instead of storing and assigning.
-        if (!_postings.TryGetValue(term, out var posting))
+        if (!_spanPostings.TryGetValue(term, out var posting))
         {
-            posting = new PostingList(term);
-            _postings.Add(term, posting);
+            string materialized = term.ToString();
+            var candidate = new PostingList(materialized);
+
+            if (_postings.TryAdd(materialized, candidate))
+            {
+                posting = candidate;
+            }
+            else
+            {
+                posting = _postings[materialized];
+            }
         }
 
         string shared = posting.Term;
@@ -574,10 +605,6 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
 
         if (!postings.TryGetValue(documentId, out var existing))
         {
-            // Assigned locally first: writing straight into the dictionary and reading it back
-            // would cost a second hash and probe of the same key, once per (document, term) pair
-            // the document introduces. The constructor takes the first position, so this branch
-            // must not append it again.
             existing = new Posting(ordinal, position);
             postings[documentId] = existing;
         }
@@ -593,9 +620,45 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     }
 
     /// <summary>
+    /// Tokenizes <paramref name="text"/> and posts every resulting term at positions starting at
+    /// <paramref name="startPosition"/>, returning the shared term instances. Uses the span path
+    /// when the tokenizer can serve it (no string allocation for terms that are already their own
+    /// normal form); falls back to the string path otherwise.
+    /// </summary>
+    private List<string> TokenizeRunIntoTerms(ITokenizer tokenizer, string text, string documentId, int ordinal, int startPosition)
+    {
+        var terms = new List<string>();
+
+        if (tokenizer is ISpanTokenizer spanTok && !string.IsNullOrEmpty(text))
+        {
+            var buffer = new NormalizedTerm[text.Length];
+            int count = spanTok.TokenizeNormalized(text.AsSpan(), buffer);
+
+            if (count >= 0)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    var span = buffer[i].View(text.AsSpan());
+                    terms.Add(Post(documentId, ordinal, span, startPosition + i));
+                }
+
+                return terms;
+            }
+        }
+
+        foreach (var token in tokenizer.Tokenize(text))
+        {
+            int i = terms.Count;
+            terms.Add(Post(documentId, ordinal, token, startPosition + i));
+        }
+
+        return terms;
+    }
+
+    /// <summary>
     /// Records one field's tokens in the per-field statistics, replacing whatever the document
     /// had for that field. The document is expected to have been removed already. The terms are the
-    /// shared instances <see cref="Post"/> returned, so the field maps share the corpus vocabulary.
+    /// shared instances returned by Post, so the field maps share the corpus vocabulary.
     /// </summary>
     /// <param name="field">The field the run belongs to.</param>
     /// <param name="ordinal">The ordinal of the document being indexed.</param>
