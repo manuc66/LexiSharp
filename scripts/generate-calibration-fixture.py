@@ -27,7 +27,7 @@ def main() -> int:
 
     case_index = 0
     while len(cases) < 6:
-        count = random_source.randint(40, 80)  # NOSONAR:S2245
+        count = random_source.randint(40, 80)
         scores = np.array(
             [round(random_source.uniform(0.0, 10.0), 2) for _ in range(count)],
             dtype=float,

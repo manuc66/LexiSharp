@@ -62,22 +62,22 @@ def main() -> int:
     uniform = [f"d{index:02d}" for index in range(1, 26)]
 
     for index in range(120):
-        judged = random_source.sample(uniform, random_source.randint(5, 24))  # NOSONAR:S2245
+        judged = random_source.sample(uniform, random_source.randint(5, 24))
         qrels = {
-            document: random_source.choices([0, 1, 2, 3], weights=[0.50, 0.25, 0.15, 0.10])[0]  # NOSONAR:S2245
+            document: random_source.choices([0, 1, 2, 3], weights=[0.50, 0.25, 0.15, 0.10])[0]
             for document in judged
         }
 
         if not any(grade > 0 for grade in qrels.values()):
-            qrels[judged[0]] = random_source.randint(1, 3)  # NOSONAR:S2245
+            qrels[judged[0]] = random_source.randint(1, 3)
 
-        retrieved = random_source.sample(judged, random_source.randint(0, min(20, len(judged))))  # NOSONAR:S2245
+        retrieved = random_source.sample(judged, random_source.randint(0, min(20, len(judged))))
 
-        for unjudged in range(random_source.randint(0, 5)):  # NOSONAR:S2245
+        for unjudged in range(random_source.randint(0, 5)):
             retrieved.append(f"u{index:03d}-{unjudged}")
 
-        random_source.shuffle(retrieved)  # NOSONAR:S2245
-        cases.append(case(f"random-{index:03d}", qrels, retrieved, random_source.choice([1, 3, 5, 10, 20])))  # NOSONAR:S2245
+        random_source.shuffle(retrieved)
+        cases.append(case(f"random-{index:03d}", qrels, retrieved, random_source.choice([1, 3, 5, 10, 20])))
 
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_text(
