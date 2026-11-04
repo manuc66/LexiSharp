@@ -19,12 +19,15 @@ OUTPUT = Path("tests/LexiSharp.Tests/TestData/calibration-scipy.json")
 
 
 def main() -> int:
+    # The fixture generator draws from random.Random with a fixed seed: the point is a
+    # reproducible fixture, not unpredictability, so S2245 does not apply. Each use is marked
+    # below rather than the rule being switched off for the project.
     random_source = random.Random(20261102)
     cases = []
 
     case_index = 0
     while len(cases) < 6:
-        count = random_source.randint(40, 80)
+        count = random_source.randint(40, 80)  # NOSONAR:S2245
         scores = np.array(
             [round(random_source.uniform(0.0, 10.0), 2) for _ in range(count)],
             dtype=float,

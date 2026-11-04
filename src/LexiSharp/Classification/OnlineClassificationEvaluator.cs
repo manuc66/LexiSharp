@@ -604,7 +604,10 @@ public static class OnlineClassificationEvaluator
         {
             double threshold = ordered[index].TopProbability;
 
-            while (index < ordered.Length && ordered[index].TopProbability == threshold)
+            // Exact on purpose: the threshold is the probability of the entry beside it, so this
+            // groups the entries that share that value and a tolerance would merge two distinct
+            // thresholds into one coverage step.
+            while (index < ordered.Length && ordered[index].TopProbability == threshold) // NOSONAR:S1244
             {
                 covered++;
 
@@ -631,7 +634,9 @@ public static class OnlineClassificationEvaluator
 
             if (recommended is null
                 || point.Precision > recommended.Precision
-                || (point.Precision == recommended.Precision && point.Coverage > recommended.Coverage))
+                // Exact on purpose: this is a tie-break between two computed precisions, and a
+                // tolerance would let a slightly worse point win on coverage.
+                || (point.Precision == recommended.Precision && point.Coverage > recommended.Coverage)) // NOSONAR:S1244
             {
                 recommended = point;
             }
