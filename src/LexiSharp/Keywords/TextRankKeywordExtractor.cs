@@ -118,33 +118,36 @@ public sealed class TextRankKeywordExtractor : IKeywordExtractor
             }
         }
 
-        var rows = new List<(int Target, double Weight)>[nodes.Count];
+        // The rows are filled directly, without a list per node and without a copy afterwards: one
+        // pass counts each node's degree, one allocates the exact arrays, one fills them. The sort
+        // is over an int key array with its weights permuted alongside, which is the cheapest form
+        // the order can take — and the order is the point (ascending destination, so the out-degree
+        // is summed the way the dense form summed it).
+        var degrees = new int[nodes.Count];
 
-        for (int i = 0; i < rows.Length; i++)
-            rows[i] = [];
+        foreach (var pair in weights.Keys)
+            degrees[(int)(pair >> 32)]++;
+
+        var built = new Row[nodes.Count];
+        var cursors = new int[nodes.Count];
+
+        for (int i = 0; i < built.Length; i++)
+        {
+            built[i] = new Row(new int[degrees[i]], new double[degrees[i]]);
+            cursors[i] = 0;
+        }
 
         foreach (var (pair, weight) in weights)
-            rows[(int)(pair >> 32)].Add(((int)(pair & 0xFFFFFFFF), weight));
-
-        var built = new Row[rows.Length];
-
-        for (int i = 0; i < rows.Length; i++)
         {
-            // Ascending destination, which is the order the dense form walked and the order the
-            // out-degree is summed in — so the two forms produce the same doubles.
-            rows[i].Sort(static (left, right) => left.Target.CompareTo(right.Target));
+            int source = (int)(pair >> 32);
+            int at = cursors[source]++;
 
-            var targets = new int[rows[i].Count];
-            var values = new double[rows[i].Count];
-
-            for (int e = 0; e < rows[i].Count; e++)
-            {
-                targets[e] = rows[i][e].Target;
-                values[e] = rows[i][e].Weight;
-            }
-
-            built[i] = new Row(targets, values);
+            built[source].Targets[at] = (int)(pair & 0xFFFFFFFF);
+            built[source].Weights[at] = weight;
         }
+
+        for (int i = 0; i < built.Length; i++)
+            Array.Sort(built[i].Targets, built[i].Weights);
 
         return (nodes, built);
     }
