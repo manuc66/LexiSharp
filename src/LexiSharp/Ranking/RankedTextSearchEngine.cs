@@ -749,21 +749,14 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
         bool finalises = finisher.Finalises;
         double minimumScore = options.MinimumScore;
 
-        for (int i = 0; i < accumulator.Count; i++)
+        // Two loops over one body, because the branch that guards the call has to be outside the
+        // candidates for the JIT to optimise the iteration as if the call were absent — and absent
+        // is the default case. `Consider` is one function for both, so the two loops cannot drift
+        // into two different behaviours, which is the failure this file already records once.
+        void Consider(double score, int candidate)
         {
-            if ((i & 0x3FF) == 0)
-                cancellationToken.ThrowIfCancellationRequested();
-
-            int candidate = accumulator.OrdinalAt(i);
-
-            // The plan's last step, because this path never calls Score and a score that is narrowed
-            // at the end of the sum has to be narrowed somewhere.
-            double score = finalises
-                ? finisher.Finalise(accumulator[candidate])
-                : accumulator[candidate];
-
             if (double.IsNaN(score) || double.IsInfinity(score) || score == 0 || score < minimumScore)
-                continue;
+                return;
 
             // An empty filter list and no exclusions make PassesFilters answer without reading the
             // document, so the common case is the same answer with none of the resolution.
@@ -777,13 +770,39 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
                         $"the accumulator produced candidate {candidate}, which the index cannot resolve");
 
                 if (!options.PassesFilters(document))
-                    continue;
+                    return;
 
                 facets?.Count(document);
             }
 
             top.Add(score, candidate, resolved: null, ordinal: ordinal);
             ordinal++;
+        }
+
+        if (finalises)
+        {
+            for (int i = 0; i < accumulator.Count; i++)
+            {
+                if ((i & 0x3FF) == 0)
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                int candidate = accumulator.OrdinalAt(i);
+
+                // The plan's last step, because this path never calls Score and a score that is
+                // narrowed at the end of the sum has to be narrowed somewhere.
+                Consider(finisher.Finalise(accumulator[candidate]), candidate);
+            }
+        }
+        else
+        {
+            for (int i = 0; i < accumulator.Count; i++)
+            {
+                if ((i & 0x3FF) == 0)
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                int candidate = accumulator.OrdinalAt(i);
+                Consider(accumulator[candidate], candidate);
+            }
         }
 
         // Every recorded ordinal was scored — the buffer holds exactly the candidates the pass
