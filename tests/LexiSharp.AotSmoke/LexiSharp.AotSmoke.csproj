@@ -20,6 +20,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.DotNet.ILCompiler" Version="10.0.14" />
     <ProjectReference Include="../../src/LexiSharp/LexiSharp.csproj" />
     <ProjectReference Include="../../src/LexiSharp.Postgres/LexiSharp.Postgres.csproj" />
   </ItemGroup>
