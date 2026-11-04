@@ -476,6 +476,11 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
         bool quantized = _quantized;
         var quantizedData = _quantizedData;
 
+        // Whether there is anything to gate on, asked once instead of once per document: the
+        // common search has no filters, and `PassesFilters` answering that costs two property reads
+        // and two null tests on every document of the corpus.
+        bool gated = options.Filters is { Count: > 0 } || options.ExcludedDocumentIds is { Count: > 0 };
+
         for (int slot = 0; slot < _slotCount; slot++)
         {
             var document = _slotDocument[slot];
@@ -485,7 +490,7 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
 
             // Structured filters gate the corpus before any relevance math is paid for, exactly as
             // the lexical engine does: an unsatisfying document costs no dot product.
-            if (!options.PassesFilters(document))
+            if (gated && !options.PassesFilters(document))
                 continue;
 
             float documentNorm = MathF.Sqrt(norms[slot]);
