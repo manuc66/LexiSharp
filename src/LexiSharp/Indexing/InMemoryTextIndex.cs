@@ -139,13 +139,46 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// One term's placement inside one document. A struct, deliberately: as a class it would be a
     /// second dependent load per posting entry on every path that walks a posting list.
     /// </summary>
-    private readonly struct Posting(int ordinal, List<int> positions)
+    private sealed class Posting(int ordinal, int firstPosition) : IReadOnlyList<int>
     {
+        /// <summary>Positions after the first, allocated only when a term occurs again.</summary>
+        private List<int>? _more;
+
         /// <summary>The document's dense ordinal, the address the scoring pass writes to.</summary>
         public int Ordinal { get; } = ordinal;
 
         /// <summary>Ascending token positions of the term in the document; the phrase gate's input.</summary>
-        public List<int> Positions { get; } = positions;
+        public IReadOnlyList<int> Positions => this;
+
+        /// <summary>
+        /// Occurrences of the term in the document — one object, one field, until there is a second.
+        /// </summary>
+        /// <remarks>
+        /// A <c>List&lt;int&gt;</c> per (term, document) pair was 25 MB and a third of an index
+        /// build's time on a 10 000-document corpus: one list object and one backing array for a
+        /// pair that almost always holds a single position. The first position now lives in the
+        /// object itself, so the common posting allocates nothing beyond the object it already
+        /// needed to hold the ordinal.
+        /// </remarks>
+        public int Count => _more is null ? 1 : _more.Count + 1;
+
+        public int this[int index] => index == 0 ? firstPosition : _more![index - 1];
+
+        /// <summary>Appends an occurrence; the first one was taken by the constructor.</summary>
+        public void Add(int position) => (_more ??= new List<int>(2)).Add(position);
+
+        public IEnumerator<int> GetEnumerator()
+        {
+            yield return firstPosition;
+
+            if (_more is null)
+                yield break;
+
+            for (int i = 0; i < _more.Count; i++)
+                yield return _more[i];
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     /// <summary>
@@ -543,12 +576,15 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         {
             // Assigned locally first: writing straight into the dictionary and reading it back
             // would cost a second hash and probe of the same key, once per (document, term) pair
-            // the document introduces.
-            existing = new Posting(ordinal, new List<int>(2));
+            // the document introduces. The constructor takes the first position, so this branch
+            // must not append it again.
+            existing = new Posting(ordinal, position);
             postings[documentId] = existing;
         }
-
-        existing.Positions.Add(position);
+        else
+        {
+            existing.Add(position);
+        }
 
         _corpusFrequencies.TryGetValue(shared, out int corpusCount);
         _corpusFrequencies[shared] = corpusCount + 1;
@@ -649,11 +685,15 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
 
             if (!posting.ByDocument.TryGetValue(documentId, out var placed))
             {
-                placed = new Posting(ordinal, new List<int>(1));
+                placed = new Posting(ordinal, nextPosition);
                 posting.ByDocument[documentId] = placed;
             }
+            else
+            {
+                placed.Add(nextPosition);
+            }
 
-            placed.Positions.Add(nextPosition++);
+            nextPosition++;
             added.Add(term);
             addedCount++;
 
