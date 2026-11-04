@@ -231,10 +231,10 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     // Per-field statistics, populated from SearchDocument.TextFields. The document's main Text is
     // the field TextFields.Default, and it is tracked here as well as in the flat structures above
     // so a field-aware scorer can read every field through one path.
-    private readonly Dictionary<string, Dictionary<string, Dictionary<string, int>>> _fieldFrequencies =
+    private readonly Dictionary<string, Dictionary<string, Dictionary<int, int>>> _fieldFrequencies =
         new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Dictionary<string, int>> _fieldLengths = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Dictionary<string, int>> _fieldStarts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Dictionary<int, int>> _fieldLengths = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Dictionary<int, int>> _fieldStarts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, long> _fieldTotalTokens = new(StringComparer.Ordinal);
 
     private long _totalTokens;
@@ -540,7 +540,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
             for (int i = 0; i < run.Terms.Count; i++)
                 terms.Add(Post(document.Id, ordinal, run.Terms[i], run.Start + i));
 
-            RecordField(run.Field, document.Id, run.Start, terms);
+            RecordField(run.Field, ordinal, run.Start, terms);
             allTerms.AddRange(terms);
             length += terms.Count;
         }
@@ -598,14 +598,14 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// shared instances <see cref="Post"/> returned, so the field maps share the corpus vocabulary.
     /// </summary>
     /// <param name="field">The field the run belongs to.</param>
-    /// <param name="documentId">The document being indexed.</param>
+    /// <param name="ordinal">The ordinal of the document being indexed.</param>
     /// <param name="start">Position of the run's first token in the document's position space.</param>
     /// <param name="terms">The run's tokens, in order.</param>
-    private void RecordField(string field, string documentId, int start, IReadOnlyList<string> terms)
+    private void RecordField(string field, int ordinal, int start, IReadOnlyList<string> terms)
     {
         if (!_fieldFrequencies.TryGetValue(field, out var byTerm))
         {
-            byTerm = new Dictionary<string, Dictionary<string, int>>(StringComparer.Ordinal);
+            byTerm = new Dictionary<string, Dictionary<int, int>>(StringComparer.Ordinal);
             _fieldFrequencies[field] = byTerm;
         }
 
@@ -613,29 +613,29 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         {
             if (!byTerm.TryGetValue(term, out var byDocument))
             {
-                byDocument = new Dictionary<string, int>(StringComparer.Ordinal);
+                byDocument = [];
                 byTerm[term] = byDocument;
             }
 
-            byDocument.TryGetValue(documentId, out int count);
-            byDocument[documentId] = count + 1;
+            byDocument.TryGetValue(ordinal, out int count);
+            byDocument[ordinal] = count + 1;
         }
 
         if (!_fieldLengths.TryGetValue(field, out var lengths))
         {
-            lengths = new Dictionary<string, int>(StringComparer.Ordinal);
+            lengths = [];
             _fieldLengths[field] = lengths;
         }
 
-        lengths[documentId] = terms.Count;
+        lengths[ordinal] = terms.Count;
 
         if (!_fieldStarts.TryGetValue(field, out var starts))
         {
-            starts = new Dictionary<string, int>(StringComparer.Ordinal);
+            starts = [];
             _fieldStarts[field] = starts;
         }
 
-        starts[documentId] = start;
+        starts[ordinal] = start;
 
         _fieldTotalTokens[field] = (_fieldTotalTokens.TryGetValue(field, out long total) ? total : 0)
             + terms.Count;
@@ -749,7 +749,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         _byOrdinal[ordinal] = null;
         _freeOrdinals.Add(ordinal);
 
-        RemoveFromFieldStatistics(documentId);
+        RemoveFromFieldStatistics(ordinal);
 
         return true;
     }
@@ -769,7 +769,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// Drops one document from every per-field structure, and forgets a field once no document
     /// carries it any more, so <see cref="Fields"/> never reports a stale name.
     /// </summary>
-    private void RemoveFromFieldStatistics(string documentId)
+    private void RemoveFromFieldStatistics(int ordinal)
     {
         foreach (string field in _fieldFrequencies.Keys.ToList())
         {
@@ -778,7 +778,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
 
             foreach (var entry in byTerm)
             {
-                if (entry.Value.Remove(documentId) && entry.Value.Count == 0)
+                if (entry.Value.Remove(ordinal) && entry.Value.Count == 0)
                     byTerm.Remove(entry.Key);
             }
 
@@ -791,11 +791,11 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
             if (!_fieldLengths.TryGetValue(field, out var lengths))
                 continue;
 
-            if (!lengths.Remove(documentId, out int removedLength))
+            if (!lengths.Remove(ordinal, out int removedLength))
                 continue;
 
             if (_fieldStarts.TryGetValue(field, out var starts))
-                starts.Remove(documentId);
+                starts.Remove(ordinal);
 
             if (_fieldTotalTokens.TryGetValue(field, out long total) &&
                 total - removedLength <= 0)
@@ -1293,7 +1293,8 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
 
         return _fieldFrequencies.TryGetValue(field, out var byTerm) &&
                byTerm.TryGetValue(term, out var byDocument) &&
-               byDocument.TryGetValue(documentId, out int count)
+               _documents.TryGetValue(documentId, out int ordinal) &&
+               byDocument.TryGetValue(ordinal, out int count)
             ? count
             : 0;
     }
@@ -1304,8 +1305,9 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         ArgumentException.ThrowIfNullOrEmpty(documentId);
         TextFields.Validate(field, nameof(field));
 
-        return _fieldLengths.TryGetValue(field, out var lengths) &&
-               lengths.TryGetValue(documentId, out int length)
+        return _documents.TryGetValue(documentId, out int ordinal) &&
+               _fieldLengths.TryGetValue(field, out var lengths) &&
+               lengths.TryGetValue(ordinal, out int length)
             ? length
             : 0;
     }
@@ -1347,10 +1349,11 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         TextFields.Validate(field, nameof(field));
         ArgumentNullException.ThrowIfNull(term);
 
-        if (!_fieldStarts.TryGetValue(field, out var starts) ||
-            !starts.TryGetValue(documentId, out int start) ||
+        if (!_documents.TryGetValue(documentId, out int ordinal) ||
+            !_fieldStarts.TryGetValue(field, out var starts) ||
+            !starts.TryGetValue(ordinal, out int start) ||
             !_fieldLengths.TryGetValue(field, out var lengths) ||
-            !lengths.TryGetValue(documentId, out int length) ||
+            !lengths.TryGetValue(ordinal, out int length) ||
             length == 0)
         {
             return Array.Empty<int>();
