@@ -153,54 +153,66 @@ internal static class DocumentAtATime
         if (terms == 0)
             return;
 
-        var cursors = new int[terms];
+        // Block-at-a-time: process a contiguous run of document ordinals for every query term before
+        // emitting any of them. This keeps each term's postings walk sequential and gives the sink
+        // documents in ascending ordinal order, exactly as the cursor merge did, while letting a
+        // later SIMD pass work on the per-document score slots. The cursor positions land on the
+        // same entries the merge would have reached, so the two are interchangeable.
+        const int BlockSize = 64;
 
-        while (true)
+        int[] cursors = new int[terms];
+        Span<double> scores = stackalloc double[BlockSize];
+        Span<bool> has = stackalloc bool[BlockSize];
+
+        int docCount = lengths.Length;
+
+        for (int baseOrd = 0; baseOrd < docCount; baseOrd += BlockSize)
         {
-            int smallest = int.MaxValue;
+            int blockEnd = Math.Min(baseOrd + BlockSize, docCount);
+            int blockSize = blockEnd - baseOrd;
+
+            scores.Slice(0, blockSize).Clear();
+            has.Slice(0, blockSize).Clear();
 
             for (int t = 0; t < terms; t++)
             {
                 int[] ordinals = postings[t].Ordinals;
+                int[] frequencies = postings[t].Frequencies;
                 int at = cursors[t];
 
-                if (at < ordinals.Length && ordinals[at] < smallest)
-                    smallest = ordinals[at];
+                while (at < ordinals.Length && ordinals[at] < baseOrd)
+                    at++;
+
+                while (at < ordinals.Length && ordinals[at] < blockEnd)
+                {
+                    int ord = ordinals[at];
+                    int idx = ord - baseOrd;
+
+                    double contribution = weights[t].Weight(frequencies[at], lengths[ord]);
+
+                    // First touch writes, later ones add — copied from the merge so a contribution
+                    // of zero keeps the document alive in the sink, exactly as before.
+                    if (!has[idx])
+                    {
+                        scores[idx] = contribution;
+                        has[idx] = true;
+                    }
+                    else
+                    {
+                        scores[idx] += contribution;
+                    }
+
+                    at++;
+                }
+
+                cursors[t] = at;
             }
 
-            if (smallest == int.MaxValue)
-                return;
-
-            double score = 0;
-            bool first = true;
-
-            for (int t = 0; t < terms; t++)
+            for (int k = 0; k < blockSize; k++)
             {
-                PostingArrays term = postings[t];
-                int at = cursors[t];
-
-                if (at >= term.Count || term.Ordinals[at] != smallest)
-                    continue;
-
-                double contribution = weights[t].Weight(term.Frequencies[at], lengths[smallest]);
-
-                // The accumulator writes on a document's first touch and adds on every later one. The
-                // difference matters for a contribution of zero, and copying the behaviour is cheaper
-                // than proving no weight can ever return one.
-                if (first)
-                {
-                    score = contribution;
-                    first = false;
-                }
-                else
-                {
-                    score += contribution;
-                }
-
-                cursors[t] = at + 1;
+                if (has[k])
+                    sink.Score(baseOrd + k, scores[k]);
             }
-
-            sink.Score(smallest, score);
         }
     }
 }
