@@ -92,18 +92,21 @@ def mean_log_loss(samples: list[dict], temperature: float) -> float:
 
 
 def temperature_fixture() -> dict:
+    # The fixture generator draws from random.Random with a fixed seed: the point is a
+    # reproducible fixture, not unpredictability, so S2245 does not apply. Each use is marked
+    # below rather than the rule being switched off for the project.
     random_source = random.Random(20261102)
     cases = []
 
     for case_index in range(8):
-        category_count = random_source.randint(2, 5)
+        category_count = random_source.randint(2, 5)  # NOSONAR:S2245
         categories = [f"c{index}" for index in range(category_count)]
         samples = []
 
         for _ in range(24):
             logits = [random_source.gauss(0.0, 1.6) for _ in categories]
             probabilities = softmax(logits)
-            actual = random_source.randrange(category_count)
+            actual = random_source.randrange(category_count)  # NOSONAR:S2245
 
             samples.append(
                 {

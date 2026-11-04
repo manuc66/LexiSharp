@@ -55,26 +55,29 @@ def main() -> int:
         case("empty-run", {"a": 1}, [], 10),
     ]
 
+    # The fixture generator draws from random.Random with a fixed seed: the point is a
+    # reproducible fixture, not unpredictability, so S2245 does not apply. Each use is marked
+    # below rather than the rule being switched off for the project.
     random_source = random.Random(20261102)
     uniform = [f"d{index:02d}" for index in range(1, 26)]
 
     for index in range(120):
-        judged = random_source.sample(uniform, random_source.randint(5, 24))
+        judged = random_source.sample(uniform, random_source.randint(5, 24))  # NOSONAR:S2245
         qrels = {
-            document: random_source.choices([0, 1, 2, 3], weights=[0.50, 0.25, 0.15, 0.10])[0]
+            document: random_source.choices([0, 1, 2, 3], weights=[0.50, 0.25, 0.15, 0.10])[0]  # NOSONAR:S2245
             for document in judged
         }
 
         if not any(grade > 0 for grade in qrels.values()):
-            qrels[judged[0]] = random_source.randint(1, 3)
+            qrels[judged[0]] = random_source.randint(1, 3)  # NOSONAR:S2245
 
-        retrieved = random_source.sample(judged, random_source.randint(0, min(20, len(judged))))
+        retrieved = random_source.sample(judged, random_source.randint(0, min(20, len(judged))))  # NOSONAR:S2245
 
-        for unjudged in range(random_source.randint(0, 5)):
+        for unjudged in range(random_source.randint(0, 5)):  # NOSONAR:S2245
             retrieved.append(f"u{index:03d}-{unjudged}")
 
-        random_source.shuffle(retrieved)
-        cases.append(case(f"random-{index:03d}", qrels, retrieved, random_source.choice([1, 3, 5, 10, 20])))
+        random_source.shuffle(retrieved)  # NOSONAR:S2245
+        cases.append(case(f"random-{index:03d}", qrels, retrieved, random_source.choice([1, 3, 5, 10, 20])))  # NOSONAR:S2245
 
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_text(
