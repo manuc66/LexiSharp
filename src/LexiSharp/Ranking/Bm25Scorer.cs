@@ -1,3 +1,4 @@
+using System.Numerics;
 using LexiSharp.Core;
 using LexiSharp.Linguistics;
 
@@ -300,7 +301,32 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
         // branch on the scoring path.
         float[] table = new float[MaxStoredLength + 1];
 
-        for (int i = 0; i < table.Length; i++)
+        int width = Vector<float>.Count;
+        int[] baseIndices = new int[width];
+
+        for (int j = 0; j < width; j++)
+            baseIndices[j] = j;
+
+        Vector<int> baseVec = new(baseIndices);
+        Vector<float> kVec = new(k);
+        Vector<float> bVec = new(bSingle);
+        Vector<float> oneMinusVec = new(oneMinus);
+        Vector<float> averageVec = new(average);
+
+        int i = 0;
+
+        for (; i + width <= table.Length; i += width)
+        {
+            Vector<int> idxInt = baseVec + new Vector<int>(i);
+            Vector<float> idx = Vector.ConvertToSingle(idxInt);
+            Vector<float> scaled = bVec * idx;
+            Vector<float> normalised = scaled / averageVec;
+            Vector<float> result = Vector<float>.One / (kVec * (oneMinusVec + normalised));
+
+            result.CopyTo(table, i);
+        }
+
+        for (; i < table.Length; i++)
         {
             float scaled = bSingle * i;
             float normalised = scaled / average;
