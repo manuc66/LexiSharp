@@ -17,10 +17,17 @@
     <IsPackable>false</IsPackable>
     <RootNamespace>LexiSharp.AotSmoke</RootNamespace>
     <AssemblyName>LexiSharp.AotSmoke</AssemblyName>
+    <!--
+      ILC and the runtime pack it compiles against must be the same version: the compiler's
+      targets locate the framework assemblies by that number, and a mismatch fails with
+      "The PrivateSdkAssemblies ItemGroup is required for _ComputeAssembliesToCompileToNative",
+      which names neither version. 10.0.13 is the version NuGet flags (NU1903, high), so both
+      move together to 10.0.14.
+    -->
+    <RuntimeFrameworkVersion>10.0.14</RuntimeFrameworkVersion>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.DotNet.ILCompiler" Version="10.0.14" />
     <ProjectReference Include="../../src/LexiSharp/LexiSharp.csproj" />
     <ProjectReference Include="../../src/LexiSharp.Postgres/LexiSharp.Postgres.csproj" />
   </ItemGroup>
