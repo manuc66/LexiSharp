@@ -33,6 +33,8 @@ are listed first.
 | `IContextualTextClassifier` | `ITextClassifier` | A classifier that accepts request-scoped evidence in addition to the text. | [guide](text-analysis.md) |
 | `IFeatureSet` | — | The features of one item, as a question sees them: a set of names, no domain. | [guide](text-analysis.md) |
 | `IFeatureSource<TItem>` | — | Extracts the features of an item — the seam that keeps the question trees domain-agnostic. | [guide](text-analysis.md) |
+| `IAsyncCrossEncoderScorer` | — | Asynchronous counterpart of ICrossEncoderScorer: scores a (query, document) pair without blocking the caller. Use this when the model is remote or otherwise… | [guide](reference.md) |
+| `IAsyncReranker` | — | Asynchronous counterpart of IReranker: re-orders a candidate list without blocking the caller. See IAsyncCrossEncoderScorer for the rationale and the limits of… | [guide](reference.md) |
 | `IAsyncTextClassifier` | `ITextClassifier` | Optional capability of an ITextClassifier: the same training and prediction operations, with provider calls that can complete asynchronously. | [guide](reference.md) |
 | `IBatchEmbeddingProvider` | `IEmbeddingProvider` | An IEmbeddingProvider that can embed several texts in one call. Engines that index a corpus check for this interface and use it instead of calling… | [guide](reference.md) |
 | `ICandidateIndex` | `IReadOnlyTextIndex` | Capability for an index that can enumerate only the documents containing at least one of the given query terms, instead of scanning the whole corpus. | [guide](reference.md) |
@@ -67,6 +69,7 @@ are listed first.
 | `IScoreExplainer` | `ITextScorer` | Optional capability of an ITextScorer that can justify its scores: it produces a ScoreExplanation decomposing the contribution of every matched query term. | [guide](reference.md) |
 | `ISparseEmbeddingProvider` | — | Contract for producing sparse text embeddings — e.g. SPLADE/SPLADE-v2, uniCOIL, or any learned sparse model. Sparse embeddings map vocabulary terms to weights,… | [guide](reference.md) |
 | `IStructureAwareSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that knows the hierarchical structure its documents live in — the « structure-aware retriever » seam. Flat retrieval… | [guide](reference.md) |
+| `ITermCorrector` | — | Corrects a single query term — the query-side seam for spell correction, typo tolerance and keyboard-aware matching. The vocabulary is a construction concern of… | [guide](reference.md) |
 | `ITermOverlapScorer` | `ITextScorer` | Capability for a scorer whose score is exactly 0 for every document sharing no query term with the query, which lets the search engine skip such documents… | [guide](reference.md) |
 | `ITextClassifier` | — | Supervised text classifier trained on labelled documents. | [guide](reference.md) |
 | `ITextIndex` | `IReadOnlyTextIndex` | A write-capable index: the read surface of IReadOnlyTextIndex plus the mutations a caller that owns the corpus performs (Index/Add/Remove/Clear). | [guide](reference.md) |
@@ -223,6 +226,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `ClassificationResult` | record | — | A category predicted for a piece of text, with its estimated probability. |
 | `CompressedHit` | record | — | One compressed hit of SearchCompressed: the ranked document's id and score, its text reduced to the query-relevant content, and how much of the source that… |
 | `ContextualBoost<TPayload>` | delegate | — | A boost that depends on the search as a whole, not only on the candidate in hand: it sees the query, the pre-boost ranking, and the caller's payload. |
+| `DamerauLevenshteinTermCorrector` | class | `ITermCorrector` | A corrector based on Damerau-Levenshtein distance (insertion, deletion, substitution and adjacent transposition), walked over the vocabulary. Distance 1 and 2… |
 | `DetailedSearchResult` | record | — | A ranked document whose final score is broken down by the source signal that produced it. |
 | `DocumentHierarchy` | class | — | A validated parent/child forest over searchable document ids — the « hierarchical metadata » seam. Declare the tree your chunks belong to (a chunk under a… |
 | `EmbeddingProviderExtensions` | class | — | Backwards-compatible call shape: embeds text as a Passage. |
@@ -241,6 +245,9 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `HierarchicalTextSearchEngine` | class | `IStructureAwareSearchEngine`, `ITextSearchEngine` | A decorator that layers a DocumentHierarchy over an existing engine: searches and writes are forwarded unchanged — flat retrieval still finds the precise node —… |
 | `InMemoryRetrievalMetrics` | class | `IRetrievalMetrics` | The default IRetrievalMetrics: in-memory counters grouped by engine and stage, with no external dependency. Enough to assert on in tests and to back a… |
 | `IndexRetrievalMetrics` | record | — | The latest observed size of one engine's index. |
+| `KeyboardAwareTermCorrector` | class | `ITermCorrector` | A spell corrector that weights substitutions by keyboard proximity: swapping two adjacent keys costs less than swapping two distant ones, and transpositions of… |
+| `KeyboardLayout` | enum | — | Keyboard layouts supported by KeyboardAwareTermCorrector. |
+| `KeyboardLayouts` | class | — | Key positions for the supported layouts. |
 | `MetadataFilter` | record | — | A declarative, single-field predicate over Fields — the raw material of structured filtering (e.g. category = article, year &gt; 2023, tags containing nlp). |
 | `MetadataFilterOperator` | enum | — | Comparison applied by a MetadataFilter. |
 | `MoreLikeThis` | class | — | Builds a query from one already-indexed document and re-runs it through an engine, so the caller gets the documents most like it — the classic "more like this"… |
@@ -248,6 +255,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `NumericFacetRange` | record | — | One numeric bucket: how many counted documents fall between From and To — in [From, To), or in [From, To] when UpperInclusive is set. |
 | `NumericFacetRequest` | record | — | One numeric facet over Fields: either explicit boundaries, or a bucket count whose boundaries are derived from the match set — a histogram. |
 | `ParsedQuery` | record | — | The structured form of a raw query: free terms, quoted phrase constraints, expansion atoms, and the combined literal term list a scorer starts from. |
+| `PassthroughTermCorrector` | class | `ITermCorrector` | A corrector that returns the term unchanged — the safe default that never alters a query. |
 | `QueryExpansion` | record | — | A free-text query atom carrying a search-time expansion operator: the base term (already tokenized to exactly one term) is matched against the index vocabulary… |
 | `QueryExpansionKind` | enum | — | How a query atom expands against the index vocabulary. |
 | `QueryFeatures` | enum | — | The optional LexiSharp query-syntax features a raw query can carry. Engines declare which ones they interpret; using an unsupported one is a hard error rather… |
@@ -280,6 +288,8 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `SearchTrace` | class | — | Collects a TraceStep per document per stage, so a ranking can be explained end to end: which engine scored a document, what each merger contributed, what the… |
 | `SparseEmbeddingProviderExtensions` | class | — | Backwards-compatible call shape: embeds text as a Passage. |
 | `StageRetrievalMetrics` | record | — | Aggregated measurements for one pipeline stage of one engine. |
+| `SyncCrossEncoderScorerAdapter` | class | `IAsyncCrossEncoderScorer` | Adapts a synchronous ICrossEncoderScorer to IAsyncCrossEncoderScorer by running it on the calling thread inside a completed task. Useful for reusing an… |
+| `SyncRerankerAdapter` | class | `IAsyncReranker` | Adapts a synchronous IReranker to IAsyncReranker by running it on the calling thread inside a completed task. |
 | `SynchronizedTextSearchEngine` | class | `IDetailedSearchEngine`, `IDisposable`, `IExplainableSearchEngine`, `IFacetedSearchEngine`, `ITextSearchEngine` | Wraps an ITextSearchEngine so that concurrent searches and concurrent mutation stop being the caller's problem: any number of Search (and the capability calls… |
 | `TermContribution` | record | — | The contribution of a single query term to a document's score, as broken down by an IScoreExplainer. |
 | `TextEvidence` | record | — | A category with an unnormalized weight, produced by a source that is not a trained classifier. |
@@ -306,10 +316,12 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
+| `CorrectingTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that corrects query terms against the index vocabulary before searching — the consuming side of ITermCorrector, proving the seam is usable… |
 | `ExpandedTerm` | record struct | — | A single additional term injected into the index for a document, alongside its source text tokenization. The term is indexed as a regular inverted-list member… |
 | `ExpandingTextSearchEngine` | class | `IDetailedSearchEngine`, `IExplainableSearchEngine`, `IFacetedSearchEngine`, `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that widens the query with related terms before delegating to the inner engine — the query-side counterpart of ExpansionTextIndex, which… |
 | `ExpansionQueryTransformer` | class | `IQueryTransformer` | A model-free IQueryTransformer that returns two variants — the caller's query and the same query widened with the terms an ITermExpander derives — the… |
 | `ExpansionRanking` | enum | — | Which statistic orders an input term's candidate neighbours before the expansion budget applies. |
+| `FuzzyTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that widens the query with vocabulary terms within a small edit distance of each query term — in-memory fuzzy matching, the counterpart of… |
 | `PmiTermExpander` | class | `ITermExpander` | A corpus-derived ITermExpander: it learns which terms habitually appear in the same context window and expands a document with the top positively associated… |
 | `PmiTermExpanderOptions` | class | — | Configuration of a PmiTermExpander: how the corpus is analyzed and how many expansion terms each document gets. |
 | `TransformingTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that runs an IQueryTransformer on the raw query, searches the inner engine for every variant, and fuses the rankings — the query-side… |
@@ -326,6 +338,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
+| `AsyncCrossEncoderReranker` | class | `IAsyncReranker` | Asynchronous counterpart of CrossEncoderReranker: re-scores every candidate with a pairwise (cross-encoder) model via IAsyncCrossEncoderScorer and reorders the… |
 | `CascadeRerankOptions` | record | — | Controls how a CascadeRerankPipeline passes candidates from stage to stage. |
 | `CascadeRerankPipeline` | class | `IReranker` | Chains rerankers in cascade: each stage re-ranks the output of the previous one, and the shortlist may be trimmed between stages so only the strongest… |
 | `CombMNZResultMerger` | class | `IResultMerger` | Blend strategy that multiplies each document's CombSUM score by the number of engines that retrieved it — the classic CombMNZ. |
