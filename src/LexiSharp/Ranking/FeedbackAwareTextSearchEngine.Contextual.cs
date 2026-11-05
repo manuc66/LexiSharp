@@ -181,7 +181,7 @@ public sealed class FeedbackAwareTextSearchEngine<TPayload> : IContextualSearchE
             foreach (var kvp in scores)
             {
                 combined.TryGetValue(kvp.Key, out double existing);
-                combined[kvp.Key] = Math.Min(1.0, existing + (weight * kvp.Value));
+                combined[kvp.Key] = Math.Clamp(existing + (weight * kvp.Value), -1.0, 1.0);
             }
         }
 
