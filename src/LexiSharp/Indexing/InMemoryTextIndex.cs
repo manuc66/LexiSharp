@@ -139,16 +139,14 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     {
         public int Ordinal;
         public int Count;
-        private int FirstPosition;
+        private int FirstPosition; // -1 means "positions not stored"
         private int[]? _more;
         private int _moreCount;
-        private bool _storePositions;
 
         public TermEntry(int ordinal, int firstPosition, bool storePositions)
         {
             Ordinal = ordinal;
             Count = 1;
-            _storePositions = storePositions;
             if (storePositions)
             {
                 FirstPosition = firstPosition;
@@ -157,7 +155,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
             }
             else
             {
-                FirstPosition = 0;
+                FirstPosition = -1;
                 _more = null;
                 _moreCount = 0;
             }
@@ -166,7 +164,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         public void Add(int position)
         {
             Count++;
-            if (_storePositions)
+            if (FirstPosition >= 0)
             {
                 if (_more is null)
                 {
@@ -189,7 +187,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
 
         public int[] ToArray()
         {
-            if (!_storePositions) return Array.Empty<int>();
+            if (FirstPosition < 0) return Array.Empty<int>();
             if (_moreCount == 0) return new[] { FirstPosition };
             var arr = new int[1 + _moreCount];
             arr[0] = FirstPosition;
@@ -199,7 +197,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
 
         public IEnumerator<int> GetEnumerator()
         {
-            if (!_storePositions) yield break;
+            if (FirstPosition < 0) yield break;
             yield return FirstPosition;
             for (int i = 0; i < _moreCount; i++) yield return _more![i];
         }
