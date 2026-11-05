@@ -134,39 +134,54 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     {
         public int Ordinal;
         public int FirstPosition;
-        private List<int>? _more;
+        private int[]? _more;
+        private int _moreCount;
 
         public TermEntry(int ordinal, int firstPosition)
         {
             Ordinal = ordinal;
             FirstPosition = firstPosition;
             _more = null;
+            _moreCount = 0;
         }
 
-        public int Count => _more is null ? 1 : _more.Count + 1;
+        public int Count => 1 + _moreCount;
 
         public int this[int index] => index == 0 ? FirstPosition : _more![index - 1];
 
-        public void Add(int position) => (_more ??= new List<int>(2)).Add(position);
+        public void Add(int position)
+        {
+            if (_more is null)
+            {
+                _more = new int[2];
+                _more[0] = position;
+                _moreCount = 1;
+                return;
+            }
+            if (_moreCount == _more.Length)
+            {
+                var grown = new int[_more.Length * 2];
+                Array.Copy(_more, grown, _moreCount);
+                _more = grown;
+            }
+            _more[_moreCount++] = position;
+        }
 
         public int[] ToArray()
         {
-            if (_more is null)
+            if (_moreCount == 0)
                 return new[] { FirstPosition };
-            var arr = new int[_more.Count + 1];
+            var arr = new int[1 + _moreCount];
             arr[0] = FirstPosition;
-            for (int i = 0; i < _more.Count; i++)
-                arr[i + 1] = _more[i];
+            Array.Copy(_more!, 0, arr, 1, _moreCount);
             return arr;
         }
 
         public IEnumerator<int> GetEnumerator()
         {
             yield return FirstPosition;
-            if (_more is null)
-                yield break;
-            for (int i = 0; i < _more.Count; i++)
-                yield return _more[i];
+            for (int i = 0; i < _moreCount; i++)
+                yield return _more![i];
         }
     }
 
