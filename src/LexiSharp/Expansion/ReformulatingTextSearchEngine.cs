@@ -1,5 +1,7 @@
 using LexiSharp.Core;
+using LexiSharp.Hybrid;
 using LexiSharp.Linguistics;
+using LexiSharp.Ranking;
 using System.Text;
 
 namespace LexiSharp.Expansion;
@@ -32,6 +34,7 @@ public sealed class ReformulatingTextSearchEngine : ITextSearchEngine, IQueryCos
     private readonly ITextSearchEngine _inner;
     private readonly ITermCorrector _corrector;
     private readonly ITokenizer _tokenizer;
+    private readonly CalibratedScoreConfidence? _calibrator;
 
     /// <param name="inner">The engine that ultimately scores each variant.</param>
     /// <param name="corrector">Produces candidate replacements per term.</param>
@@ -40,13 +43,34 @@ public sealed class ReformulatingTextSearchEngine : ITextSearchEngine, IQueryCos
         ITextSearchEngine inner,
         ITermCorrector corrector,
         ITokenizer? tokenizer = null)
+        : this(inner, corrector, tokenizer, null)
+    {
+    }
+
+    /// <param name="inner">The engine that ultimately scores each variant.</param>
+    /// <param name="corrector">Produces candidate replacements per term.</param>
+    /// <param name="tokenizer">Tokenizer used to split the raw query; defaults to <see cref="Tokenizer.Default"/>.</param>
+    /// <param name="calibrator">
+    /// Optional calibrator for the inner engine's scores. When provided, variants are fused
+    /// by <see cref="Hybrid.BayesianFusionMerger"/> instead of reciprocal rank fusion,
+    /// preserving score magnitude across variants. Must be trained.
+    /// </param>
+    public ReformulatingTextSearchEngine(
+        ITextSearchEngine inner,
+        ITermCorrector corrector,
+        ITokenizer? tokenizer,
+        CalibratedScoreConfidence? calibrator)
     {
         ArgumentNullException.ThrowIfNull(inner);
         ArgumentNullException.ThrowIfNull(corrector);
 
+        if (calibrator is not null && !calibrator.IsTrained)
+            throw new ArgumentException("The calibrator must be trained.", nameof(calibrator));
+
         _inner = inner;
         _corrector = corrector;
         _tokenizer = tokenizer ?? Tokenizer.Default;
+        _calibrator = calibrator;
     }
 
     /// <summary>The corrector applied to every query.</summary>
@@ -88,6 +112,12 @@ public sealed class ReformulatingTextSearchEngine : ITextSearchEngine, IQueryCos
         {
             cancellationToken.ThrowIfCancellationRequested();
             perVariant.Add(_inner.Search(variant, options, cancellationToken));
+        }
+
+        if (_calibrator is not null)
+        {
+            var calibrators = Enumerable.Repeat(_calibrator, perVariant.Count).ToArray();
+            return new Hybrid.BayesianFusionMerger(calibrators).Merge(perVariant, query);
         }
 
         return FuseRrf(perVariant, options);
