@@ -21,7 +21,7 @@ namespace LexiSharp.Ranking;
 public sealed class FeedbackAwareTextSearchEngine : ITextSearchEngine, IQueryCostProbe
 {
     private readonly FeedbackAwareTextSearchEngine<Unit> _inner;
-    private readonly QueryFeedbackHistory _history;
+    private readonly IReadOnlyList<(QueryFeedbackHistory History, double Weight)> _histories;
 
     /// <summary>
     /// Name this engine reports to <see cref="RetrievalTelemetry"/>.
@@ -41,17 +41,49 @@ public sealed class FeedbackAwareTextSearchEngine : ITextSearchEngine, IQueryCos
         QueryFeedbackHistory history,
         double maxBoost = 1.0,
         double minSimilarity = 0.3)
+        : this(inner, new[] { (history, 1.0) }, maxBoost, minSimilarity)
     {
         ArgumentNullException.ThrowIfNull(history);
+    }
 
-        _history = history;
-        _inner = new FeedbackAwareTextSearchEngine<Unit>(inner, _ => history, maxBoost, minSimilarity);
+    /// <summary>
+    /// Multi-signal constructor: several feedback channels (click, conversion, dwell, …) with
+    /// their own weights. The boost is the weighted combination of their strengths.
+    /// </summary>
+    public FeedbackAwareTextSearchEngine(
+        ITextSearchEngine inner,
+        IEnumerable<(QueryFeedbackHistory History, double Weight)> histories,
+        double maxBoost = 1.0,
+        double minSimilarity = 0.3)
+    {
+        ArgumentNullException.ThrowIfNull(histories);
+
+        var list = histories.ToList();
+
+        if (list.Count == 0)
+            throw new ArgumentException("At least one history is required.", nameof(histories));
+
+        foreach (var (history, weight) in list)
+        {
+            ArgumentNullException.ThrowIfNull(history);
+
+            if (weight < 0)
+                throw new ArgumentOutOfRangeException(nameof(histories), weight, "Weights must be non-negative.");
+        }
+
+        _histories = list;
+        _inner = FeedbackAwareTextSearchEngine<Unit>.CreateMulti(inner, _ => list, maxBoost, minSimilarity);
     }
 
     /// <summary>
     /// The feedback history this engine learns from and contributes to.
     /// </summary>
-    public QueryFeedbackHistory History => _history;
+    public QueryFeedbackHistory History => _histories[0].History;
+
+    /// <summary>
+    /// The feedback channels this engine combines, in the order they were given.
+    /// </summary>
+    public IReadOnlyList<(QueryFeedbackHistory History, double Weight)> Histories => _histories;
 
     /// <inheritdoc />
     public void Index(IEnumerable<SearchDocument> documents) => _inner.Index(documents);
@@ -73,14 +105,35 @@ public sealed class FeedbackAwareTextSearchEngine : ITextSearchEngine, IQueryCos
     /// Records that <paramref name="documentId"/> was chosen for <paramref name="query"/>, so a
     /// future similar query boosts it.
     /// </summary>
-    public void Learn(string query, string documentId) => _history.Record(query, documentId);
+    public void Learn(string query, string documentId)
+    {
+        foreach (var (history, _) in _histories)
+            history.Record(query, documentId);
+    }
 
     /// <summary>
     /// Records that <paramref name="documentId"/> was chosen for <paramref name="query"/>, with
     /// an explicit reward (a reranker score, a query-passage similarity, a ROUGE on the generated
     /// answer, …). A reward of 1.0 is what the two-argument form adds.
     /// </summary>
-    public void Learn(string query, string documentId, double reward) => _history.Record(query, documentId, reward);
+    public void Learn(string query, string documentId, double reward)
+    {
+        foreach (var (history, _) in _histories)
+            history.Record(query, documentId, reward);
+    }
+
+    /// <summary>
+    /// Records a choice against a single channel, identified by its index in
+    /// <see cref="Histories"/>. Use this when the reward belongs to one signal
+    /// (a click, a conversion, a dwell time) rather than to all of them.
+    /// </summary>
+    public void Learn(string query, string documentId, int historyIndex, double reward = 1.0)
+    {
+        if (historyIndex < 0 || historyIndex >= _histories.Count)
+            throw new ArgumentOutOfRangeException(nameof(historyIndex));
+
+        _histories[historyIndex].History.Record(query, documentId, reward);
+    }
 
     /// <inheritdoc />
     public long EstimateCandidateCount(ReadOnlySpan<char> query, SearchOptions options) =>

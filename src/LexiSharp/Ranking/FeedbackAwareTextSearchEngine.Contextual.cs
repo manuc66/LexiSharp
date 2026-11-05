@@ -28,7 +28,7 @@ public sealed class FeedbackAwareTextSearchEngine<TPayload> : IContextualSearchE
     where TPayload : class
 {
     private readonly ITextSearchEngine _inner;
-    private readonly Func<TPayload?, QueryFeedbackHistory?> _historyFor;
+    private readonly Func<TPayload?, IReadOnlyList<(QueryFeedbackHistory History, double Weight)>?> _historiesFor;
     private readonly double _maxBoost;
     private readonly double _minSimilarity;
     private readonly bool _requirePayload;
@@ -66,18 +66,43 @@ public sealed class FeedbackAwareTextSearchEngine<TPayload> : IContextualSearchE
         double maxBoost = 1.0,
         double minSimilarity = 0.3,
         bool requirePayload = false)
+        : this(inner, payload => historyFor(payload) is { } h ? new[] { (h, 1.0) } : null, maxBoost, minSimilarity, requirePayload, 0)
+    {
+    }
+
+    private FeedbackAwareTextSearchEngine(
+        ITextSearchEngine inner,
+        Func<TPayload?, IReadOnlyList<(QueryFeedbackHistory History, double Weight)>?> historiesFor,
+        double maxBoost,
+        double minSimilarity,
+        bool requirePayload,
+        int multi)
     {
         ArgumentNullException.ThrowIfNull(inner);
-        ArgumentNullException.ThrowIfNull(historyFor);
+        ArgumentNullException.ThrowIfNull(historiesFor);
 
         if (maxBoost < 0)
             throw new ArgumentOutOfRangeException(nameof(maxBoost), maxBoost, "Max boost must be non-negative.");
 
         _inner = inner;
-        _historyFor = historyFor;
+        _historiesFor = historiesFor;
         _maxBoost = maxBoost;
         _minSimilarity = minSimilarity;
         _requirePayload = requirePayload;
+    }
+
+    /// <summary>
+    /// Multi-signal factory: a payload may resolve to several feedback channels, each with its own
+    /// weight. The boost is the weighted sum of the channels' strengths.
+    /// </summary>
+    public static FeedbackAwareTextSearchEngine<TPayload> CreateMulti(
+        ITextSearchEngine inner,
+        Func<TPayload?, IReadOnlyList<(QueryFeedbackHistory History, double Weight)>?> historiesFor,
+        double maxBoost = 1.0,
+        double minSimilarity = 0.3,
+        bool requirePayload = false)
+    {
+        return new FeedbackAwareTextSearchEngine<TPayload>(inner, historiesFor, maxBoost, minSimilarity, requirePayload, 1);
     }
 
     /// <inheritdoc />
@@ -129,25 +154,38 @@ public sealed class FeedbackAwareTextSearchEngine<TPayload> : IContextualSearchE
                 "requirePayload: false if one history serves every search.");
         }
 
-        var history = _historyFor(payload);
+        var histories = _historiesFor(payload);
 
         var results = _inner.Search(query, options);
 
-        if (history is null || history.Count == 0 || results.Count == 0)
+        if (histories is null || histories.Count == 0 || results.Count == 0)
             return results;
 
-        // Only the ids this page can actually ask about: an association carrying four hundred
-        // documents, of which a page of ten will consult ten, is four hundred inserts and a
-        // dictionary sized to four hundred on every search. Restricting it also gives the
-        // dictionary its size, which is where the growth cost was.
+        // Only the ids this page can actually ask about.
         var pageIds = new HashSet<string>(results.Count, StringComparer.Ordinal);
 
         foreach (var result in results)
             pageIds.Add(result.DocumentId);
 
-        var associations = history.GetFuzzyAssociationScores(query, _minSimilarity, pageIds);
+        // Combine the channels: a weighted sum of each history's strength, clamped to [0, 1] so
+        // a document boosted by several channels cannot exceed the single-channel ceiling.
+        var combined = new Dictionary<string, double>(pageIds.Count, StringComparer.Ordinal);
 
-        if (associations.Count == 0)
+        foreach (var (history, weight) in histories)
+        {
+            if (history is null || history.Count == 0 || weight == 0)
+                continue;
+
+            var scores = history.GetFuzzyAssociationScores(query, _minSimilarity, pageIds);
+
+            foreach (var kvp in scores)
+            {
+                combined.TryGetValue(kvp.Key, out double existing);
+                combined[kvp.Key] = Math.Min(1.0, existing + (weight * kvp.Value));
+            }
+        }
+
+        if (combined.Count == 0)
             return results;
 
         var boosted = new List<SearchResult>(results.Count);
@@ -155,7 +193,7 @@ public sealed class FeedbackAwareTextSearchEngine<TPayload> : IContextualSearchE
         foreach (var result in results)
         {
             boosted.Add(
-                associations.TryGetValue(result.DocumentId, out double strength)
+                combined.TryGetValue(result.DocumentId, out double strength)
                     ? result with { Score = result.Score + (strength * _maxBoost) }
                     : result);
         }
@@ -175,12 +213,14 @@ public sealed class FeedbackAwareTextSearchEngine<TPayload> : IContextualSearchE
     /// </returns>
     public bool Learn(TPayload payload, string query, string documentId)
     {
-        var history = _historyFor(payload);
+        var histories = _historiesFor(payload);
 
-        if (history is null)
+        if (histories is null || histories.Count == 0)
             return false;
 
-        history.Record(query, documentId);
+        foreach (var (history, _) in histories)
+            history?.Record(query, documentId);
+
         return true;
     }
 
@@ -190,12 +230,14 @@ public sealed class FeedbackAwareTextSearchEngine<TPayload> : IContextualSearchE
     /// </summary>
     public bool Learn(TPayload payload, string query, string documentId, double reward)
     {
-        var history = _historyFor(payload);
+        var histories = _historiesFor(payload);
 
-        if (history is null)
+        if (histories is null || histories.Count == 0)
             return false;
 
-        history.Record(query, documentId, reward);
+        foreach (var (history, _) in histories)
+            history?.Record(query, documentId, reward);
+
         return true;
     }
 
