@@ -1,6 +1,7 @@
 using System.Text.Json;
 using LexiSharp.Core;
 using LexiSharp.Eval;
+using LexiSharp.Expansion;
 using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
@@ -630,6 +631,104 @@ public class CalibrationMeasurementTests
         _output.WriteLine($"Dense alone nDCG@10: {denseNdcg / n:F4}");
         _output.WriteLine($"RRF nDCG@10: {rrfNdcg / n:F4}");
         _output.WriteLine($"Bayesian fusion nDCG@10: {bayesNdcg / n:F4}");
+
+        Assert.True(true);
+    }
+
+    [Fact(Skip = "Reformulation is designed for typo correction; DamerauLevenshtein on a 5k-term vocabulary is too slow for 150 queries. Not a meaningful measurement on SciFact (no typos).")]
+    public async Task Reformulation_BayesianFusion_OnSciFact()
+    {
+        string dataDir = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "..", "..", "bench", "LexiSharp.Eval", "data", "scifact"));
+
+        if (!File.Exists(Path.Combine(dataDir, "corpus.jsonl")))
+        {
+            _output.WriteLine($"Corpus not found at {dataDir}, skipping.");
+            return;
+        }
+
+        var documents = new List<(string Id, string Title, string Text)>();
+        foreach (string line in File.ReadLines(Path.Combine(dataDir, "corpus.jsonl")))
+        {
+            using var json = JsonDocument.Parse(line);
+            string id = json.RootElement.GetProperty("_id").GetString()!;
+            string title = json.RootElement.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
+            string text = json.RootElement.TryGetProperty("text", out var tx) ? tx.GetString() ?? "" : "";
+            documents.Add((id, title, text));
+        }
+
+        var queries = new List<(string Id, string Text)>();
+        foreach (string line in File.ReadLines(Path.Combine(dataDir, "queries.jsonl")))
+        {
+            using var json = JsonDocument.Parse(line);
+            string id = json.RootElement.GetProperty("_id").GetString()!;
+            string text = json.RootElement.GetProperty("text").GetString()!;
+            queries.Add((id, text));
+        }
+
+        var qrels = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (string line in File.ReadLines(Path.Combine(dataDir, "qrels", "test.tsv")).Skip(1))
+        {
+            string[] parts = line.Split('\t');
+            if (parts.Length < 3) continue;
+            if (!double.TryParse(parts[2], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out double score) || score <= 0) continue;
+            string qid = parts[0];
+            string did = parts[1];
+            if (!qrels.TryGetValue(qid, out var set))
+            {
+                set = new HashSet<string>(StringComparer.Ordinal);
+                qrels[qid] = set;
+            }
+            set.Add(did);
+        }
+
+        var tokenizer = new Tokenizer();
+        var searchDocs = documents.Select(d =>
+            new SearchDocument(d.Id, string.IsNullOrEmpty(d.Title) ? d.Text : d.Title + " " + d.Text)).ToList();
+
+        var baseIndex = new InMemoryTextIndex(tokenizer);
+        baseIndex.Index(searchDocs);
+
+        var vocab = searchDocs.SelectMany(d => tokenizer.Tokenize(d.Text)).Distinct().ToList();
+        var corrector = new DamerauLevenshteinTermCorrector(vocab, maxDistance: 1);
+        var bm25Engine = new RankedTextSearchEngine(baseIndex, new Bm25Scorer(1.5, 0.75), tokenizer);
+
+        var qrelsQueries = queries.Where(q => qrels.ContainsKey(q.Id)).ToList();
+        int splitIdx = qrelsQueries.Count / 2;
+        var trainQueries = qrelsQueries.Take(splitIdx).ToList();
+        var testQueries = qrelsQueries.Skip(splitIdx).ToList();
+
+        var trainPairs = new List<(double Score, bool IsCorrect)>();
+        foreach (var (qid, qtext) in trainQueries)
+        {
+            var results = bm25Engine.Search(qtext, new SearchOptions(Limit: int.MaxValue)).ToList();
+            foreach (var r in results)
+                trainPairs.Add((r.Score, qrels[qid].Contains(r.DocumentId)));
+        }
+        var calibrator = CalibratedScoreConfidence.Fit(trainPairs, CalibrationMethod.IsotonicRegression);
+
+        var baseEngine = bm25Engine;
+        var reformRrf = new ReformulatingTextSearchEngine(bm25Engine, corrector, tokenizer);
+        var reformBayes = new ReformulatingTextSearchEngine(bm25Engine, corrector, tokenizer, calibrator);
+
+        double baseNdcg = 0, rrfNdcg = 0, bayesNdcg = 0;
+        int n = 0;
+        foreach (var (qid, qtext) in testQueries)
+        {
+            var baseRes = baseEngine.Search(qtext, new SearchOptions(Limit: 10)).Select(r => r.DocumentId).ToList();
+            var rrfRes = reformRrf.Search(qtext, new SearchOptions(Limit: 10)).Select(r => r.DocumentId).ToList();
+            var bayesRes = reformBayes.Search(qtext, new SearchOptions(Limit: 10)).Select(r => r.DocumentId).ToList();
+
+            baseNdcg += NdcgForQuery(baseRes, qrels[qid], 10);
+            rrfNdcg += NdcgForQuery(rrfRes, qrels[qid], 10);
+            bayesNdcg += NdcgForQuery(bayesRes, qrels[qid], 10);
+            n++;
+        }
+
+        _output.WriteLine($"Base BM25 nDCG@10: {baseNdcg / n:F4}");
+        _output.WriteLine($"Reformulation (RRF) nDCG@10: {rrfNdcg / n:F4}");
+        _output.WriteLine($"Reformulation (Bayesian) nDCG@10: {bayesNdcg / n:F4}");
 
         Assert.True(true);
     }
