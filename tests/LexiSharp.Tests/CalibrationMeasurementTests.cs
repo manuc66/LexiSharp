@@ -1,5 +1,6 @@
 using System.Text.Json;
 using LexiSharp.Core;
+using LexiSharp.Eval;
 using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
@@ -446,6 +447,189 @@ public class CalibrationMeasurementTests
         MeasureBoost("Base (no damp)", baseEngine, baseEngine, testQueries, qrels, 10);
         MeasureBoost("Blind damp", baseEngine, blindDampEngine, testQueries, qrels, 10);
         MeasureBoost("Option C (conditional damp)", baseEngine, optionCEngine, testQueries, qrels, 10);
+
+        Assert.True(true);
+    }
+
+    [Fact]
+    public async Task BayesianFusion_OnSciFact()
+    {
+        string dataDir = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "..", "..", "bench", "LexiSharp.Eval", "data", "scifact"));
+
+        if (!File.Exists(Path.Combine(dataDir, "corpus.jsonl")))
+        {
+            _output.WriteLine($"Corpus not found at {dataDir}, skipping.");
+            return;
+        }
+
+        // Load corpus
+        var documents = new List<(string Id, string Title, string Text)>();
+        foreach (string line in File.ReadLines(Path.Combine(dataDir, "corpus.jsonl")))
+        {
+            using var json = JsonDocument.Parse(line);
+            string id = json.RootElement.GetProperty("_id").GetString()!;
+            string title = json.RootElement.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
+            string text = json.RootElement.TryGetProperty("text", out var tx) ? tx.GetString() ?? "" : "";
+            documents.Add((id, title, text));
+        }
+
+        var queries = new List<(string Id, string Text)>();
+        foreach (string line in File.ReadLines(Path.Combine(dataDir, "queries.jsonl")))
+        {
+            using var json = JsonDocument.Parse(line);
+            string id = json.RootElement.GetProperty("_id").GetString()!;
+            string text = json.RootElement.GetProperty("text").GetString()!;
+            queries.Add((id, text));
+        }
+
+        var qrels = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (string line in File.ReadLines(Path.Combine(dataDir, "qrels", "test.tsv")).Skip(1))
+        {
+            string[] parts = line.Split('\t');
+            if (parts.Length < 3) continue;
+            if (!double.TryParse(parts[2], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out double score) || score <= 0) continue;
+            string qid = parts[0];
+            string did = parts[1];
+            if (!qrels.TryGetValue(qid, out var set))
+            {
+                set = new HashSet<string>(StringComparer.Ordinal);
+                qrels[qid] = set;
+            }
+            set.Add(did);
+        }
+
+        var tokenizer = new Tokenizer();
+        var searchDocs = documents.Select(d =>
+            new SearchDocument(d.Id, string.IsNullOrEmpty(d.Title) ? d.Text : d.Title + " " + d.Text)).ToList();
+
+        var baseIndex = new InMemoryTextIndex(tokenizer);
+        baseIndex.Index(searchDocs);
+        var bm25Engine = new RankedTextSearchEngine(baseIndex, new Bm25Scorer(1.5, 0.75), tokenizer);
+
+        // Load dense engine
+        DenseVectors? vectors = null;
+        try
+        {
+            vectors = await DenseEmbedder.TryBuildAsync(
+                new BeirCorpus { Name = "scifact", Documents = documents.Select(d => new BeirDocument(d.Id, d.Title, d.Text)).ToList(), Queries = queries.Select(q => new BeirQuery(q.Id, q.Text)).ToList(), TestRelevance = new Dictionary<string, IReadOnlyDictionary<string, double>>() },
+                dataDir, Path.Combine(dataDir, "..", "..", "models"), 256, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _output.WriteLine($"Dense embeddings not available: {ex.Message}");
+            return;
+        }
+
+        if (vectors == null)
+        {
+            _output.WriteLine("Dense vectors null, skipping.");
+            return;
+        }
+
+        var denseEngine = new DenseTextSearchEngine(
+            new BeirCorpus { Name = "scifact", Documents = documents.Select(d => new BeirDocument(d.Id, d.Title, d.Text)).ToList(), Queries = queries.Select(q => new BeirQuery(q.Id, q.Text)).ToList(), TestRelevance = new Dictionary<string, IReadOnlyDictionary<string, double>>() },
+            vectors);
+
+        var qrelsQueries = queries.Where(q => qrels.ContainsKey(q.Id)).ToList();
+        int splitIdx = qrelsQueries.Count / 2;
+        var trainQueries = qrelsQueries.Take(splitIdx).ToList();
+        var testQueries = qrelsQueries.Skip(splitIdx).ToList();
+
+        _output.WriteLine($"Train: {trainQueries.Count}, Test: {testQueries.Count}");
+
+        // Fit calibrators on training data
+        var bm25Pairs = new List<(double Score, bool IsCorrect)>();
+        var densePairs = new List<(double Score, bool IsCorrect)>();
+
+        foreach (var (qid, qtext) in trainQueries)
+        {
+            var bm25Results = bm25Engine.Search(qtext, new SearchOptions(Limit: int.MaxValue)).ToList();
+            var denseResults = denseEngine.Search(qtext, new SearchOptions(Limit: int.MaxValue)).ToList();
+
+            var denseScoreMap = denseResults.ToDictionary(r => r.DocumentId, r => r.Score);
+
+            foreach (var r in bm25Results)
+            {
+                bool isRel = qrels[qid].Contains(r.DocumentId);
+                bm25Pairs.Add((r.Score, isRel));
+                if (denseScoreMap.TryGetValue(r.DocumentId, out double ds))
+                    densePairs.Add((ds, isRel));
+            }
+        }
+
+        var bm25Cal = CalibratedScoreConfidence.Fit(bm25Pairs, CalibrationMethod.IsotonicRegression);
+        var denseCal = CalibratedScoreConfidence.Fit(densePairs, CalibrationMethod.IsotonicRegression);
+
+        _output.WriteLine($"BM25 calibrator: AbstainScore = {bm25Cal.AbstainScore:F4}");
+        _output.WriteLine($"Dense calibrator: AbstainScore = {denseCal.AbstainScore:F4}");
+
+        // Measure: Bayesian fusion vs RRF vs BM25 vs Dense
+        double bayesNdcg = 0, rrfNdcg = 0, bm25Ndcg = 0, denseNdcg = 0;
+        int n = 0;
+
+        foreach (var (qid, qtext) in testQueries)
+        {
+            var bm25Results = bm25Engine.Search(qtext, new SearchOptions(Limit: int.MaxValue)).ToList();
+            var denseResults = denseEngine.Search(qtext, new SearchOptions(Limit: int.MaxValue)).ToList();
+
+            var bm25ScoreMap = bm25Results.ToDictionary(r => r.DocumentId, r => r.Score);
+            var denseScoreMap = denseResults.ToDictionary(r => r.DocumentId, r => r.Score);
+
+            // Bayesian fusion: for each document, combine calibrated probabilities
+            var allDocIds = bm25Results.Select(r => r.DocumentId).Union(denseResults.Select(r => r.DocumentId)).ToList();
+            var scored = new List<(string DocId, double Score)>();
+
+            foreach (string docId in allDocIds)
+            {
+                double bm25Score = bm25ScoreMap.GetValueOrDefault(docId, 0);
+                double denseScore = denseScoreMap.GetValueOrDefault(docId, 0);
+
+                double pBm25 = bm25Cal.PredictProba(bm25Score);
+                double pDense = denseCal.PredictProba(denseScore);
+
+                // Naive Bayes combination: P = (p1 * p2) / (p1*p2 + (1-p1)*(1-p2))
+                double numerator = pBm25 * pDense;
+                double denominator = numerator + (1 - pBm25) * (1 - pDense);
+                double pCombined = denominator > 0 ? numerator / denominator : 0.5;
+
+                scored.Add((docId, pCombined));
+            }
+
+            var bayesRanked = scored.OrderByDescending(s => s.Score).Select(s => s.DocId).Take(10).ToList();
+            bayesNdcg += NdcgForQuery(bayesRanked, qrels[qid], 10);
+
+            // RRF (rank-based fusion)
+            var rrfScored = new Dictionary<string, double>(StringComparer.Ordinal);
+            for (int i = 0; i < bm25Results.Count; i++)
+            {
+                string did = bm25Results[i].DocumentId;
+                rrfScored[did] = rrfScored.GetValueOrDefault(did) + 1.0 / (60 + i + 1);
+            }
+            for (int i = 0; i < denseResults.Count; i++)
+            {
+                string did = denseResults[i].DocumentId;
+                rrfScored[did] = rrfScored.GetValueOrDefault(did) + 1.0 / (60 + i + 1);
+            }
+            var rrfRanked = rrfScored.OrderByDescending(kv => kv.Value).Select(kv => kv.Key).Take(10).ToList();
+            rrfNdcg += NdcgForQuery(rrfRanked, qrels[qid], 10);
+
+            // BM25 alone
+            var bm25Ranked = bm25Results.Select(r => r.DocumentId).Take(10).ToList();
+            bm25Ndcg += NdcgForQuery(bm25Ranked, qrels[qid], 10);
+
+            // Dense alone
+            var denseRanked = denseResults.Select(r => r.DocumentId).Take(10).ToList();
+            denseNdcg += NdcgForQuery(denseRanked, qrels[qid], 10);
+
+            n++;
+        }
+
+        _output.WriteLine($"BM25 alone nDCG@10: {bm25Ndcg / n:F4}");
+        _output.WriteLine($"Dense alone nDCG@10: {denseNdcg / n:F4}");
+        _output.WriteLine($"RRF nDCG@10: {rrfNdcg / n:F4}");
+        _output.WriteLine($"Bayesian fusion nDCG@10: {bayesNdcg / n:F4}");
 
         Assert.True(true);
     }
