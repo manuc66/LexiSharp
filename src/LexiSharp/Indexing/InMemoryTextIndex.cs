@@ -17,6 +17,7 @@ namespace LexiSharp.Indexing;
 public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IVocabularyIndex, IAccumulatingIndex, ISpanAccumulatingIndex, IFieldStatisticsIndex, ISpanPostingArrayIndex
 {
     private readonly ITokenizer _tokenizer;
+    private readonly bool _storePositions;
 
     /// <summary>Document id → the document's ordinal. The one map ids are resolved through.</summary>
     private readonly Dictionary<string, int> _documents = new(StringComparer.Ordinal);
@@ -44,6 +45,10 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// free-slot scan, so enumeration does not depend on the id hashes.
     /// </remarks>
     private readonly List<SearchDocument?> _byOrdinal = [];
+    private readonly Dictionary<string, Dictionary<string, int[]>> _positionCache = new(StringComparer.Ordinal);
+    private readonly LinkedList<string> _positionCacheOrder = new();
+    private const int PositionCacheCapacity = 256;
+    private readonly object _positionCacheLock = new();
 
     /// <summary>Slots freed by <see cref="Remove"/>, reused before the list grows.</summary>
     private readonly List<int> _freeOrdinals = [];
@@ -133,44 +138,59 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     private struct TermEntry
     {
         public int Ordinal;
-        public int FirstPosition;
+        public int Count;
+        private int FirstPosition;
         private int[]? _more;
         private int _moreCount;
+        private bool _storePositions;
 
-        public TermEntry(int ordinal, int firstPosition)
+        public TermEntry(int ordinal, int firstPosition, bool storePositions)
         {
             Ordinal = ordinal;
-            FirstPosition = firstPosition;
-            _more = null;
-            _moreCount = 0;
+            Count = 1;
+            _storePositions = storePositions;
+            if (storePositions)
+            {
+                FirstPosition = firstPosition;
+                _more = null;
+                _moreCount = 0;
+            }
+            else
+            {
+                FirstPosition = 0;
+                _more = null;
+                _moreCount = 0;
+            }
         }
-
-        public int Count => 1 + _moreCount;
-
-        public int this[int index] => index == 0 ? FirstPosition : _more![index - 1];
 
         public void Add(int position)
         {
-            if (_more is null)
+            Count++;
+            if (_storePositions)
             {
-                _more = new int[2];
-                _more[0] = position;
-                _moreCount = 1;
-                return;
+                if (_more is null)
+                {
+                    _more = new int[2];
+                    _more[0] = position;
+                    _moreCount = 1;
+                    return;
+                }
+                if (_moreCount == _more.Length)
+                {
+                    var grown = new int[_more.Length * 2];
+                    Array.Copy(_more, grown, _moreCount);
+                    _more = grown;
+                }
+                _more[_moreCount++] = position;
             }
-            if (_moreCount == _more.Length)
-            {
-                var grown = new int[_more.Length * 2];
-                Array.Copy(_more, grown, _moreCount);
-                _more = grown;
-            }
-            _more[_moreCount++] = position;
         }
+
+        public int this[int index] => index == 0 ? FirstPosition : _more![index - 1];
 
         public int[] ToArray()
         {
-            if (_moreCount == 0)
-                return new[] { FirstPosition };
+            if (!_storePositions) return Array.Empty<int>();
+            if (_moreCount == 0) return new[] { FirstPosition };
             var arr = new int[1 + _moreCount];
             arr[0] = FirstPosition;
             Array.Copy(_more!, 0, arr, 1, _moreCount);
@@ -179,9 +199,9 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
 
         public IEnumerator<int> GetEnumerator()
         {
+            if (!_storePositions) yield break;
             yield return FirstPosition;
-            for (int i = 0; i < _moreCount; i++)
-                yield return _more![i];
+            for (int i = 0; i < _moreCount; i++) yield return _more![i];
         }
     }
 
@@ -314,13 +334,20 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// caller reproducing a published number needs the one that number used.
     /// </para>
     /// </param>
+    /// <param name="storePositions">
+    /// When false, positions are not stored; they are derived lazily from the token list and memoized
+    /// per document. Reduces memory at the cost of O(document length) on the first phrase/proximity
+    /// access to a document.
+    /// </param>
     public InMemoryTextIndex(
         ITokenizer? tokenizer = null,
-        AverageLengthDivisor averageLengthDivisor = AverageLengthDivisor.AllDocuments)
+        AverageLengthDivisor averageLengthDivisor = AverageLengthDivisor.AllDocuments,
+        bool storePositions = true)
     {
         _tokenizer = tokenizer ?? LexiSharp.Linguistics.Tokenizer.Default;
         _averageLengthDivisor = averageLengthDivisor;
         _documentLengthQuantization = DocumentLengthQuantization.Exact;
+        _storePositions = storePositions;
         _spanPostings = _postings.GetAlternateLookup<ReadOnlySpan<char>>();
     }
 
@@ -341,14 +368,20 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// improvement — and a caller who reaches for it has almost certainly misunderstood what it does.
     /// </para>
     /// </remarks>
+    /// <param name="tokenizer">The tokenizer.</param>
+    /// <param name="averageLengthDivisor">Which document count divides the corpus token count.</param>
+    /// <param name="documentLengthQuantization">How a length is stored for scoring.</param>
+    /// <param name="storePositions">Whether positions are stored or derived lazily.</param>
     internal InMemoryTextIndex(
         ITokenizer? tokenizer,
         AverageLengthDivisor averageLengthDivisor,
-        DocumentLengthQuantization documentLengthQuantization)
+        DocumentLengthQuantization documentLengthQuantization,
+        bool storePositions = true)
     {
         _tokenizer = tokenizer ?? LexiSharp.Linguistics.Tokenizer.Default;
         _averageLengthDivisor = averageLengthDivisor;
         _documentLengthQuantization = documentLengthQuantization;
+        _storePositions = storePositions;
         _spanPostings = _postings.GetAlternateLookup<ReadOnlySpan<char>>();
     }
 
@@ -615,7 +648,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
 
         if (!entries.TryGetValue(ordinal, out var existing))
         {
-            existing = new TermEntry(ordinal, position);
+            existing = new TermEntry(ordinal, position, _storePositions);
             entries[ordinal] = existing;
         }
         else
@@ -759,7 +792,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
 
             if (!posting.ByOrdinal.TryGetValue(ordinal, out var placed))
             {
-                placed = new TermEntry(ordinal, nextPosition);
+                placed = new TermEntry(ordinal, nextPosition, _storePositions);
                 posting.ByOrdinal[ordinal] = placed;
             }
             else
@@ -815,6 +848,15 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         }
 
         _tokens.Remove(documentId);
+
+        lock (_positionCacheLock)
+        {
+            if (_positionCache.Remove(documentId))
+            {
+                var node = _positionCacheOrder.Find(documentId);
+                if (node is not null) _positionCacheOrder.Remove(node);
+            }
+        }
 
         _totalTokens -= _lengthsByOrdinal[ordinal];
 
@@ -937,6 +979,12 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
             }
         }
 
+        if (!_storePositions)
+        {
+            // Lazy path: derive positions from the token list, memoized per document.
+            return GetLazyPositions(documentId, term);
+        }
+
         if (_documents.TryGetValue(documentId, out int ord) &&
             posting.ByOrdinal.TryGetValue(ord, out var placed))
         {
@@ -944,6 +992,56 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         }
 
         return Array.Empty<int>();
+    }
+
+    private IReadOnlyList<int> GetLazyPositions(string documentId, string term)
+    {
+        if (!_tokens.TryGetValue(documentId, out var tokens))
+            return Array.Empty<int>();
+
+        lock (_positionCacheLock)
+        {
+            if (_positionCache.TryGetValue(documentId, out var docCache) &&
+                docCache.TryGetValue(term, out var cached))
+            {
+                TouchPositionCache(documentId);
+                return cached;
+            }
+
+            var positions = new List<int>(4);
+            for (int i = 0; i < tokens.Count; i++)
+            {
+                if (tokens[i] == term)
+                    positions.Add(i);
+            }
+            var arr = positions.ToArray();
+
+            if (!_positionCache.TryGetValue(documentId, out docCache))
+            {
+                docCache = new Dictionary<string, int[]>(StringComparer.Ordinal);
+                _positionCache[documentId] = docCache;
+                _positionCacheOrder.AddFirst(documentId);
+                if (_positionCacheOrder.Count > PositionCacheCapacity)
+                {
+                    var last = _positionCacheOrder.Last!.Value;
+                    _positionCacheOrder.RemoveLast();
+                    _positionCache.Remove(last);
+                }
+            }
+            docCache[term] = arr;
+            TouchPositionCache(documentId);
+            return arr;
+        }
+    }
+
+    private void TouchPositionCache(string documentId)
+    {
+        var node = _positionCacheOrder.Find(documentId);
+        if (node is not null && node != _positionCacheOrder.First)
+        {
+            _positionCacheOrder.Remove(node);
+            _positionCacheOrder.AddFirst(node);
+        }
     }
 
     /// <inheritdoc />
@@ -1464,9 +1562,22 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
             return Array.Empty<int>();
         }
 
+        if (!_storePositions)
+        {
+            var tokens = _tokens.TryGetValue(documentId, out var t) ? t : null;
+            if (tokens is null) return Array.Empty<int>();
+            int lazyEnd = start + length;
+            var lazyInside = new List<int>(4);
+            for (int p = 0; p < tokens.Count; p++)
+            {
+                if (p >= start && p < lazyEnd && tokens[p] == term)
+                    lazyInside.Add(p);
+            }
+            return lazyInside.Count == 0 ? (IReadOnlyList<int>)Array.Empty<int>() : lazyInside;
+        }
+
         if (!_postings.TryGetValue(term, out var posting) ||
-            !_documents.TryGetValue(documentId, out int ord) ||
-            !posting.ByOrdinal.TryGetValue(ord, out var placed))
+            !posting.ByOrdinal.TryGetValue(ordinal, out var placed))
         {
             return Array.Empty<int>();
         }
