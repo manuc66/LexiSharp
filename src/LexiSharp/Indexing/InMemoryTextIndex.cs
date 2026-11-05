@@ -99,27 +99,18 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         public string Term { get; } = term;
 
         /// <summary>
-        /// Document id → where the term sits in that document: its ordinal and its positions.
+        /// Document ordinal → where the term sits in that document: its positions.
         /// </summary>
         /// <remarks>
-        /// Keyed on the id, so <see cref="IReadOnlyTextIndex.TermFrequency"/> and
-        /// <see cref="IReadOnlyTextIndex.GetTermPositions"/> stay at the two string lookups they have always
-        /// cost — one to resolve the term, one to resolve the document inside its list. Keying on
-        /// an object instead saves nothing there and costs a third lookup to recover the id, which
-        /// is a measured 0.63x on <c>SearchBenchmarks.BooleanSearch</c>.
-        /// <para>
-        /// The ordinal rides in the value rather than in the key, as a field of a struct so the
-        /// dictionary stores it inline beside the key. That is what lets the term-at-a-time pass and
-        /// the candidate union reach a document's ordinal without hashing an id: they read it out of
-        /// the value the enumerator has already fetched.
-        /// </para>
+        /// Keyed on the ordinal so removal and reads resolve the document in one step once the term
+        /// is resolved; the flat copy (sorted by ordinal) is still what the accumulation pass walks.
         /// </remarks>
-        public Dictionary<string, Posting> ByDocument { get; } = new(StringComparer.Ordinal);
+        public Dictionary<int, TermEntry> ByOrdinal { get; } = new();
 
         private FlatPosting? _flat;
 
         /// <summary>
-        /// The contiguous view of <see cref="ByDocument"/>, or <c>null</c> when there is none for
+        /// The contiguous view of <see cref="ByOrdinal"/>, or <c>null</c> when there is none for
         /// the current corpus.
         /// </summary>
         /// <remarks>
@@ -139,46 +130,44 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// One term's placement inside one document. A struct, deliberately: as a class it would be a
     /// second dependent load per posting entry on every path that walks a posting list.
     /// </summary>
-    private sealed class Posting(int ordinal, int firstPosition) : IReadOnlyList<int>
+    private struct TermEntry
     {
-        /// <summary>Positions after the first, allocated only when a term occurs again.</summary>
+        public int Ordinal;
+        public int FirstPosition;
         private List<int>? _more;
 
-        /// <summary>The document's dense ordinal, the address the scoring pass writes to.</summary>
-        public int Ordinal { get; } = ordinal;
+        public TermEntry(int ordinal, int firstPosition)
+        {
+            Ordinal = ordinal;
+            FirstPosition = firstPosition;
+            _more = null;
+        }
 
-        /// <summary>Ascending token positions of the term in the document; the phrase gate's input.</summary>
-        public IReadOnlyList<int> Positions => this;
-
-        /// <summary>
-        /// Occurrences of the term in the document — one object, one field, until there is a second.
-        /// </summary>
-        /// <remarks>
-        /// A <c>List&lt;int&gt;</c> per (term, document) pair was 25 MB and a third of an index
-        /// build's time on a 10 000-document corpus: one list object and one backing array for a
-        /// pair that almost always holds a single position. The first position now lives in the
-        /// object itself, so the common posting allocates nothing beyond the object it already
-        /// needed to hold the ordinal.
-        /// </remarks>
         public int Count => _more is null ? 1 : _more.Count + 1;
 
-        public int this[int index] => index == 0 ? firstPosition : _more![index - 1];
+        public int this[int index] => index == 0 ? FirstPosition : _more![index - 1];
 
-        /// <summary>Appends an occurrence; the first one was taken by the constructor.</summary>
         public void Add(int position) => (_more ??= new List<int>(2)).Add(position);
+
+        public int[] ToArray()
+        {
+            if (_more is null)
+                return new[] { FirstPosition };
+            var arr = new int[_more.Count + 1];
+            arr[0] = FirstPosition;
+            for (int i = 0; i < _more.Count; i++)
+                arr[i + 1] = _more[i];
+            return arr;
+        }
 
         public IEnumerator<int> GetEnumerator()
         {
-            yield return firstPosition;
-
+            yield return FirstPosition;
             if (_more is null)
                 yield break;
-
             for (int i = 0; i < _more.Count; i++)
                 yield return _more[i];
         }
-
-        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     /// <summary>
@@ -607,16 +596,17 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         }
 
         string shared = posting.Term;
-        var postings = posting.ByDocument;
+        var entries = posting.ByOrdinal;
 
-        if (!postings.TryGetValue(documentId, out var existing))
+        if (!entries.TryGetValue(ordinal, out var existing))
         {
-            existing = new Posting(ordinal, position);
-            postings[documentId] = existing;
+            existing = new TermEntry(ordinal, position);
+            entries[ordinal] = existing;
         }
         else
         {
             existing.Add(position);
+            entries[ordinal] = existing;
         }
 
         _corpusFrequencies.TryGetValue(shared, out int corpusCount);
@@ -752,14 +742,15 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
 
             string term = posting.Term;
 
-            if (!posting.ByDocument.TryGetValue(documentId, out var placed))
+            if (!posting.ByOrdinal.TryGetValue(ordinal, out var placed))
             {
-                placed = new Posting(ordinal, nextPosition);
-                posting.ByDocument[documentId] = placed;
+                placed = new TermEntry(ordinal, nextPosition);
+                posting.ByOrdinal[ordinal] = placed;
             }
             else
             {
                 placed.Add(nextPosition);
+                posting.ByOrdinal[ordinal] = placed;
             }
 
             nextPosition++;
@@ -795,7 +786,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
             foreach (var term in terms)
             {
                 if (_postings.TryGetValue(term, out var posting) &&
-                    posting.ByDocument.Remove(documentId) && posting.ByDocument.Count == 0)
+                    posting.ByOrdinal.Remove(ordinal) && posting.ByOrdinal.Count == 0)
                 {
                     _postings.Remove(term);
                 }
@@ -918,8 +909,6 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         if (!_postings.TryGetValue(term, out var posting))
             return Array.Empty<int>();
 
-        // Prefer the already-published contiguous copy when its epoch matches, so a read after a
-        // query pays no dictionary lookup. Falls back to the authoritative form otherwise.
         var flat = posting.Flat;
         if (flat is not null && flat.Epoch == _epoch &&
             _documents.TryGetValue(documentId, out int ordinal))
@@ -933,8 +922,11 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
             }
         }
 
-        if (posting.ByDocument.TryGetValue(documentId, out var placed))
-            return placed.Positions;
+        if (_documents.TryGetValue(documentId, out int ord) &&
+            posting.ByOrdinal.TryGetValue(ord, out var placed))
+        {
+            return placed.ToArray();
+        }
 
         return Array.Empty<int>();
     }
@@ -942,7 +934,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// <inheritdoc />
     public int DocumentFrequency(string term) =>
         _postings.TryGetValue(term, out var posting)
-            ? posting.ByDocument.Count
+            ? posting.ByOrdinal.Count
             : 0;
 
     /// <inheritdoc />
@@ -966,9 +958,12 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
                 return flat.Frequencies[idx];
         }
 
-        return posting.ByDocument.TryGetValue(documentId, out var placed)
-            ? placed.Positions.Count
-            : 0;
+        if (_documents.TryGetValue(documentId, out int ord) &&
+            posting.ByOrdinal.TryGetValue(ord, out var placed))
+        {
+            return placed.Count;
+        }
+        return 0;
     }
 
     /// <inheritdoc />
@@ -1078,16 +1073,12 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     // the corpus order — no candidate set needed, indistinguishable from a full scan.
     private IEnumerable<SearchDocument> EnumerateSingleTerm(string term)
     {
-        if (!_postings.TryGetValue(term, out var posting) || posting.ByDocument.Count == 0)
+        if (!_postings.TryGetValue(term, out var posting) || posting.ByOrdinal.Count == 0)
             yield break;
 
-        // The ordinal rides in the posting value, so a candidate costs one array read rather than
-        // a string-hashed lookup of the id. A posting references a live ordinal — removal removes the
-        // postings with the slot it nulls — so the `!` states an invariant rather than hiding a null,
-        // and the tidy alternative is worse: `is { }` would silently drop a candidate if it broke.
         var slots = _byOrdinal;
 
-        foreach (var placed in posting.ByDocument.Values)
+        foreach (var placed in posting.ByOrdinal.Values)
             yield return slots[placed.Ordinal]!;
     }
 
@@ -1141,7 +1132,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
                 // Ordinal to document is an array read, so a candidate costs a reference add and a
                 // read — no string hash anywhere in the walk. Same invariant as the single-term walk:
                 // a posting names a live ordinal, so the `!` is a claim, not a null in disguise.
-                foreach (var placed in posting.ByDocument.Values)
+                foreach (var placed in posting.ByOrdinal.Values)
                     candidates.Add(slots[placed.Ordinal]!);
             }
         }
@@ -1239,7 +1230,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
 
     /// <inheritdoc />
     int ISpanAccumulatingIndex.SpanDocumentFrequency(ReadOnlySpan<char> term) =>
-        _spanPostings.TryGetValue(term, out var posting) ? posting.ByDocument.Count : 0;
+        _spanPostings.TryGetValue(term, out var posting) ? posting.ByOrdinal.Count : 0;
 
     /// <inheritdoc />
     bool ISpanAccumulatingIndex.TryResolvePostings(ReadOnlySpan<char> term, bool withPositions, out PostingView postings)
@@ -1305,13 +1296,13 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// </remarks>
     private FlatPosting BuildFlatPosting(PostingList posting, int epoch)
     {
-        int count = posting.ByDocument.Count;
+        int count = posting.ByOrdinal.Count;
         var entries = new (int Ordinal, int Frequency, int[] Positions)[count];
 
         int i = 0;
-        foreach (var placed in posting.ByDocument.Values)
+        foreach (var placed in posting.ByOrdinal.Values)
         {
-            entries[i] = (placed.Ordinal, placed.Positions.Count, placed.Positions.ToArray());
+            entries[i] = (placed.Ordinal, placed.Count, placed.ToArray());
             i++;
         }
 
@@ -1459,7 +1450,8 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         }
 
         if (!_postings.TryGetValue(term, out var posting) ||
-            !posting.ByDocument.TryGetValue(documentId, out var placed))
+            !_documents.TryGetValue(documentId, out int ord) ||
+            !posting.ByOrdinal.TryGetValue(ord, out var placed))
         {
             return Array.Empty<int>();
         }
@@ -1467,7 +1459,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
         int end = start + length;
         List<int>? inside = null;
 
-        foreach (int position in placed.Positions)
+        foreach (int position in placed)
         {
             if (position >= start && position < end)
                 (inside ??= new List<int>(2)).Add(position);
