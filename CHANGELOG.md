@@ -1,5 +1,25 @@
 ## [Unreleased]
 
+## [0.10.0] — 2026-11-06
+
+### Added
+
+- **`BayesianFusionMerger`** in `LexiSharp.Hybrid`: merges per-engine results by calibrating
+  each engine's native score to a probability of relevance (`CalibratedScoreConfidence`) and
+  combining them with the naive Bayes rule, instead of blending ranks (RRF) or normalized
+  scores. Measured on SciFact (150 held-out queries): nDCG@10 = 0.6927 vs RRF 0.6628 (+0.03).
+  Requires one trained calibrator per source engine.
+
+- **`ReformulatingTextSearchEngine`** in `LexiSharp.Expansion`: generates query variants
+  from a term corrector's uncertainty (one variant per term with a distinct correction) and
+  fuses the result lists. Accepts an optional `CalibratedScoreConfidence` to fuse variants
+  by Bayesian fusion instead of RRF.
+
+- **Negative feedback support** in `QueryFeedbackHistory` and `FeedbackAwareTextSearchEngine`:
+  `Record(query, documentId, reward)` now accumulates negative rewards instead of
+  neutralizing them, and the engine clamps combined strength to [-1, 1] instead of [0, 1],
+  so a rejected document receives a penalty.
+
 ### Added
 
 - **The classifier surface has an async contract and a snapshot publish point.** `IAsyncTextClassifier`
