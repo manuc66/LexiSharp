@@ -324,6 +324,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `FuzzyTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that widens the query with vocabulary terms within a small edit distance of each query term — in-memory fuzzy matching, the counterpart of… |
 | `PmiTermExpander` | class | `ITermExpander` | A corpus-derived ITermExpander: it learns which terms habitually appear in the same context window and expands a document with the top positively associated… |
 | `PmiTermExpanderOptions` | class | — | Configuration of a PmiTermExpander: how the corpus is analyzed and how many expansion terms each document gets. |
+| `ReformulatingTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that generates query variants from a term corrector's uncertainty and fuses their results, instead of committing to a single correction or… |
 | `TransformingTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that runs an IQueryTransformer on the raw query, searches the inner engine for every variant, and fuses the rankings — the query-side… |
 
 #### `LexiSharp.Highlighting`
@@ -339,6 +340,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
 | `AsyncCrossEncoderReranker` | class | `IAsyncReranker` | Asynchronous counterpart of CrossEncoderReranker: re-scores every candidate with a pairwise (cross-encoder) model via IAsyncCrossEncoderScorer and reorders the… |
+| `BayesianFusionMerger` | class | `IResultMerger` | Merges per-engine results by calibrating each engine's native score to a probability of relevance and combining them with the naive Bayes rule, instead of… |
 | `CascadeRerankOptions` | record | — | Controls how a CascadeRerankPipeline passes candidates from stage to stage. |
 | `CascadeRerankPipeline` | class | `IReranker` | Chains rerankers in cascade: each stage re-ranks the output of the previous one, and the shortlist may be trimmed between stages so only the strongest… |
 | `CombMNZResultMerger` | class | `IResultMerger` | Blend strategy that multiplies each document's CombSUM score by the number of engines that retrieved it — the classic CombMNZ. |
