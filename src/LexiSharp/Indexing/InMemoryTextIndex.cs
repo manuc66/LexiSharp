@@ -216,13 +216,19 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// and it is why the build is skipped for the tiny lists that gain nothing from it.
     /// </para>
     /// </remarks>
-    private sealed class FlatPosting(int epoch, int[] ordinals, int[] frequencies)
+    private sealed class FlatPosting(int epoch, int[] ordinals, int[] frequencies, int[] positionOffsets, int[] positions)
     {
         public int Epoch { get; } = epoch;
 
         public int[] Ordinals { get; } = ordinals;
 
         public int[] Frequencies { get; } = frequencies;
+
+        /// <summary>Cumulative offsets into <see cref="Positions"/>; length is <see cref="Count"/> + 1.</summary>
+        public int[] PositionOffsets { get; } = positionOffsets;
+
+        /// <summary>All of the term's positions, flattened in ordinal order.</summary>
+        public int[] Positions { get; } = positions;
 
         public int Count => Ordinals.Length;
 
@@ -909,11 +915,26 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// <inheritdoc />
     public IReadOnlyList<int> GetTermPositions(string documentId, string term)
     {
-        if (_postings.TryGetValue(term, out var posting) &&
-            posting.ByDocument.TryGetValue(documentId, out var placed))
+        if (!_postings.TryGetValue(term, out var posting))
+            return Array.Empty<int>();
+
+        // Prefer the already-published contiguous copy when its epoch matches, so a read after a
+        // query pays no dictionary lookup. Falls back to the authoritative form otherwise.
+        var flat = posting.Flat;
+        if (flat is not null && flat.Epoch == _epoch &&
+            _documents.TryGetValue(documentId, out int ordinal))
         {
-            return placed.Positions;
+            int idx = Array.BinarySearch(flat.Ordinals, ordinal);
+            if (idx >= 0)
+            {
+                int start = flat.PositionOffsets[idx];
+                int length = flat.Frequencies[idx];
+                return new ArraySegment<int>(flat.Positions, start, length);
+            }
         }
+
+        if (posting.ByDocument.TryGetValue(documentId, out var placed))
+            return placed.Positions;
 
         return Array.Empty<int>();
     }
@@ -931,11 +952,24 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
             : 0;
 
     /// <inheritdoc />
-    public int TermFrequency(string documentId, string term) =>
-        _postings.TryGetValue(term, out var posting) &&
-        posting.ByDocument.TryGetValue(documentId, out var placed)
+    public int TermFrequency(string documentId, string term)
+    {
+        if (!_postings.TryGetValue(term, out var posting))
+            return 0;
+
+        var flat = posting.Flat;
+        if (flat is not null && flat.Epoch == _epoch &&
+            _documents.TryGetValue(documentId, out int ordinal))
+        {
+            int idx = Array.BinarySearch(flat.Ordinals, ordinal);
+            if (idx >= 0)
+                return flat.Frequencies[idx];
+        }
+
+        return posting.ByDocument.TryGetValue(documentId, out var placed)
             ? placed.Positions.Count
             : 0;
+    }
 
     /// <inheritdoc />
     public int DocumentLength(string documentId) =>
@@ -1288,21 +1322,39 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     private FlatPosting BuildFlatPosting(PostingList posting, int epoch)
     {
         int count = posting.ByDocument.Count;
-        var ordinals = new int[count];
-        var frequencies = new int[count];
+        var entries = new (int Ordinal, int Frequency, int[] Positions)[count];
 
         int i = 0;
-
         foreach (var placed in posting.ByDocument.Values)
         {
-            ordinals[i] = placed.Ordinal;
-            frequencies[i] = placed.Positions.Count;
+            entries[i] = (placed.Ordinal, placed.Positions.Count, placed.Positions.ToArray());
             i++;
         }
 
-        Array.Sort(ordinals, frequencies);
+        Array.Sort(entries, (a, b) => a.Ordinal.CompareTo(b.Ordinal));
 
-        return new FlatPosting(epoch, ordinals, frequencies);
+        var ordinals = new int[count];
+        var frequencies = new int[count];
+        var offsets = new int[count + 1];
+        int total = 0;
+        for (i = 0; i < count; i++)
+        {
+            ordinals[i] = entries[i].Ordinal;
+            frequencies[i] = entries[i].Frequency;
+            offsets[i] = total;
+            total += entries[i].Frequency;
+        }
+        offsets[count] = total;
+
+        var positions = new int[total];
+        int at = 0;
+        for (i = 0; i < count; i++)
+        {
+            entries[i].Positions.CopyTo(positions, at);
+            at += entries[i].Frequency;
+        }
+
+        return new FlatPosting(epoch, ordinals, frequencies, offsets, positions);
     }
 
     /// <inheritdoc />
