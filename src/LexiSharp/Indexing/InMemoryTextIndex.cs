@@ -1270,25 +1270,9 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// </remarks>
     private int[] FlatPositionsFor(PostingList posting, FlatPosting flat)
     {
-        int total = 0;
-
-        for (int i = 0; i < flat.Frequencies.Length; i++)
-            total += flat.Frequencies[i];
-
-        var positions = new int[total];
-        int at = 0;
-
-        for (int i = 0; i < flat.Ordinals.Length; i++)
-        {
-            // A posting's ordinals name live documents: removal removes the postings with the slot
-            // it nulls. The `!` is that claim.
-            string id = _byOrdinal[flat.Ordinals[i]]!.Id;
-
-            foreach (int position in posting.ByDocument[id].Positions)
-                positions[at++] = position;
-        }
-
-        return positions;
+        // Positions are already flattened in ordinal order inside the published copy, so this
+        // path no longer walks ByDocument. The shared array is immutable once published.
+        return flat.Positions;
     }
 
     /// <inheritdoc />
