@@ -239,7 +239,7 @@ public sealed class QueryFeedbackHistory
                 double strength = similarity * (kvp.Value / maxWeight);
 
                 documentScores.TryGetValue(kvp.Key, out double existing);
-                documentScores[kvp.Key] = Math.Max(existing, strength);
+                documentScores[kvp.Key] = existing + strength;
             }
         }
 
