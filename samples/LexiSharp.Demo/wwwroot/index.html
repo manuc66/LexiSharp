@@ -152,8 +152,16 @@
 </aside>
 
 <script type="module">
-const laneColors = { lexical: "var(--accent)", semantic: "var(--accent-2)", dense: "var(--accent-4)", hybrid: "var(--accent-3)", rerank: "#f2789f", segment: "#7ad0c0" };
+const laneColors = { lexical: "var(--accent)", semantic: "var(--accent-2)", dense: "var(--accent-4)", hybrid: "var(--accent-3)", rerank: "#f2789f", segment: "#7ad0c0", "feedback-global": "#f7c948", "feedback-session": "#7ad0c0" };
 const $ = (id) => document.getElementById(id);
+
+// A per-browser id for the ephemeral feedback history. It is never sent to a third party and is
+// only used to key an in-memory history on the server; clearing storage resets it.
+const sessionId = (() => {
+  let id = localStorage.getItem("lexisharp-session");
+  if (!id) { id = crypto.randomUUID(); localStorage.setItem("lexisharp-session", id); }
+  return id;
+})();
 
 function esc(value) {
   return String(value).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -221,6 +229,10 @@ function hitCard(hit, laneKey) {
     <span class="hit-cat">${esc(hit.category)}</span>
     <div class="hit-text">${hit.highlighted}</div>
     ${sourceChips(hit.sources)}
+    <div class="learn-row" style="margin-top:6px;display:flex;gap:6px;align-items:center;">
+      <button class="learn ghost" data-id="${esc(hit.id)}" style="padding:4px 8px;font-size:11px;">mark useful</button>
+      <label style="font-size:11px;color:var(--muted);"><input type="checkbox" class="learn-global" /> share with everyone</label>
+    </div>
   </div>`;
 }
 
@@ -242,6 +254,21 @@ function render(response) {
   document.querySelectorAll(".hit").forEach((node) => node.addEventListener("click", () => {
     explain(node.dataset.lane, node.dataset.id);
   }));
+
+  document.querySelectorAll(".learn").forEach((btn) => btn.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    const query = $("q").value.trim();
+    if (!query) return;
+    const global = btn.parentElement.querySelector(".learn-global").checked;
+    try {
+      await fetch("/api/learn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, documentId: btn.dataset.id, sessionId, global }),
+      });
+      await runSearch();
+    } catch { /* ignore */ }
+  }));
 }
 
 async function runSearch() {
@@ -249,7 +276,7 @@ async function runSearch() {
   $("error").textContent = "";
   if (!query) { $("lanes").innerHTML = ""; return; }
   try {
-    const response = await getJson("/api/compare?q=" + encodeURIComponent(query) + "&limit=6");
+    const response = await getJson("/api/compare?q=" + encodeURIComponent(query) + "&limit=6&sessionId=" + encodeURIComponent(sessionId));
     render(response);
   } catch (error) {
     $("error").textContent = "Search failed: " + error.message;
