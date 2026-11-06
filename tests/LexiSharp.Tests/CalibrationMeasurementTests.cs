@@ -632,7 +632,16 @@ public class CalibrationMeasurementTests
         _output.WriteLine($"RRF nDCG@10: {rrfNdcg / n:F4}");
         _output.WriteLine($"Bayesian fusion nDCG@10: {bayesNdcg / n:F4}");
 
-        Assert.True(true);
+        // Published (CHANGELOG 0.10.0): 0.6927 vs RRF 0.6628 (+0.03), linear nDCG@10.
+        // Pinned here so the number cannot drift silently: a test that only printed it
+        // passed whether the measurement held or not, which is the shape the AGENTS.md rule
+        // forbids. The tolerance is the harness's 0.002, on 150 held-out queries.
+        Assert.True(
+            bayesNdcg / n >= 0.6927 - 0.002,
+            $"Bayesian fusion regressed: {bayesNdcg / n:F4} < 0.6927 - 0.002 on SciFact (150 held-out queries).");
+        Assert.True(
+            bayesNdcg / n > rrfNdcg / n + 0.02,
+            $"Bayesian fusion no longer beats RRF by 0.02 nDCG@10: {bayesNdcg / n:F4} vs {rrfNdcg / n:F4}.");
     }
 
     [Fact(Skip = "Reformulation is designed for typo correction; DamerauLevenshtein on a 5k-term vocabulary is too slow for 150 queries. Not a meaningful measurement on SciFact (no typos).")]
