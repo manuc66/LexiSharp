@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Encodings.Web;
 using LexiSharp;
@@ -32,6 +33,9 @@ public sealed class DemoSearchService
     private readonly InMemoryVectorSearchEngine _dense;
     private readonly HybridTextSearchEngine _hybrid;
     private readonly RerankedTextSearchEngine _rerank;
+    private readonly QueryFeedbackHistory _globalFeedbackHistory;
+    private readonly FeedbackAwareTextSearchEngine _feedbackGlobal;
+    private readonly ConcurrentDictionary<string, QueryFeedbackHistory> _sessionFeedbackHistories = new(StringComparer.Ordinal);
 
     /// <summary>
     /// The same corpus, served from a committed segment store rather than from memory.
@@ -104,6 +108,11 @@ public sealed class DemoSearchService
             _hybrid,
             new CrossEncoderReranker(new OverlapCrossEncoder(_tokenizer)));
 
+        // Feedback channels: a corpus-level (global) history shared by everyone, and per-session
+        // histories that live only in memory for the lifetime of a browser session. Neither stores
+        // anything beyond term counts and chosen document ids.
+        _globalFeedbackHistory = new QueryFeedbackHistory(_tokenizer);
+        _feedbackGlobal = new FeedbackAwareTextSearchEngine(_hybrid, _globalFeedbackHistory, maxBoost: 5.0);
         // The segment lane: the same documents, the same tokenizer, written to a segment, committed,
         // and reopened from disk. A caller of the demo sees the page it serves beside the lexical
         // lane's, which is the parity claim made visible rather than asserted.
@@ -199,7 +208,7 @@ public sealed class DemoSearchService
         int Segments);
 
     /// <summary>Runs the five strategies and returns their pages side by side.</summary>
-    public CompareResponse Compare(string query, int limit)
+    public CompareResponse Compare(string query, int limit, string? sessionId = null)
     {
         var lanes = new List<LaneResult>
         {
@@ -209,9 +218,52 @@ public sealed class DemoSearchService
             Measure("hybrid", "Hybrid · RRF fusion", "lexical, semantic and dense fused by rank", () => HybridHits(query, limit)),
             Measure("rerank", "Hybrid + reranker", "query-term overlap reorders the hybrid shortlist", () => RerankHits(query, limit)),
             Measure("segment", "Segment · BM25 from disk", "the same BM25, served from a committed segment", () => SegmentHits(query, limit)),
+            Measure("feedback-global", "Feedback · global history", "corpus-level learned preferences, shared by everyone", () => FeedbackHits(query, limit, _globalFeedbackHistory)),
         };
 
+        if (!string.IsNullOrWhiteSpace(sessionId))
+        {
+            lanes.Add(Measure("feedback-session", "Feedback · session history", "per-browser ephemeral preferences, never persisted", () => FeedbackHits(query, limit, GetSessionHistory(sessionId!))));
+        }
+
         return new CompareResponse(query, lanes);
+    }
+
+    /// <summary>
+    /// Records that <paramref name="documentId"/> was chosen for <paramref name="query"/>, so a
+    /// future similar query boosts it. <paramref name="global"/> selects the corpus-level history;
+    /// otherwise the per-session history keyed by <paramref name="sessionId"/> is used.
+    /// </summary>
+    public void Learn(string query, string documentId, string? sessionId, bool global)
+    {
+        if (global || string.IsNullOrWhiteSpace(sessionId))
+        {
+            _feedbackGlobal.Learn(query, documentId);
+            return;
+        }
+
+        GetSessionHistory(sessionId!).Record(query, documentId);
+    }
+
+    private QueryFeedbackHistory GetSessionHistory(string sessionId) =>
+        _sessionFeedbackHistories.GetOrAdd(sessionId, _ => new QueryFeedbackHistory(_tokenizer));
+
+    private IReadOnlyList<HitResult> FeedbackHits(string query, int limit, QueryFeedbackHistory history)
+    {
+        var engine = history == _globalFeedbackHistory
+            ? _feedbackGlobal
+            : new FeedbackAwareTextSearchEngine(_hybrid, history, maxBoost: 5.0);
+
+        var hits = engine.Search(query, new SearchOptions(Limit: limit));
+        var results = new HitResult[hits.Count];
+
+        for (int i = 0; i < hits.Count; i++)
+        {
+            var hit = hits[i];
+            results[i] = ToHit(hit.DocumentId, hit.Score, hit.Document, Highlight(query, hit.Document.Text), null);
+        }
+
+        return results;
     }
 
     /// <summary>

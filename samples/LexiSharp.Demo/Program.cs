@@ -79,10 +79,19 @@ var app = builder.Build();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-app.MapGet("/api/compare", (DemoSearchService service, string? q, int? limit) =>
+app.MapGet("/api/compare", (DemoSearchService service, string? q, int? limit, string? sessionId) =>
     string.IsNullOrWhiteSpace(q)
         ? Results.BadRequest(new { error = "The 'q' query parameter is required." })
-        : Results.Ok(service.Compare(q, Math.Clamp(limit ?? 6, 1, 25))));
+        : Results.Ok(service.Compare(q, Math.Clamp(limit ?? 6, 1, 25), sessionId)));
+
+app.MapPost("/api/learn", (DemoSearchService service, LearnRequest request) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Query) || string.IsNullOrWhiteSpace(request.DocumentId))
+        return Results.BadRequest(new { error = "The 'query' and 'documentId' fields are required." });
+
+    service.Learn(request.Query, request.DocumentId, request.SessionId, request.Global);
+    return Results.Ok(new { ok = true });
+});
 
 app.MapGet("/api/explain", (DemoSearchService service, string? q, string? lane, string? id) =>
 {
@@ -145,3 +154,4 @@ static string Usage() =>
 
      The demo serves on http://localhost:5000 unless ASPNETCORE_URLS says otherwise.
      """;
+public sealed record LearnRequest(string Query, string DocumentId, string? SessionId = null, bool Global = false);
