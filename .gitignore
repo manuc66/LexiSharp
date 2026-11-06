@@ -10,6 +10,7 @@ BenchmarkDotNet.Artifacts/
 artifacts/
 TestResults/
 bench/LexiSharp.Eval/data/
+bench/LexiSharp.Eval/models/
 
 # CocoIndex pipeline (Python subproject)
 cocoindex/.venv/
