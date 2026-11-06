@@ -189,3 +189,94 @@ using LexiSharp.Expansion;
 ITextSearchEngine engine = new ExpandingTextSearchEngine(bm25Engine, expansion);
 var hits = engine.Search("refresh"); // query becomes "refresh token access oauth session"
 ```
+
+## Adapting a Microsoft.Extensions.AI generator
+
+If your embeddings come from a Microsoft.Extensions.AI `IEmbeddingGenerator<string, Embedding<float>>`
+(OpenAI, Azure OpenAI, Ollama, …), the adapter is short enough to live in your own code rather than
+in a package: copy the class below and adjust the prefixes for your model. The core stays free of
+any MEAI dependency, and you keep full control over the backend.
+
+```csharp
+using System;
+using LexiSharp.Core;
+using Microsoft.Extensions.AI;
+
+public sealed class MeaiEmbeddingProvider : IEmbeddingProvider, IBatchEmbeddingProvider
+{
+    private readonly IEmbeddingGenerator<string, Embedding<float>> _generator;
+    private readonly string _queryPrefix;
+    private readonly string _passagePrefix;
+    private int _dimension;
+    private readonly object _lock = new();
+
+    public MeaiEmbeddingProvider(
+        IEmbeddingGenerator<string, Embedding<float>> generator,
+        string queryPrefix = "",
+        string passagePrefix = "",
+        int dimension = 0)
+    {
+        _generator = generator;
+        _queryPrefix = queryPrefix;
+        _passagePrefix = passagePrefix;
+        _dimension = dimension;
+    }
+
+    public int Dimension
+    {
+        get
+        {
+            if (_dimension > 0) return _dimension;
+            lock (_lock)
+            {
+                if (_dimension > 0) return _dimension;
+                var probe = GetTextEmbeddingAsync("", EmbeddingUse.Passage).GetAwaiter().GetResult();
+                if (probe.IsEmpty)
+                    throw new InvalidOperationException("supply the dimension explicitly");
+                _dimension = probe.Length;
+                return _dimension;
+            }
+        }
+    }
+
+    public async Task<ReadOnlyMemory<float>> GetTextEmbeddingAsync(
+        string text, EmbeddingUse use, CancellationToken ct = default)
+    {
+        string input = (use == EmbeddingUse.Query ? _queryPrefix : _passagePrefix) + text;
+        var result = await _generator.GenerateAsync(new[] { input }, null, ct).ConfigureAwait(false);
+        if (result.Count == 0) return ReadOnlyMemory<float>.Empty;
+        var vector = result[0].Vector;
+        if (_dimension == 0 && !vector.IsEmpty) { lock (_lock) { if (_dimension == 0) _dimension = vector.Length; } }
+        return vector;
+    }
+
+    public async Task<IReadOnlyList<ReadOnlyMemory<float>>> GetTextEmbeddingsAsync(
+        IReadOnlyList<string> texts, EmbeddingUse use, CancellationToken ct = default)
+    {
+        if (texts.Count == 0) return Array.Empty<ReadOnlyMemory<float>>();
+        var inputs = new string[texts.Count];
+        for (int i = 0; i < texts.Count; i++)
+            inputs[i] = (use == EmbeddingUse.Query ? _queryPrefix : _passagePrefix) + texts[i];
+        var result = await _generator.GenerateAsync(inputs, null, ct).ConfigureAwait(false);
+        if (result.Count != texts.Count)
+            throw new InvalidOperationException(
+                $"generator returned {result.Count} vector(s) for {texts.Count} input(s)");
+        var vectors = new ReadOnlyMemory<float>[texts.Count];
+        for (int i = 0; i < texts.Count; i++) vectors[i] = result[i].Vector;
+        return vectors;
+    }
+}
+```
+
+Register it normally:
+
+```csharp
+services.AddEmbeddingGenerator<string, Embedding<float>>(sp =>
+    new OpenAIClient(apiKey).AsEmbeddingGenerator("text-embedding-3-small"));
+
+services.AddSingleton<IEmbeddingProvider>(sp =>
+    new MeaiEmbeddingProvider(
+        sp.GetRequiredService<IEmbeddingGenerator<string, Embedding<float>>>(),
+        queryPrefix: "query: ",
+        passagePrefix: "passage: "));
+```
