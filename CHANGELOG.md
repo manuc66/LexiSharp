@@ -1,5 +1,16 @@
 ## [Unreleased]
 
+### Added
+
+- **`IContextualEvidenceScorer`** (core) and **`ContextualExpansionSearchEngine`**
+  (`LexiSharp.Expansion`): multi-hop evidence retrieval in the SAG2 style — an initial BM25
+  pass followed by passage-to-term-to-passage expansion, where a contextual decision model
+  (JEV and its open, locally-runnable alternatives: jevos, Von, Decider, or any chat model
+  behind `Microsoft.Extensions.AI`) judges each candidate against the evidence chain assembled
+  so far. LexiSharp never runs the model; it is supplied by the consumer behind the seam. A
+  model-free `ContextualTermOverlapScorer` exercises the loop offline. Parameters (B, s, L, p, H)
+  are configurable; the default matches the published architecture (B=100, s=10, L=20, p=5, H=2).
+
 ## [0.10.0] — 2026-11-06
 
 ### Added
