@@ -10,6 +10,15 @@
   scores. Measured on SciFact (150 held-out queries): nDCG@10 = 0.6927 vs RRF 0.6628 (+0.03).
   Requires one trained calibrator per source engine.
 
+  Reproduces from `CalibrationMeasurementTests.BayesianFusion_OnSciFact` on the cached SciFact
+  corpus and embeddings (no network). Settings: SciFact (BEIR, md5 5f7d1de60b170fc8027bb7898e2efca1),
+  300 test queries, 150/150 train/held-out split by file order; `Tokenizer.Default` (lowercase,
+  diacritics folded, no stemming); BM25 k1=1.5, b=0.75; dense multilingual-e5-small at 256 tokens,
+  384 dimensions; gain convention linear (1.0 per relevant document); calibrator
+  `CalibratedScoreConfidence` with `CalibrationMethod.IsotonicRegression` per engine; fusion is the
+  naive Bayes combination `(p₁·p₂)/(p₁·p₂+(1−p₁)·(1−p₂))`; RRF k=60; metric nDCG@10. The test
+  now asserts 0.6927 (±0.002) and a margin of 0.02 over RRF, instead of `Assert.True(true)`.
+
 - **`ReformulatingTextSearchEngine`** in `LexiSharp.Expansion`: generates query variants
   from a term corrector's uncertainty (one variant per term with a distinct correction) and
   fuses the result lists. Accepts an optional `CalibratedScoreConfidence` to fuse variants
