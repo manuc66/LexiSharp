@@ -285,31 +285,44 @@ public sealed class DemoSearchService
         int Documents,
         int Segments);
 
-    /// <summary>Runs the five strategies and returns their pages side by side.</summary>
+    /// <summary>Runs the strategies and returns their pages side by side, with their syntax mode.</summary>
     public CompareResponse Compare(string query, int limit, string? sessionId = null)
     {
+        QueryFeatures features = QuerySyntax.Detect(query);
+        bool hasSyntax = features != QueryFeatures.None;
+
+        string Mode(bool usesDense) => hasSyntax && usesDense ? "plain" : "full";
+
         var lanes = new List<LaneResult>
         {
-            Measure("lexical", "Lexical · BM25", "literal term match, length-normalized", () => LexicalHits(query, limit)),
-            Measure("semantic", "Semantic · BM25 + PMI expansion", "documents carry corpus-derived related terms", () => SemanticHits(query, limit)),
-            Measure("dense", "Dense · hashing embedding", "cosine over deterministic hashed vectors", () => DenseHits(query, limit)),
-            Measure("hybrid", "Hybrid · RRF fusion", "lexical, semantic and dense fused by rank", () => HybridHits(query, limit)),
-            Measure("rerank", "Hybrid + reranker", "query-term overlap reorders the hybrid shortlist", () => RerankHits(query, limit)),
-            Measure("reformulate", "Reformulate · typo-tolerant", "query variants from a keyboard-aware corrector", () => ReformulateHits(query, limit)),
-            Measure("mmr", "MMR · diversity", "maximal marginal relevance over hashed embeddings", () => MmrHits(query, limit)),
-            Measure("contextual", "Contextual · expansion", "multi-hop expansion guided by term overlap", () => ContextualHits(query, limit)),
-            Measure("cascade", "Cascade · rerank+MMR", "overlap rerank then diversity pass", () => CascadeHits(query, limit)),
-            Measure("bayesian", "Bayesian · fusion", "calibrated fusion of lexical, semantic and dense", () => BayesianHits(query, limit)),
-            Measure("segment", "Segment · BM25 from disk", "the same BM25, served from a committed segment", () => SegmentHits(query, limit)),
-            Measure("feedback-global", "Feedback · global history", "corpus-level learned preferences, shared by everyone", () => FeedbackHits(query, limit, _globalFeedbackHistory)),
+            Measure("lexical", "Lexical · BM25", "literal term match, length-normalized", Mode(false), () => LexicalHits(query, limit)),
+            Measure("semantic", "Semantic · BM25 + PMI expansion", "documents carry corpus-derived related terms", Mode(false), () => SemanticHits(query, limit)),
+            Measure("dense", "Dense · hashing embedding", "cosine over deterministic hashed vectors", Mode(true), () => DenseHits(query, limit)),
+            Measure("hybrid", "Hybrid · RRF fusion", "lexical, semantic and dense fused by rank", Mode(true), () => HybridHits(query, limit)),
+            Measure("rerank", "Hybrid + reranker", "query-term overlap reorders the hybrid shortlist", Mode(true), () => RerankHits(query, limit)),
+            Measure("reformulate", "Reformulate · typo-tolerant", "query variants from a keyboard-aware corrector", Mode(false), () => ReformulateHits(query, limit)),
+            Measure("mmr", "MMR · diversity", "maximal marginal relevance over hashed embeddings", Mode(true), () => MmrHits(query, limit)),
+            Measure("contextual", "Contextual · expansion", "multi-hop expansion guided by term overlap", Mode(false), () => ContextualHits(query, limit)),
+            Measure("cascade", "Cascade · rerank+MMR", "overlap rerank then diversity pass", Mode(true), () => CascadeHits(query, limit)),
+            Measure("bayesian", "Bayesian · fusion", "calibrated fusion of lexical, semantic and dense", Mode(true), () => BayesianHits(query, limit)),
+            Measure("segment", "Segment · BM25 from disk", "the same BM25, served from a committed segment", Mode(false), () => SegmentHits(query, limit)),
+            Measure("feedback-global", "Feedback · global history", "corpus-level learned preferences, shared by everyone", Mode(true), () => FeedbackHits(query, limit, _globalFeedbackHistory)),
         };
 
         if (!string.IsNullOrWhiteSpace(sessionId))
         {
-            lanes.Add(Measure("feedback-session", "Feedback · session history", "per-browser ephemeral preferences, never persisted", () => FeedbackHits(query, limit, GetSessionHistory(sessionId!))));
+            lanes.Add(Measure("feedback-session", "Feedback · session history", "per-browser ephemeral preferences, never persisted", Mode(true), () => FeedbackHits(query, limit, GetSessionHistory(sessionId!))));
         }
 
-        return new CompareResponse(query, lanes);
+        var plainFallback = lanes
+            .Where(l => l.SyntaxMode == "plain" && hasSyntax)
+            .Select(l => l.Key)
+            .ToList();
+
+        return new CompareResponse(
+            query,
+            lanes,
+            new QuerySyntaxDto(features.ToString(), hasSyntax, plainFallback));
     }
 
     /// <summary>
@@ -563,12 +576,26 @@ public sealed record SearchMetricDto(string Lane, double NdcgAt5);
     }
 
     /// <summary>
-    /// The dense engine and every hybrid that includes it support plain queries only. Phrase
-    /// syntax is honoured by the lexical lanes, so the dense lanes search the words without the
-    /// quote operators instead of failing the whole comparison.
+    /// The dense engine and every hybrid that includes it support plain queries only. The lexical
+    /// lanes honour the syntax, so the dense lanes search the plain words instead of failing the
+    /// whole comparison: quotes, prefix stars and leading +/− operators are removed.
     /// </summary>
-    private static string WithoutPhraseSyntax(string query) =>
-        query.Replace("\"", string.Empty, StringComparison.Ordinal);
+    private static string WithoutPhraseSyntax(string query)
+    {
+        if (string.IsNullOrEmpty(query))
+            return query;
+
+        var cleaned = query
+            .Replace("\"", string.Empty, StringComparison.Ordinal)
+            .Replace("*", string.Empty, StringComparison.Ordinal);
+
+        var tokens = cleaned.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+
+        for (int i = 0; i < tokens.Length; i++)
+            tokens[i] = tokens[i].TrimStart('+', '-');
+
+        return string.Join(' ', tokens);
+    }
 
     private IReadOnlyList<HitResult> LexicalHits(string query, int limit)
     {
@@ -742,13 +769,24 @@ public sealed record SearchMetricDto(string Lane, double NdcgAt5);
         return results;
     }
 
-    private static LaneResult Measure(string key, string label, string description, Func<IReadOnlyList<HitResult>> run)
+    private static LaneResult Measure(
+        string key,
+        string label,
+        string description,
+        string syntaxMode,
+        Func<IReadOnlyList<HitResult>> run)
     {
         var stopwatch = Stopwatch.StartNew();
         var hits = run();
         stopwatch.Stop();
 
-        return new LaneResult(key, label, description, Math.Round(stopwatch.Elapsed.TotalMilliseconds, 3), hits);
+        return new LaneResult(
+            key,
+            label,
+            description,
+            Math.Round(stopwatch.Elapsed.TotalMilliseconds, 3),
+            hits,
+            syntaxMode);
     }
 
     private HitResult ToHit(

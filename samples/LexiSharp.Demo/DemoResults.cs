@@ -1,15 +1,29 @@
 namespace LexiSharp.Demo;
 
-/// <summary>Everything one search returns: the query and one entry per compared strategy.</summary>
-public sealed record CompareResponse(string Query, IReadOnlyList<LaneResult> Lanes);
+/// <summary>Everything one search returns: the query, the syntax it carried, and one entry per strategy.</summary>
+public sealed record CompareResponse(
+    string Query,
+    IReadOnlyList<LaneResult> Lanes,
+    QuerySyntaxDto Syntax);
+
+/// <summary>What the query carried and which lanes had to fall back to plain words.</summary>
+/// <param name="Detected">Detected features, for example <c>Phrases</c> or <c>None</c>.</param>
+/// <param name="HasSyntax">Whether the query used any operator at all.</param>
+/// <param name="PlainFallbackLanes">Lanes that searched the plain words because their engine cannot honour the syntax.</param>
+public sealed record QuerySyntaxDto(
+    string Detected,
+    bool HasSyntax,
+    IReadOnlyList<string> PlainFallbackLanes);
 
 /// <summary>One retrieval strategy, its timing, and its ranked page.</summary>
+/// <param name="SyntaxMode"><c>full</c> when the lane honoured the query syntax, <c>plain</c> when it fell back.</param>
 public sealed record LaneResult(
     string Key,
     string Label,
     string Description,
     double ElapsedMs,
-    IReadOnlyList<HitResult> Hits);
+    IReadOnlyList<HitResult> Hits,
+    string SyntaxMode);
 
 /// <summary>One ranked document inside a lane.</summary>
 public sealed record HitResult(
