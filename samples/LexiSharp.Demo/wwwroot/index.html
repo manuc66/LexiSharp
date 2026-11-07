@@ -133,6 +133,7 @@
 <div class="tabs" style="display:flex; gap:8px; padding: 0 32px 12px;">
   <button id="tab-search" class="ghost" style="border-color: var(--accent); color: var(--accent);">Search</button>
   <button id="tab-classify" class="ghost">Classification</button>
+  <button id="tab-scope" class="ghost">Scope</button>
 </div>
 
 <div id="search-view">
@@ -184,6 +185,34 @@
     <button id="btn-context" class="ghost">Apply context</button>
   </div>
   <div id="classify-output" class="empty">type a sentence and classify.</div>
+</div>
+
+<div id="scope-view" style="display:none; padding: 8px 32px 32px;">
+  <p class="sub" style="margin-bottom: 12px;">What this demo exercises, and what lives in optional packages or the test/evaluation harness instead.</p>
+  <table style="width:100%; border-collapse:collapse; font-size:13px;">
+    <thead>
+      <tr style="text-align:left; color:var(--muted); border-bottom:1px solid var(--border);">
+        <th style="padding:8px 6px;">Area</th>
+        <th style="padding:8px 6px;">In demo</th>
+        <th style="padding:8px 6px;">Package / reference</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td style="padding:7px 6px;">BM25, hybrid RRF, rerank, query expansion</td><td style="padding:7px 6px; color:var(--accent-2);">yes</td><td style="padding:7px 6px; color:var(--muted);">LexiSharp core</td></tr>
+      <tr><td style="padding:7px 6px;">Reformulation, MMR, contextual expansion, cascade</td><td style="padding:7px 6px; color:var(--accent-2);">yes</td><td style="padding:7px 6px; color:var(--muted);">LexiSharp core</td></tr>
+      <tr><td style="padding:7px 6px;">Bayesian fusion</td><td style="padding:7px 6px; color:var(--accent-2);">yes</td><td style="padding:7px 6px; color:var(--muted);">LexiSharp core</td></tr>
+      <tr><td style="padding:7px 6px;">Segment store, feedback history</td><td style="padding:7px 6px; color:var(--accent-2);">yes</td><td style="padding:7px 6px; color:var(--muted);">LexiSharp core</td></tr>
+      <tr><td style="padding:7px 6px;">Classification (NB, tree, forest, linear, centroid, NN, blend, calibrated, synchronized)</td><td style="padding:7px 6px; color:var(--accent-2);">yes</td><td style="padding:7px 6px; color:var(--muted);">LexiSharp core</td></tr>
+      <tr><td style="padding:7px 6px;">Corpus divider, metrics, persistence, online eval</td><td style="padding:7px 6px; color:var(--accent-2);">yes</td><td style="padding:7px 6px; color:var(--muted);">LexiSharp core</td></tr>
+      <tr><td style="padding:7px 6px;">PostgreSQL / ParadeDB backends</td><td style="padding:7px 6px; color:var(--danger);">no</td><td style="padding:7px 6px; color:var(--muted);">LexiSharp.Postgres</td></tr>
+      <tr><td style="padding:7px 6px;">ASP.NET Core integration</td><td style="padding:7px 6px; color:var(--danger);">no</td><td style="padding:7px 6px; color:var(--muted);">LexiSharp.AspNetCore</td></tr>
+      <tr><td style="padding:7px 6px;">MessagePack serialization</td><td style="padding:7px 6px; color:var(--danger);">no</td><td style="padding:7px 6px; color:var(--muted);">LexiSharp.MessagePack</td></tr>
+      <tr><td style="padding:7px 6px;">ONNX embeddings / cross-encoder</td><td style="padding:7px 6px; color:var(--danger);">no</td><td style="padding:7px 6px; color:var(--muted);">LexiSharp.Onnx</td></tr>
+      <tr><td style="padding:7px 6px;">BEIR / nDCG / SPLADE evaluation harness</td><td style="padding:7px 6px; color:var(--danger);">no</td><td style="padding:7px 6px; color:var(--muted);">bench/LexiSharp.Eval + docs/evaluation.md</td></tr>
+      <tr><td style="padding:7px 6px;">Filters, facets, field scopes, synonyms, fuzzy/prefix</td><td style="padding:7px 6px; color:var(--danger);">partial</td><td style="padding:7px 6px; color:var(--muted);">docs/querying.md</td></tr>
+      <tr><td style="padding:7px 6px;">SearchTrace / telemetry / diagnostics</td><td style="padding:7px 6px; color:var(--danger);">partial</td><td style="padding:7px 6px; color:var(--muted);">docs/observability.md</td></tr>
+    </tbody>
+  </table>
 </div>
 
 <aside id="panel" class="panel" aria-hidden="true">
@@ -518,29 +547,29 @@ async function runClassify() {
 }
 
 function showTab(name) {
-  const search = $("search-view");
-  const classify = $("classify-view");
-  const tSearch = $("tab-search");
-  const tClassify = $("tab-classify");
-  if (name === "search") {
-    search.style.display = "";
-    classify.style.display = "none";
-    tSearch.style.borderColor = "var(--accent)";
-    tSearch.style.color = "var(--accent)";
-    tClassify.style.borderColor = "var(--border)";
-    tClassify.style.color = "var(--text)";
-  } else {
-    search.style.display = "none";
-    classify.style.display = "";
-    tSearch.style.borderColor = "var(--border)";
-    tSearch.style.color = "var(--text)";
-    tClassify.style.borderColor = "var(--accent)";
-    tClassify.style.color = "var(--accent)";
+  const views = {
+    search: $("search-view"),
+    classify: $("classify-view"),
+    scope: $("scope-view"),
+  };
+  const tabs = {
+    search: $("tab-search"),
+    classify: $("tab-classify"),
+    scope: $("tab-scope"),
+  };
+
+  for (const [key, view] of Object.entries(views))
+    view.style.display = key === name ? "" : "none";
+
+  for (const [key, tab] of Object.entries(tabs)) {
+    tab.style.borderColor = key === name ? "var(--accent)" : "var(--border)";
+    tab.style.color = key === name ? "var(--accent)" : "var(--text)";
   }
 }
 
 $("tab-search").addEventListener("click", () => showTab("search"));
 $("tab-classify").addEventListener("click", () => showTab("classify"));
+$("tab-scope").addEventListener("click", () => showTab("scope"));
 
 const classifyPicks = ["refresh token", "short lived credential", "ranking quality", "session expiry", "embeddings", "inverted index"];
 const classifyChips = $("classify-chips");
