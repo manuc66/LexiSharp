@@ -117,6 +117,15 @@ public sealed class DemoClassificationServiceTests
     }
 
     [Fact]
+    public void ClassifyWithContext_CanIntroduceACandidateCategory()
+    {
+        var service = Create();
+        var result = service.ClassifyWithContext("refresh token", "auth", 1.0, "newcat", 1.0);
+
+        Assert.Contains(result, r => r.Category == "newcat");
+    }
+
+    [Fact]
     public void TestPersistence_RoundTrips()
     {
         var service = Create();
