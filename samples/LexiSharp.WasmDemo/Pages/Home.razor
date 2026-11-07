@@ -1,0 +1,63 @@
+﻿@page "/"
+@using LexiSharp.Core
+@using LexiSharp.Indexing
+@using LexiSharp.Ranking
+
+<PageTitle>LexiSharp · WASM</PageTitle>
+
+<h1>LexiSharp in the browser</h1>
+<p>BM25 runs entirely in WebAssembly. No server, no API call.</p>
+
+<div style="display:flex; gap:8px; margin: 16px 0;">
+    <input @bind="Query" @bind:event="oninput" placeholder="Search the in-browser corpus…" style="flex:1; padding:10px;" />
+    <button @onclick="Search">Search</button>
+</div>
+
+@if (Results.Count > 0)
+{
+    <ul>
+        @foreach (var hit in Results)
+        {
+            <li style="margin-bottom:12px;">
+                <strong>@hit.Document.Id</strong> — @hit.Score.ToString("0.###")
+                <div>@hit.Document.Text</div>
+            </li>
+        }
+    </ul>
+}
+else if (!string.IsNullOrWhiteSpace(Query))
+{
+    <p>No match.</p>
+}
+
+@code {
+    private string Query { get; set; } = "search";
+    private ITextSearchEngine? _engine;
+    private IReadOnlyList<SearchResult> Results { get; set; } = Array.Empty<SearchResult>();
+
+    protected override void OnInitialized()
+    {
+        var index = new InMemoryTextIndex();
+        _engine = new RankedTextSearchEngine(index, new Bm25Scorer());
+
+        _engine.Index(new[]
+        {
+            new SearchDocument("1", "The search engine uses BM25 to rank documents"),
+            new SearchDocument("2", "TF-IDF is a classic method of textual search"),
+            new SearchDocument("3", "Italian cuisine is renowned in Rome"),
+        });
+
+        Search();
+    }
+
+    private void Search()
+    {
+        if (_engine is null || string.IsNullOrWhiteSpace(Query))
+        {
+            Results = Array.Empty<SearchResult>();
+            return;
+        }
+
+        Results = _engine.Search(Query, new SearchOptions(Limit: 10));
+    }
+}
