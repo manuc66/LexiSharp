@@ -3,37 +3,72 @@
 @using LexiSharp.Indexing
 @using LexiSharp.Ranking
 
-<PageTitle>LexiSharp · WASM</PageTitle>
+<PageTitle>LexiSharp · in-browser search</PageTitle>
 
-<h1>LexiSharp in the browser</h1>
-<p>BM25 runs entirely in WebAssembly. No server, no API call.</p>
+<style>
+    .wasm-hero { padding: 28px 0 18px; border-bottom: 1px solid #e5e7eb; }
+    .wasm-hero h1 { margin: 0 0 6px; font-size: 30px; letter-spacing: -0.02em; }
+    .wasm-hero p { margin: 0; color: #5b6472; max-width: 640px; }
+    .wasm-search { display: flex; gap: 8px; margin: 22px 0 10px; }
+    .wasm-search input { flex: 1; padding: 12px 14px; border: 1px solid #d6dbe3; border-radius: 10px; font-size: 15px; }
+    .wasm-search button { padding: 12px 18px; border: 0; border-radius: 10px; background: #2563eb; color: white; font-weight: 600; cursor: pointer; }
+    .wasm-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+    .wasm-chip { padding: 6px 12px; border: 1px solid #d6dbe3; border-radius: 999px; background: white; color: #475569; cursor: pointer; font-size: 13px; }
+    .wasm-chip:hover { border-color: #2563eb; color: #1d4ed8; }
+    .wasm-card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; background: white; }
+    .wasm-score { color: #2563eb; font-variant-numeric: tabular-nums; font-size: 13px; }
+    .wasm-id { font-weight: 600; margin-right: 8px; }
+    .wasm-text { color: #475569; margin-top: 4px; font-size: 14px; }
+    .wasm-empty { color: #64748b; padding: 18px 0; }
+    .wasm-note { color: #64748b; font-size: 12px; margin-top: 22px; }
+</style>
 
-<div style="display:flex; gap:8px; margin: 16px 0;">
-    <input @bind="Query" @bind:event="oninput" placeholder="Search the in-browser corpus…" style="flex:1; padding:10px;" />
+<div class="wasm-hero">
+    <h1>LexiSharp in the browser</h1>
+    <p>BM25 and an inverted index run entirely in WebAssembly. No server, no API call, no index uploaded anywhere.</p>
+</div>
+
+<div class="wasm-search">
+    <input @bind="Query" @bind:event="oninput" @onkeydown="OnKeyDown" placeholder="Search the in-browser corpus…" />
     <button @onclick="Search">Search</button>
+</div>
+
+<div class="wasm-chips">
+    @foreach (var pick in Picks)
+    {
+        <button class="wasm-chip" @onclick="() => Pick(pick)">@pick</button>
+    }
 </div>
 
 @if (Results.Count > 0)
 {
-    <ul>
-        @foreach (var hit in Results)
-        {
-            <li style="margin-bottom:12px;">
-                <strong>@hit.Document.Id</strong> — @hit.Score.ToString("0.###")
-                <div>@hit.Document.Text</div>
-            </li>
-        }
-    </ul>
+    @foreach (var hit in Results)
+    {
+        <div class="wasm-card">
+            <div>
+                <span class="wasm-id">@hit.DocumentId</span>
+                <span class="wasm-score">score @hit.Score.ToString("0.###")</span>
+            </div>
+            <div class="wasm-text">@hit.Document.Text</div>
+        </div>
+    }
 }
 else if (!string.IsNullOrWhiteSpace(Query))
 {
-    <p>No match.</p>
+    <div class="wasm-empty">No match in this small in-memory corpus.</div>
 }
+
+<p class="wasm-note">
+    This proof covers the search path only. The server demo also exercises classification,
+    segment storage, persistence and the optional packages.
+</p>
 
 @code {
     private string Query { get; set; } = "search";
     private ITextSearchEngine? _engine;
     private IReadOnlyList<SearchResult> Results { get; set; } = Array.Empty<SearchResult>();
+
+    private static readonly string[] Picks = { "search", "ranking", "Italian cuisine", "TF-IDF" };
 
     protected override void OnInitialized()
     {
@@ -48,6 +83,18 @@ else if (!string.IsNullOrWhiteSpace(Query))
         });
 
         Search();
+    }
+
+    private void Pick(string pick)
+    {
+        Query = pick;
+        Search();
+    }
+
+    private void OnKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+            Search();
     }
 
     private void Search()
