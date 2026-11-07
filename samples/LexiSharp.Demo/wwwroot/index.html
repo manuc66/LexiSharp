@@ -144,6 +144,7 @@
   </div>
   <div id="chips" class="chips"></div>
   <div class="meta" style="font-size:12px;">Syntax: <code>"phrase"</code>, <code>+required</code>, <code>-prohibited</code>, <code>prefix*</code>. Dense lanes search the plain words when a phrase is used.</div>
+  <div id="syntax-note" class="meta" style="font-size:12px;"></div>
   <div id="meta" class="meta"></div>
   <div id="error" class="err"></div>
   <div id="lanes" class="lanes"></div>
@@ -282,13 +283,21 @@ function hitCard(hit, laneKey) {
 }
 
 function render(response) {
+  const syntax = response.syntax;
+  $("syntax-note").textContent = syntax && syntax.hasSyntax
+    ? `Query syntax detected: ${syntax.detected}. Plain fallback: ${syntax.plainFallbackLanes.length ? syntax.plainFallbackLanes.join(", ") : "none"}.`
+    : "";
+
   $("lanes").innerHTML = response.lanes.map((lane) => {
     const hits = lane.hits.length
       ? lane.hits.map((hit) => hitCard(hit, lane.key)).join("")
       : '<div class="empty">no match</div>';
+    const fallback = lane.syntaxMode === "plain"
+      ? '<span class="source" style="margin-left:6px;">plain fallback</span>'
+      : "";
     return `<section class="lane">
       <div class="lane-head">
-        <div class="lane-title"><span class="dot" style="background:${laneColors[lane.key]}"></span>${esc(lane.label)}</div>
+        <div class="lane-title"><span class="dot" style="background:${laneColors[lane.key]}"></span>${esc(lane.label)}${fallback}</div>
         <div class="lane-desc">${esc(lane.description)}</div>
         <div class="lane-stat"><span><b>${lane.hits.length}</b> hits</span><span><b>${fmt(lane.elapsedMs, 2)}</b> ms</span></div>
       </div>

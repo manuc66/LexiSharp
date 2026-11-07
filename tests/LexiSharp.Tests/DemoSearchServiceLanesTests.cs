@@ -58,6 +58,21 @@ public sealed class DemoSearchServiceLanesTests
     }
 
     [Fact]
+    public void Compare_ReportsWhichLanesFellBackToPlainWords()
+    {
+        var corpus = DemoCorpusCatalog.Load(DemoCorpusCatalog.BuiltIn, null, "/nonexistent");
+        var service = new DemoSearchService(corpus, WordSegmentation.UnicodeWordBoundaries);
+
+        var comparison = service.Compare("\"refresh token\"", limit: 5);
+
+        Assert.True(comparison.Syntax.HasSyntax);
+        Assert.Contains("Phrases", comparison.Syntax.Detected);
+        Assert.Contains("dense", comparison.Syntax.PlainFallbackLanes);
+        Assert.Contains(comparison.Lanes, l => l.Key == "lexical" && l.SyntaxMode == "full");
+        Assert.Contains(comparison.Lanes, l => l.Key == "dense" && l.SyntaxMode == "plain");
+    }
+
+    [Fact]
     public void EvaluateSearch_ReturnsAllLanesWithNdcg()
     {
         var corpus = DemoCorpusCatalog.Load(DemoCorpusCatalog.BuiltIn, null, "/nonexistent");
