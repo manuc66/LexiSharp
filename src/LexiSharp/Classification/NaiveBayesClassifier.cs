@@ -80,6 +80,14 @@ public sealed class NaiveBayesClassifier
     private int _classCount;
     private int _vocabularySize;
 
+    // Per-class document frequencies: how many training documents of each class contain each term.
+    // Used by the class-specific (Bernoulli-style) variant.
+    private readonly Dictionary<string, Dictionary<string, int>> _termDocumentCountsByClass =
+        new(StringComparer.Ordinal);
+
+    // Class-specific Naive Bayes (XNB-style): the terms retained for each class.
+    private readonly Dictionary<string, HashSet<string>> _selectedTermsByClass =
+        new(StringComparer.Ordinal);
     /// <param name="tokenizer">Tokenizer used both at training and prediction time (default: <see cref="Tokenizer.Default"/>).</param>
     /// <param name="options">Tunable knobs; when null, <see cref="NaiveBayesOptions.Default"/> (classic behavior) applies.</param>
     public NaiveBayesClassifier(ITokenizer? tokenizer = null, NaiveBayesOptions? options = null)
@@ -100,6 +108,9 @@ public sealed class NaiveBayesClassifier
 
         foreach (var document in documents)
             Accumulate(document);
+
+        if (_options.ClassSpecific)
+            RecomputeSelection();
     }
 
     /// <inheritdoc />
@@ -108,6 +119,9 @@ public sealed class NaiveBayesClassifier
         ArgumentNullException.ThrowIfNull(document);
 
         Accumulate(document);
+
+        if (_options.ClassSpecific)
+            RecomputeSelection();
     }
 
     /// <inheritdoc />
@@ -125,6 +139,9 @@ public sealed class NaiveBayesClassifier
 
         // document.Category is non-empty here, checked above.
         Decumulate(document.Category, document.Text, classTerms);
+
+        if (_options.ClassSpecific)
+            RecomputeSelection();
     }
 
     private void ResetModel()
@@ -134,6 +151,8 @@ public sealed class NaiveBayesClassifier
         _termCountsByClass.Clear();
         _globalTermCounts.Clear();
         _termDocumentFrequencies.Clear();
+        _selectedTermsByClass.Clear();
+        _termDocumentCountsByClass.Clear();
         _documentCount = 0;
         _totalTokenCount = 0;
         _classCount = 0;
@@ -188,6 +207,18 @@ public sealed class NaiveBayesClassifier
         // Derived from the counts rather than tracked separately, so it cannot drift out of step the
         // way an independent counter would.
         _vocabularySize = _globalTermCounts.Count;
+
+        if (!_termDocumentCountsByClass.TryGetValue(category, out var classDocTerms))
+        {
+            classDocTerms = new Dictionary<string, int>(StringComparer.Ordinal);
+            _termDocumentCountsByClass[category] = classDocTerms;
+        }
+
+        foreach (string term in documentTerms)
+        {
+            classDocTerms.TryGetValue(term, out int df);
+            classDocTerms[term] = df + 1;
+        }
     }
 
     /// <summary>
@@ -239,6 +270,23 @@ public sealed class NaiveBayesClassifier
                 else
                     _termDocumentFrequencies[term] = documentFrequency - 1;
             }
+        }
+
+        if (_termDocumentCountsByClass.TryGetValue(category, out var classDocTerms))
+        {
+            foreach (string term in documentTerms)
+            {
+                if (classDocTerms.TryGetValue(term, out int df))
+                {
+                    if (df <= 1)
+                        classDocTerms.Remove(term);
+                    else
+                        classDocTerms[term] = df - 1;
+                }
+            }
+
+            if (classDocTerms.Count == 0)
+                _termDocumentCountsByClass.Remove(category);
         }
 
         if (_classDocumentCounts.TryGetValue(category, out int documents))
@@ -333,6 +381,92 @@ public sealed class NaiveBayesClassifier
 
         if (ledger.Count == 0)
             _reinforcementByClass.Remove(category);
+    }
+
+    /// <summary>
+    /// The terms retained for <paramref name="category"/> when <see cref="NaiveBayesOptions.ClassSpecific"/>
+    /// is enabled; an empty set otherwise or for an unknown/untrained category. Exposed for
+    /// explainability and tests.
+    /// </summary>
+    public IReadOnlySet<string> SelectedTerms(string category)
+    {
+        if (string.IsNullOrEmpty(category))
+            return new HashSet<string>(StringComparer.Ordinal);
+
+        return _selectedTermsByClass.TryGetValue(category, out var selected)
+            ? new HashSet<string>(selected, StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// All retained term sets, keyed by category, when <see cref="NaiveBayesOptions.ClassSpecific"/>
+    /// is enabled; empty otherwise.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlySet<string>> SelectedTermsByClass =>
+        _selectedTermsByClass.ToDictionary(
+            pair => pair.Key,
+            pair => (IReadOnlySet<string>)new HashSet<string>(pair.Value, StringComparer.Ordinal),
+            StringComparer.Ordinal);
+
+    /// <summary>
+    /// Recomputes the per-class term sets from the current counts. Called after every structural
+    /// change to the corpus when <see cref="NaiveBayesOptions.ClassSpecific"/> is enabled.
+    /// </summary>
+    private void RecomputeSelection()
+    {
+        _selectedTermsByClass.Clear();
+
+        if (!_options.ClassSpecific || _classCount == 0)
+            return;
+
+        double threshold = _options.ClassSpecificThreshold;
+
+        foreach (var category in _termCountsByClass.Keys)
+        {
+            int docCount = _classDocumentCounts.TryGetValue(category, out int dc) ? dc : 0;
+            var classDocTerms = _termDocumentCountsByClass.TryGetValue(category, out var cdt)
+                ? cdt
+                : new Dictionary<string, int>(StringComparer.Ordinal);
+
+            var selected = new HashSet<string>(StringComparer.Ordinal);
+
+            string? bestTerm = null;
+            double bestScore = double.NegativeInfinity;
+
+            // Candidate terms: those that appear in at least one document of this class.
+            foreach (var term in classDocTerms.Keys)
+            {
+                int dfInClass = classDocTerms.TryGetValue(term, out int d) ? d : 0;
+                if (dfInClass <= 0)
+                    continue;
+
+                int globalDf = _termDocumentFrequencies.TryGetValue(term, out int gdf) ? gdf : 0;
+                int dfInComplement = globalDf - dfInClass;
+
+                double pInClass = (dfInClass + _options.Alpha)
+                    / (docCount + (2.0 * _options.Alpha));
+                double complementDocs = _documentCount - docCount;
+                double pInComplement = complementDocs > 0
+                    ? (dfInComplement + _options.Alpha) / (complementDocs + (2.0 * _options.Alpha))
+                    : _options.Alpha / (2.0 * _options.Alpha);
+
+                double score = Math.Abs(Math.Log(pInClass / pInComplement));
+
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestTerm = term;
+                }
+
+                if (score >= threshold)
+                    selected.Add(term);
+            }
+
+            if (selected.Count == 0 && bestTerm is not null)
+                selected.Add(bestTerm);
+
+            _selectedTermsByClass[category] = selected;
+        }
     }
 
     /// <inheritdoc />
@@ -575,12 +709,20 @@ public sealed class NaiveBayesClassifier
         _classTokenCounts.TryGetValue(category, out int classTokenCount);
         _classDocumentCounts.TryGetValue(category, out int classDocumentCount);
 
+        if (_options.ClassSpecific
+            && _selectedTermsByClass.TryGetValue(category, out var selectedTerms)
+            && selectedTerms is { Count: > 0 })
+        {
+            return ClassSpecificLogProbability(category, selectedTerms, query, classDocumentCount)
+                + ReinforcedEvidence(category, query);
+        }
+
         // Parenthesized deliberately: `?:` binds looser than `+`, so without them the reinforcement
         // would only ever be added on the classic path.
         return _options.Complement
             ? ComplementLogProbability(classTerms, classTokenCount, query)
               + ReinforcedEvidence(category, query)
-            : ClassicLogProbability(classTerms, classTokenCount, classDocumentCount, query)
+            : ClassicLogProbability(classTerms, classTokenCount, classDocumentCount, query, category)
               + ReinforcedEvidence(category, query);
     }
 
@@ -660,7 +802,8 @@ public sealed class NaiveBayesClassifier
         Dictionary<string, int> classTerms,
         int classTokenCount,
         int classDocumentCount,
-        QueryTerms query)
+        QueryTerms query,
+        string category)
     {
         double smoothingDenominator = classTokenCount + (_options.Alpha * _vocabularySize);
 
@@ -679,10 +822,65 @@ public sealed class NaiveBayesClassifier
             if (query.InVocabulary is not null && !query.InVocabulary[i])
                 continue;
 
-            classTerms.TryGetValue(tokens[i].Token, out int termCount);
+            string term = tokens[i].Token;
+
+            classTerms.TryGetValue(term, out int termCount);
 
             logProbability += tokens[i].Weight * query.IdfWeights[i]
                 * Math.Log((termCount + _options.Alpha) / smoothingDenominator);
+        }
+
+        return logProbability;
+    }
+
+    /// <summary>
+    /// Class-specific (Bernoulli-style) scoring over the terms retained for <paramref name="category"/>.
+    /// Every retained term contributes, whether or not it appears in the query: a present term
+    /// contributes <c>log P(t = 1 | c)</c>, an absent one <c>log P(t = 0 | c)</c>. This keeps
+    /// the classes comparable even when their retained vocabularies are disjoint, which is the
+    /// whole point of the class-specific variant.
+    /// </summary>
+    private double ClassSpecificLogProbability(
+        string category,
+        HashSet<string> selectedTerms,
+        QueryTerms query,
+        int classDocumentCount)
+    {
+        double alpha = _options.Alpha;
+
+        double logProbability = _options.SmoothPriors
+            ? Math.Log((classDocumentCount + alpha) / (_documentCount + (alpha * _classCount)))
+            : (classDocumentCount > 0 ? Math.Log((double)classDocumentCount / _documentCount) : 0.0);
+
+        if (classDocumentCount <= 0 || selectedTerms.Count == 0)
+            return logProbability;
+
+        // Presence lookup for the query, so each retained term is scored once.
+        var present = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var token in query.Tokens)
+            present.Add(token.Token);
+
+        int complementDocs = _documentCount - classDocumentCount;
+
+        var classDocTerms = _termDocumentCountsByClass.TryGetValue(category, out var cdt)
+            ? cdt
+            : new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (string term in selectedTerms)
+        {
+            int dfInClass = classDocTerms.TryGetValue(term, out int d) ? d : 0;
+
+            double pPresent = (dfInClass + alpha) / (classDocumentCount + (2.0 * alpha));
+            if (pPresent <= 0.0) pPresent = alpha / (classDocumentCount + (2.0 * alpha));
+            if (pPresent >= 1.0) pPresent = 1.0 - (alpha / (classDocumentCount + (2.0 * alpha)));
+
+            bool isPresent = present.Contains(term);
+            double factor = isPresent ? pPresent : (1.0 - pPresent);
+
+            if (factor <= 0.0)
+                factor = alpha / (classDocumentCount + (2.0 * alpha));
+
+            logProbability += Math.Log(factor);
         }
 
         return logProbability;
