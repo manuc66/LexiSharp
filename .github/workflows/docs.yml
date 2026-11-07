@@ -1,0 +1,60 @@
+name: docs
+
+# Publishes the Jekyll site and the Blazor WebAssembly proof under /wasm/.
+# Requires Settings -> Pages -> Source: "GitHub Actions".
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "samples/LexiSharp.WasmDemo/**"
+      - "src/LexiSharp/**"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Publish the WASM proof
+        run: >
+          dotnet publish samples/LexiSharp.WasmDemo/LexiSharp.WasmDemo.csproj
+          -c Release
+          -o "${{ runner.temp }}/wasm"
+
+      - name: Build the Jekyll site
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./docs
+          destination: ./_site
+
+      - name: Add the WASM proof to the site
+        run: |
+          mkdir -p _site/wasm
+          cp -r "${{ runner.temp }}/wasm/wwwroot/." _site/wasm/
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./_site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
