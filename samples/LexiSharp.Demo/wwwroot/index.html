@@ -241,7 +241,7 @@ async function loadMeta() {
     $("chips").innerHTML = meta.queries
       .map((query) => `<span class="chip" data-q="${esc(query)}">${chipLabel(query)}</span>`)
       .join("");
-    document.querySelectorAll(".chip").forEach((chip) => chip.addEventListener("click", () => {
+    document.querySelectorAll("#chips .chip").forEach((chip) => chip.addEventListener("click", () => {
       $("q").value = chip.dataset.q;
       runSearch();
     }));
