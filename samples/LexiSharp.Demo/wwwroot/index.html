@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>LexiSharp · retrieval lab</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%236ea8fe'/%3E%3Ccircle cx='26' cy='26' r='12' fill='none' stroke='white' stroke-width='5'/%3E%3Cline x1='35' y1='35' x2='48' y2='48' stroke='white' stroke-width='5' stroke-linecap='round'/%3E%3Ctext x='40' y='24' font-family='system-ui' font-size='20' font-weight='700' fill='white'%3EL%3C/text%3E%3C/svg%3E" />
 <style>
   :root {
     --bg: #0b0e14;
@@ -129,16 +130,59 @@
     download. Click any hit to see <em>why</em> it ranked there.</p>
 </header>
 
-<div class="bar">
-  <label class="sr-only" for="q">Search query</label>
-  <input id="q" type="search" placeholder="e.g. refresh token, ranking quality, vector database…" autocomplete="off" />
-  <button id="go">Search</button>
-  <button id="clear" class="ghost">Clear</button>
+<div class="tabs" style="display:flex; gap:8px; padding: 0 32px 12px;">
+  <button id="tab-search" class="ghost" style="border-color: var(--accent); color: var(--accent);">Search</button>
+  <button id="tab-classify" class="ghost">Classification</button>
 </div>
-<div id="chips" class="chips"></div>
-<div id="meta" class="meta"></div>
-<div id="error" class="err"></div>
-<div id="lanes" class="lanes"></div>
+
+<div id="search-view">
+  <div class="bar">
+    <label class="sr-only" for="q">Search query</label>
+    <input id="q" type="search" placeholder="e.g. refresh token, ranking quality, vector database…" autocomplete="off" />
+    <button id="go">Search</button>
+    <button id="clear" class="ghost">Clear</button>
+  </div>
+  <div id="chips" class="chips"></div>
+  <div id="meta" class="meta"></div>
+  <div id="error" class="err"></div>
+  <div id="lanes" class="lanes"></div>
+  <div style="padding: 0 32px 16px;">
+    <button id="btn-eval-search" class="ghost">Evaluate search (nDCG@5)</button>
+    <div id="eval-search-output" class="empty" style="margin-top:8px;"></div>
+  </div>
+</div>
+
+<div id="classify-view" style="display:none; padding: 8px 32px 32px;">
+  <p class="sub" style="margin-bottom: 12px;">Classifies a sentence with the corpus's categories and shows the decision path and the terms each class keeps.</p>
+  <div class="bar" style="padding: 0 0 12px;">
+    <label class="sr-only" for="ctext">Text to classify</label>
+    <input id="ctext" type="search" placeholder="e.g. refresh token, inverted index, SQL transaction…" autocomplete="off" />
+    <button id="cgo">Classify</button>
+  </div>
+  <div id="classify-chips" class="chips" style="padding: 0 0 12px;"></div>
+  <div style="display:flex; gap:8px; margin-bottom: 8px; flex-wrap:wrap;">
+    <button id="toggle-terms" class="ghost">Toggle terms</button>
+    <button id="btn-divide" class="ghost">Divide corpus</button>
+    <button id="btn-evaluate" class="ghost">Evaluate models</button>
+    <button id="btn-persist" class="ghost">Test persistence</button>
+    <button id="btn-divide-tree" class="ghost">Show division tree</button>
+    <button id="btn-online-eval" class="ghost">Online eval</button>
+  </div>
+  <div style="display:flex; gap:8px; margin-bottom: 12px; flex-wrap:wrap; align-items:center;">
+    <input id="teach-text" type="search" placeholder="text to teach" style="flex:1 1 220px; min-width:180px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text);" />
+    <input id="teach-cat" type="search" placeholder="category" style="width:140px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text);" />
+    <button id="btn-teach" class="ghost">Teach</button>
+    <button id="btn-forget" class="ghost">Forget</button>
+  </div>
+  <div style="display:flex; gap:8px; margin-bottom: 12px; flex-wrap:wrap; align-items:center;">
+    <input id="ctx-text" type="search" placeholder="text for contextual blend" style="flex:1 1 220px; min-width:180px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text);" />
+    <input id="ctx-prior" type="search" placeholder="prior category" style="width:140px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text);" />
+    <input id="ctx-weight" type="number" value="1" step="0.1" style="width:80px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text);" />
+    <input id="ctx-candidate" type="search" placeholder="candidate category" style="width:140px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text);" />
+    <button id="btn-context" class="ghost">Apply context</button>
+  </div>
+  <div id="classify-output" class="empty">type a sentence and classify.</div>
+</div>
 
 <aside id="panel" class="panel" aria-hidden="true">
   <div class="panel-head">
@@ -152,7 +196,7 @@
 </aside>
 
 <script type="module">
-const laneColors = { lexical: "var(--accent)", semantic: "var(--accent-2)", dense: "var(--accent-4)", hybrid: "var(--accent-3)", rerank: "#f2789f", segment: "#7ad0c0", "feedback-global": "#f7c948", "feedback-session": "#7ad0c0" };
+const laneColors = { lexical: "var(--accent)", semantic: "var(--accent-2)", dense: "var(--accent-4)", hybrid: "var(--accent-3)", rerank: "#f2789f", reformulate: "#4dd4ac", mmr: "#b388ff", contextual: "#ff9f43", cascade: "#00d2d3", bayesian: "#feca57", segment: "#7ad0c0", "feedback-global": "#f7c948", "feedback-session": "#7ad0c0" };
 const $ = (id) => document.getElementById(id);
 
 // A per-browser id for the ephemeral feedback history. It is never sent to a third party and is
@@ -404,6 +448,227 @@ $("panel-close").addEventListener("click", () => { $("panel").classList.remove("
 // is what makes that ordering the one the reader sees. Module scope is what makes top-level await
 // available; the page has no inline event handlers, so nothing was reaching for these names as
 // globals.
+async function runClassify() {
+  const text = $("ctext").value.trim();
+  if (!text) return;
+  const out = $("classify-output");
+  out.innerHTML = '<div class="empty">classifying…</div>';
+  try {
+    const data = await getJson("/api/classify?text=" + encodeURIComponent(text));
+      const renderPreds = (rows) => rows.map((r, i) => {
+      const pct = Math.max(0, Math.min(100, r.probability * 100));
+      const selected = i === 0;
+      return `<div style="margin-bottom:8px;">
+        <div style="display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:3px;">
+          <span style="font-family:ui-monospace,monospace; ${selected ? "font-weight:700; color:var(--accent-2);" : ""}">${esc(r.category)}${selected ? "  ← selected" : ""}</span>
+          <span style="color:var(--accent); font-variant-numeric:tabular-nums;">${r.probability.toFixed(3)}</span>
+        </div>
+        <div class="track"><div class="fill" style="width:${pct}%; ${selected ? "background:linear-gradient(90deg,var(--accent-2),var(--accent-4));" : ""}"></div></div>
+      </div>`;
+    }).join("");
+    const nb = renderPreds(data.naiveBayes);
+    const tree = renderPreds(data.decisionTree);
+    const calibrated = renderPreds(data.calibratedTree);
+    const linear = renderPreds(data.linear);
+    const forest = renderPreds(data.randomForest);
+    const centroid = renderPreds(data.centroid);
+    const nearest = renderPreds(data.nearestNeighbor);
+    const blend = renderPreds(data.blend);
+    const sync = renderPreds(data.synchronized);
+    const path = data.treePath.length
+      ? data.treePath.map(q => `<div class="stage"><div class="stage-top"><span class="stage-name">${esc(q.question)}</span><span class="stage-score">${q.answer ? "yes" : "no"}</span></div></div>`).join("")
+      : '<div class="empty">no path (untrained).</div>';
+    const terms = Object.entries(data.selectedTermsByClass || {}).map(([cat, terms]) =>
+      `<details class="term" open style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; margin-bottom:8px; background:var(--panel-2);">
+        <summary style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; font-size:12.5px;">
+          <span class="term-name">${esc(cat)}</span><span class="term-val">${terms.length} terms</span>
+        </summary>
+        <div class="term-sub" style="margin-top:8px;">${terms.map(t => `<span style="display:inline-block; margin:2px 4px 2px 0; padding:1px 6px; border-radius:6px; background:#0f141c; border:1px solid var(--border); font-size:11px;">${esc(t)}</span>`).join("")}</div>
+      </details>`).join("");
+    const topFeatures = Object.entries(data.linearTopFeatures || {}).map(([f, w]) => `<span style="display:inline-block; margin:2px 4px 2px 0; padding:1px 6px; border-radius:6px; background:#0f141c; border:1px solid var(--border); font-size:11px;">${esc(f)} <b style="color:var(--accent-2);">${w.toFixed(2)}</b></span>`).join("");
+    const consensus = [data.naiveBayes[0]?.category, data.decisionTree[0]?.category, data.linear[0]?.category, data.randomForest[0]?.category].filter(Boolean);
+    const agreement = consensus.length ? (consensus.every(c => c === consensus[0]) ? `All models agree: <b style="color:var(--accent-2);">${esc(consensus[0])}</b>` : `Models disagree — ${consensus.map(esc).join(", ")}`) : "";
+    out.innerHTML = `
+      ${agreement ? `<div class="chain" style="margin-bottom:14px;"><div class="chain-title">Consensus</div><div style="font-size:13px;">${agreement}</div></div>` : ""}
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">
+        <div class="chain"><div class="chain-title">Naive Bayes</div>${nb || '<div class="empty">none</div>'}</div>
+        <div class="chain"><div class="chain-title">Decision tree</div>${tree || '<div class="empty">none</div>'}${path}</div>
+        <div class="chain"><div class="chain-title">Calibrated tree (temp. scaling)</div>${calibrated || '<div class="empty">none</div>'}</div>
+        <div class="chain"><div class="chain-title">Linear</div>${linear || '<div class="empty">none</div>'}<div class="term-sub" style="margin-top:8px;">${topFeatures}</div></div>
+        <div class="chain"><div class="chain-title">Random forest</div>${forest || '<div class="empty">none</div>'}</div>
+        <div class="chain"><div class="chain-title">Centroid (embeddings)</div>${centroid || '<div class="empty">none</div>'}</div>
+        <div class="chain"><div class="chain-title">Nearest neighbour (BM25)</div>${nearest || '<div class="empty">none</div>'}</div>
+        <div class="chain"><div class="chain-title">Blend (NB + tree + linear)</div>${blend || '<div class="empty">none</div>'}</div>
+        <div class="chain"><div class="chain-title">Synchronized (thread-safe linear)</div>${sync || '<div class="empty">none</div>'}</div>
+      </div>
+      <div class="chain" style="margin-top:14px;"><div class="chain-title">Terms kept per class</div>${terms || '<div class="empty">none</div>'}</div>`;
+  } catch (err) {
+    out.innerHTML = '<div class="empty">classification failed.</div>';
+  }
+}
+
+function showTab(name) {
+  const search = $("search-view");
+  const classify = $("classify-view");
+  const tSearch = $("tab-search");
+  const tClassify = $("tab-classify");
+  if (name === "search") {
+    search.style.display = "";
+    classify.style.display = "none";
+    tSearch.style.borderColor = "var(--accent)";
+    tSearch.style.color = "var(--accent)";
+    tClassify.style.borderColor = "var(--border)";
+    tClassify.style.color = "var(--text)";
+  } else {
+    search.style.display = "none";
+    classify.style.display = "";
+    tSearch.style.borderColor = "var(--border)";
+    tSearch.style.color = "var(--text)";
+    tClassify.style.borderColor = "var(--accent)";
+    tClassify.style.color = "var(--accent)";
+  }
+}
+
+$("tab-search").addEventListener("click", () => showTab("search"));
+$("tab-classify").addEventListener("click", () => showTab("classify"));
+
+const classifyPicks = ["refresh token", "short lived credential", "ranking quality", "session expiry", "embeddings", "inverted index"];
+const classifyChips = $("classify-chips");
+for (const pick of classifyPicks) {
+  const chip = document.createElement("button");
+  chip.className = "chip";
+  chip.textContent = pick;
+  chip.addEventListener("click", () => { $("ctext").value = pick; runClassify(); });
+  classifyChips.appendChild(chip);
+}
+
+async function runDivide() {
+  const out = $("classify-output");
+  out.innerHTML = '<div class="empty">dividing corpus…</div>';
+  try {
+    const data = await getJson("/api/divide");
+    const clusters = data.map(c =>
+      `<div class="chain"><div class="chain-title">${esc(c.id)} · depth ${c.depth} · ${c.documentIds.length} docs</div>
+        <div class="term-sub">${c.documentIds.map(esc).join(", ")}</div>
+        <div class="term-sub" style="margin-top:4px;">top: ${c.topFeatures.map(esc).join(", ")}</div>
+      </div>`).join("");
+    out.innerHTML = clusters || '<div class="empty">no clusters.</div>';
+  } catch {
+    out.innerHTML = '<div class="empty">division failed.</div>';
+  }
+}
+
+async function runEvaluate() {
+  const out = $("classify-output");
+  out.innerHTML = '<div class="empty">evaluating…</div>';
+  try {
+    const data = await getJson("/api/evaluate");
+    const metrics = data.metrics.map(m =>
+      `<div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+        <span>${esc(m.model)}</span>
+        <span style="color:var(--accent-2); font-variant-numeric:tabular-nums;">acc ${(m.accuracy * 100).toFixed(1)}% · F1 ${(m.macroF1 * 100).toFixed(1)}%</span>
+      </div>`).join("");
+    out.innerHTML = `
+      <div class="chain"><div class="chain-title">Held-out metrics (train ${data.trainCount}, test ${data.testCount})</div>${metrics}</div>
+      <div class="chain"><div class="chain-title">Calibration</div><div class="term-sub">fitted temperature: ${data.calibrationTemperature.toFixed(3)}</div></div>
+      <div class="chain"><div class="chain-title">Persistence</div><div class="term-sub">decision tree round-trip: ${data.persistenceRoundTrip ? "OK" : "FAILED"}</div></div>`;
+  } catch {
+    out.innerHTML = '<div class="empty">evaluation failed.</div>';
+  }
+}
+
+$("cgo").addEventListener("click", runClassify);
+$("ctext").addEventListener("keydown", (event) => { if (event.key === "Enter") runClassify(); });
+$("toggle-terms").addEventListener("click", () => {
+  const details = document.querySelectorAll("#classify-output details");
+  const anyOpen = Array.from(details).some(d => d.open);
+  details.forEach(d => { d.open = !anyOpen; });
+});
+
+$("btn-divide").addEventListener("click", runDivide);
+$("btn-evaluate").addEventListener("click", runEvaluate);
+
+$("btn-divide-tree").addEventListener("click", async () => {
+  const out = $("classify-output");
+  out.innerHTML = '<div class="empty">dividing…</div>';
+  try {
+    const data = await getJson("/api/divide-tree");
+    out.innerHTML = `<div class="chain"><div class="chain-title">Division tree</div><pre style="white-space:pre-wrap; font-size:11px; color:var(--muted);">${esc(data.tree)}</pre></div>`;
+  } catch {
+    out.innerHTML = '<div class="empty">division tree failed.</div>';
+  }
+});
+
+$("btn-online-eval").addEventListener("click", async () => {
+  const out = $("classify-output");
+  out.innerHTML = '<div class="empty">running online evaluation…</div>';
+  try {
+    const data = await getJson("/api/online-eval");
+    out.innerHTML = `<div class="chain"><div class="chain-title">Online evaluation (predict-then-learn)</div><div class="term-sub">docs: ${data.documents} · acc@1: ${(data.accuracyAt1 * 100).toFixed(1)}% · acc@3: ${(data.accuracyAtK * 100).toFixed(1)}% · macro-F1: ${(data.macroF1 * 100).toFixed(1)}%</div></div>`;
+  } catch {
+    out.innerHTML = '<div class="empty">online evaluation failed.</div>';
+  }
+});
+
+$("btn-persist").addEventListener("click", async () => {
+  const out = $("classify-output");
+  out.innerHTML = '<div class="empty">testing persistence…</div>';
+  try {
+    const data = await getJson("/api/persist");
+    out.innerHTML = `<div class="chain"><div class="chain-title">Persistence</div><div class="term-sub">bytes: ${data.bytes} · round-trip: ${data.roundTrip ? "OK" : "FAILED"}</div></div>`;
+  } catch {
+    out.innerHTML = '<div class="empty">persistence test failed.</div>';
+  }
+});
+
+async function runTeach() {
+  const text = $("teach-text").value.trim();
+  const category = $("teach-cat").value.trim();
+  if (!text || !category) return;
+  await fetch("/api/reinforce", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, category }) });
+  $("ctext").value = text;
+  await runClassify();
+}
+
+async function runForget() {
+  await fetch("/api/forget", { method: "POST" });
+  const text = $("ctext").value.trim() || $("teach-text").value.trim();
+  if (text) { $("ctext").value = text; await runClassify(); }
+}
+
+$("btn-teach").addEventListener("click", runTeach);
+$("btn-forget").addEventListener("click", runForget);
+
+async function runContext() {
+  const text = $("ctx-text").value.trim();
+  const prior = $("ctx-prior").value.trim();
+  const weight = parseFloat($("ctx-weight").value) || 1;
+  const candidate = $("ctx-candidate").value.trim();
+  if (!text) return;
+  const out = $("classify-output");
+  out.innerHTML = '<div class="empty">applying context…</div>';
+  try {
+    const data = await getJson("/api/classify-context?text=" + encodeURIComponent(text) + "&prior=" + encodeURIComponent(prior) + "&weight=" + encodeURIComponent(weight) + "&candidate=" + encodeURIComponent(candidate));
+    const rows = data.map(r => `<div>${esc(r.category)} · ${r.probability.toFixed(3)}</div>`).join("");
+    out.innerHTML = `<div class="chain"><div class="chain-title">Contextual blend (prior: ${esc(prior || "none")})</div>${rows || '<div class="empty">none</div>'}</div>`;
+  } catch {
+    out.innerHTML = '<div class="empty">contextual classification failed.</div>';
+  }
+}
+
+$("btn-context").addEventListener("click", runContext);
+
+$("btn-eval-search").addEventListener("click", async () => {
+  const out = $("eval-search-output");
+  out.innerHTML = '<div class="empty">evaluating…</div>';
+  try {
+    const data = await getJson("/api/eval-search");
+    out.innerHTML = data.map(m => `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>${esc(m.lane)}</span><span style="color:var(--accent-2); font-variant-numeric:tabular-nums;">${(m.ndcgAt5 * 100).toFixed(1)}%</span></div>`).join("");
+  } catch {
+    out.innerHTML = '<div class="empty">evaluation failed.</div>';
+  }
+});
+
 await loadMeta();
 $("q").value = "refresh token";
 await runSearch();

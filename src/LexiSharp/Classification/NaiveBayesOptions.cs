@@ -125,7 +125,24 @@ public sealed record NaiveBayesOptions
     /// </summary>
     public bool Complement { get; init; }
 
+    /// <summary>
+    /// When true, each class scores a query using only the terms that discriminate it from the
+    /// other classes (class-specific feature selection, in the spirit of XNB). The selected terms
+    /// are exposed through <see cref="NaiveBayesClassifier.SelectedTerms(string)"/>. Default:
+    /// <c>false</c> (classic multinomial behaviour, all vocabulary terms participate).
+    /// </summary>
+    public bool ClassSpecific { get; init; }
+
+    /// <summary>
+    /// Minimum absolute log-likelihood ratio a term must reach to be kept for a class:
+    /// <c>|log P(t | c) / P(t | ¬c)| ≥ ClassSpecificThreshold</c>. Larger values keep fewer,
+    /// more discriminative terms. Default: <c>0.3</c>.
+    /// </summary>
+    public double ClassSpecificThreshold { get; init; } = 0.3;
+
     internal bool IsValid =>
         Temperature > 0 && !double.IsNaN(Temperature) && !double.IsInfinity(Temperature)
-        && Alpha > 0 && !double.IsNaN(Alpha) && !double.IsInfinity(Alpha);
+        && Alpha > 0 && !double.IsNaN(Alpha) && !double.IsInfinity(Alpha)
+        && ClassSpecificThreshold >= 0 && !double.IsNaN(ClassSpecificThreshold)
+        && !double.IsInfinity(ClassSpecificThreshold);
 }

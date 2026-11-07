@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using LexiSharp.Demo;
 using LexiSharp.Linguistics;
+using LexiSharp.Classification;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -53,10 +54,12 @@ catch (DemoOptionException ex)
 // happened to arrive first — a 26-document corpus hides that, a BEIR one does not.
 var stopwatch = Stopwatch.StartNew();
 DemoSearchService service;
+DemoClassificationService classificationService;
 
 try
 {
     service = new DemoSearchService(corpus, segmentation);
+    classificationService = new DemoClassificationService(corpus, segmentation);
 }
 catch (Exception ex)
 {
@@ -73,6 +76,7 @@ Console.WriteLine(
 
 builder.Services.AddSingleton(corpus);
 builder.Services.AddSingleton(service);
+builder.Services.AddSingleton(classificationService);
 
 var app = builder.Build();
 
@@ -100,6 +104,55 @@ app.MapGet("/api/explain", (DemoSearchService service, string? q, string? lane, 
 
     var explanation = service.Explain(q, lane, id);
     return explanation is null ? Results.NotFound() : Results.Ok(explanation);
+});
+
+app.MapGet("/api/classify", (DemoClassificationService service, string? text) =>
+    string.IsNullOrWhiteSpace(text)
+        ? Results.BadRequest(new { error = "The 'text' query parameter is required." })
+        : Results.Ok(service.Classify(text)));
+
+app.MapGet("/api/classifier", (DemoClassificationService service) =>
+    Results.Ok(service.Info()));
+
+app.MapPost("/api/reinforce", (DemoClassificationService service, ReinforceRequest request) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Text) || string.IsNullOrWhiteSpace(request.Category))
+        return Results.BadRequest(new { error = "text and category are required." });
+
+    service.Reinforce(request.Text, request.Category);
+    return Results.Ok(new { ok = true });
+});
+
+app.MapPost("/api/forget", (DemoClassificationService service) =>
+{
+    service.ForgetReinforcement();
+    return Results.Ok(new { ok = true });
+});
+
+app.MapGet("/api/classify-context", (DemoClassificationService service, string? text, string? prior, double? weight, string? candidate, double? candidateWeight) =>
+    string.IsNullOrWhiteSpace(text)
+        ? Results.BadRequest(new { error = "text is required." })
+        : Results.Ok(service.ClassifyWithContext(text, prior ?? string.Empty, weight ?? 1.0, candidate, candidateWeight ?? 1.0)));
+
+app.MapGet("/api/divide", (DemoClassificationService service) =>
+    Results.Ok(service.Divide()));
+
+app.MapGet("/api/divide-tree", (DemoClassificationService service) =>
+    Results.Ok(new { tree = service.DivideTree() }));
+
+app.MapGet("/api/online-eval", (DemoClassificationService service) =>
+    Results.Ok(service.OnlineEvaluate()));
+
+app.MapGet("/api/evaluate", (DemoClassificationService service, DemoCorpusSet corpus) =>
+    Results.Ok(service.Evaluate(corpus.Documents)));
+
+app.MapGet("/api/eval-search", (DemoSearchService service) =>
+    Results.Ok(service.EvaluateSearch()));
+
+app.MapGet("/api/persist", (DemoClassificationService service) =>
+{
+    var (bytes, roundTrip) = service.TestPersistence();
+    return Results.Ok(new { bytes, roundTrip });
 });
 
 app.MapGet("/api/meta", (DemoSearchService service, DemoCorpusSet active) => Results.Ok(new
@@ -155,3 +208,4 @@ static string Usage() =>
      The demo serves on http://localhost:5000 unless ASPNETCORE_URLS says otherwise.
      """;
 public sealed record LearnRequest(string Query, string DocumentId, string? SessionId = null, bool Global = false);
+public sealed record ReinforceRequest(string Text, string Category);

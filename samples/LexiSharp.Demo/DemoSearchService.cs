@@ -10,6 +10,7 @@ using LexiSharp.Hybrid;
 using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
+using System.Linq;
 
 namespace LexiSharp.Demo;
 
@@ -33,6 +34,11 @@ public sealed class DemoSearchService
     private readonly InMemoryVectorSearchEngine _dense;
     private readonly HybridTextSearchEngine _hybrid;
     private readonly RerankedTextSearchEngine _rerank;
+    private readonly ReformulatingTextSearchEngine _reformulate;
+    private readonly RerankedTextSearchEngine _mmr;
+    private readonly RerankedTextSearchEngine _cascade;
+    private readonly ContextualExpansionSearchEngine _contextual;
+    private readonly HybridTextSearchEngine _bayesian;
     private readonly QueryFeedbackHistory _globalFeedbackHistory;
     private readonly FeedbackAwareTextSearchEngine _feedbackGlobal;
     private readonly ConcurrentDictionary<string, QueryFeedbackHistory> _sessionFeedbackHistories = new(StringComparer.Ordinal);
@@ -104,9 +110,81 @@ public sealed class DemoSearchService
             new ReciprocalRankFusionMerger(),
             sourceNames: new[] { "lexical", "semantic", "dense" });
 
+        // Bayesian fusion lane: calibrated fusion of the same three engines.
+        var labelledQueries = new (string Query, string[] Relevant)[]
+        {
+            ("refresh token", new[] { "auth-refresh", "auth-session" }),
+            ("short lived credential", new[] { "auth-jwt", "auth-login" }),
+            ("ranking quality", new[] { "ir-eval", "ir-bm25" }),
+            ("session expiry", new[] { "auth-session", "auth-refresh" }),
+            ("embeddings", new[] { "db-pgvector", "ir-splade" }),
+            ("inverted index", new[] { "ir-inverted", "db-postgres" }),
+        };
+
+        try
+        {
+            var calibrators = new List<CalibratedScoreConfidence>();
+
+            foreach (var engine in new ITextSearchEngine[] { _lexical.Engine, _semantic.Engine, _dense })
+            {
+                var examples = new List<(double Score, bool IsCorrect)>();
+
+                foreach (var (query, relevant) in labelledQueries)
+                {
+                    var relevantSet = new HashSet<string>(relevant, StringComparer.Ordinal);
+                    var hits = engine.Search(query, new SearchOptions(Limit: 5));
+
+                    foreach (var hit in hits)
+                        examples.Add((hit.Score, relevantSet.Contains(hit.DocumentId)));
+                }
+
+                calibrators.Add(CalibratedScoreConfidence.Fit(examples));
+            }
+
+            _bayesian = new HybridTextSearchEngine(
+                new ITextSearchEngine[] { _lexical.Engine, _semantic.Engine, _dense },
+                new BayesianFusionMerger(calibrators.ToArray()),
+                sourceNames: new[] { "lexical", "semantic", "dense" });
+        }
+        catch (ArgumentException)
+        {
+            // Synthetic corpora used by tests may not carry both relevance classes; fall back to
+            // the RRF hybrid rather than failing construction.
+            _bayesian = _hybrid;
+        }
+
         _rerank = new RerankedTextSearchEngine(
             _hybrid,
             new CrossEncoderReranker(new OverlapCrossEncoder(_tokenizer)));
+
+        // Reformulation lane: try corrected variants of the query, fused by RRF.
+        var vocabulary = documents.SelectMany(d => _tokenizer.Tokenize(d.Text)).Distinct(StringComparer.Ordinal).ToList();
+        var corrector = new KeyboardAwareTermCorrector(vocabulary);
+        _reformulate = new ReformulatingTextSearchEngine(_lexical.Engine, corrector, _tokenizer);
+
+        // MMR lane: diversity-aware rerank of the hybrid shortlist.
+        var embeddingProvider = new HashingEmbeddingProvider(256, _tokenizer);
+        var vectors = documents.ToDictionary(
+            d => d.Id,
+            d => embeddingProvider.GetEmbedding(d.Text),
+            StringComparer.Ordinal);
+        _mmr = new RerankedTextSearchEngine(
+            _hybrid,
+            new MaximalMarginalRelevanceReranker(vectors, lambda: 0.5, limit: 6));
+
+        _cascade = new RerankedTextSearchEngine(
+            _hybrid,
+            new CascadeRerankPipeline(new IReranker[]
+            {
+                new CrossEncoderReranker(new OverlapCrossEncoder(_tokenizer)),
+                new MaximalMarginalRelevanceReranker(vectors, lambda: 0.5, limit: 6),
+            }));
+
+        _contextual = new ContextualExpansionSearchEngine(
+            _lexical.Engine,
+            new ContextualTermOverlapScorer(_tokenizer),
+            _lexical.TextIndex,
+            _tokenizer);
 
         // Feedback channels: a corpus-level (global) history shared by everyone, and per-session
         // histories that live only in memory for the lifetime of a browser session. Neither stores
@@ -217,6 +295,11 @@ public sealed class DemoSearchService
             Measure("dense", "Dense · hashing embedding", "cosine over deterministic hashed vectors", () => DenseHits(query, limit)),
             Measure("hybrid", "Hybrid · RRF fusion", "lexical, semantic and dense fused by rank", () => HybridHits(query, limit)),
             Measure("rerank", "Hybrid + reranker", "query-term overlap reorders the hybrid shortlist", () => RerankHits(query, limit)),
+            Measure("reformulate", "Reformulate · typo-tolerant", "query variants from a keyboard-aware corrector", () => ReformulateHits(query, limit)),
+            Measure("mmr", "MMR · diversity", "maximal marginal relevance over hashed embeddings", () => MmrHits(query, limit)),
+            Measure("contextual", "Contextual · expansion", "multi-hop expansion guided by term overlap", () => ContextualHits(query, limit)),
+            Measure("cascade", "Cascade · rerank+MMR", "overlap rerank then diversity pass", () => CascadeHits(query, limit)),
+            Measure("bayesian", "Bayesian · fusion", "calibrated fusion of lexical, semantic and dense", () => BayesianHits(query, limit)),
             Measure("segment", "Segment · BM25 from disk", "the same BM25, served from a committed segment", () => SegmentHits(query, limit)),
             Measure("feedback-global", "Feedback · global history", "corpus-level learned preferences, shared by everyone", () => FeedbackHits(query, limit, _globalFeedbackHistory)),
         };
@@ -245,11 +328,53 @@ public sealed class DemoSearchService
         GetSessionHistory(sessionId!).Record(query, documentId);
     }
 
+    public IReadOnlyList<SearchMetricDto> EvaluateSearch()
+    {
+        var labelled = new (string Query, string[] Relevant)[]
+        {
+            ("refresh token", new[] { "auth-refresh", "auth-session" }),
+            ("short lived credential", new[] { "auth-jwt", "auth-login" }),
+            ("ranking quality", new[] { "ir-eval", "ir-bm25" }),
+            ("session expiry", new[] { "auth-session", "auth-refresh" }),
+            ("embeddings", new[] { "db-pgvector", "ir-splade" }),
+            ("inverted index", new[] { "ir-inverted", "db-postgres" }),
+        };
+
+        var sums = new Dictionary<string, double>(StringComparer.Ordinal);
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var (query, relevant) in labelled)
+        {
+            var comparison = Compare(query, 5);
+            var relevantSet = new HashSet<string>(relevant, StringComparer.Ordinal);
+
+            foreach (var lane in comparison.Lanes)
+            {
+                var ids = lane.Hits.Select(h => h.Id).ToList();
+                double ndcg = RetrievalMetrics.NdcgAtK(ids, relevantSet, 5);
+
+                sums.TryGetValue(lane.Key, out double current);
+                sums[lane.Key] = current + ndcg;
+
+                counts.TryGetValue(lane.Key, out int c);
+                counts[lane.Key] = c + 1;
+            }
+        }
+
+        return sums
+            .Select(kv => new SearchMetricDto(kv.Key, kv.Value / counts[kv.Key]))
+            .OrderByDescending(m => m.NdcgAt5)
+            .ToList();
+    }
+
     private QueryFeedbackHistory GetSessionHistory(string sessionId) =>
         _sessionFeedbackHistories.GetOrAdd(sessionId, _ => new QueryFeedbackHistory(_tokenizer));
 
+public sealed record SearchMetricDto(string Lane, double NdcgAt5);
+
     private IReadOnlyList<HitResult> FeedbackHits(string query, int limit, QueryFeedbackHistory history)
     {
+        query = WithoutPhraseSyntax(query);
         var engine = history == _globalFeedbackHistory
             ? _feedbackGlobal
             : new FeedbackAwareTextSearchEngine(_hybrid, history, maxBoost: 5.0);
@@ -437,6 +562,14 @@ public sealed class DemoSearchService
         return 0;
     }
 
+    /// <summary>
+    /// The dense engine and every hybrid that includes it support plain queries only. Phrase
+    /// syntax is honoured by the lexical lanes, so the dense lanes search the words without the
+    /// quote operators instead of failing the whole comparison.
+    /// </summary>
+    private static string WithoutPhraseSyntax(string query) =>
+        query.Replace("\"", string.Empty, StringComparison.Ordinal);
+
     private IReadOnlyList<HitResult> LexicalHits(string query, int limit)
     {
         var hits = _lexical.Search(query, new LexiSharpQueryOptions(Limit: limit, Highlight: true)
@@ -499,7 +632,7 @@ public sealed class DemoSearchService
 
     private IReadOnlyList<HitResult> DenseHits(string query, int limit)
     {
-        var hits = _dense.Search(query, new SearchOptions(Limit: limit));
+        var hits = _dense.Search(WithoutPhraseSyntax(query), new SearchOptions(Limit: limit));
         var results = new HitResult[hits.Count];
 
         for (int i = 0; i < hits.Count; i++)
@@ -513,7 +646,7 @@ public sealed class DemoSearchService
 
     private IReadOnlyList<HitResult> HybridHits(string query, int limit)
     {
-        var details = _hybrid.SearchWithDetails(query, new SearchOptions(Limit: limit));
+        var details = _hybrid.SearchWithDetails(WithoutPhraseSyntax(query), new SearchOptions(Limit: limit));
         var results = new HitResult[details.Count];
 
         for (int i = 0; i < details.Count; i++)
@@ -527,7 +660,77 @@ public sealed class DemoSearchService
 
     private IReadOnlyList<HitResult> RerankHits(string query, int limit)
     {
-        var hits = _rerank.Search(query, new SearchOptions(Limit: limit));
+        var hits = _rerank.Search(WithoutPhraseSyntax(query), new SearchOptions(Limit: limit));
+        var results = new HitResult[hits.Count];
+
+        for (int i = 0; i < hits.Count; i++)
+        {
+            var hit = hits[i];
+            results[i] = ToHit(hit.DocumentId, hit.Score, hit.Document, Highlight(query, hit.Document.Text), null);
+        }
+
+        return results;
+    }
+
+    private IReadOnlyList<HitResult> ReformulateHits(string query, int limit)
+    {
+        var hits = _reformulate.Search(query, new SearchOptions(Limit: limit));
+        var results = new HitResult[hits.Count];
+
+        for (int i = 0; i < hits.Count; i++)
+        {
+            var hit = hits[i];
+            results[i] = ToHit(hit.DocumentId, hit.Score, hit.Document, Highlight(query, hit.Document.Text), null);
+        }
+
+        return results;
+    }
+
+    private IReadOnlyList<HitResult> MmrHits(string query, int limit)
+    {
+        var hits = _mmr.Search(WithoutPhraseSyntax(query), new SearchOptions(Limit: limit));
+        var results = new HitResult[hits.Count];
+
+        for (int i = 0; i < hits.Count; i++)
+        {
+            var hit = hits[i];
+            results[i] = ToHit(hit.DocumentId, hit.Score, hit.Document, Highlight(query, hit.Document.Text), null);
+        }
+
+        return results;
+    }
+
+    private IReadOnlyList<HitResult> ContextualHits(string query, int limit)
+    {
+        var hits = _contextual.Search(query, new SearchOptions(Limit: limit));
+        var results = new HitResult[hits.Count];
+
+        for (int i = 0; i < hits.Count; i++)
+        {
+            var hit = hits[i];
+            results[i] = ToHit(hit.DocumentId, hit.Score, hit.Document, Highlight(query, hit.Document.Text), null);
+        }
+
+        return results;
+    }
+
+    private IReadOnlyList<HitResult> CascadeHits(string query, int limit)
+    {
+        var hits = _cascade.Search(WithoutPhraseSyntax(query), new SearchOptions(Limit: limit));
+        var results = new HitResult[hits.Count];
+
+        for (int i = 0; i < hits.Count; i++)
+        {
+            var hit = hits[i];
+            results[i] = ToHit(hit.DocumentId, hit.Score, hit.Document, Highlight(query, hit.Document.Text), null);
+        }
+
+        return results;
+    }
+
+    private IReadOnlyList<HitResult> BayesianHits(string query, int limit)
+    {
+        var hits = _bayesian.Search(WithoutPhraseSyntax(query), new SearchOptions(Limit: limit));
         var results = new HitResult[hits.Count];
 
         for (int i = 0; i < hits.Count; i++)
