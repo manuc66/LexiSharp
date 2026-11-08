@@ -33,6 +33,7 @@ are listed first.
 | `IContextualTextClassifier` | `ITextClassifier` | A classifier that accepts request-scoped evidence in addition to the text. | [guide](text-analysis.md) |
 | `IFeatureSet` | — | The features of one item, as a question sees them: a set of names, no domain. | [guide](text-analysis.md) |
 | `IFeatureSource<TItem>` | — | Extracts the features of an item — the seam that keeps the question trees domain-agnostic. | [guide](text-analysis.md) |
+| `IAsyncContextualEvidenceScorer` | — | Asynchronous counterpart of IContextualEvidenceScorer: scores a (query, candidate, context) triple without blocking the caller. Use this when the model is… | [guide](reference.md) |
 | `IAsyncCrossEncoderScorer` | — | Asynchronous counterpart of ICrossEncoderScorer: scores a (query, document) pair without blocking the caller. Use this when the model is remote or otherwise… | [guide](reference.md) |
 | `IAsyncReranker` | — | Asynchronous counterpart of IReranker: re-orders a candidate list without blocking the caller. See IAsyncCrossEncoderScorer for the rationale and the limits of… | [guide](reference.md) |
 | `IAsyncTextClassifier` | `ITextClassifier` | Optional capability of an ITextClassifier: the same training and prediction operations, with provider calls that can complete asynchronously. | [guide](reference.md) |
@@ -43,6 +44,7 @@ are listed first.
 | `IColumnAwareBatchEmbeddingProvider` | `IBatchEmbeddingProvider`, `IEmbeddingProvider` | A batch provider that also knows which column the texts belong to — the pair of capabilities a PostgreSQL engine with EmbeddingColumns needs to batch one column… | [guide](reference.md) |
 | `ICompressingSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that can return, alongside the ranked page, each document compressed to its query-relevant content — the surface a… | [guide](reference.md) |
 | `IContextCompressor` | — | Reduces a document's text to the content a query actually cares about — the token-reduction seam between a ranked page and a generation model. LexiSharp never… | [guide](reference.md) |
+| `IContextualEvidenceScorer` | — | Scores whether a candidate passage is necessary evidence for answering a question, conditioned on the evidence already retrieved — the seam for a contextual… | [guide](reference.md) |
 | `IContextualSearchEngine<TPayload>` | `ITextSearchEngine` | An ITextSearchEngine that accepts a caller-supplied payload alongside a query, for the cases a query alone does not carry: who is asking, what time it is, which… | [guide](reference.md) |
 | `ICrossEncoderScorer` | — | Scores a (query, document) pair as a single relevance value — the job of a cross-encoder (concatenate query and document into one input) or, more generally, of… | [guide](reference.md) |
 | `IDetailedSearchEngine` | — | Optional capability of an ITextSearchEngine that can return, alongside the merged ranking, the per-source score breakdown that fed it (see Contributions). | [guide](reference.md) |
@@ -61,6 +63,7 @@ are listed first.
 | `IQueryCostProbe` | — | Optional capability of an ITextSearchEngine that can estimate, cheaply and without running a search, how many documents a query is likely to touch — the signal… | [guide](reference.md) |
 | `IQueryRouter` | — | Picks which route (engine + optional filters) a RoutingSearchEngine should run a query on — a semantic/intent decision, as opposed to IQueryCostEstimator which… | [guide](reference.md) |
 | `IQuerySyntaxSupport` | — | Declares which QueryFeatures an ITextSearchEngine interprets, so callers can discover the supported query syntax instead of discovering it by getting wrong… | [guide](reference.md) |
+| `IQueryTermWeighter` | — | Computes a weight for each term of a tokenized query, before the query reaches a scorer. | [guide](reference.md) |
 | `IQueryTransformer` | — | Rewrites a raw query into one or more searchable variants before retrieval — the « pre-retrieval transformation » seam. Rewriting, decomposing a question into… | [guide](reference.md) |
 | `IReadOnlyTextIndex` | — | The read-only view of an ITextIndex: the corpus statistics and per-document lookups a scorer, a reranker or an extractor needs, with none of the mutation… | [guide](reference.md) |
 | `IReinforceableTextClassifier` | `ITextClassifier` | Optional capability of an ITextClassifier: adjust a trained model from user feedback, one text-to-category association at a time, without a retraining pass over… | [guide](reference.md) |
@@ -79,6 +82,7 @@ are listed first.
 | `ITokenEmbeddingProvider` | — | Produces a sequence of token-level embeddings for a text — the building block of late interaction (ColBERT-style) ranking, where a query is matched to a… | [guide](reference.md) |
 | `IVocabularyIndex` | `IReadOnlyTextIndex` | Capability for an index that can enumerate its vocabulary — the seam prefix/fuzzy query expansion reads at search time. | [guide](reference.md) |
 | `IWeightedPredictor` | — | Optional capability of a ITextClassifier that accepts WeightedTokens instead of raw text, bypassing internal tokenization. Detected with pattern matching… | [guide](reference.md) |
+| `IWeightedQueryScorer` | `ITextScorer` | A scorer that can be rebuilt with per-query term weights, which is what lets a decorator apply an IQueryTermWeighter without knowing which scorer it wraps. | [guide](reference.md) |
 | `ITermExpander` | — | Derives the additional terms to index for a document from its own tokenization. | [guide](embeddings.md) |
 | `IMergeExplainer` | — | A merger that can state the arithmetic behind the list it returned, without keeping any state between searches. | [guide](pipelines.md) |
 | `IResultMerger` | — | Strategy that turns several ranked result lists — one per source engine — into a single coherent, de-duplicated, ordered list. | [guide](pipelines.md) |
@@ -288,6 +292,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `SearchTrace` | class | — | Collects a TraceStep per document per stage, so a ranking can be explained end to end: which engine scored a document, what each merger contributed, what the… |
 | `SparseEmbeddingProviderExtensions` | class | — | Backwards-compatible call shape: embeds text as a Passage. |
 | `StageRetrievalMetrics` | record | — | Aggregated measurements for one pipeline stage of one engine. |
+| `SyncContextualEvidenceScorerAdapter` | class | `IAsyncContextualEvidenceScorer` | Adapts a synchronous IContextualEvidenceScorer to IAsyncContextualEvidenceScorer by running it on the calling thread inside a completed task. Useful for reusing… |
 | `SyncCrossEncoderScorerAdapter` | class | `IAsyncCrossEncoderScorer` | Adapts a synchronous ICrossEncoderScorer to IAsyncCrossEncoderScorer by running it on the calling thread inside a completed task. Useful for reusing an… |
 | `SyncRerankerAdapter` | class | `IAsyncReranker` | Adapts a synchronous IReranker to IAsyncReranker by running it on the calling thread inside a completed task. |
 | `SynchronizedTextSearchEngine` | class | `IDetailedSearchEngine`, `IDisposable`, `IExplainableSearchEngine`, `IFacetedSearchEngine`, `ITextSearchEngine` | Wraps an ITextSearchEngine so that concurrent searches and concurrent mutation stop being the caller's problem: any number of Search (and the capability calls… |
@@ -316,6 +321,8 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
+| `CoOccurrenceQueryTermWeighter` | class | `IQueryTermWeighter` | Weights the terms of a query by how redundant each one is with the rest of the query in a corpus-derived co-occurrence graph: a term tied to many of the other… |
+| `ContextualExpansionSearchEngine` | class | `ITextSearchEngine` | A decorator that implements multi-hop evidence retrieval in the style of the SAG2 architecture: an initial BM25 pass, then passage-to-term-to-passage expansion,… |
 | `CorrectingTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that corrects query terms against the index vocabulary before searching — the consuming side of ITermCorrector, proving the seam is usable… |
 | `ExpandedTerm` | record struct | — | A single additional term injected into the index for a document, alongside its source text tokenization. The term is indexed as a regular inverted-list member… |
 | `ExpandingTextSearchEngine` | class | `IDetailedSearchEngine`, `IExplainableSearchEngine`, `IFacetedSearchEngine`, `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that widens the query with related terms before delegating to the inner engine — the query-side counterpart of ExpansionTextIndex, which… |
@@ -324,7 +331,9 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `FuzzyTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that widens the query with vocabulary terms within a small edit distance of each query term — in-memory fuzzy matching, the counterpart of… |
 | `PmiTermExpander` | class | `ITermExpander` | A corpus-derived ITermExpander: it learns which terms habitually appear in the same context window and expands a document with the top positively associated… |
 | `PmiTermExpanderOptions` | class | — | Configuration of a PmiTermExpander: how the corpus is analyzed and how many expansion terms each document gets. |
+| `QueryTermWeightingMode` | enum | — | Which direction the co-occurrence graph moves a query term's weight. |
 | `ReformulatingTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that generates query variants from a term corrector's uncertainty and fuses their results, instead of committing to a single correction or… |
+| `ReweightingTextSearchEngine` | class | `ITextSearchEngine` | A decorator engine that weights the terms of each query before ranking it, through an IQueryTermWeighter, and then searches with a scorer rebuilt for that… |
 | `TransformingTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that runs an IQueryTransformer on the raw query, searches the inner engine for every variant, and fuses the rankings — the query-side… |
 
 #### `LexiSharp.Highlighting`
@@ -345,6 +354,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `CascadeRerankPipeline` | class | `IReranker` | Chains rerankers in cascade: each stage re-ranks the output of the previous one, and the shortlist may be trimmed between stages so only the strongest… |
 | `CombMNZResultMerger` | class | `IResultMerger` | Blend strategy that multiplies each document's CombSUM score by the number of engines that retrieved it — the classic CombMNZ. |
 | `CombSumResultMerger` | class | `IResultMerger` | Blend strategy that sums the normalized per-engine scores of every document — the classic CombSUM of score-based fusion. |
+| `ContextualTermOverlapScorer` | class | `IContextualEvidenceScorer` | A model-free IContextualEvidenceScorer used to exercise the multi-hop expansion stack with no external dependency: it scores a candidate by the fraction of… |
 | `CrossEncoderReranker` | class | `IReranker` | Precision-oriented reranker: re-scores every candidate with a pairwise (cross-encoder) model and reorders the list by the model's judgment. |
 | `HybridTextSearchEngine` | class | `IDetailedSearchEngine`, `ITextSearchEngine` | A federated search engine: queries a list of delegate engines, then merges their results into one coherent ordering through an IResultMerger. |
 | `MaxSimReranker` | class | `IReranker` | Late-interaction reranker (ColBERT-style): scores each candidate with MaxSim between the token-level embeddings of the query and of the document, then reorders… |
@@ -419,8 +429,12 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `Bm25PlusParameterTuner` | class | — | Finds the BM25+ parameters (k1, b and the lower bound delta) that best satisfy a set of labeled validation queries, by brute-force grid search. |
 | `Bm25PlusScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | BM25+ relevance: Okapi BM25 with the hard term-presence cut replaced by a lower-bounded one, so a document that matches more distinct query terms is rewarded… |
 | `Bm25PlusTuningResult` | record | — | The outcome of a Tune run: the best configuration found, the quality it achieved, and the full evaluation grid for inspection. |
-| `Bm25Scorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | Okapi BM25 relevance — the standard non-semantic ranking model for full-text search. It blends term saturation (k1) with document-length normalization (b). |
+| `Bm25Scorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer`, `IWeightedQueryScorer` | Okapi BM25 relevance — the standard non-semantic ranking model for full-text search. It blends term saturation (k1) with document-length normalization (b). |
 | `Bm25TuningResult` | record | — | The outcome of a Tune run: the best parameter pair found, the quality it achieved and the full evaluation grid for inspection. |
+| `Bm25VaGridPoint` | record | — | One evaluated (k1, b) combination of a Bm25VaParameterTuner. |
+| `Bm25VaParameterTuner` | class | — | Finds the (k1, b) of Bm25VaScorer that best satisfy a set of labeled validation queries, by the same brute-force grid search as Bm25ParameterTuner. |
+| `Bm25VaScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | BM25VA — Okapi BM25 whose length normalization is shared with the document's verboseness, the average number of times a term is repeated in the document… |
+| `Bm25VaTuningResult` | record | — | The outcome of a Bm25VaParameterTuner run: the best (k1, b) found, the quality it achieved and the full grid for inspection. |
 | `Bm25ValidationQuery` | record | — | One labeled validation query of a Bm25ParameterTuner: a raw query together with the ids of the documents a good ranking should surface. |
 | `BooleanMatch` | enum | — | How the modifiers of a BooleanScorer are combined. |
 | `BooleanScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | Pure boolean filter. A matching document gets a score of 1, a non-matching one 0. Because the RankedTextSearchEngine discards scores below MinimumScore, this… |
@@ -439,6 +453,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `RetrievalMetrics` | class | — | Standard top-k retrieval metrics over a ranked list of document ids, used to evaluate (and tune) ranking quality against a validation set. |
 | `ScoreConfidence` | class | — | Maps an ordered result set's raw scores into calibrated confidences in [0,1] — the "is this really the answer?" gauge that raw lexical scores (BM25, TF-IDF,… |
 | `ScoreConfidenceMethod` | enum | — | How an ordered result set's raw scores are mapped into a calibrated per-result confidence in [0,1]. |
+| `SpreadBm25Scorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | BM25 whose term frequency is a spatial spread rather than a count: how many distinct windows of the document contain the term, instead of how many times it… |
 | `TfIdfScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | Classic TF-IDF relevance. A document matches when it contains at least one query term; rare terms are weighted more than common ones. |
 | `TieBreak` | enum | — | How the engines order candidates whose scores are exactly equal. |
 | `TuningMetric` | enum | — | The quality metric a Bm25ParameterTuner maximizes over its validation set. |
@@ -508,6 +523,10 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
+| `LexiSharpFeedbackEndpoint` | class | — | The testable heart of the feedback endpoint: an HTTP-agnostic function from an index and a feedback request to an IResult. The minimal-API extension only wires… |
+| `LexiSharpFeedbackEndpointBuilder` | class | — | Minimal-API wiring for the LexiSharpFeedbackEndpoint handler. |
+| `LexiSharpFeedbackError` | record | — | The payload of a failed feedback request. |
+| `LexiSharpFeedbackRequest` | record | — | The payload of a feedback request: which document was chosen for which query. |
 | `LexiSharpIndexHealthCheck` | class | `IHealthCheck` | Reports whether a search index is ready to serve traffic: non-empty, and optionally connected to its backing store and not too stale. |
 | `LexiSharpIndexHealthCheckOptions` | class | — | Tuning for the registration helpers on LexiSharpObservabilityServiceCollectionExtensions. |
 | `LexiSharpObservabilityServiceCollectionExtensions` | class | — | One-call registration of the LexiSharp observability pieces on an IServiceCollection. |

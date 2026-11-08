@@ -11,6 +11,48 @@
   model-free `ContextualTermOverlapScorer` exercises the loop offline. Parameters (B, s, L, p, H)
   are configurable; the default matches the published architecture (B=100, s=10, L=20, p=5, H=2).
 
+- **`Bm25VaScorer`** (`LexiSharp.Ranking`): BM25VA, Okapi BM25 whose normalization interpolates
+  between document verboseness (`|d| / distinct terms`) and length (Lipani, Lupu and Hanbury,
+  2015). `b = 1` reproduces `Bm25Scorer` to the bit — pinned by
+  `Bm25VaScorerTests.AtBOneIsExactlyBm25` and by a `BM25 (b=1) [control]` row in the harness —
+  and `b = 0` removes length from the ranking. `Bm25VaParameterTuner` fits `(k1, b)` and reports a
+  winner at `b = 1` as the null result (the search collapsed onto BM25). Measured with
+  `--bm25va` / `--tune-bm25va`: the fitted `b` is interior (0.25 on NFCorpus, 0.5 on SciFact) but
+  the score ties tuned BM25 on NFCorpus (0.311) and beats it by 0.001 on SciFact (0.665), with
+  recall@10 moving the other way; on ArguAna the fixed points lose 0.021 and verboseness alone
+  loses 0.120. The scorer declines the term-at-a-time fast paths (verboseness is not in the
+  postings), so on ArguAna a row costs 55 s at `--jobs 8` against BM25's 0.5 s. See
+  `docs/ranking.md#bm25va-verboseness-normalized-bm25`.
+
+- **Query-term reweighting** (`IQueryTermWeighter`, `IWeightedQueryScorer` in
+  `LexiSharp.Core`; `CoOccurrenceQueryTermWeighter`, `QueryTermWeightingMode` and
+  `ReweightingTextSearchEngine` in `LexiSharp.Expansion`): weights each query term from the
+  windowed co-occurrence graph `PmiTermExpander` already learns, and applies it in the scoring sum
+  — the terms stay in the query, so candidate enumeration is unchanged. `Bm25Scorer` implements
+  `IWeightedQueryScorer`: `WithTermWeights` returns a private copy whose idf carries the weights,
+  the prototype is never mutated, and the decorator rebuilds the scorer per search so concurrent
+  queries cannot see each other's weights. Syntax-bearing queries pass through untouched.
+  `PmiTermExpander.AssociationsWith` exposes one term's PPMI to a set of others in one pass.
+  Measured with `--reweight` (nDCG@10, in-sample): `redundancy` down-weighting loses on all three
+  corpora (0.308 → 0.301 on NFCorpus, 0.662 → 0.548 on SciFact, 0.320 → 0.219 on ArguAna);
+  `centrality` up-weighting gains 0.008 on ArguAna (0.320 → 0.328) and loses 0.012–0.046 on the
+  two short-query corpora. `minimumQueryTerms` (floor 30 measured here) makes the short-query
+  corpora exact no-ops while keeping the ArguAna gain, so the direction matters and the estimate
+  is only worth acting on when the query is long enough. At the tuned operating point the gain is
+  **not additive**: on ArguAna, `b = 1` reads 0.353 and the weighter reads 0.354 / 0.355, so the
+  +0.008 at the library default becomes +0.001 / +0.002 and the feature is not a default. Opt-in;
+  see `docs/ranking.md#query-term-reweighting`.
+
+- **`SpreadBm25Scorer`** (`LexiSharp.Ranking`): BM25 whose term frequency is the number of distinct
+  non-overlapping windows holding the term, blended with the raw count by `alpha` (`0` is exactly
+  `Bm25Scorer` — pinned by `SpreadBm25ScorerTests.AtAlphaZeroIsExactlyBm25` — and `1` is the spread
+  alone). Measured with `--spread` across `b = 0, 0.5, 1`: the hypothesis that a spatial count makes
+  length normalization redundant is **refuted** — at `alpha = 1`, `b = 0` reads 0.143 against 0.355
+  on ArguAna and 0.642 against 0.663 on SciFact — and at a fixed `b` the spread moves nDCG by at
+  most 0.002 on NFCorpus, SciFact and ArguAna. The scorer declines the term-at-a-time fast paths
+  (it reads positions), so an ArguAna row costs 58–77 s at `--jobs 8` against BM25's 1 s. See
+  `docs/ranking.md#spread-tf-bm25-over-distinct-windows`.
+
 ## [0.10.0] — 2026-11-06
 
 ### Added

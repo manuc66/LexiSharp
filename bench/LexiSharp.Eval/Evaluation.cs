@@ -150,7 +150,12 @@ internal static class Evaluation
         bool parseQuerySyntax = false, bool captureOutcomes = false, bool tuneBm25F = false,
         IReadOnlyList<(string Name, ITermExpander Expander)>? queryExpansions = null,
         SearchOptions? tuningSearchOptions = null,
-        double? heldOutFraction = null)
+        double? heldOutFraction = null,
+        bool bm25Va = false,
+        bool tuneBm25Va = false,
+        IReadOnlyList<(string Name, IQueryTermWeighter Weighter)>? queryReweights = null,
+        IReadOnlyList<double>? spreadAlphas = null,
+        int spreadWindow = 8)
     {
         // Excluding a query's own document id is a no-op unless the corpus numbers its queries as
         // documents, so the check needs no corpus-specific configuration. One membership test per
@@ -234,6 +239,26 @@ internal static class Evaluation
                 .ToArray();
         }
 
+        // BM25VA is a direction, not one point: b = 1 is the degeneration control (the same scorer
+        // as BM25, which is what the identity test pins), b = 0 removes length from the
+        // normalization entirely, and b = 0.5 sits between them. Opt-in, so the default table keeps
+        // the rows and the run time it had.
+        if (bm25Va)
+        {
+            builders = builders
+                .Concat(new (string, Func<ITextSearchEngine>)[]
+                {
+                    // The control the identity test pins: BM25VA at b = 1 *is* BM25 at b = 1, so these
+                    // two rows must print the same numbers. The default BM25 row is at b = 0.75 and is
+                    // deliberately a different operating point, not the control.
+                    ("BM25 (k1=1.5, b=1) [control]", () => Ranked(index, new Bm25Scorer(1.5, 1.0, queryTerms), tokenizer)),
+                    ("BM25VA (k1=1.5, b=1)", () => Ranked(index, new Bm25VaScorer(1.5, 1.0, queryTerms), tokenizer)),
+                    ("BM25VA (k1=1.5, b=0.5)", () => Ranked(index, new Bm25VaScorer(1.5, 0.5, queryTerms), tokenizer)),
+                    ("BM25VA (k1=1.5, b=0)", () => Ranked(index, new Bm25VaScorer(1.5, 0.0, queryTerms), tokenizer)),
+                })
+                .ToArray();
+        }
+
         builders = builders
             .Concat(new (string, Func<ITextSearchEngine>)[]
             {
@@ -306,6 +331,46 @@ internal static class Evaluation
                 Ranked(index, new Bm25Scorer(1.5, 0.75, queryTerms), tokenizer),
                 expander,
                 tokenizer)));
+        }
+
+        // Query-term reweighting, one row per strength. The graph is learned once by the caller and
+        // shared; each row rebuilds the scorer per search because a weight is a property of the
+        // query, not of the engine. The BM25 operating point is the run's reference pair when one
+        // was asked for, so the reweighting can be measured on top of the tuned corpus point rather
+        // than only on the library default.
+        if (queryReweights is { Count: > 0 })
+        {
+            Bm25Parameters reweightParameters = referenceBm25 ?? new Bm25Parameters(1.5, 0.75);
+
+            foreach (var (name, weighter) in queryReweights)
+            {
+                buildersList.Add((name, () => new ReweightingTextSearchEngine(
+                    index,
+                    new Bm25Scorer(reweightParameters.K1, reweightParameters.B, queryTerms),
+                    weighter,
+                    tokenizer)));
+            }
+        }
+
+        // Spread is a direction, and the direction is the interaction with b: the same statistic at
+        // b = 0, 0.5 and 1 shows whether the spatial count makes length normalization redundant.
+        // alpha = 0 is the raw-count control and must reproduce BM25 at the same b.
+        if (spreadAlphas is { Count: > 0 })
+        {
+            foreach (double alpha in spreadAlphas)
+            {
+                foreach (double b in new[] { 0.0, 0.5, 1.0 })
+                {
+                    string name =
+                        $"BM25 spread (alpha={alpha.ToString("0.##", CultureInfo.InvariantCulture)}, "
+                        + $"b={b.ToString("0.##", CultureInfo.InvariantCulture)}, w={spreadWindow})";
+
+                    buildersList.Add((name, () => new RankedTextSearchEngine(
+                        index,
+                        new SpreadBm25Scorer(1.5, b, spreadWindow, alpha, queryTerms),
+                        tokenizer)));
+                }
+            }
         }
 
         if (dense is not null)
@@ -412,6 +477,14 @@ internal static class Evaluation
                 out string lDelta, jobs, parseQuerySyntax, tuningSearchOptions, captureOutcomes);
 
             tunedDescription += $"; {plusDelta}, {lDelta}";
+        }
+
+        if (tuned && tuneBm25Va)
+        {
+            // The three fixed points say what verboseness does; this row says what a corpus-chosen
+            // b does, which is the configuration the normalization literature actually fits. A
+            // winner at b = 1 is the null result and is printed as one.
+            tunedDescription += $"; {RunTunedVa(index, fitQueries, scoreQueries, topK, tokenizer, ndcgGain, results, heldOutRows, jobs, parseQuerySyntax, tuningSearchOptions, captureOutcomes)}";
         }
 
         if (heldOut is not null)
@@ -670,6 +743,55 @@ internal static class Evaluation
         return $"k1={tuned.Parameters.K1.ToString("0.####", CultureInfo.InvariantCulture)}, "
              + $"b={tuned.Parameters.B.ToString("0.####", CultureInfo.InvariantCulture)}, "
              + $"nDCG@10={result.NdcgAt10.ToString("0.###", CultureInfo.InvariantCulture)}";
+    }
+
+    /// <summary>
+    /// Fits <c>(k1, b)</c> for BM25VA on the same queries as the tuned BM25 row, and states the one
+    /// reading that matters: a winner at <c>b = 1</c> is BM25, so verboseness bought nothing.
+    /// </summary>
+    private static string RunTunedVa(
+        ITextIndex index,
+        IReadOnlyList<EvaluatedQuery> fitQueries,
+        IReadOnlyList<EvaluatedQuery>? scoreQueries,
+        int topK,
+        ITokenizer tokenizer,
+        NdcgGain ndcgGain,
+        List<ConfigResult> results,
+        List<HeldOutComparison> heldOutRows,
+        int jobs,
+        bool parseQuerySyntax,
+        SearchOptions? tuningSearchOptions,
+        bool captureOutcomes = false)
+    {
+        var tuner = new Bm25VaParameterTuner(index, Validation(fitQueries), tokenizer, tuningSearchOptions);
+        Bm25VaTuningResult tuned = tuner.Tune(topK: topK, metric: TuningMetric.Ndcg);
+
+        string name = $"BM25VA tuned (k1={tuned.K1:0.##}, b={tuned.B:0.##})";
+
+        ITextSearchEngine Engine() =>
+            new RankedTextSearchEngine(index, new Bm25VaScorer(tuned.K1, tuned.B), tokenizer);
+
+        ConfigResult result = RunConfig(
+            name, Engine(), fitQueries, topK, ndcgGain, jobs, parseQuerySyntax, captureOutcomes: captureOutcomes);
+
+        results.Add(result);
+
+        if (scoreQueries is not null)
+        {
+            heldOutRows.Add(new HeldOutComparison(
+                name,
+                result,
+                RunConfig(name, Engine(), scoreQueries, topK, ndcgGain, jobs, parseQuerySyntax, captureOutcomes: captureOutcomes)));
+        }
+
+        string reading = tuned.B >= 1.0
+            ? "b=1 is BM25, so verboseness bought nothing"
+            : $"b={tuned.B.ToString("0.##", CultureInfo.InvariantCulture)} keeps "
+              + $"{((1.0 - tuned.B) * 100).ToString("0.#", CultureInfo.InvariantCulture)} % verboseness";
+
+        return $"BM25VA tuned: k1={tuned.K1.ToString("0.####", CultureInfo.InvariantCulture)}, "
+             + $"b={tuned.B.ToString("0.####", CultureInfo.InvariantCulture)}, "
+             + $"nDCG@10={result.NdcgAt10.ToString("0.###", CultureInfo.InvariantCulture)} ({reading})";
     }
 
     /// <summary>
