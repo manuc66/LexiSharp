@@ -191,15 +191,7 @@ public sealed class ContextualExpansionSearchEngine : ITextSearchEngine
                 break;
 
             // pool U
-            List<SearchResult> u;
-            if (round == 1)
-            {
-                u = Dedup(p.Concat(accumulatedSeeds).Concat(cNew).ToList());
-            }
-            else
-            {
-                u = Dedup(p.Concat(accumulatedSeeds).Concat(cNew).ToList());
-            }
+            List<SearchResult> u = Dedup(p.Concat(accumulatedSeeds).Concat(cNew).ToList());
 
             // round 2 (last) history substitution: keep at most _b scored; if r==_h (last), apply
             List<SearchResult> w;
@@ -312,8 +304,8 @@ public sealed class ContextualExpansionSearchEngine : ITextSearchEngine
             if (c != 0) return c;
             int ra = rankOf.TryGetValue(a.item.DocumentId, out var r1) ? r1 : int.MaxValue;
             int rb = rankOf.TryGetValue(b.item.DocumentId, out var r2) ? r2 : int.MaxValue;
-            double ta = 1.0 / (60 + ra);
-            double tb = 1.0 / (60 + rb);
+            double ta = 1.0 / (60.0 + ra);
+            double tb = 1.0 / (60.0 + rb);
             int c2 = tb.CompareTo(ta);
             if (c2 != 0) return c2;
             return string.CompareOrdinal(a.item.DocumentId, b.item.DocumentId);

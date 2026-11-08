@@ -377,7 +377,7 @@ public sealed class DemoClassificationService
             total += f1;
         }
 
-        return classes.Count > 0 ? total / classes.Count : 0.0;
+        return total / classes.Count;
     }
 }
 

@@ -207,5 +207,3 @@ static string Usage() =>
 
      The demo serves on http://localhost:5000 unless ASPNETCORE_URLS says otherwise.
      """;
-public sealed record LearnRequest(string Query, string DocumentId, string? SessionId = null, bool Global = false);
-public sealed record ReinforceRequest(string Text, string Category);
