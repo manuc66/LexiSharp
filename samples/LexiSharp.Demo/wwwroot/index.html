@@ -172,16 +172,16 @@
     <button id="btn-online-eval" class="ghost">Online eval</button>
   </div>
   <div style="display:flex; gap:8px; margin-bottom: 12px; flex-wrap:wrap; align-items:center;">
-    <input id="teach-text" type="search" placeholder="text to teach" style="flex:1 1 220px; min-width:180px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text);" />
-    <input id="teach-cat" type="search" placeholder="category" style="width:140px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text);" />
+    <input id="teach-text" type="search" aria-label="text to teach" placeholder="text to teach" style="flex:1 1 220px; min-width:180px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text);" />
+    <input id="teach-cat" type="search" aria-label="category to teach" placeholder="category" style="width:140px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text);" />
     <button id="btn-teach" class="ghost">Teach</button>
     <button id="btn-forget" class="ghost">Forget</button>
   </div>
   <div style="display:flex; gap:8px; margin-bottom: 12px; flex-wrap:wrap; align-items:center;">
-    <input id="ctx-text" type="search" placeholder="text for contextual blend" style="flex:1 1 220px; min-width:180px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text);" />
-    <input id="ctx-prior" type="search" placeholder="prior category" style="width:140px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text);" />
-    <input id="ctx-weight" type="number" value="1" step="0.1" style="width:80px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text);" />
-    <input id="ctx-candidate" type="search" placeholder="candidate category" style="width:140px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text);" />
+    <input id="ctx-text" type="search" aria-label="text for contextual blend" placeholder="text for contextual blend" style="flex:1 1 220px; min-width:180px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text);" />
+    <input id="ctx-prior" type="search" aria-label="prior category" placeholder="prior category" style="width:140px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text);" />
+    <input id="ctx-weight" type="number" aria-label="context weight" value="1" step="0.1" style="width:80px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text);" />
+    <input id="ctx-candidate" type="search" aria-label="candidate category" placeholder="candidate category" style="width:140px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text);" />
     <button id="btn-context" class="ghost">Apply context</button>
   </div>
   <div id="classify-output" class="empty">type a sentence and classify.</div>
