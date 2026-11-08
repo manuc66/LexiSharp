@@ -85,6 +85,17 @@ public static class Program
         var expandDensities = new List<double>();
         var expandRankings = new List<ExpansionRanking>();
 
+        // Query-term reweighting. Empty means off: the learning pass is the same one expansion
+        // pays for, and a default run learns nothing.
+        var reweightStrengths = new List<double>();
+        var reweightMode = QueryTermWeightingMode.Redundancy;
+        int reweightMinTerms = 0;
+
+        // Spread-tf sweep. Empty means off: the scorer declines the fast paths, so a default run
+        // pays neither the positions reads nor the slower per-document loop.
+        var spreadAlphas = new List<double>();
+        int spreadWindow = 8;
+
         // The ANN curve is a separate lane from the metrics table: it reports a recall/latency curve
         // over the pgvector index, and it needs a live server, so it is opt-in on both counts.
         var annEfValues = new List<int>();
@@ -126,6 +137,14 @@ public static class Program
         // BM25F's own tuner is 29 evaluations where BM25's is 25 and the deltas' are 125; opt-in so a
         // default run and the pinned replay do not pay for a row that answers a narrower question.
         bool tuneBm25F = false;
+        // BM25VA's rows are opt-in for the same reason as the BM25F tuner's: they answer a narrower
+        // question (does verboseness beat length as the normalization statistic?) and a default run
+        // should keep the rows and the run time it had.
+        bool bm25Va = false;
+        // Fitting (k1, b) for BM25VA is 25 full search passes over the validation set; on ArguAna a
+        // single pass is already the slowest row in the table, so the tuned row is opt-in on top of
+        // the fixed points rather than implied by them.
+        bool tuneBm25Va = false;
         // Opt-in for the same reason: fitting the tuned rows under this run's query-reading convention
         // changes their parameters on a corpus whose queries carry syntax, and the tuned rows already
         // published were fitted through the tuners' defaults. A default run keeps that convention.
@@ -232,6 +251,13 @@ public static class Program
                 case "--tune-bm25f":
                     tuneBm25F = true;
                     break;
+                case "--bm25va":
+                    bm25Va = true;
+                    break;
+                case "--tune-bm25va":
+                    tuneBm25Va = true;
+                    bm25Va = true;
+                    break;
                 case "--tune-search-options":
                     tuneSearchOptions = true;
                     break;
@@ -323,6 +349,21 @@ public static class Program
                     break;
                 case "--expand-ranking" when i + 1 < args.Length:
                     expandRankings.AddRange(ParseRanking(args[++i]));
+                    break;
+                case "--reweight" when i + 1 < args.Length:
+                    reweightStrengths.AddRange(ParseStrengths(args[++i]));
+                    break;
+                case "--reweight-mode" when i + 1 < args.Length:
+                    reweightMode = ParseReweightMode(args[++i]);
+                    break;
+                case "--reweight-min-terms" when i + 1 < args.Length:
+                    reweightMinTerms = ParseNonNegative(args[++i], "--reweight-min-terms");
+                    break;
+                case "--spread" when i + 1 < args.Length:
+                    spreadAlphas.AddRange(ParseAlphas(args[++i]));
+                    break;
+                case "--spread-window" when i + 1 < args.Length:
+                    spreadWindow = ParsePositive(args[++i], "--spread-window");
                     break;
                 case "--help":
                 case "-h":
@@ -628,10 +669,10 @@ public static class Program
                 excludeQueryDocument, fingerprintOnly, referenceBm25, queryFrequency, scoreRounding,
                 saturationConstant, singlePrecision, dense, densePackage, denseSeq,
                 tuned, reranker, rerankCandidates, runPath, jobs, indexCache, parseQuerySyntax,
-                querySyntaxReference, segment, tuneBm25F, tuneSearchOptions,
+                querySyntaxReference, segment, tuneBm25F, tuneSearchOptions, bm25Va, tuneBm25Va,
                 analyzePath, analyzeBaseline, analyzeCandidate,
                 disagreementLeft, disagreementRight,
-                expandDensities, expandRankings, annEfValues, annConnection, backendLane, rerankCacheDir,
+                expandDensities, expandRankings, reweightStrengths, reweightMode, reweightMinTerms, spreadAlphas, spreadWindow, annEfValues, annConnection, backendLane, rerankCacheDir,
                 heldOutFraction, sparseLane, bootstrap, bootstrapResamples, bootstrapBaseline,
                 bootstrapCorrection);
             Console.WriteLine();
@@ -759,10 +800,12 @@ public static class Program
         bool singlePrecision, bool dense, bool densePackage, int denseSeq, bool tuned,
         IReranker? reranker, int rerankCandidates, string? runPath, int jobs, string? indexCache,
         bool parseQuerySyntax, bool referenceIndexStatistics, bool segment, bool tuneBm25F,
-        bool tuneSearchOptions,
+        bool tuneSearchOptions, bool bm25Va, bool tuneBm25Va,
         string? analyzePath, string analyzeBaseline, string? analyzeCandidate,
         string? disagreementLeft, string? disagreementRight,
         IReadOnlyList<double> expandDensities, IReadOnlyList<ExpansionRanking> expandRankings,
+        IReadOnlyList<double> reweightStrengths, QueryTermWeightingMode reweightMode, int reweightMinTerms,
+        IReadOnlyList<double> spreadAlphas, int spreadWindow,
         IReadOnlyList<int> annEfValues, string? annConnection, BackendLane? backendLane,
         string? rerankCacheDir, double? heldOutFraction, SparseLane? sparseLane,
         bool bootstrap, int bootstrapResamples, string bootstrapBaseline,
@@ -894,12 +937,38 @@ public static class Program
                 queryExpansions.Add((name, learned));
             }
 
+        var queryReweights = new List<(string Name, IQueryTermWeighter Weighter)>();
+
+        if (reweightStrengths.Count > 0)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var graph = PmiTermExpander.LearnFrom(learningCorpus, tokenizer);
+            sw.Stop();
+
+            Console.WriteLine($"Learned the query-reweighting graph in {sw.Elapsed.TotalSeconds:0.0}s.");
+
+            foreach (double strength in reweightStrengths.Distinct().OrderBy(value => value))
+            {
+                string name =
+                    $"BM25 + query reweight ({reweightMode.ToString().ToLowerInvariant()}, "
+                    + $"strength={strength.ToString("0.####", CultureInfo.InvariantCulture)}"
+                    + (reweightMinTerms > 0 ? $", floor={reweightMinTerms}" : string.Empty) + ")";
+
+                queryReweights.Add((name, new CoOccurrenceQueryTermWeighter(graph, strength, reweightMode, reweightMinTerms)));
+            }
+        }
+
         var (results, tunedDescription, notes, heldOut) = Evaluation.Run(
             corpus, runIndex, topK, limit, tokenizer, excludeQueryDocument, gain, referenceBm25,
             queryFrequency, scoreRounding, saturationConstant, singlePrecision, denseVectors, tuned, reranker,
             rerankCandidates,
             jobs, parseQuerySyntax, captureOutcomes: analyzePath is not null || bootstrap, queryExpansions: queryExpansions,
             tuneBm25F: tuneBm25F,
+            bm25Va: bm25Va,
+            tuneBm25Va: tuneBm25Va,
+            queryReweights: queryReweights,
+            spreadAlphas: spreadAlphas,
+            spreadWindow: spreadWindow,
             tuningSearchOptions: tuneSearchOptions
                 ? new SearchOptions(ParseQuerySyntax: parseQuerySyntax)
                 : null,
@@ -1327,6 +1396,44 @@ public static class Program
         }
     }
 
+    private static IEnumerable<double> ParseAlphas(string value)
+    {
+        foreach (string part in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!double.TryParse(part, NumberStyles.Float, CultureInfo.InvariantCulture, out double alpha)
+                || !double.IsFinite(alpha) || alpha is < 0 or > 1)
+            {
+                throw new ArgumentException(
+                    $"--spread expects a comma-separated list of alphas in [0, 1], got '{part}'.");
+            }
+
+            yield return alpha;
+        }
+    }
+
+    private static QueryTermWeightingMode ParseReweightMode(string value) => value switch
+    {
+        "redundancy" => QueryTermWeightingMode.Redundancy,
+        "centrality" => QueryTermWeightingMode.Centrality,
+        _ => throw new ArgumentException(
+            $"--reweight-mode expects 'redundancy' or 'centrality', got '{value}'."),
+    };
+
+    private static IEnumerable<double> ParseStrengths(string value)
+    {
+        foreach (string part in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!double.TryParse(part, NumberStyles.Float, CultureInfo.InvariantCulture, out double strength)
+                || !double.IsFinite(strength) || strength < 0)
+            {
+                throw new ArgumentException(
+                    $"--reweight expects a comma-separated list of finite strengths >= 0, got '{part}'.");
+            }
+
+            yield return strength;
+        }
+    }
+
     private static IEnumerable<ExpansionRanking> ParseRanking(string value) => value switch
     {
         "count" => [ExpansionRanking.CoOccurrenceCount],
@@ -1627,6 +1734,14 @@ public static class Program
         return parsed;
     }
 
+    private static int ParseNonNegative(string value, string option)
+    {
+        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) || parsed < 0)
+            throw new ArgumentException($"{option} must be a non-negative integer, got '{value}'.");
+
+        return parsed;
+    }
+
     /// <summary>
     /// A share strictly between 0 and 1. Both endpoints are refused: a score set of zero queries or a
     /// fit set of zero queries is not a split, and the error says which flag failed rather than the
@@ -1648,7 +1763,7 @@ public static class Program
     {
         Console.WriteLine("""
             Usage: LexiSharp.Eval [--data <dir>] [--dataset <name|all>] [--top-k <n>] [--limit <n>]
-                     [--no-tuned] [--tune-bm25f] [--tune-search-options] [--heldout <share>] [--stem porter] [--dense] [--dense-seq <n>] [--rerank] [--rerank-top <n>]
+                     [--no-tuned] [--tune-bm25f] [--bm25va] [--tune-bm25va] [--reweight <list>] [--reweight-mode <mode>] [--reweight-min-terms <n>] [--spread <list>] [--spread-window <n>] [--tune-search-options] [--heldout <share>] [--stem porter] [--dense] [--dense-seq <n>] [--rerank] [--rerank-top <n>]
                      [--rerank-cache <dir>]
                      [--backend <lexical|paradedb|vector|fuzzy|sparse> --backend-connection <s>]
                      [--backend-bm25 <k1,b>] [--backend-ef <list>] [--backend-threshold <list>]
@@ -1671,6 +1786,46 @@ public static class Program
                                 whether weighting beats leaving the fields neutral when both are
                                 fitted. Reports WeightingHelped. Needs a corpus with titles and an
                                 index that keeps per-field statistics; skipped with a note otherwise.
+              --bm25va          Add three BM25VA rows (b = 1, 0.5, 0) plus a BM25 b = 1 control:
+                                BM25 normalized by document verboseness (|d| / distinct terms)
+                                instead of, or as well as, by length. b = 1 is the degeneration
+                                control and must reproduce the b = 1 BM25 row to the bit; b = 0
+                                removes length from the normalization. Opt-in, so the default
+                                table is unchanged. The scorer cannot use the term-at-a-time fast
+                                paths, so these rows score document by document and cost more per
+                                candidate.
+              --tune-bm25va     Fit BM25VA's (k1, b) on the same queries as the tuned BM25 row
+                                (25 configurations, nDCG@10), and print the winner with the one
+                                reading that matters: a winner at b = 1 is BM25, so the verboseness
+                                component bought nothing. Implies --bm25va. On ArguAna a single
+                                BM25VA pass is already the slowest row, so this is 25 of them.
+              --reweight <list>  Add one BM25 row per strength in a comma-separated list (>= 0):
+                                query terms are weighted from a windowed co-occurrence graph
+                                learned from the corpus, normalized so the most important term
+                                keeps weight 1. strength=0 is the no-op control. Opt-in because
+                                the graph's learning pass is the same expensive step query
+                                expansion pays for. Uses --reference-bm25 as its BM25 operating
+                                point when that flag is given, so the reweighting can be measured
+                                on top of the tuned corpus point.
+              --reweight-mode <mode>
+                                'redundancy' (default) down-weights a term tied to the rest of the
+                                query; 'centrality' up-weights it. The same statistic read two
+                                ways, and the two are measured separately.
+              --reweight-min-terms <n>
+                                Do nothing below n distinct query terms. The relation is an estimate
+                                from the query itself, and the measurements show the short-query
+                                corpora losing; a floor is the line between acting and declining.
+              --spread <list>    Add a spread-tf matrix: one BM25 spread row per alpha in the
+                                comma-separated list (values in [0, 1]) crossed with b = 0, 0.5
+                                and 1. alpha = 0 is the raw-count control and must reproduce BM25
+                                at the same b; alpha = 1 replaces the count with the number of
+                                distinct windows holding the term. The point is the interaction:
+                                if spread makes length normalization redundant, the b = 0 rows
+                                should approach the tuned BM25. Opt-in; the scorer cannot use the
+                                term-at-a-time fast paths and reads positions per candidate.
+              --spread-window <n>
+                                Window width, in tokens, of the non-overlapping windows a spread
+                                counts (default: 8).
               --tune-search-options
                                 Fit every tuned row with the same SearchOptions this run reports
                                 with, instead of the tuners' defaults. The convention that changes

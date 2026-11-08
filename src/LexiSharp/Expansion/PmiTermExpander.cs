@@ -232,6 +232,43 @@ public sealed class PmiTermExpander : ITermExpander
         return result;
     }
 
+    /// <summary>
+    /// The positive mutual information between <paramref name="term"/> and each member of
+    /// <paramref name="candidates"/> that this graph associates it with.
+    /// </summary>
+    /// <remarks>
+    /// One pass over the term's neighbour list, so a query with <c>k</c> terms costs <c>k</c> passes
+    /// rather than <c>k²</c> pairwise lookups — the shape a query-term weighter needs when it asks
+    /// « how strongly is this term tied to the rest of the query? ». The default graph is built by
+    /// <see cref="LearnFrom"/>, and a pair that was filtered out there (below
+    /// <see cref="PmiTermExpanderOptions.MinimumCoOccurrence"/>, or past
+    /// <see cref="PmiTermExpanderOptions.MaxWindowDensity"/>) is absent here too, which is what
+    /// makes the answer « no association » rather than a number the filters rejected.
+    /// </remarks>
+    public IReadOnlyDictionary<string, double> AssociationsWith(string term, IReadOnlySet<string> candidates)
+    {
+        ArgumentNullException.ThrowIfNull(term);
+        ArgumentNullException.ThrowIfNull(candidates);
+
+        if (!_associations.TryGetValue(term, out var neighbors))
+            return EmptyAssociations;
+
+        var result = new Dictionary<string, double>(StringComparer.Ordinal);
+
+        for (int i = 0; i < neighbors.Count; i++)
+        {
+            var association = neighbors[i];
+
+            if (association.Neighbor != term && candidates.Contains(association.Neighbor))
+                result[association.Neighbor] = association.Pmi;
+        }
+
+        return result;
+    }
+
+    private static readonly IReadOnlyDictionary<string, double> EmptyAssociations =
+        new Dictionary<string, double>(0, StringComparer.Ordinal);
+
     private static void AddAssociation(
         Dictionary<string, List<Association>> associations,
         string from,

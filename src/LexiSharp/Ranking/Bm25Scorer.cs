@@ -23,11 +23,18 @@ namespace LexiSharp.Ranking;
 /// <c>arithmetic</c> fixes the precision. All three default to this library's own conventions.
 /// </para>
 /// </remarks>
-public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlannableScorer
+public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlannableScorer, IWeightedQueryScorer
 {
     private readonly double _k1;
     private readonly double _b;
     private readonly QueryTermWeighting _queryTerms;
+
+    /// <summary>
+    /// Per-query term weights, or <c>null</c> for the unweighted scorer. The dictionary is owned by
+    /// this instance (copied on the way in) because one scorer is shared by every query an engine
+    /// runs: a weight is a property of one query, so it cannot live in a scorer that outlives it.
+    /// </summary>
+    private readonly IReadOnlyDictionary<string, double>? _termWeights;
 
     /// <summary>
     /// The saturation constant <c>k1 + 1</c>, or 1 when the caller asked for the formula without it.
@@ -101,6 +108,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
         _queryTerms = queryTermWeighting;
         _saturation = saturationConstant ? k1 + 1.0 : 1.0;
         _arithmetic = arithmetic;
+        _termWeights = null;
     }
 
     /// <summary>Builds a scorer from a preset or tuned <see cref="Bm25Parameters"/> profile.</summary>
@@ -118,7 +126,50 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
         _queryTerms = QueryTermWeighting.Distinct;
         _saturation = parameters.K1 + 1.0;
         _arithmetic = Bm25Arithmetic.Double;
+        _termWeights = null;
     }
+
+    /// <summary>
+    /// The copy that carries a query's term weights. Everything else is shared with the prototype:
+    /// the weights are the only thing a query changes.
+    /// </summary>
+    private Bm25Scorer(Bm25Scorer source, IReadOnlyDictionary<string, double> termWeights)
+    {
+        _k1 = source._k1;
+        _b = source._b;
+        _queryTerms = source._queryTerms;
+        _saturation = source._saturation;
+        _arithmetic = source._arithmetic;
+        _termWeights = termWeights;
+    }
+
+    /// <summary>
+    /// This scorer rebuilt with one weight per query term. Terms absent from the map keep weight
+    /// <c>1</c>; the prototype is unchanged, so concurrent searches cannot see each other's query.
+    /// </summary>
+    public ITextScorer WithTermWeights(IReadOnlyDictionary<string, double> weights)
+    {
+        ArgumentNullException.ThrowIfNull(weights);
+
+        var copy = new Dictionary<string, double>(weights.Count, StringComparer.Ordinal);
+
+        foreach (var (term, weight) in weights)
+        {
+            if (!double.IsFinite(weight) || weight < 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(weights), weight, "Query term weights must be finite and non-negative.");
+            }
+
+            copy[term] = weight;
+        }
+
+        return new Bm25Scorer(this, copy);
+    }
+
+    /// <summary>The weight of one query term, or <c>1</c> when this scorer carries none.</summary>
+    private double Weight(string term) =>
+        _termWeights is not null && _termWeights.TryGetValue(term, out double weight) ? weight : 1.0;
 
     /// <inheritdoc />
     public string Name => "BM25";
@@ -156,7 +207,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
             int df = index.DocumentFrequency(term);
 
-            double idf = Math.Log(1.0 + ((documentCount - df + 0.5) / (df + 0.5)));
+            double idf = Math.Log(1.0 + ((documentCount - df + 0.5) / (df + 0.5))) * Weight(term);
 
             score += shape.Contribution(idf, tf, documentLength, normalization);
         }
@@ -191,7 +242,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
             : null;
 
         return new Bm25QueryPlan(
-            Terms(queryTerms), index, new Bm25Shape(_k1, _b, _saturation, averageLength, table));
+            Terms(queryTerms), index, new Bm25Shape(_k1, _b, _saturation, averageLength, table), _termWeights);
     }
 
     ISpanAccumulatingQueryPlan? IQueryPlannableScorer.CreateSpanPlan(
@@ -204,6 +255,13 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
         // Only an index that resolves a term by span can run this plan, and the caller asks for the
         // capability before it asks the scorer.
         if (index is not ISpanAccumulatingIndex spanIndex)
+            return null;
+
+        // A weighted query has no span plan: resolving a slice back to the string key of the weight
+        // map would allocate once per term per call, which is the cost this path exists to avoid.
+        // The string plan carries the weights, so the query keeps a correct score at the price of
+        // the span fast path.
+        if (_termWeights is not null)
             return null;
 
         // Single precision collapses a repeated query term into one clause whose weight carries the
@@ -409,7 +467,11 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
         private IReadOnlyList<string> _terms;
         private double[] _idf;
 
-        public Bm25QueryPlan(IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index, Bm25Shape shape)
+        public Bm25QueryPlan(
+            IReadOnlyList<string> queryTerms,
+            IReadOnlyTextIndex index,
+            Bm25Shape shape,
+            IReadOnlyDictionary<string, double>? termWeights)
         {
             ArgumentNullException.ThrowIfNull(queryTerms);
 
@@ -431,7 +493,12 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
                     continue;
 
                 int df = index.DocumentFrequency(queryTerms[i]);
-                _idf[i] = Math.Log(1.0 + ((documentCount - df + 0.5) / (df + 0.5)));
+                double idf = Math.Log(1.0 + ((documentCount - df + 0.5) / (df + 0.5)));
+
+                if (termWeights is not null && termWeights.TryGetValue(queryTerms[i], out double weight))
+                    idf *= weight;
+
+                _idf[i] = idf;
             }
 
             // Only single precision folds, because only there the two forms differ.
@@ -712,6 +779,7 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
         var shape = new Bm25Shape(_k1, _b, _saturation, averageLength, Table(averageLength));
         var contributions = new List<TermContribution>();
+        var termWeights = _termWeights is null ? null : new Dictionary<string, double>(StringComparer.Ordinal);
         double total = 0;
 
         if (documentCount > 0 && documentLength > 0 && averageLength > 0)
@@ -727,9 +795,11 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
                     continue;
 
                 int df = index.DocumentFrequency(term);
-                double idf = Math.Log(1.0 + ((documentCount - df + 0.5) / (df + 0.5)));
+                double weight = Weight(term);
+                double idf = Math.Log(1.0 + ((documentCount - df + 0.5) / (df + 0.5))) * weight;
                 double termScore = shape.Contribution(idf, tf, documentLength, normalization);
 
+                termWeights?[term] = weight;
                 contributions.Add(new TermContribution(term, tf, df, idf, termScore));
                 total += termScore;
             }
@@ -745,6 +815,14 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
             // computed from. 1.9 with the constant and 1 without it.
             ["saturationConstant"] = _saturation,
         };
+
+        // The reported idf above is the weighted one, so the term breakdown still multiplies out to
+        // the reported score; the weight itself is the other factor a reader needs.
+        if (termWeights is not null)
+        {
+            foreach (var (term, weight) in termWeights)
+                parameters[$"weight:{term}"] = weight;
+        }
 
         return new ScoreExplanation(
             documentId,

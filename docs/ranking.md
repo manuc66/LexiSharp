@@ -2,9 +2,9 @@
 title: BM25 and ranking functions
 nav_order: 5
 description: >-
-  BM25 and its variants — BM25+, BM25L, BM25F — plus TF-IDF, query likelihood and
-  boolean scorers, composing scorers into a weighted sum, score boosting, proximity,
-  and per-term score explanations.
+  BM25 and its variants — BM25+, BM25L, BM25F, BM25VA — plus spread-tf, TF-IDF, query
+  likelihood and boolean scorers, composing scorers into a weighted sum, score boosting,
+  proximity, query-term reweighting, and per-term score explanations.
 ---
 
 # BM25 and ranking functions
@@ -24,6 +24,13 @@ engine does everything else. Swap the scorer, keep the index.
 - **`Bm25FScorer`** — the same `ITextSearchEngine` contract over documents that declare
   `TextFields`: per-field weights, per-field length normalization, an explainable
   per-term breakdown. Requires an index that tracks fields.
+- **`Bm25VaScorer`** — BM25VA, BM25 with **verboseness** normalization: `b` interpolates
+  between document verboseness (`|d| / distinct terms`) and length, with `b = 1` exactly
+  BM25 and `b = 0` length-free. Measured at fixed points, it does not beat tuned BM25 on the
+  three corpora here and costs far more per query — see the section below.
+- **`SpreadBm25Scorer`** — BM25 whose term frequency is the number of **distinct windows** holding
+  the term (`α` blends it with the raw count; `α = 0` is exactly BM25). Measured as an interaction
+  with `b`: it does not replace length normalization and moves nDCG by at most 0.002.
 - **Score boosting** — `BoostedTextSearchEngine` applies **signed** adjustments
   (multiplicative factor and/or additive offset) per result, without touching the engine
   underneath.
@@ -227,6 +234,93 @@ in.
 doing anything, without a table. Two corpora report `false` and one reports `true` by 0.004, all
 fitted on their own evaluation queries. The bound is neither a free win nor a loss on these corpora
 — which is a real answer, and the one to re-derive on your data rather than inherit.
+
+## BM25VA (verboseness-normalized BM25)
+
+`Bm25VaScorer` is Okapi BM25 whose normalization is shared between document length and
+**verboseness** — the average number of times a term is repeated in the document,
+`v_d = |d| / |T_d|` (Lipani, Lupu and Hanbury, 2015, *Verboseness Fission for BM25 Document Length
+Normalization*):
+
+```
+K_d = k1 · ((1 − b) · v̂_d + b · |d| / avgdl),   v̂_d = v_d / E_D[v_d]
+```
+
+`b` keeps its name but not its meaning: in this scorer **`b = 1` is exactly `Bm25Scorer`** and
+**`b = 0` normalizes by verboseness alone**, so document length leaves the ranking entirely.
+There is no “no normalization” corner — a caller who reads `b = 0` the BM25 way is reading it
+backwards. `Bm25VaScorerTests.AtBOneIsExactlyBm25` pins the degeneration to the bit, and the
+harness prints a `BM25 (b=1) [control]` row beside the scorer so the identity is visible at corpus
+scale rather than only in a unit test.
+
+**The measurement.** `--bm25va` adds fixed operating points; `--tune-bm25va` fits `(k1, b)` on
+the same validation queries as the tuned BM25 row. nDCG@10, in-sample, one run:
+
+| Corpus | BM25 (b=0.75) | BM25 tuned | VA b=0.5 | VA tuned `(k1, b)` | VA b=0 | Queries |
+|---|---|---|---|---|---|---|
+| NFCorpus | 0.308 | 0.311 | 0.310 | **0.311** `(2, 0.25)` | 0.305 | 323 |
+| SciFact | 0.662 | 0.664 | 0.665 | **0.665** `(1.5, 0.5)` | 0.655 | 300 |
+| ArguAna | 0.320 | 0.363¹ | 0.299 | not fitted² | 0.200 | 1,406 |
+
+¹ Published in [Evaluation](evaluation.md#tuning-bm25-bm25f-bm25-and-bm25l), different run.
+² 25 search passes over 1,406 long queries, each already the slowest row in the table; the fixed
+points lose 0.021 against the untuned row and 0.064 against the published tuned one, so the fit
+was not paid for.
+
+**The fitted `b` is interior, and it changes nothing.** On NFCorpus the search chooses
+`b = 0.25` — 75 % verboseness, 25 % length — and reads 0.311, exactly tuned BM25's figure. On
+SciFact it chooses `b = 0.5` and reads 0.665 against 0.664, **+0.001**; recall@10 moves the other
+way, 0.778 against 0.789. So the point of the section is neither “verboseness wins” nor “the model
+is refuted”: at a corpus-chosen `b`, the statistic reorders documents and does not improve the
+metric beyond the noise the tuned row already carries. Verboseness alone (`b = 0`) loses on all
+three corpora, and loses most where documents are long.
+
+The blend at a fixed `b = 0.5` behaves the same as the fitted point on the two short-query
+corpora (+0.002 and +0.003 over untuned BM25). On ArguAna it loses 0.021 to the untuned row and
+0.064 to the published tuned one — the only corpus here where the extra statistic is clearly
+harmful rather than neutral.
+
+**Cost, and why it is not a drop-in.** Verboseness is not stored by any shipped index, so the
+scorer computes it once per index and caches it against `Count` and `CorpusTokenCount`; scoring
+then does a dictionary lookup per candidate. The scorer declines the term-at-a-time and
+posting-array passes because those carry a term frequency and a length, and verboseness is
+neither, so a query that reaches most of the corpus is scored document by document. On ArguAna
+that is **55 s at `--jobs 8` against BM25's 0.5 s** — a hundred times the clock for a row that
+lost 0.021. The cost is stated here because it is part of the result: a future version that
+carries verboseness through the posting arrays would make the row cheap, not better.
+
+## Spread-tf (BM25 over distinct windows)
+
+`SpreadBm25Scorer` replaces BM25's term frequency with a spatial spread: the number of distinct,
+non-overlapping windows of width `W` that contain the term, blended with the raw count as
+`tf_eff = tf^(1 − α) · spread^α`. `α = 0` is **exactly** `Bm25Scorer` (the control the tests pin to
+the bit); `α = 1` is the spread alone. The length normalization and the rest of the formula are
+BM25's, unchanged.
+
+**The hypothesis, and the one it is tested against.** BM25 counts a term ten times in one paragraph
+as ten pieces of evidence. If the spatial statistic is the better one, it should also make length
+normalization (`b`) less necessary: a spread already knows that a long document is not automatically
+a better match. That interaction — not the fixed-`b` score — is what the scorer exists to measure.
+
+nDCG@10, in-sample, `--no-tuned`, window 8:
+
+| Corpus | BM25 (b=0.75) | spread α=0, b=0 / 0.5 / 1 | spread α=1, b=0 / 0.5 / 1 |
+|---|---|---|---|
+| NFCorpus | 0.308 | 0.304 / 0.310 / 0.306 | 0.305 / 0.310 / 0.307 |
+| SciFact | 0.662 | 0.641 / 0.661 / 0.664 | 0.642 / 0.662 / 0.663 |
+| ArguAna | 0.320 | 0.144 / 0.278 / 0.353 | 0.143 / 0.277 / 0.355 |
+
+**The hypothesis is refuted.** At `α = 1`, `b = 0` is still far below `b = 1` on every corpus —
+0.143 against 0.355 on ArguAna, 0.642 against 0.663 on SciFact — so the spread does **not** replace
+length normalization. It also barely moves the metric at a fixed `b`: across the nine `(α, b, corpus)`
+pairs the difference is −0.001 to +0.002. Length normalization is doing more than discounting
+repetition, and the spatial statistic does not address the rest: a long document is more likely to
+cover ground the query asks about, and a per-term spread cannot see that.
+
+**Cost.** Positions per candidate, and no term-at-a-time or posting-array pass, so the scorer walks
+documents: on ArguAna a row costs 58–77 s at `--jobs 8` against BM25's 1 s. The `α = 0` rows skip the
+positions read entirely, which is why the control costs what BM25 costs rather than the spread's
+price.
 
 ## BM25F (field-weighted BM25)
 
@@ -842,6 +936,97 @@ So: **do not assume proximity helps.** It ships because the arithmetic is specif
 cheap to evaluate on your own corpus — `--configs bm25,bm25-proximity,bm25-proximity-boost`. It is
 the right tool when a spread-out match really is a weaker match, which is a property of your data.
 
+## Query-term reweighting
+
+BM25 sums one contribution per query term, each weighted by its idf. A co-occurrence graph learned
+over a sliding window says which query terms habitually travel together, and
+`CoOccurrenceQueryTermWeighter` turns that into one weight per term;
+`ReweightingTextSearchEngine` applies it without changing which terms the query has:
+
+```csharp
+PmiTermExpander graph = PmiTermExpander.LearnFrom(corpus, tokenizer);
+
+var weighter = new CoOccurrenceQueryTermWeighter(
+    graph, strength: 0.25,
+    mode: QueryTermWeightingMode.Centrality,
+    minimumQueryTerms: 30);
+
+ITextSearchEngine engine = new ReweightingTextSearchEngine(
+    index, new Bm25Scorer(1.5, 0.75), weighter, tokenizer);
+```
+
+For a query `Q` and a term `t`, `relation(t) = Σ_{u ∈ Q, u ≠ t} max(0, PPMI(t, u))`, and the
+weight is `1 / (1 + strength · relation(t))` for
+`QueryTermWeightingMode.Redundancy` or `1 + strength · relation(t)` for
+`QueryTermWeightingMode.Centrality`, normalized so the most important
+term carries `1`. `strength = 0` is the no-op control. The two modes are opposite readings of the
+same statistic and are **not** interchangeable:
+
+- **Redundancy** treats a term tied to the rest of the query as a concept the query already
+  contains, and damps it.
+- **Centrality** treats the same term as the query's core, and promotes it; an isolated term is
+  more likely to be noise.
+
+A weight is a property of one query, so the decorator rebuilds the scorer per search: the prototype
+is never mutated and concurrent searches cannot see each other's weights. Queries carrying `"`,
+`*` or `~` pass through untouched, because their terms are not the tokenizer's terms.
+
+**The measurement.** nDCG@10, in-sample, `--no-tuned`, one learned graph per corpus:
+
+| Corpus | BM25 | Redundancy (0.25 / 0.5 / 1) | Centrality (0.25 / 0.5 / 1) |
+|---|---|---|---|
+| NFCorpus (323 q) | 0.308 | 0.308 / 0.301 / — | 0.296 / 0.291 / 0.288 |
+| SciFact (300 q) | 0.662 | 0.617 / 0.548 / — | 0.616 / 0.602 / 0.596 |
+| ArguAna (1 406 q) | 0.320 | 0.238 / 0.226 / 0.219 | **0.328 / 0.328 / 0.327** |
+
+One cell is positive: **centrality on ArguAna, +0.008**, stable across the three strengths. Every
+other cell is negative, and on the two short-query corpora the loss at the mildest strength is
+0.012 and 0.046. The reading follows the query lengths: with a handful of terms, the graph's
+relation is estimated from almost nothing and the reweighting overrides an idf that already
+separated the terms; with a whole argument as the query, the relation is measured from many terms
+and promoting the core helps a little.
+
+**The floor makes it safe.** `minimumQueryTerms` declines the estimate below a number of distinct
+query terms, and 30 is the line these three corpora put it at:
+
+| Corpus | BM25 | Centrality 0.25 | Centrality 0.25, floor 30 |
+|---|---|---|---|
+| NFCorpus | 0.308 | 0.296 | **0.308** |
+| SciFact | 0.662 | 0.616 | **0.662** |
+| ArguAna | 0.320 | **0.328** | **0.328** |
+
+With the floor the two short-query corpora are scored exactly as BM25 — the weighter is a no-op on
+every one of their queries — while ArguAna keeps the 0.008. The rule is not free: it says « only
+apply this where the query is long enough to estimate the relation », and 30 is a property of these
+corpora rather than a constant. But it turns a corpus-dependent loss into an opt-in that does not
+hurt the cases the estimate cannot serve.
+
+**The gain overlaps with the tuned length term.** The reweighting rows can be measured at the
+run's reference operating point (`--reference-bm25`), and on ArguAna the same weighter against
+`b = 1` reads:
+
+| ArguAna | BM25 | + centrality 0.25 | + centrality 0.5 |
+|---|---|---|---|
+| `b = 0.75` | 0.320 | **0.328** | **0.328** |
+| `b = 1` (reference) | 0.353 | 0.354 | 0.355 |
+
+**+0.001 / +0.002**, not +0.008. The two changes push in the same direction — the tuned `b = 1`
+already removes the length penalty the graph was partly compensating for — so the effect is not
+additive, and a tuned engine keeps a thousandth of it. The 0.008 is a property of the untuned
+operating point, not a gain to promise on top of tuning.
+
+**This is not the published method.** Aklouche, Bounhas and Slimani (2019/2021) derive a
+discriminative-power weight from a co-occurrence graph and report significant gains on
+long-query TREC collections; the two modes here are the two readings of that statistic, not a
+reproduction of their formula. What the table establishes is narrower and useful: **the direction
+matters, the effect is corpus-dependent, and only a long-query corpus shows a gain** — which is
+why the feature is opt-in and measured per corpus.
+
+**Cost.** Learning the graph is one pass over the corpus (`PmiTermExpander.LearnFrom`), measured at
+4–8 s on these corpora. Reweighting itself is per query and cheap: on ArguAna, a row costs about
+3 s at `--jobs 8` against BM25's 0.9 s, because the scorer still uses the ordinary BM25 paths —
+unlike BM25VA, nothing here declines them.
+
 ## Explainable scoring and BM25 tuning
 
 Audit any ranking decision term by term, then let the corpus pick its own parameters. The
@@ -870,11 +1055,12 @@ Each validation query lists the relevant document ids; candidates are judged wit
 `Precision@k`, `Recall@k`, `F1@k` (default) or `nDCG@k` (`RetrievalMetrics`), averaged over the
 set. The index is never mutated; `tuning.Grid` exposes every evaluated `(k1, b)` point.
 
-There are three tuners, and picking the right one is the whole point:
+There are four tuners, and picking the right one is the whole point:
 
 | Tuner | Searches | Cost | Reports |
 |---|---|---|---|
 | `Bm25ParameterTuner` | `k1 × b` | 25 points | `Bm25TuningResult` |
+| `Bm25VaParameterTuner` | `k1 × b` | 25 points | `Bm25VaTuningResult` — a winner at `b = 1` is BM25, i.e. verboseness bought nothing |
 | `Bm25FParameterTuner` | `(k1, b)`, then field weights | 25 + Π weights | `WeightingHelped` |
 | `Bm25PlusParameterTuner` | `k1 × b × delta` | 125 points | `DeltaHelped` |
 | `Bm25LParameterTuner` | `k1 × b × delta` | 125 points | `DeltaHelped` |
@@ -885,3 +1071,9 @@ is an upper bound, and the bound loosens as N grows — 125 points fit more nois
 `delta = 0` slice of either variant tuner is a BM25 search**, so a variant's `UnflooredMetricScore`
 can be read directly against a `Bm25ParameterTuner` result on the same grids. Score a winner on a
 held-out set before believing its margin.
+
+`Bm25VaParameterTuner` has a third property of its own: its `b` axis is **not** BM25's, so a winner
+at `b = 1` is the search collapsing onto `Bm25Scorer` and saying the verboseness component bought
+nothing. Read the winning `b`, not only the score. On the three corpora measured here the fitted
+`b` was interior (0.25 and 0.5) and the score tied or beat tuned BM25 by 0.001 — a changed
+operating point, not a better ranking.

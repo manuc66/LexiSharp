@@ -75,6 +75,10 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --dense               # 
 dotnet run --project bench/LexiSharp.Eval -c Release -- --rerank              # add cross-encoder reranking (MiniLM)
 dotnet run --project bench/LexiSharp.Eval -c Release -- --rerank-top 50       # rerank depth (default 100)
 dotnet run --project bench/LexiSharp.Eval -c Release -- --tune-bm25f          # fit BM25F's k1/b and the field weights
+dotnet run --project bench/LexiSharp.Eval -c Release -- --bm25va               # add BM25VA rows (verboseness normalization)
+dotnet run --project bench/LexiSharp.Eval -c Release -- --reweight 0.25,0.5    # weight query terms from a co-occurrence graph
+dotnet run --project bench/LexiSharp.Eval -c Release -- --reweight 0.25 --reweight-mode centrality --reweight-min-terms 30
+dotnet run --project bench/LexiSharp.Eval -c Release -- --spread 0,1 --spread-window 8    # spread-tf versus b
 dotnet run --project bench/LexiSharp.Eval -c Release -- --limit 5            # smoke run
 dotnet run --project bench/LexiSharp.Eval -c Release -- --stem porter       # English stemming
 dotnet run --project bench/LexiSharp.Eval -c Release -- --data /path/to/dir  # custom data dir
@@ -870,6 +874,106 @@ minute or more each is the multi-hour estimate, and it is a property of the tune
 not of BM25. That is why `--no-tuned` is the practical default and why the table above is a single
 full-split run rather than a sweep. Treat the absolute figures as one machine's wall clock, not a
 benchmark.
+
+## BM25VA (verboseness normalization)
+
+`--bm25va` adds three fixed operating points of `Bm25VaScorer` plus the `BM25 (b=1)` control the
+degeneration test pins:
+
+```
+K_d = k1 · ((1 − b) · v̂_d + b · |d| / avgdl),   v_d = |d| / |T_d|,   v̂_d = v_d / E_D[v_d]
+```
+
+`b = 1` is exactly `Bm25Scorer`, so the control and the `b = 1` row must print identical numbers;
+`b = 0` normalizes by verboseness alone and removes length from the ranking. `--tune-bm25va` fits
+`(k1, b)` on the same validation queries as the tuned BM25 row; a winner at `b = 1` is the null
+result. Same corpora and analyses as the tables above, nDCG@10:
+
+| Corpus | BM25 (b=0.75) | BM25 tuned | VA b=0.5 | VA tuned `(k1, b)` | VA b=0 | Queries |
+|---|---:|---:|---:|---:|---:|---:|
+| NFCorpus | 0.308 | 0.311 | 0.310 | **0.311** `(2, 0.25)` | 0.305 | 323 |
+| SciFact | 0.662 | 0.664 | 0.665 | **0.665** `(1.5, 0.5)` | 0.655 | 300 |
+| ArguAna | 0.320 | 0.363¹ | 0.299 | not fitted² | 0.200 | 1,406 |
+
+¹ Published in [the guide](../../docs/evaluation.md#tuning-bm25-bm25f-bm25-and-bm25l), different run.
+² 25 passes over 1,406 long queries, each already the slowest row; the fixed points lose 0.021 and
+0.064, so the fit was not paid for.
+
+These are in-sample operating points, like the tables above, not held-out figures. The fitted `b`
+is interior — `0.25` and `0.5`, never collapsing to `1` — but the score ties tuned BM25 on NFCorpus
+and beats it by 0.001 on SciFact, where recall@10 moves the other way (0.778 against 0.789). The
+statistic reorders documents; it does not improve the metric beyond the tuned row's own noise. On
+ArguAna, the only corpus with long documents, verboseness is clearly harmful. Run it on your own
+corpus with `--bm25va` / `--tune-bm25va`; do not enable it by default on the strength of the
+literature alone.
+
+The cost is part of the result. Verboseness is not in the postings, so the scorer declines the
+term-at-a-time and posting-array passes, and a long query that reaches most of the corpus is scored
+document by document. On ArguAna, one `--bm25va` row takes **55 s at `--jobs 8`** against BM25's
+0.5 s — a hundred times the clock for a row that lost 0.021.
+
+## Query-term reweighting
+
+`--reweight <list>` learns a windowed co-occurrence graph from the corpus (the same
+`PmiTermExpander` learning pass the expansion rows pay for) and adds one BM25 row per strength.
+`--reweight-mode` chooses the direction: `redundancy` (default) damps a term tied to the rest of
+the query, `centrality` promotes it. `strength = 0` is the no-op control and must reproduce the
+BM25 row. Same corpora and analyses, nDCG@10, `--no-tuned`:
+
+| Corpus | BM25 | Redundancy (0.25 / 0.5 / 1) | Centrality (0.25 / 0.5 / 1) |
+|---|---:|---|---|
+| NFCorpus (323 q) | 0.308 | 0.308 / 0.301 / — | 0.296 / 0.291 / 0.288 |
+| SciFact (300 q) | 0.662 | 0.617 / 0.548 / — | 0.616 / 0.602 / 0.596 |
+| ArguAna (1 406 q) | 0.320 | 0.238 / 0.226 / 0.219 | **0.328 / 0.328 / 0.327** |
+
+Only centrality on ArguAna is positive (+0.008, stable across strengths); everything else loses,
+and the two short-query corpora lose a lot at the mildest strength. The effect follows query
+length: with a few terms the relation is estimated from almost nothing.
+
+`--reweight-min-terms` turns that reading into a rule. At floor 30, the two short-query corpora are
+scored exactly as BM25 — the weighter is a no-op on every query — while ArguAna keeps the gain:
+
+| Corpus | BM25 | Centrality 0.25 | Centrality 0.25, floor 30 |
+|---|---:|---:|---:|
+| NFCorpus | 0.308 | 0.296 | **0.308** |
+| SciFact | 0.662 | 0.616 | **0.662** |
+| ArguAna | 0.320 | **0.328** | **0.328** |
+
+This is **not** a reproduction of the published discriminative-power formula (Aklouche et al.,
+2019/2021); the two modes are the two readings of the same statistic. The graph's learning pass
+costs 4–8 s; a row costs about 3 s on ArguAna at `--jobs 8`.
+
+The reweight rows use `--reference-bm25` as their BM25 operating point when it is given, so the
+effect can be measured on top of the tuned corpus point. On ArguAna it does **not** add:
+
+| ArguAna | BM25 | + centrality 0.25 | + centrality 0.5 |
+|---|---:|---:|---:|
+| `b = 0.75` | 0.320 | **0.328** | **0.328** |
+| `b = 1` | 0.353 | 0.354 | 0.355 |
+
+The +0.008 at the library default becomes +0.001 / +0.002 at the tuned point: the reweighting and
+the tuned length term compensate for the same thing, so a tuned engine keeps a thousandth of the
+gain.
+
+## Spread-tf
+
+`--spread <list>` adds a spread-tf matrix: one row per alpha (in `[0, 1]`) crossed with
+`b = 0, 0.5, 1`, over non-overlapping windows of `--spread-window` tokens (default 8). `alpha = 0` is
+the raw-count control and must reproduce BM25 at the same `b`; `alpha = 1` replaces the count with
+the number of distinct windows holding the term. nDCG@10, in-sample, `--no-tuned`:
+
+| Corpus | BM25 b=0.75 | α=0, b=0 / 0.5 / 1 | α=1, b=0 / 0.5 / 1 |
+|---|---:|---|---|
+| NFCorpus | 0.308 | 0.304 / 0.310 / 0.306 | 0.305 / 0.310 / 0.307 |
+| SciFact | 0.662 | 0.641 / 0.661 / 0.664 | 0.642 / 0.662 / 0.663 |
+| ArguAna | 0.320 | 0.144 / 0.278 / 0.353 | 0.143 / 0.277 / 0.355 |
+
+The interaction hypothesis — a spatial spread makes length normalization redundant — is **refuted**:
+at `alpha = 1`, `b = 0` is still far below `b = 1` (0.143 against 0.355 on ArguAna). Length
+normalization is not only discounting repetition; a long document covering more ground is still a
+better match, and a per-term spread cannot see that. At a fixed `b`, spread moves nDCG by at most
+0.002. Cost: positions per candidate and no fast path, so an ArguAna row takes 58–77 s at
+`--jobs 8` against BM25's 1 s; the `alpha = 0` rows skip the positions read.
 
 ## Stemming
 
