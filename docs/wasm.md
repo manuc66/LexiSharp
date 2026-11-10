@@ -29,7 +29,7 @@ call and no document leaving the tab.
 
 - `InMemoryTextIndex` and `RankedTextSearchEngine`
 - BM25 scoring
-- a hand-written corpus indexed in the tab
+- the demo's 26-document corpus, fetched once from a static JSON file and indexed in the tab
 
 ## What it does not cover
 
