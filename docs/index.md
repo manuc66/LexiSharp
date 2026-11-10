@@ -8,6 +8,10 @@ description: >-
   backends.
 ---
 
+<p align="center">
+  <img src="images/icon-128.png" alt="LexiSharp" width="96">
+</p>
+
 # LexiSharp
 
 A composable information retrieval toolkit for .NET — an in-memory inverted index, four

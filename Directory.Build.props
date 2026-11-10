@@ -57,6 +57,26 @@
   </PropertyGroup>
 
   <!--
+    The icon every package carries. One mark for the whole family: a magnifying
+    glass over ranked bars, the two things the library is. docs/images/icon.svg
+    is the source, scripts/generate-icons.sh the only thing that produces the
+    rasters, and the 128x128 PNG is what NuGet asks for at the package root.
+
+    Here rather than in each csproj for the same reason as the version above: a
+    package icon that only most packages carry is a bug nobody notices until
+    nuget.org renders one card differently. The item is unconditional (this file
+    is evaluated before IsPackable exists); non-packable projects never pack, so
+    the stray None item is inert.
+  -->
+  <PropertyGroup>
+    <PackageIcon>icon-128.png</PackageIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)docs/images/icon-128.png" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
+
+  <!--
     A warning fails the build. Nothing else here treats one as a failure: `dotnet build` fails on
     errors only, and the SonarCloud job that imports analyzer output into its own issues is skipped
     unless SONAR_TOKEN is configured, so on a repository without that secret the only reader of a
