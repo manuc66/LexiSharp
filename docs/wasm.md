@@ -14,8 +14,9 @@ description: >-
 # In-browser demo (WASM)
 
 The core of LexiSharp is BCL-only, so it compiles to WebAssembly. This page hosts a small
-proof: an in-memory inverted index and BM25 run **entirely in the browser**, with no API
-call and no document leaving the tab.
+proof: an in-memory inverted index, BM25 and a cosine comparison run **entirely in the
+browser**, with no search API and no document leaving the tab. The corpus and the document
+vectors are static files, and the page says which is which.
 
 [Open the in-browser demo]({{ site.baseurl }}/wasm/){: .btn .btn-primary }
 
@@ -30,12 +31,28 @@ call and no document leaving the tab.
 - `InMemoryTextIndex` and `RankedTextSearchEngine`
 - BM25 scoring
 - the demo's 26-document corpus, fetched once from a static JSON file and indexed in the tab
+- "similar documents" over precomputed embeddings, ranked by cosine in the tab
+
+## What is precomputed, and what is not
+
+Two files are fetched once and then used locally:
+
+| File | Produced by | Runs in the tab |
+|---|---|---|
+| `corpus.json` | exported from the server demo's `DemoCorpus.Build()` | BM25 indexing and search |
+| `embeddings.json` | `scripts/generate-embeddings.py`, with **BAAI/bge-small-en-v1.5** (MIT, 384 dimensions) | loading the vectors and computing cosine |
+
+The embedding model is **not** downloaded, loaded or executed by the page. The vectors were
+computed offline, once, and the "similar" panel names the model next to the results. That is
+the honest boundary: BM25 works for any query, while "similar documents" is limited to the
+26 documents whose vectors were generated.
 
 ## What it does not cover
 
 - the segment store (it needs a writable file system)
 - PostgreSQL / ParadeDB backends
 - ONNX Runtime
+- embedding a new document or a free-text query: no model runs in the tab
 - ASP.NET Core hosting
 - the classification and evaluation panels of the server demo
 
