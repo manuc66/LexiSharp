@@ -1,0 +1,158 @@
+[
+  {
+    "id": "auth-oauth-intro",
+    "title": "OAuth 2.0 overview",
+    "category": "auth",
+    "text": "OAuth 2.0 lets a client obtain an access token from an authorization server. The token grants scoped access to protected resources without ever sharing the user password."
+  },
+  {
+    "id": "auth-refresh",
+    "title": "Refreshing an access token",
+    "category": "auth",
+    "text": "An access token is short lived. When it expires the client exchanges its refresh token for a new one, so the user session continues without re-authenticating."
+  },
+  {
+    "id": "auth-session",
+    "title": "Session expiry and renewal",
+    "category": "auth",
+    "text": "A server session expires after a timeout. Before expiry the client silently renews it using stored credentials, avoiding a logout for the active user."
+  },
+  {
+    "id": "auth-jwt",
+    "title": "JSON Web Tokens",
+    "category": "auth",
+    "text": "A JWT is a signed credential carrying claims. The signature lets a resource server verify the token without a database lookup on every request."
+  },
+  {
+    "id": "auth-login",
+    "title": "Login and credential handling",
+    "category": "auth",
+    "text": "The login endpoint validates credentials against the user store, then issues a token pair. Storing passwords requires a slow hash, never plaintext."
+  },
+  {
+    "id": "auth-revoke",
+    "title": "Revoking tokens",
+    "category": "auth",
+    "text": "Revocation invalidates an issued token before its natural expiry. A denylist keyed by token id lets the authorization server reject a compromised credential."
+  },
+  {
+    "id": "ir-bm25",
+    "title": "BM25 ranking",
+    "category": "search",
+    "text": "BM25 scores a document by term frequency saturated with k1 and normalized by length with b. It is the workhorse of lexical retrieval."
+  },
+  {
+    "id": "ir-inverted",
+    "title": "Inverted index",
+    "category": "search",
+    "text": "An inverted index maps each term to the documents and positions where it occurs, enabling fast boolean and phrase matching."
+  },
+  {
+    "id": "ir-tokenizer",
+    "title": "Tokenization and stemming",
+    "category": "search",
+    "text": "A tokenizer splits text into terms, applies NFKD normalization and optionally removes stop words. A stemmer reduces inflected words to a common root."
+  },
+  {
+    "id": "ir-hybrid",
+    "title": "Hybrid retrieval",
+    "category": "search",
+    "text": "Hybrid retrieval fuses a lexical ranking with a semantic ranking. Reciprocal rank fusion combines the two orderings without calibrating their scores."
+  },
+  {
+    "id": "ir-rerank",
+    "title": "Two stage reranking",
+    "category": "search",
+    "text": "A cheap retriever produces a shortlist; an expensive reranker reorders it. The cascade trades latency for precision at the top of the list."
+  },
+  {
+    "id": "ir-facets",
+    "title": "Faceted search",
+    "category": "search",
+    "text": "Facets count the values of a metadata field across the whole match set, letting an interface filter results by category or tag."
+  },
+  {
+    "id": "ir-splade",
+    "title": "Learned sparse retrieval",
+    "category": "search",
+    "text": "SPLADE expands a document into weighted lexical terms learned by a model, keeping an inverted index while adding semantic reach."
+  },
+  {
+    "id": "ir-eval",
+    "title": "Retrieval metrics",
+    "category": "search",
+    "text": "Precision at k, recall at k and NDCG measure ranking quality against labelled relevance. Without them, tuning is guesswork."
+  },
+  {
+    "id": "db-postgres",
+    "title": "PostgreSQL full text search",
+    "category": "database",
+    "text": "PostgreSQL stores a tsvector for full text search and supports GIN indexes. It can rank with ts_rank or combine with BM25 extensions."
+  },
+  {
+    "id": "db-pgvector",
+    "title": "Vector search with pgvector",
+    "category": "database",
+    "text": "The pgvector extension stores embeddings in a column and supports approximate nearest neighbour search with an HNSW index."
+  },
+  {
+    "id": "db-sql-index",
+    "title": "SQL indexes",
+    "category": "database",
+    "text": "A B-tree index speeds up equality and range filters. A query planner decides whether an index scan beats a sequential scan."
+  },
+  {
+    "id": "db-replication",
+    "title": "Database replication",
+    "category": "database",
+    "text": "Replication copies writes from a primary to replicas. Asynchronous replicas may lag, so reads can observe stale rows."
+  },
+  {
+    "id": "db-transaction",
+    "title": "Transactions and isolation",
+    "category": "database",
+    "text": "A transaction groups statements into an atomic unit. Isolation levels trade consistency against concurrency."
+  },
+  {
+    "id": "misc-weather",
+    "title": "Weather forecast",
+    "category": "misc",
+    "text": "The forecast calls for scattered showers in the morning and a sunny afternoon, with a light breeze from the west."
+  },
+  {
+    "id": "misc-cooking",
+    "title": "Slow cooked stew",
+    "category": "misc",
+    "text": "Brown the meat, add onions and stock, then simmer for three hours. Season with salt and pepper before serving."
+  },
+  {
+    "id": "misc-garden",
+    "title": "Spring garden chores",
+    "category": "misc",
+    "text": "Prune the roses, spread compost on the beds and water the tulips. Seed the herbs once the frost has passed."
+  },
+  {
+    "id": "misc-cycling",
+    "title": "Commuting by bicycle",
+    "category": "misc",
+    "text": "Bicycles share the path with pedestrians. Signal before turning and keep a safe distance at rush hour."
+  },
+  {
+    "id": "misc-astronomy",
+    "title": "Backyard astronomy",
+    "category": "misc",
+    "text": "A small telescope reveals the craters of the moon and the rings of Saturn. Dark skies matter more than aperture."
+  },
+  {
+    "id": "misc-music",
+    "title": "Tuning a guitar",
+    "category": "misc",
+    "text": "Tune the lowest string to the reference pitch, then match each successive string by ear or with a tuner before the concert."
+  },
+  {
+    "id": "misc-photography",
+    "title": "Exposure basics",
+    "category": "misc",
+    "text": "Aperture, shutter speed and ISO form the exposure triangle. Open the aperture for a shallow depth of field."
+  }
+]
