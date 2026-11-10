@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/manuc66/LexiSharp/main/docs/images/icon-512.png" alt="LexiSharp" width="112">
+</p>
+
 # LexiSharp
 
 [![CI](https://github.com/manuc66/lexisharp/actions/workflows/ci.yml/badge.svg)](https://github.com/manuc66/lexisharp/actions/workflows/ci.yml)

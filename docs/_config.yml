@@ -44,6 +44,10 @@ defaults:
         height: 1500
         alt: The LexiSharp demo comparing five retrieval strategies over one corpus
 
+# The browser tab icon. just-the-docs only emits a favicon link when this key is
+# set; the .ico carries the 16/24/32/48/64/128/256px frames.
+favicon_ico: "/images/icon.ico"
+
 color_scheme: light
 
 search_enabled: true

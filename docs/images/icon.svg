@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="LexiSharp">
+  <!--
+    The square app/package icon.
+
+    A magnifying glass over four left-aligned bars of decreasing width: search
+    plus ranking, the two things the library is. The colours are the demo's own
+    (the dark retrieval-lab ground and the blue-to-violet lane accent), so the
+    icon is a reduction of a surface the project already has rather than a new
+    identity.
+
+    This SVG is the source of truth. scripts/generate-icons.sh regenerates every
+    raster (README/docs PNG, NuGet package icon, favicon and .ico) from it.
+  -->
+  <defs>
+    <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#16202e"/>
+      <stop offset="1" stop-color="#0a0f17"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f2f8ff"/>
+      <stop offset="1" stop-color="#b9d2ef"/>
+    </linearGradient>
+    <linearGradient id="rank" x1="148" y1="0" x2="300" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7fd8ff"/>
+      <stop offset="0.5" stop-color="#6ea8fe"/>
+      <stop offset="1" stop-color="#b388ff"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#ground)"/>
+  <rect x="1" y="1" width="510" height="510" rx="111" fill="none" stroke="#6ea8fe" stroke-opacity="0.28" stroke-width="2"/>
+
+  <!-- Lens and handle. -->
+  <circle cx="222" cy="210" r="126" fill="#0e1725" stroke="url(#ring)" stroke-width="24"/>
+  <line x1="311" y1="299" x2="404" y2="392" stroke="url(#ring)" stroke-width="28" stroke-linecap="round"/>
+
+  <!-- Ranked results: four bars, widest first, inside the lens. -->
+  <g fill="url(#rank)">
+    <rect x="148" y="125" width="140" height="26" rx="13"/>
+    <rect x="148" y="173" width="110" height="26" rx="13"/>
+    <rect x="148" y="221" width="80"  height="26" rx="13"/>
+    <rect x="148" y="269" width="50"  height="26" rx="13"/>
+  </g>
+</svg>
