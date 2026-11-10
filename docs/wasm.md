@@ -1,6 +1,11 @@
 ---
 title: In-browser demo (WASM)
 nav_order: 16
+# The BCL-only demo is deployed at /wasm/ by .github/workflows/docs.yml. This
+# page embeds it, so it cannot live at the same path: `permalink: pretty` would
+# otherwise give the page /wasm/ from its filename and the copy would overwrite
+# it (or, before the workflow was fixed, fail to write there at all).
+permalink: /wasm-demo/
 description: >-
   LexiSharp's BCL-only core compiled to WebAssembly: BM25 search runs entirely
   in the browser, with no server and no uploaded documents.

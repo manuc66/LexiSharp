@@ -47,6 +47,18 @@ jobs:
 
       - name: Add the WASM proof to the site
         run: |
+          # jekyll-build-pages runs Jekyll in a container, so _site comes back
+          # owned by root and the runner cannot create anything under it.
+          sudo chown -R "$(id -u):$(id -g)" _site
+
+          # /wasm/ belongs to the app; the page that embeds it lives at
+          # /wasm-demo/ (permalink in docs/wasm.md). If Jekyll ever writes
+          # _site/wasm again, the two would silently overwrite each other.
+          if [ -e _site/wasm ]; then
+            echo "::error::_site/wasm already exists: the docs page and the WASM app are colliding"
+            exit 1
+          fi
+
           mkdir -p _site/wasm
           cp -r "${{ runner.temp }}/wasm/wwwroot/." _site/wasm/
 
