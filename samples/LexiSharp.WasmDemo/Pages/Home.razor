@@ -3,6 +3,7 @@
 @using System.Globalization
 @using System.Text.Json
 @using LexiSharp.Core
+@using LexiSharp.Hybrid
 @using LexiSharp.Indexing
 @using LexiSharp.Ranking
 @inject HttpClient Http
@@ -24,9 +25,18 @@
     .wasm-head { display: flex; align-items: center; gap: 8px; }
     .wasm-id { font-weight: 600; }
     .wasm-cat { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #64748b; border: 1px solid #e5e7eb; border-radius: 999px; padding: 1px 7px; }
-    .wasm-score { margin-left: auto; color: #2563eb; font-variant-numeric: tabular-nums; font-size: 13px; }
+    .wasm-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+    .wasm-score { color: #2563eb; font-variant-numeric: tabular-nums; font-size: 13px; }
+    .wasm-similar { border: 1px solid #d6dbe3; background: white; color: #1d4ed8; border-radius: 999px; padding: 2px 10px; font-size: 11.5px; cursor: pointer; }
+    .wasm-similar:hover { border-color: #2563eb; background: #eff6ff; }
     .wasm-text { color: #475569; margin-top: 6px; font-size: 14px; }
     .wasm-empty { color: #64748b; padding: 18px 0; }
+    .wasm-similar-panel { border: 1px solid #dbe4f0; background: #f8fafc; border-radius: 12px; padding: 14px 16px; margin: 0 0 18px; }
+    .wasm-similar-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .wasm-similar-head h2 { margin: 0; font-size: 15px; letter-spacing: -0.01em; }
+    .wasm-similar-head button { margin-left: auto; }
+    .wasm-card-similar .wasm-score { margin-left: auto; }
+    .wasm-disclosure { color: #64748b; font-size: 11.5px; line-height: 1.5; margin: 10px 0 0; }
     .wasm-note { color: #64748b; font-size: 12px; margin-top: 22px; }
 </style>
 
@@ -55,6 +65,37 @@
     }
 </p>
 
+@if (_similarTo is not null && _similarResults.Count > 0)
+{
+    <section class="wasm-similar-panel">
+        <div class="wasm-similar-head">
+            <h2>Similar to “@TitleOf(_similarTo)”</h2>
+            <button class="wasm-chip" @onclick="CloseSimilar">Close</button>
+        </div>
+
+        @foreach (var hit in _similarResults)
+        {
+            <div class="wasm-card wasm-card-similar">
+                <div class="wasm-head">
+                    <span class="wasm-id">@TitleOf(hit.Document)</span>
+                    @if (!string.IsNullOrEmpty(hit.Document.Category))
+                    {
+                        <span class="wasm-cat">@hit.Document.Category</span>
+                    }
+                    <span class="wasm-score">cosine @hit.Score.ToString("0.000", CultureInfo.InvariantCulture)</span>
+                </div>
+                <div class="wasm-text">@hit.Document.Text</div>
+            </div>
+        }
+
+        <p class="wasm-disclosure">
+            Document vectors were precomputed offline with <b>@_embeddingModel</b>
+            (@_embeddingDimension dimensions); the tab only loads them and compares them. No model is
+            downloaded, loaded or executed here.
+        </p>
+    </section>
+}
+
 @if (Results.Count > 0)
 {
     @foreach (var hit in Results)
@@ -66,7 +107,13 @@
                 {
                     <span class="wasm-cat">@hit.Document.Category</span>
                 }
-                <span class="wasm-score">score @hit.Score.ToString("0.###", CultureInfo.InvariantCulture)</span>
+                <span class="wasm-actions">
+                    @if (HasSimilar)
+                    {
+                        <button class="wasm-similar" @onclick="() => ShowSimilar(hit.Document)">similar</button>
+                    }
+                    <span class="wasm-score">score @hit.Score.ToString("0.###", CultureInfo.InvariantCulture)</span>
+                </span>
             </div>
             <div class="wasm-text">@hit.Document.Text</div>
         </div>
@@ -78,8 +125,9 @@ else if (!string.IsNullOrWhiteSpace(Query))
 }
 
 <p class="wasm-note">
-    The corpus is fetched once from a static file; the search itself never leaves the tab. The
-    server demo also exercises classification, segment storage, persistence and the optional packages.
+    The corpus and the similar-documents vectors are static files; the index and every comparison
+    run in the tab. The server demo also exercises classification, segment storage, persistence and
+    the optional packages.
 </p>
 
 @code {
@@ -105,17 +153,29 @@ else if (!string.IsNullOrWhiteSpace(Query))
         new("3", "Italian cuisine is renowned in Rome"),
     };
 
+    private readonly Dictionary<string, SearchDocument> _documentsById = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, float[]> _vectorsById = new(StringComparer.Ordinal);
+
     private string Query { get; set; } = "refresh token";
     private ITextSearchEngine? _engine;
     private IReadOnlyList<SearchResult> Results { get; set; } = Array.Empty<SearchResult>();
+    private SearchDocument? _similarTo;
+    private IReadOnlyList<SimilarHit> _similarResults = Array.Empty<SimilarHit>();
+    private string? _embeddingModel;
+    private int _embeddingDimension;
     private int _documentCount;
     private double _indexMs;
     private bool _usedFallback;
+
+    private bool HasSimilar => _vectorsById.Count > 1;
 
     protected override async Task OnInitializedAsync()
     {
         (List<SearchDocument> documents, bool fromFile) = await LoadCorpusAsync();
         _usedFallback = !fromFile;
+
+        foreach (SearchDocument document in documents)
+            _documentsById[document.Id] = document;
 
         _engine = new RankedTextSearchEngine(new InMemoryTextIndex(), new Bm25Scorer());
 
@@ -125,6 +185,8 @@ else if (!string.IsNullOrWhiteSpace(Query))
 
         _documentCount = documents.Count;
         _indexMs = stopwatch.Elapsed.TotalMilliseconds;
+
+        await LoadEmbeddingsAsync();
 
         Search();
     }
@@ -149,6 +211,42 @@ else if (!string.IsNullOrWhiteSpace(Query))
         }
 
         return (FallbackCorpus.ToList(), false);
+    }
+
+    /// <summary>
+    /// Loads the precomputed vectors. They are an optional feature, not a requirement: if the file
+    /// is absent or malformed the page keeps its BM25 search and simply does not offer "similar".
+    /// </summary>
+    private async Task LoadEmbeddingsAsync()
+    {
+        try
+        {
+            EmbeddingFile? file = await Http.GetFromJsonAsync(
+                "embeddings.json", CorpusJsonContext.Default.EmbeddingFile);
+
+            if (file is null)
+                return;
+
+            foreach ((string id, float[] vector) in file.Documents)
+            {
+                if (vector.Length == file.Dimension && _documentsById.ContainsKey(id))
+                    _vectorsById[id] = vector;
+            }
+
+            if (HasSimilar)
+            {
+                _embeddingModel = file.Model;
+                _embeddingDimension = file.Dimension;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            // No vectors published: the demo stays BM25-only.
+        }
+        catch (JsonException)
+        {
+            // Vectors that do not parse are the same as no vectors.
+        }
     }
 
     private static SearchDocument ToSearchDocument(CorpusDocument document) =>
@@ -179,6 +277,8 @@ else if (!string.IsNullOrWhiteSpace(Query))
 
     private void Search()
     {
+        CloseSimilar();
+
         if (_engine is null || string.IsNullOrWhiteSpace(Query))
         {
             Results = Array.Empty<SearchResult>();
@@ -187,4 +287,40 @@ else if (!string.IsNullOrWhiteSpace(Query))
 
         Results = _engine.Search(Query, new SearchOptions(Limit: 10));
     }
+
+    /// <summary>
+    /// Ranks the other documents against this one. The source vector is already in
+    /// <see cref="_vectorsById"/>, so no text is embedded: this is a cosine scan, which is exactly
+    /// the claim the panel makes.
+    /// </summary>
+    private void ShowSimilar(SearchDocument source)
+    {
+        if (!_vectorsById.TryGetValue(source.Id, out float[]? sourceVector))
+            return;
+
+        var hits = new List<SimilarHit>(_vectorsById.Count);
+
+        foreach ((string id, float[] vector) in _vectorsById)
+        {
+            if (id == source.Id || !_documentsById.TryGetValue(id, out SearchDocument? document))
+                continue;
+
+            hits.Add(new SimilarHit(document, VectorSimilarity.CosineSimilarity(sourceVector, vector)));
+        }
+
+        _similarTo = source;
+        _similarResults = hits
+            .OrderByDescending(hit => hit.Score)
+            .ThenBy(hit => hit.Document.Id, StringComparer.Ordinal)
+            .Take(5)
+            .ToList();
+    }
+
+    private void CloseSimilar()
+    {
+        _similarTo = null;
+        _similarResults = Array.Empty<SimilarHit>();
+    }
+
+    private sealed record SimilarHit(SearchDocument Document, float Score);
 }

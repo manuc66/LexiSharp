@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json;
 using LexiSharp.Core;
 using LexiSharp.Demo;
@@ -41,7 +42,45 @@ public sealed class WasmCorpusTests
         }
     }
 
+    [Fact]
+    public void TheWasmEmbeddingsCoverEveryDocumentWithUnitVectors()
+    {
+        string directory = Path.Combine(RepositoryRoot, "samples", "LexiSharp.WasmDemo", "wwwroot");
+
+        CorpusDocument[] corpus = JsonSerializer.Deserialize<CorpusDocument[]>(
+            File.ReadAllText(Path.Combine(directory, "corpus.json")),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+
+        EmbeddingFile file = JsonSerializer.Deserialize<EmbeddingFile>(
+            File.ReadAllText(Path.Combine(directory, "embeddings.json")),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+
+        Assert.Equal("BAAI/bge-small-en-v1.5", file.Model);
+        Assert.Equal(384, file.Dimension);
+        Assert.True(file.Normalized);
+
+        Assert.Equal(
+            corpus.Select(document => document.Id).OrderBy(id => id, StringComparer.Ordinal),
+            file.Documents.Keys.OrderBy(id => id, StringComparer.Ordinal));
+
+        foreach ((string id, float[] vector) in file.Documents)
+        {
+            Assert.Equal(file.Dimension, vector.Length);
+
+            double norm = Math.Sqrt(vector.Sum(value => (double)value * value));
+            Assert.InRange(norm, 0.9999, 1.0001);
+            Assert.All(vector, value => Assert.True(float.IsFinite(value), $"{id} has a non-finite value."));
+        }
+    }
+
     private sealed record CorpusDocument(string Id, string Title, string Category, string Text);
+
+    private sealed record EmbeddingFile(
+        string Model,
+        int Dimension,
+        bool Normalized,
+        string Generator,
+        Dictionary<string, float[]> Documents);
 
     private static string RepositoryRoot
     {
