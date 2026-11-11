@@ -329,7 +329,7 @@ F|LexiSharp.Core.QueryTermOperator|None|LexiSharp.Core.QueryTermOperator|static|
 F|LexiSharp.Core.QueryTermOperator|Prohibited|LexiSharp.Core.QueryTermOperator|static|2
 F|LexiSharp.Core.QueryTermOperator|Required|LexiSharp.Core.QueryTermOperator|static|1
 F|LexiSharp.Core.RerankedTextSearchEngine|EngineName|System.String|static|RerankedTextSearchEngine
-F|LexiSharp.Core.RetrievalAgreementAnalyzer|DefaultStrongThreshold|System.Double|static|0,5
+F|LexiSharp.Core.RetrievalAgreementAnalyzer|DefaultStrongThreshold|System.Double|static|0.5
 F|LexiSharp.Core.RetrievalAgreement|Disputed|LexiSharp.Core.RetrievalAgreement|static|3
 F|LexiSharp.Core.RetrievalAgreement|Lukewarm|LexiSharp.Core.RetrievalAgreement|static|2
 F|LexiSharp.Core.RetrievalAgreement|None|LexiSharp.Core.RetrievalAgreement|static|0
