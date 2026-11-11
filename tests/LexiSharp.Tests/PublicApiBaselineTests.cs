@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using Xunit;
 
@@ -131,7 +132,12 @@ public class PublicApiBaselineTests
                          .Where(f => !f.IsSpecialName)
                          .OrderBy(f => f.Name, StringComparer.Ordinal))
             {
-                string constant = field.IsLiteral ? "|" + field.GetRawConstantValue() : "";
+                // The raw constant is formatted with the current culture by default, which is how a
+                // baseline recorded on a French machine came to carry "0,5" and fail on an English
+                // CI runner. The baseline is a build artifact, not a locale-sensitive document.
+                string constant = field.IsLiteral
+                    ? "|" + Convert.ToString(field.GetRawConstantValue(), CultureInfo.InvariantCulture)
+                    : "";
                 yield return $"F|{typeName}|{field.Name}|{TypeName(field.FieldType)}|{(field.IsStatic ? "static" : "instance")}{constant}";
             }
 
