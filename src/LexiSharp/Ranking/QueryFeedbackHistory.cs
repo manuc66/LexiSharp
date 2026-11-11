@@ -150,6 +150,11 @@ public sealed class QueryFeedbackHistory
     /// historical queries that share tokens with the current query and returns
     /// their associated documents, weighted by similarity.
     /// </summary>
+    /// <remarks>
+    /// Positive evidence for a document is the strongest association any similar query carries;
+    /// negative evidence accumulates. See <see cref="GetFuzzyAssociationScores"/> for why the
+    /// positives are not summed.
+    /// </remarks>
     /// <param name="query">The current query.</param>
     /// <param name="minSimilarity">Minimum token-overlap similarity (0 to 1) for a historical query to contribute.</param>
     public IReadOnlyList<(string DocumentId, double Strength)> GetFuzzyAssociations(
@@ -171,8 +176,15 @@ public sealed class QueryFeedbackHistory
     /// a caller applying them to a page can look each candidate up without building a second map.
     /// </summary>
     /// <remarks>
+    /// A document keeps the strongest positive association found among the similar queries and
+    /// adds every negative one. Summing the positives would let a document that shares one token
+    /// with many recorded queries outrank the document chosen for the query itself: four
+    /// half-similar queries would score 2.0 against the exact association's 1.0. Keeping the two
+    /// sides apart also makes the result independent of the order the associations are visited in.
+    /// <para>
     /// This is the form the engines use: <see cref="GetFuzzyAssociations"/> sorts, and a decorator
     /// that then needs a lookup would pay for the projection and the map on every search.
+    /// </para>
     /// </remarks>
     /// <param name="query">The current query.</param>
     /// <param name="minSimilarity">Minimum token-overlap similarity (0 to 1) for a historical query to contribute.</param>
@@ -210,6 +222,11 @@ public sealed class QueryFeedbackHistory
 
         var documentScores = new Dictionary<string, double>(capacity, StringComparer.Ordinal);
 
+        // Positive evidence keeps the strongest association; penalties accumulate. The two sides
+        // are kept apart until the end so the result does not depend on the order the associations
+        // happen to be visited in.
+        Dictionary<string, double>? penalties = null;
+
         foreach (var association in _associations.Values)
         {
             var historyTokens = association.Tokens;
@@ -238,8 +255,26 @@ public sealed class QueryFeedbackHistory
 
                 double strength = similarity * (kvp.Value / maxWeight);
 
-                documentScores.TryGetValue(kvp.Key, out double existing);
-                documentScores[kvp.Key] = existing + strength;
+                if (strength >= 0)
+                {
+                    documentScores.TryGetValue(kvp.Key, out double existing);
+                    documentScores[kvp.Key] = Math.Max(existing, strength);
+                }
+                else
+                {
+                    penalties ??= new Dictionary<string, double>(capacity, StringComparer.Ordinal);
+                    penalties.TryGetValue(kvp.Key, out double existingPenalty);
+                    penalties[kvp.Key] = existingPenalty + strength;
+                }
+            }
+        }
+
+        if (penalties is not null)
+        {
+            foreach (var kvp in penalties)
+            {
+                documentScores.TryGetValue(kvp.Key, out double positive);
+                documentScores[kvp.Key] = positive + kvp.Value;
             }
         }
 
