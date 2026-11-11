@@ -30,6 +30,7 @@ internal static class SegmentFile
     {
         ArgumentNullException.ThrowIfNull(index);
         ArgumentNullException.ThrowIfNull(path);
+        PathSafety.ThrowIfUnsafe(path, nameof(path));
 
         File.WriteAllBytes(path, SegmentWriter.Write(index));
     }
@@ -44,6 +45,7 @@ internal static class SegmentFile
     public static SegmentTextIndex Open(string path, ITokenizer? tokenizer = null)
     {
         ArgumentNullException.ThrowIfNull(path);
+        PathSafety.ThrowIfUnsafe(path, nameof(path));
 
         return new SegmentTextIndex(File.ReadAllBytes(path), tokenizer);
     }

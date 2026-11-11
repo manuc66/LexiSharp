@@ -221,6 +221,8 @@ internal static class OnlineClassificationCommand
     {
         if (options.WritePath is not null)
         {
+            LexiSharp.PathSafety.ThrowIfUnsafe(options.WritePath, nameof(options.WritePath));
+
             File.WriteAllText(options.WritePath, JsonSerializer.Serialize(pin, JsonOptions) + Environment.NewLine);
             Console.WriteLine($"Wrote {options.WritePath}");
         }
@@ -447,6 +449,8 @@ internal static class OnlineClassificationCommand
 
     private static int Verify(OnlineClassificationPin actual, string path)
     {
+        LexiSharp.PathSafety.ThrowIfUnsafe(path, nameof(path));
+
         if (!File.Exists(path))
         {
             Console.Error.WriteLine($"classification-online: pin not found: {path}");

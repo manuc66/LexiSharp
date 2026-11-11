@@ -65,6 +65,7 @@ internal sealed class MappedSegment : IDisposable
     public static MappedSegment Open(string path, ITokenizer? tokenizer = null, DecodedPostingsCache? decoded = null)
     {
         ArgumentNullException.ThrowIfNull(path);
+        LexiSharp.PathSafety.ThrowIfUnsafe(path, nameof(path));
 
         var file = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
         var accessor = file.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);

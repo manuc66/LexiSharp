@@ -118,6 +118,10 @@ public static class SegmentCommands
 
         try
         {
+            foreach (var candidate in new[] { corpusDir, storeDir, jsonPath })
+                if (candidate is not null)
+                    LexiSharp.PathSafety.ThrowIfUnsafe(candidate, "path");
+
             return subcommand switch
             {
                 "build" => Build(corpusDir, storeDir, analyzer),

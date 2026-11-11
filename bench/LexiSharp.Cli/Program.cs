@@ -182,6 +182,10 @@ public static class Program
 
         try
         {
+            foreach (var candidate in new[] { corpusDir, queriesPath, qrelsPath, jsonPath, outPath, againstPath })
+                if (candidate is not null)
+                    LexiSharp.PathSafety.ThrowIfUnsafe(candidate, "path");
+
             if (command == "diff")
             {
                 return RunDiff(
@@ -474,6 +478,8 @@ public static class Program
         // shell is already in, where naming the directory twice is the only thing to get wrong.
         target ??= ".";
 
+        LexiSharp.PathSafety.ThrowIfUnsafe(target, nameof(target));
+
         if (query is null)
         {
             Console.Error.WriteLine("search requires --query <text>.");
@@ -604,6 +610,8 @@ public static class Program
 
     internal static IReadOnlyList<SearchDocument> LoadCorpus(string corpusDir)
     {
+        LexiSharp.PathSafety.ThrowIfUnsafe(corpusDir, nameof(corpusDir));
+
         var root = Path.GetFullPath(corpusDir);
 
         if (!Directory.Exists(root))
@@ -652,6 +660,8 @@ public static class Program
 
     private static IReadOnlyList<(string Id, string Text)> ReadQueries(string path)
     {
+        LexiSharp.PathSafety.ThrowIfUnsafe(path, nameof(path));
+
         string? firstLine = File.ReadLines(path).FirstOrDefault(line => !string.IsNullOrWhiteSpace(line));
 
         if (firstLine is not null && firstLine.AsSpan().TrimStart().StartsWith('{'))
@@ -687,6 +697,8 @@ public static class Program
 
     private static Dictionary<string, IReadOnlyDictionary<string, double>> ReadQrels(string path)
     {
+        LexiSharp.PathSafety.ThrowIfUnsafe(path, nameof(path));
+
         var qrels = new Dictionary<string, Dictionary<string, double>>(StringComparer.Ordinal);
 
         foreach (string line in File.ReadLines(path))

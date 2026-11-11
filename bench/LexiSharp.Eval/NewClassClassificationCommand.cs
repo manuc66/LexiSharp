@@ -138,6 +138,8 @@ internal static class NewClassClassificationCommand
 
         if (options.WritePath is not null)
         {
+            LexiSharp.PathSafety.ThrowIfUnsafe(options.WritePath, nameof(options.WritePath));
+
             File.WriteAllText(options.WritePath, JsonSerializer.Serialize(pin, JsonOptions) + Environment.NewLine);
             Console.WriteLine($"Wrote {options.WritePath}");
         }
@@ -419,6 +421,8 @@ internal static class NewClassClassificationCommand
 
     private static int Verify(NewClassPin actual, string path)
     {
+        LexiSharp.PathSafety.ThrowIfUnsafe(path, nameof(path));
+
         if (!File.Exists(path))
         {
             Console.Error.WriteLine($"classification-new-class: pin not found: {path}");

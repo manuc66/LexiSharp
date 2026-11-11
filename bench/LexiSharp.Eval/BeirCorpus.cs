@@ -167,6 +167,8 @@ internal static class BeirLoader
     public static async Task<BeirCorpus> LoadOrDownloadAsync(
         string dataBaseDir, string name, string downloadUrl, string expectedMd5)
     {
+        LexiSharp.PathSafety.ThrowIfUnsafe(dataBaseDir, nameof(dataBaseDir));
+
         string root = await EnsureDatasetAsync(dataBaseDir, name, downloadUrl, expectedMd5);
 
         var documents = ParseJsonLines(

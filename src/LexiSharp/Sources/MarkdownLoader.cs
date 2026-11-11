@@ -82,6 +82,7 @@ public static class MarkdownLoader
     public static LoadedDocument LoadFile(string path, MarkdownLoadOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(path);
+        PathSafety.ThrowIfUnsafe(path, nameof(path));
 
         return ParseCore(
             File.ReadAllText(path),
@@ -96,6 +97,7 @@ public static class MarkdownLoader
     public static IReadOnlyList<LoadedDocument> LoadDirectory(string path, MarkdownLoadOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(path);
+        PathSafety.ThrowIfUnsafe(path, nameof(path));
 
         var root = Path.GetFullPath(path);
         var loaderOptions = options ?? new MarkdownLoadOptions();
