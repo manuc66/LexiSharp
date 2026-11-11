@@ -22,6 +22,44 @@ internal static class MetricDepth
     public const int Cutoff = 10;
 }
 
+/// <summary>
+/// One row of the metrics table: a name a reader compares across runs, and the engine that
+/// produces it.
+/// </summary>
+/// <param name="Name">The display name — the column a diff or a pin is keyed on.</param>
+/// <param name="Factory">Builds the engine. Invoked once per scored set, not once per query.</param>
+/// <param name="CandidatePool">
+/// How many candidates a cascade row (proximity, cross-encoder) reorders at its shipped operating
+/// point, or <c>null</c> for a row whose candidate set is the whole result set. The document
+/// diagnosis probes a cascade row at this depth rather than at its own probe depth: a rerank row
+/// asked for a thousand candidates is a different, far more expensive row than the one the table
+/// measures, and past its pool the row cannot surface a document the base engine never returned.
+/// </param>
+/// <param name="IsProbe">
+/// <c>true</c> for the rows a diagnosis adds beyond the table (length-normalization probes, the
+/// unanalyzed-overlap control). A probe measures a hypothesis, not a shipped configuration, so it
+/// is labelled in the report and never counted as « a technique that retrieved it ».
+/// </param>
+internal sealed record ConfigurationRow(
+    string Name,
+    Func<ITextSearchEngine> Factory,
+    int? CandidatePool = null,
+    bool IsProbe = false);
+
+/// <summary>
+/// What one run can probe: its fixed rows, the notes explaining absent ones, and the two
+/// capabilities the row list is gated on.
+/// </summary>
+/// <param name="Notes">
+/// Why a row a reader might expect is not here — the same notes the table prints, so a diagnosis
+/// and a table state the same absences.
+/// </param>
+internal sealed record ConfigurationSet(
+    IReadOnlyList<ConfigurationRow> Configurations,
+    IReadOnlyList<string> Notes,
+    bool AnyTitle,
+    bool FieldStatistics);
+
 /// <param name="Outcomes">
 /// Per-query detail, or <c>null</c>. Non-null only when the run was asked to analyze: capturing a
 /// ranking per query per configuration is real memory — ArguAna at depth 100 over twenty
@@ -190,226 +228,23 @@ internal static class Evaluation
                 fraction, queries.Count, fit.Count, score.Count, [], NotRunReason: degenerate);
         }
 
-        // Documents are still built here: the field-bearing view is what anyTitle and the
-        // field-weighted configs need, and it is the same set the caller's index was built from.
-        // Building it costs nothing against the corpus; tokenizing it again per config did.
-        var documents = BuildDocuments(corpus);
-
         // Null means the library default (distinct), so the shared value below is what every
         // scorer in this run was actually built with.
-        var queryTerms = queryFrequency ? QueryTermWeighting.QueryFrequency : QueryTermWeighting.Distinct;
+        var queryTerms = QueryTermsFor(queryFrequency);
 
-        // ArguAna carries no title, so a field-weighted configuration there would be the same three
-        // rows over again with an inert weight. Say so instead of padding the table.
-        bool anyTitle = corpus.Documents.Any(document => !string.IsNullOrEmpty(document.Title));
+        ConfigurationSet configurations = BuildConfigurations(
+            corpus, index, tokenizer, queryTerms, referenceBm25, saturationConstant, singlePrecision,
+            bm25Va, queryExpansions, queryReweights, spreadAlphas, spreadWindow, dense, reranker,
+            rerankCandidates);
 
-        // Titles are a property of the corpus; per-field statistics are a property of the index. A
-        // field-weighted ranking needs both, and a store that keeps no field statistics refuses it by
-        // name rather than reading a silent zero — so the rows are gated on the capability the scorer
-        // actually reads, and their absence is reported rather than left as a gap in the table.
-        bool fieldStatistics = index is IFieldStatisticsIndex;
-        var notes = new List<string>();
-
-        var builders = new (string Name, Func<ITextSearchEngine> Factory)[]
-        {
-            ("BM25 (k1=1.5, b=0.75)", () => Ranked(index, new Bm25Scorer(1.5, 0.75, queryTerms), tokenizer)),
-            ("BM25 (k1=1.2, b=0.75)", () => Ranked(index, new Bm25Scorer(1.2, 0.75, queryTerms), tokenizer)),
-        };
-
-        // The published BM25 baselines were produced at the retrieval stack's own defaults,
-        // k1=0.9 and b=0.4, which is not one of the two rows above. A run has to be able to measure
-        // that operating point, or a comparison against a published number is a comparison of two
-        // different configurations. Opt-in, so the default table is unchanged.
-        if (referenceBm25 is { } reference)
-        {
-            builders = builders
-                .Concat(new (string, Func<ITextSearchEngine>)[]
-                {
-                    // Invariant formatting: a comma here would read as two parameters on a
-                    // machine whose culture uses it, in a table whose whole job is naming them.
-                    ($"BM25 (k1={reference.K1.ToString("0.##", CultureInfo.InvariantCulture)}, "
-                      + $"b={reference.B.ToString("0.##", CultureInfo.InvariantCulture)})",
-                        () => Ranked(
-                            index,
-                            new Bm25Scorer(
-                                reference.K1, reference.B, queryTerms, saturationConstant,
-                                singlePrecision ? Bm25Arithmetic.SinglePrecision : Bm25Arithmetic.Double),
-                            tokenizer)),
-                })
-                .ToArray();
-        }
-
-        // BM25VA is a direction, not one point: b = 1 is the degeneration control (the same scorer
-        // as BM25, which is what the identity test pins), b = 0 removes length from the
-        // normalization entirely, and b = 0.5 sits between them. Opt-in, so the default table keeps
-        // the rows and the run time it had.
-        if (bm25Va)
-        {
-            builders = builders
-                .Concat(new (string, Func<ITextSearchEngine>)[]
-                {
-                    // The control the identity test pins: BM25VA at b = 1 *is* BM25 at b = 1, so these
-                    // two rows must print the same numbers. The default BM25 row is at b = 0.75 and is
-                    // deliberately a different operating point, not the control.
-                    ("BM25 (k1=1.5, b=1) [control]", () => Ranked(index, new Bm25Scorer(1.5, 1.0, queryTerms), tokenizer)),
-                    ("BM25VA (k1=1.5, b=1)", () => Ranked(index, new Bm25VaScorer(1.5, 1.0, queryTerms), tokenizer)),
-                    ("BM25VA (k1=1.5, b=0.5)", () => Ranked(index, new Bm25VaScorer(1.5, 0.5, queryTerms), tokenizer)),
-                    ("BM25VA (k1=1.5, b=0)", () => Ranked(index, new Bm25VaScorer(1.5, 0.0, queryTerms), tokenizer)),
-                })
-                .ToArray();
-        }
-
-        builders = builders
-            .Concat(new (string, Func<ITextSearchEngine>)[]
-            {
-                ("TF-IDF", () => Ranked(index, new TfIdfScorer(), tokenizer)),
-                ("QueryLikelihood (lambda=0.2)", () => Ranked(index, new QueryLikelihoodScorer(0.2), tokenizer)),
-                ("Hybrid BM25+QL weighted", () => Hybrid(index,
-                    new WeightedScoreResultMerger(1.0, 1.0), tokenizer)),
-                ("Hybrid BM25+QL RRF", () => Hybrid(index,
-                    new ReciprocalRankFusionMerger(), tokenizer)),
-            })
-            .ToArray();
-
-        if (anyTitle && fieldStatistics)
-        {
-            // Three weights rather than one: the question is whether weighting a title helps at all
-            // here, and a single point cannot show a direction. BM25F neutral is included because it
-            // is not BM25 — on one field it is a different length term, so its own row is the
-            // baseline the weighted rows have to beat.
-            builders = builders
-                .Concat(new (string, Func<ITextSearchEngine>)[]
-                {
-                    ("BM25F (unweighted)", () => Ranked(index, TitleWeighted(1.0), tokenizer)),
-                    ("BM25F (title 2.0)", () => Ranked(index, TitleWeighted(2.0), tokenizer)),
-                    ("BM25F (title 4.0)", () => Ranked(index, TitleWeighted(4.0), tokenizer)),
-                })
-                .ToArray();
-        }
-        else if (anyTitle)
-        {
-            notes.Add(
-                "BM25F (unweighted / title 2.0 / title 4.0) skipped: the corpus carries titles, but "
-                + $"{index.GetType().Name} keeps no per-field statistics (IFieldStatisticsIndex), and a "
-                + "field-weighted ranking over absent statistics would be wrong with no error to show for it.");
-        }
-
-        // Single-field BM25 variants, measured against the tuned BM25 row rather than the default
-        // one: a default-versus-default comparison mostly measures which default fits the corpus.
-        // These two rows fix delta at the papers' starting value, which is why RunTunedVariants adds
-        // a tuned row for each of them — otherwise the table compares a fitted BM25 against two
-        // unfitted variants and calls it a verdict on the formula.
-        builders = builders
-            .Concat(new (string, Func<ITextSearchEngine>)[]
-            {
-                ("BM25+ (delta=1.0)", () => Ranked(index, new Bm25PlusScorer(1.5, 0.75, 1.0, queryTerms), tokenizer)),
-                ("BM25L (delta=0.5)", () => Ranked(index, new Bm25LScorer(1.5, 0.75, 0.5, queryTerms), tokenizer)),
-            })
-            .ToArray();
-
-        // Proximity is corpus-dependent by nature, and the two shapes are not interchangeable, so
-        // both are measured. The first stage is identical to the BM25 row, so the difference is
-        // proximity alone and nothing else.
-        builders = builders
-            .Concat(new (string, Func<ITextSearchEngine>)[]
-            {
-                ("BM25 + proximity (damp, s=0.25)", () => Proximity(index, 0.25, ProximityMode.Damp, tokenizer)),
-                ("BM25 + proximity (damp, s=1)", () => Proximity(index, 1.0, ProximityMode.Damp, tokenizer)),
-                ("BM25 + proximity (boost, s=1)", () => Proximity(index, 1.0, ProximityMode.Boost, tokenizer)),
-            })
-            .ToArray();
-
-        var buildersList = builders.ToList();
-
-        // Query-side expansion, one row per learned expander. The index is untouched and the corpus
-        // statistics BM25 reads are therefore the ones the lexical rows above read, which is the
-        // whole point: ExpansionTextIndex is the document-side variant and changes avgdl, so a
-        // comparison between it and these rows would be a comparison of two indexes.
-        foreach (var (name, expander) in queryExpansions ?? [])
-        {
-            buildersList.Add((name, () => new ExpandingTextSearchEngine(
-                Ranked(index, new Bm25Scorer(1.5, 0.75, queryTerms), tokenizer),
-                expander,
-                tokenizer)));
-        }
-
-        // Query-term reweighting, one row per strength. The graph is learned once by the caller and
-        // shared; each row rebuilds the scorer per search because a weight is a property of the
-        // query, not of the engine. The BM25 operating point is the run's reference pair when one
-        // was asked for, so the reweighting can be measured on top of the tuned corpus point rather
-        // than only on the library default.
-        if (queryReweights is { Count: > 0 })
-        {
-            Bm25Parameters reweightParameters = referenceBm25 ?? new Bm25Parameters(1.5, 0.75);
-
-            foreach (var (name, weighter) in queryReweights)
-            {
-                buildersList.Add((name, () => new ReweightingTextSearchEngine(
-                    index,
-                    new Bm25Scorer(reweightParameters.K1, reweightParameters.B, queryTerms),
-                    weighter,
-                    tokenizer)));
-            }
-        }
-
-        // Spread is a direction, and the direction is the interaction with b: the same statistic at
-        // b = 0, 0.5 and 1 shows whether the spatial count makes length normalization redundant.
-        // alpha = 0 is the raw-count control and must reproduce BM25 at the same b.
-        if (spreadAlphas is { Count: > 0 })
-        {
-            foreach (double alpha in spreadAlphas)
-            {
-                foreach (double b in new[] { 0.0, 0.5, 1.0 })
-                {
-                    string name =
-                        $"BM25 spread (alpha={alpha.ToString("0.##", CultureInfo.InvariantCulture)}, "
-                        + $"b={b.ToString("0.##", CultureInfo.InvariantCulture)}, w={spreadWindow})";
-
-                    buildersList.Add((name, () => new RankedTextSearchEngine(
-                        index,
-                        new SpreadBm25Scorer(1.5, b, spreadWindow, alpha, queryTerms),
-                        tokenizer)));
-                }
-            }
-        }
-
-        if (dense is not null)
-        {
-            var denseEngine = new DenseTextSearchEngine(corpus, dense);
-            var bm25 = Ranked(index, new Bm25Scorer(1.5, 0.75), tokenizer);
-
-            buildersList.Add(("Dense multilingual-e5-small", () => denseEngine));
-            buildersList.Add(("Hybrid BM25+Dense weighted", () => new HybridTextSearchEngine(
-                new ITextSearchEngine[] { bm25, denseEngine }, new WeightedScoreResultMerger(1.0, 1.0))));
-            buildersList.Add(("Hybrid BM25+Dense RRF", () => new HybridTextSearchEngine(
-                new ITextSearchEngine[] { bm25, denseEngine }, new ReciprocalRankFusionMerger())));
-        }
-
-        if (reranker is not null)
-        {
-            var bm25 = Ranked(index, new Bm25Scorer(1.5, 0.75), tokenizer);
-            var languageModel = Ranked(index, new QueryLikelihoodScorer(0.2), tokenizer);
-
-            buildersList.Add(($"BM25 (top{rerankCandidates})+CrossRerank", () =>
-                RerankEngines.Reranked(bm25, rerankCandidates, reranker)));
-            buildersList.Add(($"QL (top{rerankCandidates})+CrossRerank", () =>
-                RerankEngines.Reranked(languageModel, rerankCandidates, reranker)));
-
-            if (dense is not null)
-            {
-                var rrf = new HybridTextSearchEngine(
-                    new ITextSearchEngine[] { bm25, new DenseTextSearchEngine(corpus, dense) },
-                    new ReciprocalRankFusionMerger());
-
-                buildersList.Add(($"Hybrid RRF (top{rerankCandidates})+CrossRerank", () =>
-                    RerankEngines.Reranked(rrf, rerankCandidates, reranker)));
-            }
-        }
+        bool anyTitle = configurations.AnyTitle;
+        bool fieldStatistics = configurations.FieldStatistics;
+        var notes = new List<string>(configurations.Notes);
 
         var results = new List<ConfigResult>();
 
-        foreach (var (name, factory) in buildersList)
-            results.Add(RunConfig(name, factory(), queries, topK, ndcgGain, jobs, parseQuerySyntax, scoreRounding, captureOutcomes));
+        foreach (ConfigurationRow row in configurations.Configurations)
+            results.Add(RunConfig(row.Name, row.Factory(), queries, topK, ndcgGain, jobs, parseQuerySyntax, scoreRounding, captureOutcomes));
 
         // Each fitted configuration is scored on the fit set here, and on the withheld score set when
         // one exists. Without --heldout the fit set is the whole query list, so these are the rows and
@@ -518,6 +353,267 @@ internal static class Evaluation
         }
 
         return (results, tunedDescription, notes, heldOut);
+    }
+
+    /// <summary>
+    /// The name of the fixed BM25 row every other row and every default baseline is read against —
+    /// the literal is shared so the table, the analysis defaults and the document diagnosis's
+    /// lookup of this row cannot drift apart into three strings that read the same and differ.
+    /// </summary>
+    internal const string BaselineConfigurationName = "BM25 (k1=1.5, b=0.75)";
+
+    /// <summary>
+    /// The candidate pool the proximity rows reorder at their shipped operating point — the same
+    /// <c>maxCandidates</c> <see cref="Proximity"/> passes, named once so the row metadata and the
+    /// engine it describes cannot disagree.
+    /// </summary>
+    internal const int ProximityCandidates = 100;
+
+    /// <summary>
+    /// The query-term weighting every scorer in a run is built with: <c>null</c>-means-default is
+    /// resolved once here rather than at each construction site, so a run cannot end up with rows
+    /// scored under two different weightings because one site read the flag differently.
+    /// </summary>
+    internal static QueryTermWeighting QueryTermsFor(bool queryFrequency) =>
+        queryFrequency ? QueryTermWeighting.QueryFrequency : QueryTermWeighting.Distinct;
+
+    /// <summary>
+    /// The run's fixed configurations — every row of the metrics table that needs no fitting — as
+    /// named engine factories, plus the notes explaining rows that are absent.
+    /// </summary>
+    /// <remarks>
+    /// Built once and shared by <see cref="Run"/> and the document diagnosis (<c>--diagnose-doc</c>):
+    /// a diagnosis that probed a different list would answer a question this harness does not
+    /// measure, and a list written out twice is a list that drifts — the failure mode the per-query
+    /// analysis already documents for query lists. Tuned rows are absent by construction: they are
+    /// fitted against the query set inside <see cref="Run"/>, so a diagnosis states that it probes
+    /// the fixed rows only rather than paying a grid search to include them.
+    /// </remarks>
+    internal static ConfigurationSet BuildConfigurations(
+        BeirCorpus corpus,
+        ITextIndex index,
+        ITokenizer tokenizer,
+        QueryTermWeighting queryTerms,
+        Bm25Parameters? referenceBm25,
+        bool saturationConstant,
+        bool singlePrecision,
+        bool bm25Va,
+        IReadOnlyList<(string Name, ITermExpander Expander)>? queryExpansions,
+        IReadOnlyList<(string Name, IQueryTermWeighter Weighter)>? queryReweights,
+        IReadOnlyList<double>? spreadAlphas,
+        int spreadWindow,
+        DenseVectors? dense,
+        IReranker? reranker,
+        int rerankCandidates)
+    {
+        // ArguAna carries no title, so a field-weighted configuration there would be the same three
+        // rows over again with an inert weight. Say so instead of padding the table.
+        bool anyTitle = corpus.Documents.Any(document => !string.IsNullOrEmpty(document.Title));
+
+        // Titles are a property of the corpus; per-field statistics are a property of the index. A
+        // field-weighted ranking needs both, and a store that keeps no field statistics refuses it by
+        // name rather than reading a silent zero — so the rows are gated on the capability the scorer
+        // actually reads, and their absence is reported rather than left as a gap in the table.
+        bool fieldStatistics = index is IFieldStatisticsIndex;
+        var notes = new List<string>();
+
+        var builders = new ConfigurationRow[]
+        {
+            new(BaselineConfigurationName, () => Ranked(index, new Bm25Scorer(1.5, 0.75, queryTerms), tokenizer)),
+            new("BM25 (k1=1.2, b=0.75)", () => Ranked(index, new Bm25Scorer(1.2, 0.75, queryTerms), tokenizer)),
+        };
+
+        // The published BM25 baselines were produced at the retrieval stack's own defaults,
+        // k1=0.9 and b=0.4, which is not one of the two rows above. A run has to be able to measure
+        // that operating point, or a comparison against a published number is a comparison of two
+        // different configurations. Opt-in, so the default table is unchanged.
+        if (referenceBm25 is { } reference)
+        {
+            builders = builders
+                .Concat(new ConfigurationRow[]
+                {
+                    // Invariant formatting: a comma here would read as two parameters on a
+                    // machine whose culture uses it, in a table whose whole job is naming them.
+                    new($"BM25 (k1={reference.K1.ToString("0.##", CultureInfo.InvariantCulture)}, "
+                      + $"b={reference.B.ToString("0.##", CultureInfo.InvariantCulture)})",
+                        () => Ranked(
+                            index,
+                            new Bm25Scorer(
+                                reference.K1, reference.B, queryTerms, saturationConstant,
+                                singlePrecision ? Bm25Arithmetic.SinglePrecision : Bm25Arithmetic.Double),
+                            tokenizer)),
+                })
+                .ToArray();
+        }
+
+        // BM25VA is a direction, not one point: b = 1 is the degeneration control (the same scorer
+        // as BM25, which is what the identity test pins), b = 0 removes length from the
+        // normalization entirely, and b = 0.5 sits between them. Opt-in, so the default table keeps
+        // the rows and the run time it had.
+        if (bm25Va)
+        {
+            builders = builders
+                .Concat(new ConfigurationRow[]
+                {
+                    // The control the identity test pins: BM25VA at b = 1 *is* BM25 at b = 1, so these
+                    // two rows must print the same numbers. The default BM25 row is at b = 0.75 and is
+                    // deliberately a different operating point, not the control.
+                    new("BM25 (k1=1.5, b=1) [control]", () => Ranked(index, new Bm25Scorer(1.5, 1.0, queryTerms), tokenizer)),
+                    new("BM25VA (k1=1.5, b=1)", () => Ranked(index, new Bm25VaScorer(1.5, 1.0, queryTerms), tokenizer)),
+                    new("BM25VA (k1=1.5, b=0.5)", () => Ranked(index, new Bm25VaScorer(1.5, 0.5, queryTerms), tokenizer)),
+                    new("BM25VA (k1=1.5, b=0)", () => Ranked(index, new Bm25VaScorer(1.5, 0.0, queryTerms), tokenizer)),
+                })
+                .ToArray();
+        }
+
+        builders = builders
+            .Concat(new ConfigurationRow[]
+            {
+                new("TF-IDF", () => Ranked(index, new TfIdfScorer(), tokenizer)),
+                new("QueryLikelihood (lambda=0.2)", () => Ranked(index, new QueryLikelihoodScorer(0.2), tokenizer)),
+                new("Hybrid BM25+QL weighted", () => Hybrid(index,
+                    new WeightedScoreResultMerger(1.0, 1.0), tokenizer)),
+                new("Hybrid BM25+QL RRF", () => Hybrid(index,
+                    new ReciprocalRankFusionMerger(), tokenizer)),
+            })
+            .ToArray();
+
+        if (anyTitle && fieldStatistics)
+        {
+            // Three weights rather than one: the question is whether weighting a title helps at all
+            // here, and a single point cannot show a direction. BM25F neutral is included because it
+            // is not BM25 — on one field it is a different length term, so its own row is the
+            // baseline the weighted rows have to beat.
+            builders = builders
+                .Concat(new ConfigurationRow[]
+                {
+                    new("BM25F (unweighted)", () => Ranked(index, TitleWeighted(1.0), tokenizer)),
+                    new("BM25F (title 2.0)", () => Ranked(index, TitleWeighted(2.0), tokenizer)),
+                    new("BM25F (title 4.0)", () => Ranked(index, TitleWeighted(4.0), tokenizer)),
+                })
+                .ToArray();
+        }
+        else if (anyTitle)
+        {
+            notes.Add(
+                "BM25F (unweighted / title 2.0 / title 4.0) skipped: the corpus carries titles, but "
+                + $"{index.GetType().Name} keeps no per-field statistics (IFieldStatisticsIndex), and a "
+                + "field-weighted ranking over absent statistics would be wrong with no error to show for it.");
+        }
+
+        // Single-field BM25 variants, measured against the tuned BM25 row rather than the default
+        // one: a default-versus-default comparison mostly measures which default fits the corpus.
+        // These two rows fix delta at the papers' starting value, which is why RunTunedVariants adds
+        // a tuned row for each of them — otherwise the table compares a fitted BM25 against two
+        // unfitted variants and calls it a verdict on the formula.
+        builders = builders
+            .Concat(new ConfigurationRow[]
+            {
+                new("BM25+ (delta=1.0)", () => Ranked(index, new Bm25PlusScorer(1.5, 0.75, 1.0, queryTerms), tokenizer)),
+                new("BM25L (delta=0.5)", () => Ranked(index, new Bm25LScorer(1.5, 0.75, 0.5, queryTerms), tokenizer)),
+            })
+            .ToArray();
+
+        // Proximity is corpus-dependent by nature, and the two shapes are not interchangeable, so
+        // both are measured. The first stage is identical to the BM25 row, so the difference is
+        // proximity alone and nothing else.
+        builders = builders
+            .Concat(new ConfigurationRow[]
+            {
+                new("BM25 + proximity (damp, s=0.25)", () => Proximity(index, 0.25, ProximityMode.Damp, tokenizer), CandidatePool: ProximityCandidates),
+                new("BM25 + proximity (damp, s=1)", () => Proximity(index, 1.0, ProximityMode.Damp, tokenizer), CandidatePool: ProximityCandidates),
+                new("BM25 + proximity (boost, s=1)", () => Proximity(index, 1.0, ProximityMode.Boost, tokenizer), CandidatePool: ProximityCandidates),
+            })
+            .ToArray();
+
+        var buildersList = builders.ToList();
+
+        // Query-side expansion, one row per learned expander. The index is untouched and the corpus
+        // statistics BM25 reads are therefore the ones the lexical rows above read, which is the
+        // whole point: ExpansionTextIndex is the document-side variant and changes avgdl, so a
+        // comparison between it and these rows would be a comparison of two indexes.
+        foreach (var (name, expander) in queryExpansions ?? [])
+        {
+            buildersList.Add(new(name, () => new ExpandingTextSearchEngine(
+                Ranked(index, new Bm25Scorer(1.5, 0.75, queryTerms), tokenizer),
+                expander,
+                tokenizer)));
+        }
+
+        // Query-term reweighting, one row per strength. The graph is learned once by the caller and
+        // shared; each row rebuilds the scorer per search because a weight is a property of the
+        // query, not of the engine. The BM25 operating point is the run's reference pair when one
+        // was asked for, so the reweighting can be measured on top of the tuned corpus point rather
+        // than only on the library default.
+        if (queryReweights is { Count: > 0 })
+        {
+            Bm25Parameters reweightParameters = referenceBm25 ?? new Bm25Parameters(1.5, 0.75);
+
+            foreach (var (name, weighter) in queryReweights)
+            {
+                buildersList.Add(new(name, () => new ReweightingTextSearchEngine(
+                    index,
+                    new Bm25Scorer(reweightParameters.K1, reweightParameters.B, queryTerms),
+                    weighter,
+                    tokenizer)));
+            }
+        }
+
+        // Spread is a direction, and the direction is the interaction with b: the same statistic at
+        // b = 0, 0.5 and 1 shows whether the spatial count makes length normalization redundant.
+        // alpha = 0 is the raw-count control and must reproduce BM25 at the same b.
+        if (spreadAlphas is { Count: > 0 })
+        {
+            foreach (double alpha in spreadAlphas)
+            {
+                foreach (double b in new[] { 0.0, 0.5, 1.0 })
+                {
+                    string name =
+                        $"BM25 spread (alpha={alpha.ToString("0.##", CultureInfo.InvariantCulture)}, "
+                        + $"b={b.ToString("0.##", CultureInfo.InvariantCulture)}, w={spreadWindow})";
+
+                    buildersList.Add(new(name, () => new RankedTextSearchEngine(
+                        index,
+                        new SpreadBm25Scorer(1.5, b, spreadWindow, alpha, queryTerms),
+                        tokenizer)));
+                }
+            }
+        }
+
+        if (dense is not null)
+        {
+            var denseEngine = new DenseTextSearchEngine(corpus, dense);
+            var bm25 = Ranked(index, new Bm25Scorer(1.5, 0.75), tokenizer);
+
+            buildersList.Add(new("Dense multilingual-e5-small", () => denseEngine));
+            buildersList.Add(new("Hybrid BM25+Dense weighted", () => new HybridTextSearchEngine(
+                new ITextSearchEngine[] { bm25, denseEngine }, new WeightedScoreResultMerger(1.0, 1.0))));
+            buildersList.Add(new("Hybrid BM25+Dense RRF", () => new HybridTextSearchEngine(
+                new ITextSearchEngine[] { bm25, denseEngine }, new ReciprocalRankFusionMerger())));
+        }
+
+        if (reranker is not null)
+        {
+            var bm25 = Ranked(index, new Bm25Scorer(1.5, 0.75), tokenizer);
+            var languageModel = Ranked(index, new QueryLikelihoodScorer(0.2), tokenizer);
+
+            buildersList.Add(new($"BM25 (top{rerankCandidates})+CrossRerank", () =>
+                RerankEngines.Reranked(bm25, rerankCandidates, reranker), CandidatePool: rerankCandidates));
+            buildersList.Add(new($"QL (top{rerankCandidates})+CrossRerank", () =>
+                RerankEngines.Reranked(languageModel, rerankCandidates, reranker), CandidatePool: rerankCandidates));
+
+            if (dense is not null)
+            {
+                var rrf = new HybridTextSearchEngine(
+                    new ITextSearchEngine[] { bm25, new DenseTextSearchEngine(corpus, dense) },
+                    new ReciprocalRankFusionMerger());
+
+                buildersList.Add(new($"Hybrid RRF (top{rerankCandidates})+CrossRerank", () =>
+                    RerankEngines.Reranked(rrf, rerankCandidates, reranker), CandidatePool: rerankCandidates));
+            }
+        }
+
+        return new ConfigurationSet(buildersList, notes, anyTitle, fieldStatistics);
     }
 
     /// <summary>The tuners' validation rows, one per query the fit set holds.</summary>
@@ -903,7 +999,7 @@ internal static class Evaluation
         return new RerankedTextSearchEngine(
             new RankedTextSearchEngine(index, new Bm25Scorer(1.5, 0.75), tokenizer),
             new ProximityReranker(index, tokenizer, strength, mode),
-            maxCandidates: 100);
+            maxCandidates: ProximityCandidates);
     }
 
     /// <summary>BM25F weighting the corpus's <c>title</c> field, everything else neutral.</summary>

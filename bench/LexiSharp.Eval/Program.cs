@@ -127,6 +127,18 @@ public static class Program
         // corpora whose document ids collide.
         string? rerankCacheDir = null;
 
+        // Document diagnosis: a different question from the table's — not « how does this corpus
+        // score » but « why does no technique surface this document ». Off by default because it
+        // replaces the metrics table rather than adding to it, and because it builds a second,
+        // analysis-free control index to decide between the two no-overlap causes.
+        string? diagnoseDocument = null;
+        string? diagnoseQuery = null;
+        int? diagnoseDepth = null;
+
+        // The retrieval-level counterpart of the fingerprint: that one counts terms, this one says
+        // which judged (query, document) pairs a second analysis would reach differently.
+        string? analysisDiff = null;
+
         // Off by default, because every query in a BEIR corpus is natural language and the published
         // figures apply no query language to it: the query string goes to the analyzer whole. Left on,
         // a straight double quote in an argument — 138 of ArguAna's 1,406 test queries, measured —
@@ -344,6 +356,18 @@ public static class Program
                 case "--rerank-cache" when i + 1 < args.Length:
                     rerankCacheDir = args[++i];
                     break;
+                case "--diagnose-doc" when i + 1 < args.Length:
+                    diagnoseDocument = args[++i];
+                    break;
+                case "--diagnose-query" when i + 1 < args.Length:
+                    diagnoseQuery = args[++i];
+                    break;
+                case "--diagnose-depth" when i + 1 < args.Length:
+                    diagnoseDepth = ParsePositive(args[++i], "--diagnose-depth");
+                    break;
+                case "--analysis-diff" when i + 1 < args.Length:
+                    analysisDiff = args[++i];
+                    break;
                 case "--expand-density" when i + 1 < args.Length:
                     expandDensities.AddRange(ParseDensities(args[++i]));
                     break;
@@ -443,6 +467,60 @@ public static class Program
             Console.Error.WriteLine(
                 "--heldout cannot run with --fingerprint: a fingerprint run stops before any query is " +
                 "scored, so there is nothing to split.");
+            return 2;
+        }
+
+        // Two modes replace the metrics table: the per-document diagnosis and the per-corpus
+        // analysis diff. Both read the index and print, so a flag whose output lives only in the
+        // table would vanish silently — the same rule --heldout and --sparse are already refused
+        // under above.
+        if (diagnoseDocument is not null && analysisDiff is not null)
+        {
+            Console.Error.WriteLine(
+                "--diagnose-doc diagnoses one document and --analysis-diff compares two analyses over " +
+                "the corpus, and both replace the metrics table. Give one or the other.");
+            return 2;
+        }
+
+        if (diagnoseDocument is not null || analysisDiff is not null)
+        {
+            string mode = diagnoseDocument is not null ? "--diagnose-doc" : "--analysis-diff";
+            var inert = new List<string>();
+
+            if (analyzePath is not null) inert.Add("--analyze");
+            if (bootstrap) inert.Add("--bootstrap");
+            if (heldOutFraction is not null) inert.Add("--heldout");
+            if (runPath is not null) inert.Add("--run");
+            if (fingerprintOnly) inert.Add("--fingerprint");
+            if (verifyAgainst is not null) inert.Add("--verify-reference");
+            if (backendKind is not null || backendConnection is not null) inert.Add("--backend");
+            if (sparseVectorsDir is not null) inert.Add("--sparse");
+            if (tuneBm25F) inert.Add("--tune-bm25f");
+            if (tuneBm25Va) inert.Add("--tune-bm25va");
+            if (tuneSearchOptions) inert.Add("--tune-search-options");
+
+            // The diff ranks nothing: it compares two tokenizations and prints verdicts, so the lanes
+            // a table would carry are not merely unused but fetched and encoded for a report that
+            // never reads them.
+            if (analysisDiff is not null)
+            {
+                if (dense) inert.Add("--dense");
+                if (rerank) inert.Add("--rerank");
+            }
+
+            if (inert.Count > 0)
+            {
+                Console.Error.WriteLine(
+                    mode + " replaces the metrics table, so " + string.Join(", ", inert) +
+                    " would produce nothing here. Drop " +
+                    (inert.Count == 1 ? "it" : "them") + ", or drop " + mode + ".");
+                return 2;
+            }
+        }
+        else if (diagnoseQuery is not null || diagnoseDepth is not null)
+        {
+            Console.Error.WriteLine(
+                "--diagnose-query and --diagnose-depth are options of --diagnose-doc, which was not given.");
             return 2;
         }
 
@@ -674,7 +752,8 @@ public static class Program
                 disagreementLeft, disagreementRight,
                 expandDensities, expandRankings, reweightStrengths, reweightMode, reweightMinTerms, spreadAlphas, spreadWindow, annEfValues, annConnection, backendLane, rerankCacheDir,
                 heldOutFraction, sparseLane, bootstrap, bootstrapResamples, bootstrapBaseline,
-                bootstrapCorrection);
+                bootstrapCorrection, diagnoseDocument, diagnoseQuery, diagnoseDepth,
+                analysisDiff, stem);
             Console.WriteLine();
         }
 
@@ -691,6 +770,13 @@ public static class Program
     /// pins so a recorded run states what it was allowed to use.
     /// </remarks>
     private static int DefaultJobs() => Math.Clamp(Environment.ProcessorCount - 1, 1, 8);
+
+    /// <summary>
+    /// How deep <c>--diagnose-doc</c> probes each configuration when <c>--diagnose-depth</c> is not
+    /// given: deep enough that « not returned » means « ranked below a thousand », not « ranked
+    /// 101st », and shallow enough that twenty-odd rows over a handful of queries stay interactive.
+    /// </summary>
+    private const int DefaultDiagnoseDepth = 1000;
 
     /// <summary>
     /// Builds the shared tokenizer for a run, and the description of the analysis it applies.
@@ -809,7 +895,9 @@ public static class Program
         IReadOnlyList<int> annEfValues, string? annConnection, BackendLane? backendLane,
         string? rerankCacheDir, double? heldOutFraction, SparseLane? sparseLane,
         bool bootstrap, int bootstrapResamples, string bootstrapBaseline,
-        BootstrapCorrection bootstrapCorrection)
+        BootstrapCorrection bootstrapCorrection,
+        string? diagnoseDocument, string? diagnoseQuery, int? diagnoseDepth,
+        string? analysisDiff, bool stem)
     {
         Console.WriteLine($"== {dataset.Name} ==");
 
@@ -827,15 +915,19 @@ public static class Program
         // cost in a run before this, and it was being repeated once per row of the table for an
         // index that came out identical each time. With --index-cache the build is repeated once per
         // process instead of once per run, which is what a sweep of eighteen stages needs.
-        var index = IndexCache.LoadOrBuild(
-            indexCache, dataset, corpus, tokenizer, analysisDescription,
-            referenceIndexStatistics ? new IndexOptions(
+        // The conventions both indexes of a comparison are built with, held once: two sides that
+        // disagreed about quantization or about the length divisor would differ for a reason no
+        // token ever caused, and every length below would be a statement about that.
+        IndexOptions? indexOptions = referenceIndexStatistics
+            ? new IndexOptions(
                 // The average is over the EXACT lengths: 969,528 / 8,673 = 111.786925. The reference
                 // index stores 108.372651, the mean of its decoded one-byte lengths, and using that
                 // instead moves every score by 6e-03 — a hundred times the residual being chased — so
                 // its scorer averages the exact lengths while its index stores quantized ones.
                 AverageLengthDivisor.NonEmptyDocuments, DocumentLengthQuantization.OneByte)
-            : null);
+            : null;
+        var index = IndexCache.LoadOrBuild(
+            indexCache, dataset, corpus, tokenizer, analysisDescription, indexOptions);
         // Which conventions the run used, on the same footing as the analysis line: a score read
         // without them is not comparable with one read with them.
         Console.WriteLine(
@@ -868,10 +960,37 @@ public static class Program
                 + $"{(runIndex as SegmentedTextIndex)!.SegmentCount} segment on disk, exact lengths.");
         }
 
-        PrintFingerprint(dataset, runIndex, analysisDescription);
+        // Neither of the two modes that stop before the table prints a score, so the sentence about
+        // whether "the scores below" are comparable would be about scores that do not exist.
+        PrintFingerprint(
+            dataset, runIndex, analysisDescription,
+            scoresArePrinted: !fingerprintOnly && analysisDiff is null);
 
         if (fingerprintOnly)
             return;
+
+        if (analysisDiff is not null)
+        {
+            Console.WriteLine(
+                "Analysis-diff mode: the metrics table is not run — two tokenizations of the same corpus "
+                + "are compared instead.");
+
+            (ITokenizer otherTokenizer, string otherDescription, TokenizerOptions otherOptions) =
+                BuildAnalysis(analysisDiff, stem);
+
+            // Built fresh rather than through --index-cache: that file is keyed on one analysis, so a
+            // second analyzer under the same path would either miss every time or — on a mismatch,
+            // which it refuses by throwing — be the run's own index read as the other analysis.
+            ITextIndex otherIndex = IndexCache.LoadOrBuild(
+                path: null, dataset, corpus, otherTokenizer, otherDescription, indexOptions);
+
+            AnalysisDiff.Write(Console.Out, AnalysisDiff.Compare(
+                corpus,
+                Evaluation.BuildQueries(corpus, limit, excludeQueryDocument),
+                runIndex, tokenizer, tokenizerOptions, analysisDescription,
+                otherIndex, otherTokenizer, otherOptions, otherDescription));
+            return;
+        }
 
         Console.WriteLine();
 
@@ -958,6 +1077,48 @@ public static class Program
             }
         }
 
+        // Both exit paths flush the cache: a diagnosis probes the cross-encoder rows too, and the
+        // pairs it pays for must land in the file exactly as a table run's would — otherwise the
+        // next run recomputes what this one already spent.
+        void CloseRerankCache()
+        {
+            if (rerankCache is null)
+                return;
+
+            rerankCache.Dispose();
+            Console.WriteLine(
+                $"Rerank cache: {rerankCache.Reused:N0} pairs reused, {rerankCache.Computed:N0} computed, "
+                + $"{rerankCache.Loaded + rerankCache.Appended:N0} in the file — re-running this command resumes "
+                + "from here rather than from the first query.");
+        }
+
+        // The diagnosis replaces the table rather than following it: it probes the same fixed rows,
+        // at depth, for the handful of queries that judge one document, while the table's question —
+        // every query under every configuration — costs minutes and answers a different one. The
+        // flags that only feed the table are refused in Main, where a return code exists.
+        if (diagnoseDocument is not null)
+        {
+            QueryTermWeighting weighting = Evaluation.QueryTermsFor(queryFrequency);
+
+            ConfigurationSet configurations = Evaluation.BuildConfigurations(
+                corpus, runIndex, tokenizer, weighting, referenceBm25, saturationConstant,
+                singlePrecision, bm25Va, queryExpansions, queryReweights, spreadAlphas, spreadWindow,
+                denseVectors, reranker, rerankCandidates);
+
+            Console.WriteLine(
+                "Diagnosis mode: the metrics table is not run — the fixed configurations are probed "
+                + "for this document instead.");
+
+            DocumentDiagnosisReport report = DocumentDiagnosis.Diagnose(
+                diagnoseDocument, diagnoseQuery, corpus, runIndex, tokenizer, tokenizerOptions,
+                configurations, weighting, diagnoseDepth ?? DefaultDiagnoseDepth, topK,
+                parseQuerySyntax, excludeQueryDocument);
+
+            DocumentDiagnosis.Write(Console.Out, report);
+            CloseRerankCache();
+            return;
+        }
+
         var (results, tunedDescription, notes, heldOut) = Evaluation.Run(
             corpus, runIndex, topK, limit, tokenizer, excludeQueryDocument, gain, referenceBm25,
             queryFrequency, scoreRounding, saturationConstant, singlePrecision, denseVectors, tuned, reranker,
@@ -1022,14 +1183,7 @@ public static class Program
                 results, bootstrap, bootstrapResamples, bootstrapBaseline, bootstrapCorrection);
         }
 
-        if (rerankCache is not null)
-        {
-            rerankCache.Dispose();
-            Console.WriteLine(
-                $"Rerank cache: {rerankCache.Reused:N0} pairs reused, {rerankCache.Computed:N0} computed, "
-                + $"{rerankCache.Loaded + rerankCache.Appended:N0} in the file — re-running this command resumes "
-                + "from here rather than from the first query.");
-        }
+        CloseRerankCache();
     }
 
     /// <summary>
@@ -1585,7 +1739,8 @@ public static class Program
     /// same corpus holds. A run whose analysis differs is visible here, as integers, before any
     /// score is compared with anything.
     /// </summary>
-    private static void PrintFingerprint(BeirDataset dataset, ITextIndex index, string analysisDescription)
+    private static void PrintFingerprint(
+        BeirDataset dataset, ITextIndex index, string analysisDescription, bool scoresArePrinted)
     {
         var fingerprint = IndexFingerprint.Of(index);
 
@@ -1606,11 +1761,21 @@ public static class Program
         Console.WriteLine(
             $"  reference          : {reference.Documents} / {reference.NonEmptyDocuments} / " +
             $"{reference.TotalTerms} terms — difference {difference:P1}");
-        Console.WriteLine(
-            difference <= FingerprintTolerance
+
+        if (difference <= FingerprintTolerance)
+        {
+            Console.WriteLine(scoresArePrinted
                 ? "  -> the two indexes agree to within the tolerance; scores below are comparable with that reference."
-                : $"  -> the two indexes differ by more than the {FingerprintTolerance:P0} tolerance: the scores below " +
-                  "are NOT comparable with that reference, whatever they read.");
+                : "  -> the two indexes agree to within the tolerance.");
+        }
+        else
+        {
+            Console.WriteLine(
+                $"  -> the two indexes differ by more than the {FingerprintTolerance:P0} tolerance: " +
+                (scoresArePrinted
+                    ? "the scores below are NOT comparable with that reference, whatever they read."
+                    : "this index is not the reference's index."));
+        }
     }
 
     /// <summary>
@@ -1765,6 +1930,8 @@ public static class Program
             Usage: LexiSharp.Eval [--data <dir>] [--dataset <name|all>] [--top-k <n>] [--limit <n>]
                      [--no-tuned] [--tune-bm25f] [--bm25va] [--tune-bm25va] [--reweight <list>] [--reweight-mode <mode>] [--reweight-min-terms <n>] [--spread <list>] [--spread-window <n>] [--tune-search-options] [--heldout <share>] [--stem porter] [--dense] [--dense-seq <n>] [--rerank] [--rerank-top <n>]
                      [--rerank-cache <dir>]
+                     [--diagnose-doc <id>] [--diagnose-query <id>] [--diagnose-depth <n>]
+                     [--analysis-diff <analyzer>]
                      [--backend <lexical|paradedb|vector|fuzzy|sparse> --backend-connection <s>]
                      [--backend-bm25 <k1,b>] [--backend-ef <list>] [--backend-threshold <list>]
                      [--backend-config <name>]
@@ -2051,6 +2218,47 @@ public static class Program
                                 candidate-against-baseline delta sliced by disagreement band, plus a
                                 Spearman correlation between the two — the "does disagreement predict
                                 where the stage helps" question, as a description rather than a test.
+              --diagnose-doc <id>
+                                Diagnose why ONE document is or is not surfaced, instead of scoring the
+                                metrics table. For every test query that judges it (or the one query
+                                --diagnose-query names), the run prints: lexical reachability — analyzed
+                                query terms, out-of-vocabulary count, shared terms, the raw surface
+                                overlap the analysis may have removed, and the idf mass the document
+                                carries (the per-document dual of --analyze's judged_idf_share); the
+                                baseline BM25 explain with its length ratio and normalization; the rank
+                                of every fixed configuration probed at --diagnose-depth, with cascade
+                                rows (proximity, cross-encoder) probed at their shipped candidate pool;
+                                two counterfactual probes — b=0 isolates length normalization, and an
+                                analysis-free control index separates "the analyzer removed the match"
+                                from "the words were never there"; then the verdict and the IR
+                                capability the measurement says is missing. A lane the run never
+                                enabled is reported as not measured, never counted as a failure.
+                                Refused with the flags whose output lives only in the table
+                                (--analyze, --bootstrap, --heldout, --run, --fingerprint,
+                                --verify-reference, --backend, --sparse, the tuning flags).
+              --diagnose-query <id>
+                                Restrict the diagnosis to one query instead of every test query that
+                                judges the document. The query need not judge it — say so in the
+                                report — which is how you ask "why does MY query not return it".
+                                Requires --diagnose-doc.
+              --diagnose-depth <n>
+                                Probe depth for each configuration (default: 1000), raised to the top-k
+                                page and capped at the corpus size: "not returned" should mean "ranked
+                                below a thousand", not "ranked 101st". Cascade rows are never probed
+                                deeper than their candidate pool. Requires --diagnose-doc.
+              --analysis-diff <analyzer>
+                                Compare the run's analysis against a named one and print what would
+                                change, instead of scoring the metrics table: both indexes' fingerprints,
+                                the terms only one of the two indexes (top ten by document frequency),
+                                the documents one analysis reduces to zero terms, and — over every judged
+                                (query, document) pair — how many change reach verdict, listed up to
+                                twenty with their ids. The verdicts come from the same code
+                                --diagnose-doc reads, so an id listed here can be diagnosed with
+                                --diagnose-doc; and they are reachability, not ranks: a pair that became
+                                reachable is one some technique can score, not one that was retrieved.
+                                The second index is built fresh (--index-cache covers the run's own
+                                index only). Refused with the flags whose output lives in the table,
+                                with --dense and --rerank, and with --diagnose-doc.
               --expand-density <shares>
                                 Add a query-side expansion row per window-density cut, e.g. 0.05,0.1,
                                 along with its --analyze rows if --analyze is set. The share is the
