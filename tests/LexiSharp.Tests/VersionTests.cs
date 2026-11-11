@@ -112,9 +112,10 @@ public partial class VersionTests
     [Fact]
     public void TheDeclaredVersionIsAThreePartNumber()
     {
-        // Nothing about the public API is frozen before 1.0, and the version is where that is
-        // written down. The test does not assert a particular number: it asserts the shape, so a
-        // typo that would make the package unreleasable fails here rather than at the tag.
+        // The version is where the API contract is written down: from 1.0 a breaking change
+        // requires a major release, and the version is the first place a reader checks. The test
+        // does not assert a particular number: it asserts the shape, so a typo that would make
+        // the package unreleasable fails here rather than at the tag.
         Assert.Matches(@"^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$", DeclaredVersion());
     }
 

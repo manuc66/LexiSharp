@@ -110,9 +110,9 @@ linear classifier): [text analysis →](docs/text-analysis.md).
 
 ## Limits (short version)
 
-- **net10.0**, **0.9.0**: the public API may still change between minor versions; pin a version
-  and read the [changelog](CHANGELOG.md). 0.9.0 breaks binary compatibility for
-  `ITextSearchEngine` implementations, write-capable engine constructors and `SearchResult`.
+- **net10.0**, **1.0.0**: the public API is stable within a major version. Breaking changes
+  require a major release, additions are minor and fixes are patches. Pin a major version and
+  read the [changelog](CHANGELOG.md).
 - ArguAna reads 0.4005 against 0.3970 published (0.0035 short; cause not established). An earlier
   ArguAna figure was withdrawn and is not reproducible by any code path.
 - Not every engine/scorer/reranker/merger combination is tested; treat unusual pairings as

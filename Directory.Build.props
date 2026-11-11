@@ -53,7 +53,19 @@
     csproj files to keep the duplication from coming back.
   -->
   <PropertyGroup>
-    <Version>0.10.0</Version>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+  <!--
+    The links every package carries on nuget.org. RepositoryType alone tells the gallery what kind
+    of URL to expect, but without RepositoryUrl the "source repository" link has nothing to point
+    at; PackageProjectUrl is the "Project Site" link, which is the documentation site. Declared
+    here for the same reason as the version and the icon: one value for the whole family, so a
+    package cannot ship with a different link from its siblings.
+  -->
+  <PropertyGroup>
+    <RepositoryUrl>https://github.com/manuc66/LexiSharp</RepositoryUrl>
+    <PackageProjectUrl>https://manuc66.github.io/LexiSharp/</PackageProjectUrl>
   </PropertyGroup>
 
   <!--

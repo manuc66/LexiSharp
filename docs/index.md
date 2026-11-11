@@ -158,12 +158,13 @@ twice. Every figure below is reproducible with a command on the
 | [Allocation and latency benchmarks](benchmarks.md) | allocations and timings, with the machine they came from and the command to reproduce them |
 | [Reference](reference.md) | packages, architecture, scoring conventions, scope and limits, build and test |
 | [SPLADE: learned sparse retrieval](SPLADE.md) | writing a consumer-side `ISparseEmbeddingProvider` around a SPLADE ONNX model |
-| [API reference](api.md) | every public type of the four packages, generated from the assemblies — the contracts you implement, and the classes that implement them |
+| [API reference](api.md) | every public type of the five packages, generated from the assemblies — the contracts you implement, and the classes that implement them |
 
 ## Scope
 
-Version 0.9.0, and the public API may still change between minor versions —
-pin a version and read the release notes. The changelog records what changed in each release.
+Version 1.0.0, and the public API is stable within a major version — breaking changes require a
+major release. Pin a major version and read the release notes.
+The changelog records what changed in each release.
 The techniques implemented (BM25 and its variants,
 RRF, SPLADE-style sparse retrieval, MaxSim) follow published information-retrieval
 literature; what is here is a small, dependency-free .NET implementation of them, not new

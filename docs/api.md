@@ -122,6 +122,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `LexiSharpIndex<TDocument>` | class | `IDisposable` | The drop-in entry point of the library: an opinionated, typed search index that maps your own documents to the engine internals and back — from "a list of… |
 | `LexiSharpIndexOptions<TDocument>` | class | — | Configuration of a LexiSharpIndex: how caller documents map to indexable records, and which engine pieces to use. |
 | `LexiSharpQueryOptions` | record | — | Per-search options for LexiSharpIndex and friends. |
+| `PathSafety` | class | — | Guards file paths against traversal sequences such as .., which would let a caller escape an intended base directory. |
 
 #### `LexiSharp.Benchmarking`
 
@@ -443,6 +444,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `DocumentLengthRatioScorer` | class | `ITextScorer` | A document's length relative to the corpus average: \|D\| / avgdl, where both figures come from the index. One for an average document, above one for a long… |
 | `FeedbackAwareTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that augments a primary search engine with a learned query → document feedback channel — one history for every search. |
 | `FeedbackAwareTextSearchEngine<TPayload>` | class | `IContextualSearchEngine`, `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that augments a primary search engine with a learned query → document feedback channel, choosing the history per search from the caller's… |
+| `FeedbackBoostMode` | enum | — | How a feedback channel's strength changes a candidate's base score. |
 | `NdcgGain` | enum | — | How a relevance level is turned into a gain in NdcgAtK. |
 | `ProximityMode` | enum | — | How ProximityReranker turns a term window into a score change. |
 | `ProximityReranker` | class | `IReranker` | Re-ranks a candidate list by how close together the query terms actually occur in each document, refining the order a term-frequency scorer produced without… |
