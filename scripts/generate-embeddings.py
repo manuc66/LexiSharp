@@ -25,7 +25,7 @@ from fastembed import TextEmbedding
 
 MODEL = "BAAI/bge-small-en-v1.5"
 DIMENSION = 384
-CORPUS = Path("samples/LexiSharp.WasmDemo/wwwroot/corpus.json")
+CORPUS = Path("samples/LexiSharp.Demo/corpus.json")
 OUTPUT = Path("samples/LexiSharp.WasmDemo/wwwroot/embeddings.json")
 
 

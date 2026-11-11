@@ -16,4 +16,10 @@
     <ProjectReference Include="..\..\src\LexiSharp\LexiSharp.csproj" />
   </ItemGroup>
 
+  <!-- The corpus belongs to the server demo; the browser fetches this copy as a static file. -->
+  <ItemGroup>
+    <Content Include="..\LexiSharp.Demo\corpus.json" Link="wwwroot\corpus.json"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
