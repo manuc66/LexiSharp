@@ -14,4 +14,10 @@
     <ProjectReference Include="../../src/LexiSharp/LexiSharp.csproj" />
   </ItemGroup>
 
+  <!-- The corpus is a file, not C#: the browser demo serves the same one, and a single copy is
+       what stops the two hosts from indexing different documents. -->
+  <ItemGroup>
+    <EmbeddedResource Include="corpus.json" LogicalName="LexiSharp.Demo.corpus.json" />
+  </ItemGroup>
+
 </Project>

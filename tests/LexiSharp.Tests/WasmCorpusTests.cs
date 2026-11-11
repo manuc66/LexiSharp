@@ -7,28 +7,34 @@ using Xunit;
 namespace LexiSharp.Tests;
 
 /// <summary>
-/// The in-browser demo loads its corpus from <c>samples/LexiSharp.WasmDemo/wwwroot/corpus.json</c>,
-/// a copy of the server demo's built-in corpus. Two hosts, one corpus: until the services move to a
-/// shared library, this is what stops the copy from drifting.
+/// The demos' data files: the corpus both hosts read, and the vectors the browser demo's
+/// "similar documents" panel needs.
 /// </summary>
 /// <remarks>
-/// The JSON is generated from <see cref="DemoCorpus.Build"/> and then frozen. Editing the server
-/// corpus without regenerating the file would leave the browser demo quietly answering over
-/// different documents — the kind of divergence no compiler sees and neither test suite would
-/// otherwise cover.
+/// <para>
+/// <c>samples/LexiSharp.Demo/corpus.json</c> is the one corpus. The server demo embeds it and maps
+/// it to <see cref="SearchDocument"/>; the browser demo serves it as a static file. The first test
+/// pins that mapping, because a loader that dropped <c>category</c> or reordered the rows would
+/// leave both hosts internally consistent and the two demos showing different documents.
+/// </para>
+/// <para>
+/// The embeddings are derived data: they must cover exactly the corpus ids, with one unit vector
+/// per document. Editing the corpus without rerunning
+/// <c>python3 scripts/generate-embeddings.py</c> is what this catches.
+/// </para>
 /// </remarks>
 public sealed class WasmCorpusTests
 {
+    private static readonly string CorpusPath =
+        Path.Combine(RepositoryRoot, "samples", "LexiSharp.Demo", "corpus.json");
+
+    private static readonly string EmbeddingsPath =
+        Path.Combine(RepositoryRoot, "samples", "LexiSharp.WasmDemo", "wwwroot", "embeddings.json");
+
     [Fact]
-    public void TheWasmCorpusMatchesTheServerDemosBuiltInCorpus()
+    public void TheSharedCorpusMapsToTheDocumentsTheDemosIndex()
     {
-        string path = Path.Combine(
-            RepositoryRoot, "samples", "LexiSharp.WasmDemo", "wwwroot", "corpus.json");
-
-        CorpusDocument[] documents = JsonSerializer.Deserialize<CorpusDocument[]>(
-            File.ReadAllText(path),
-            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-
+        CorpusDocument[] documents = ReadJson<CorpusDocument[]>(CorpusPath);
         IReadOnlyList<SearchDocument> expected = DemoCorpus.Build();
 
         Assert.Equal(expected.Count, documents.Length);
@@ -45,15 +51,8 @@ public sealed class WasmCorpusTests
     [Fact]
     public void TheWasmEmbeddingsCoverEveryDocumentWithUnitVectors()
     {
-        string directory = Path.Combine(RepositoryRoot, "samples", "LexiSharp.WasmDemo", "wwwroot");
-
-        CorpusDocument[] corpus = JsonSerializer.Deserialize<CorpusDocument[]>(
-            File.ReadAllText(Path.Combine(directory, "corpus.json")),
-            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-
-        EmbeddingFile file = JsonSerializer.Deserialize<EmbeddingFile>(
-            File.ReadAllText(Path.Combine(directory, "embeddings.json")),
-            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        CorpusDocument[] corpus = ReadJson<CorpusDocument[]>(CorpusPath);
+        EmbeddingFile file = ReadJson<EmbeddingFile>(EmbeddingsPath);
 
         Assert.Equal("BAAI/bge-small-en-v1.5", file.Model);
         Assert.Equal(384, file.Dimension);
@@ -72,6 +71,9 @@ public sealed class WasmCorpusTests
             Assert.All(vector, value => Assert.True(float.IsFinite(value), $"{id} has a non-finite value."));
         }
     }
+
+    private static T ReadJson<T>(string path) =>
+        JsonSerializer.Deserialize<T>(File.ReadAllText(path), new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
 
     private sealed record CorpusDocument(string Id, string Title, string Category, string Text);
 
