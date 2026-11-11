@@ -89,6 +89,22 @@
   </ItemGroup>
 
   <!--
+    Where a reader on nuget.org goes next. RepositoryUrl is not optional polish: SourceLink
+    already stamps the commit into the package, but without the URL the nuspec carries a commit
+    hash with nowhere to resolve it, so the "source repository" link is missing from every package
+    page. PackageProjectUrl is the docs site, which is what a package page's "Project Site" link
+    should point at rather than the repository root.
+
+    Centralized for the same reason as the icon: one package family, one set of links, and no
+    package that quietly ships without them.
+  -->
+  <PropertyGroup>
+    <PackageProjectUrl>https://manuc66.github.io/LexiSharp/</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/manuc66/LexiSharp</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+  <!--
     A warning fails the build. Nothing else here treats one as a failure: `dotnet build` fails on
     errors only, and the SonarCloud job that imports analyzer output into its own issues is skipped
     unless SONAR_TOKEN is configured, so on a repository without that secret the only reader of a
