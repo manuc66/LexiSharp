@@ -86,6 +86,7 @@ public static class MessagePackTextIndexPersistence
     public static void Save(InMemoryTextIndex index, string filePath)
     {
         ArgumentNullException.ThrowIfNull(filePath);
+        LexiSharp.PathSafety.ThrowIfUnsafe(filePath, nameof(filePath));
 
         using FileStream stream = File.Create(filePath);
         Save(index, stream);
@@ -136,6 +137,7 @@ public static class MessagePackTextIndexPersistence
     public static InMemoryTextIndex Load(string filePath, ITokenizer? tokenizer = null)
     {
         ArgumentNullException.ThrowIfNull(filePath);
+        LexiSharp.PathSafety.ThrowIfUnsafe(filePath, nameof(filePath));
 
         using FileStream stream = File.OpenRead(filePath);
         return Load(stream, tokenizer);

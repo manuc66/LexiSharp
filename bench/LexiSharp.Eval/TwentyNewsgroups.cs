@@ -51,6 +51,8 @@ internal static class TwentyNewsgroups
         int? limit = null,
         ClassificationTextMode mode = ClassificationTextMode.SubjectAndBody)
     {
+        LexiSharp.PathSafety.ThrowIfUnsafe(dataBaseDir, nameof(dataBaseDir));
+
         string root = Path.Combine(dataBaseDir, DatasetName);
         string trainDir = Path.Combine(root, "20news-bydate-train");
         string testDir = Path.Combine(root, "20news-bydate-test");
@@ -131,6 +133,9 @@ internal static class TwentyNewsgroups
     /// <param name="destinationRoot">Directory the entries are written under.</param>
     internal static void Extract(string archivePath, string destinationRoot)
     {
+        LexiSharp.PathSafety.ThrowIfUnsafe(archivePath, nameof(archivePath));
+        LexiSharp.PathSafety.ThrowIfUnsafe(destinationRoot, nameof(destinationRoot));
+
         Directory.CreateDirectory(destinationRoot);
 
         string rootFull = Path.GetFullPath(destinationRoot) + Path.DirectorySeparatorChar;

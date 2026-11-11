@@ -21,6 +21,8 @@ internal static class FileSystemScan
     /// </remarks>
     public static IEnumerable<string> Enumerate(string root, IReadOnlyList<string> extensions, bool recursive)
     {
+        PathSafety.ThrowIfUnsafe(root, nameof(root));
+
         var wanted = new HashSet<string>(extensions, StringComparer.OrdinalIgnoreCase);
         var searchOption = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
 

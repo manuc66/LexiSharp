@@ -52,6 +52,8 @@ internal static class IndexCache
         if (path is null)
             return Build(corpus, tokenizer, indexOptions);
 
+        LexiSharp.PathSafety.ThrowIfUnsafe(path, nameof(path));
+
         string full = Path.GetFullPath(path);
         string stampPath = StampPathFor(full);
 

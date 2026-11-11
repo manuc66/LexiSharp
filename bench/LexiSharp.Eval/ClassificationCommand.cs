@@ -446,6 +446,8 @@ internal static class ClassificationCommand
 
         if (options.WritePath is not null)
         {
+            LexiSharp.PathSafety.ThrowIfUnsafe(options.WritePath, nameof(options.WritePath));
+
             File.WriteAllText(
                 options.WritePath,
                 JsonSerializer.Serialize(pin, JsonOptions) + Environment.NewLine);
@@ -837,6 +839,8 @@ internal static class ClassificationCommand
     private static bool TryLoadPin(string path, out ClassificationPin pin)
     {
         pin = null!;
+
+        LexiSharp.PathSafety.ThrowIfUnsafe(path, nameof(path));
 
         if (!File.Exists(path))
         {

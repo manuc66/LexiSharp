@@ -269,6 +269,8 @@ internal static class QuantizationLane
 
     private static Pool LoadPool(string dataRoot)
     {
+        LexiSharp.PathSafety.ThrowIfUnsafe(dataRoot, nameof(dataRoot));
+
         string[] corpora = ["arguana", "nfcorpus", "scifact"];
         var documents = new List<float[]>();
         var queries = new List<float[]>();
@@ -326,6 +328,8 @@ internal static class QuantizationLane
 
     private static float[][] ReadVectors(string path, int count, int dimension)
     {
+        LexiSharp.PathSafety.ThrowIfUnsafe(path, nameof(path));
+
         byte[] bytes = File.ReadAllBytes(path);
 
         if (bytes.Length < (long)count * dimension * sizeof(float))

@@ -155,6 +155,7 @@ internal sealed class SegmentJournal : IDisposable
     public static SegmentJournal Open(string directory, JournalOptions options, long startAt = 0)
     {
         ArgumentNullException.ThrowIfNull(directory);
+        LexiSharp.PathSafety.ThrowIfUnsafe(directory, nameof(directory));
         ArgumentNullException.ThrowIfNull(options);
 
         if (startAt < 0)
@@ -202,6 +203,7 @@ internal sealed class SegmentJournal : IDisposable
     public static bool HasEntriesAbove(string directory, long sequence)
     {
         ArgumentNullException.ThrowIfNull(directory);
+        LexiSharp.PathSafety.ThrowIfUnsafe(directory, nameof(directory));
         string path = Path.Combine(directory, FileName);
 
         if (!File.Exists(path))

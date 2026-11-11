@@ -77,6 +77,7 @@ public static class MessagePackSparseIndexPersistence
     public static void Save(SparseTextSearchEngine engine, string filePath)
     {
         ArgumentNullException.ThrowIfNull(filePath);
+        LexiSharp.PathSafety.ThrowIfUnsafe(filePath, nameof(filePath));
 
         using FileStream stream = File.Create(filePath);
         Save(engine, stream);
@@ -121,6 +122,7 @@ public static class MessagePackSparseIndexPersistence
     public static SparseTextSearchEngine Load(string filePath, ISparseEmbeddingProvider embeddings)
     {
         ArgumentNullException.ThrowIfNull(filePath);
+        LexiSharp.PathSafety.ThrowIfUnsafe(filePath, nameof(filePath));
 
         using FileStream stream = File.OpenRead(filePath);
         return Load(stream, embeddings);

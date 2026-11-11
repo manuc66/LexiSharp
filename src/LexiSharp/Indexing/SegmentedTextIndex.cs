@@ -153,6 +153,7 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
         JournalOptions? journal = null)
     {
         ArgumentNullException.ThrowIfNull(directory);
+        LexiSharp.PathSafety.ThrowIfUnsafe(directory, nameof(directory));
 
         _directory = directory;
         _tokenizer = tokenizer ?? Linguistics.Tokenizer.Default;

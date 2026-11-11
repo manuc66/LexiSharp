@@ -24,6 +24,7 @@ public static class TextFileLoader
     public static IReadOnlyList<LoadedDocument> ScanDirectory(string root, TextFileLoadOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(root);
+        PathSafety.ThrowIfUnsafe(root, nameof(root));
 
         var rootPath = Path.GetFullPath(root);
         var loaderOptions = options ?? new TextFileLoadOptions();

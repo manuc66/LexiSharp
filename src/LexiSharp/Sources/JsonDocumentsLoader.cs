@@ -73,6 +73,7 @@ public static class JsonDocumentsLoader
     public static IReadOnlyList<LoadedDocument> LoadFile(string path, JsonDocumentLoadOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(path);
+        PathSafety.ThrowIfUnsafe(path, nameof(path));
 
         return Parse(File.ReadAllText(path), options);
     }
