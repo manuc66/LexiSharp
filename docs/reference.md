@@ -87,9 +87,9 @@ was designed from:
 
 ## Scope and limits
 
-- **Version 0.9.0.** The library is young and its public API may still
-  change between minor versions — pin a version and read the release notes if you adopt it
-  early. Contributions and feedback are welcome.
+- **Version 1.0.0.** The public API is stable within a major version: breaking changes require a
+  major release, additions are minor and fixes are patches. Pin a major version and read the
+  release notes. Contributions and feedback are welcome.
 - **Built on established IR.** The techniques implemented (BM25, RRF, SPLADE-style sparse
   retrieval, MaxSim) follow well-documented information-retrieval literature; the value here
   is a small, dependency-free .NET implementation of them, not new research.

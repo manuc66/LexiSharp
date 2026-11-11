@@ -1,6 +1,55 @@
-## [Unreleased]
+## [1.0.0] — 2026-11-10
+
+The first stable release. The public API is now versioned by semantic versioning: a breaking
+change requires a major release, additions are minor, and fixes are patches. The package metadata,
+the symbol packages and the generated API page are part of the release gate.
+
+### Compatibility
+
+- **No public type or member was removed since 0.10.0.** The feedback engine's 0.10 constructor
+  and `CreateMulti` overloads are retained alongside the new `candidatePool` and `boostMode`
+  parameters, so an assembly compiled against 0.10.0 keeps binding. The only contract change is
+  additive: `Bm25Scorer` now implements `IWeightedQueryScorer`.
+- **The positive-feedback aggregation changed** (see Fixed). Callers that tuned `minSimilarity`,
+  `maxBoost` or channel weights on 0.10.0 should re-measure.
 
 ### Added
+
+- **`--diagnose-doc <id>`** in `bench/LexiSharp.Eval` (`DocumentDiagnosis`): the dual of
+  `--analyze` — not *which queries does this configuration miss* but **why does no technique, or
+  only a minority, surface this document**. It replaces the metrics table (same fixed rows, probed
+  for one document) and is refused with exit 2 alongside the flags whose output lives only in that
+  table. Per judging query — or per the one `--diagnose-query` names, whether or not it judges the
+  document — it prints the reach verdict, decided from the index before any rank is read
+  (`Excluded`, `QueryHasNoTerms`, `DocumentHasNoTerms`, `VocabularyAbsent`,
+  `AnalysisRemovedOverlap`, `NoVocabularyOverlap`, `Reachable`); the analyzed query terms with df
+  and presence, the surface words the analysis removed, and the covered idf mass with its
+  `--analyze` band; the baseline BM25 arithmetic plus the page cut the document had to reach; and
+  one rank per fixed row at `--diagnose-depth` (default 1000), cascade rows capped at their shipped
+  candidate pool and marked `†`. Two counterfactual probes are added and never counted as
+  techniques — `b=0` isolates length normalization, an analysis-free control index separates *the
+  analyzer removed the match* from *the words were never there* — and `missing` names the IR
+  capability the measurement asserts is absent, each entry carrying the row, rank or idf number
+  behind it. Lanes the run never enabled read as `not measured`, never as a failure. The row list
+  comes from `Evaluation.BuildConfigurations`, now shared with the metrics table so the two cannot
+  drift. Pinned by `DocumentDiagnosisTests`.
+
+- **`--analysis-diff <analyzer>`** (`AnalysisDiff` in `bench/LexiSharp.Eval`): what a second
+  analysis would change about a corpus, in the two units a percentage cannot give — terms and pairs.
+  Runs instead of the metrics table and is refused (exit 2) alongside it, and with `--dense` /
+  `--rerank`, which it never reads: it prints both fingerprints' term counts in one delta, the terms
+  only one analysis indexes (top ten by document frequency), the documents either analysis reduces
+  to zero terms, and how many judged (query, document) pairs change **reach verdict** — transition
+  counts first, then up to twenty ids. The verdicts come from `DocumentDiagnosis.Measure` and
+  `DocumentDiagnosis.Reach`, extracted for this so that a verdict here and the same pair under
+  `--diagnose-doc` are one definition rather than two. Measured on NFCorpus, default against
+  `--analyzer english`: 838,399 → 655,153 terms, 15,204 / 7,888 terms one side alone, and **1,667 of
+  12,334 judged pairs (13.5%)** moving verdict — 1,131 `Reachable → AnalysisRemovedOverlap` (the
+  stop list took the only shared word) and 383 `NoVocabularyOverlap → Reachable` (Porter put one
+  back). Reachability only: nothing searches, so the changed ids are input to `--diagnose-doc`
+  rather than a result. The fingerprint's "scores below are comparable" sentence is now printed
+  only when scores are actually printed — `--fingerprint` and this mode both stopped before the
+  table and were saying something about scores they never produced. Pinned by `AnalysisDiffTests`.
 
 - **`IContextualEvidenceScorer`** (core) and **`ContextualExpansionSearchEngine`**
   (`LexiSharp.Expansion`): multi-hop evidence retrieval in the SAG2 style — an initial BM25
@@ -52,6 +101,38 @@
   most 0.002 on NFCorpus, SciFact and ArguAna. The scorer declines the term-at-a-time fast paths
   (it reads positions), so an ArguAna row costs 58–77 s at `--jobs 8` against BM25's 1 s. See
   `docs/ranking.md#spread-tf-bm25-over-distinct-windows`.
+
+- **`FeedbackAwareTextSearchEngine` can over-fetch a candidate pool and scale its boost
+  relatively.** `candidatePool` requests `Offset + max(Limit, candidatePool)` candidates from the
+  inner engine and cuts the caller's page after the feedback boost, so a document beyond the
+  requested page can still be promoted; `Offset` and `MinimumScore` then apply to the boosted
+  ranking. `FeedbackBoostMode.Multiplicative` replaces the additive score-point bonus with
+  `score * (1 + strength * maxBoost)`, so the same `maxBoost` means the same relative change
+  whatever the scorer's scale. The defaults (`candidatePool: 0`, `Additive`) keep the previous
+  behaviour. Pinned by `FeedbackAwareTextSearchEngineTests`.
+
+### Fixed
+
+- **`QueryFeedbackHistory` keeps the exact-match association ahead of loosely similar ones.**
+  `2424421` replaced the per-document `Math.Max` with a sum so negative and positive associations
+  could compose, but that also summed positives across every historical query: at
+  `minSimilarity = 0.1`, a document chosen for four queries that each shared one token with the
+  current query (4 × 0.5 = 2.0) beat the document chosen for the exact query (1.0), and the
+  engine's `[-1, 1]` clamp erased the remaining difference — at a channel weight below 1 the
+  exact match lost outright. Positive evidence now takes the strongest association again, while
+  penalties accumulate separately; the result no longer depends on insertion order. Callers that
+  only record positive rewards see the 0.9.0 behaviour again, and those that tuned
+  `minSimilarity`, `maxBoost` or channel weights on 0.10.0 should re-measure. No API or persisted
+  snapshot format changes.
+
+### Security
+
+- **File-backed loaders, segment stores and MessagePack persistence reject path traversal.**
+  Every path those APIs open is checked by the new `PathSafety` helper before it touches the
+  filesystem; a path containing `..` is refused with `ArgumentException` rather than resolved.
+  Covers `TextFileLoader`, `MarkdownLoader`, `JsonDocumentsLoader`, `FileSystemScan`, the mapped
+  and segmented stores, the journal, and the MessagePack save/load entry points. The helper is
+  public so a consumer composing its own loader can apply the same rule.
 
 ## [0.10.0] — 2026-11-06
 
