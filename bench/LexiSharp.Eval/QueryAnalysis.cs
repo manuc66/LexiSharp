@@ -852,7 +852,10 @@ internal static class QueryAnalysis
     /// Not a plain log(N/df): the smoothed form is the one <c>Bm25Scorer</c> uses, and a different
     /// weighting would put the band cut points somewhere other than where the corpus puts them.
     /// </remarks>
-    private static double Idf(int documentCount, int documentFrequency) =>
+    // internal rather than private: the document diagnosis computes the same coverage this file
+    // reports, and two copies of the scorer's idf would put a diagnosis's band and a table's band
+    // on different weightings the first time either formula moved.
+    internal static double Idf(int documentCount, int documentFrequency) =>
         Math.Log(1.0 + ((documentCount - documentFrequency + 0.5) / (documentFrequency + 0.5)));
 
     /// <summary>

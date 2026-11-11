@@ -82,6 +82,8 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --spread 0,1 --spread-wi
 dotnet run --project bench/LexiSharp.Eval -c Release -- --limit 5            # smoke run
 dotnet run --project bench/LexiSharp.Eval -c Release -- --stem porter       # English stemming
 dotnet run --project bench/LexiSharp.Eval -c Release -- --data /path/to/dir  # custom data dir
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --diagnose-doc MED-10   # why is this document never surfaced?
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --analysis-diff english  # what a second analysis would change
 
 # Scored the way the published figures were — see "Comparing against a published number":
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
@@ -364,6 +366,134 @@ Three limits worth stating before reading the table:
 - **Band cut points (0.2 / 0.5 / 0.8) are a reading, not a result.** The summary prints the count of
   queries with identical top-10 sets and the count with none in common, because a distribution that
   is 1 almost everywhere bands the corpus into one row and says nothing about separation.
+
+## Document diagnosis
+
+`--diagnose-doc <id>` answers the dual question. `--analyze` asks *which queries does this
+configuration miss*; this asks **why does no technique — or only a minority — surface this
+document**, and what IR capability the measurement says is absent. It **replaces** the metrics
+table rather than following it — the same fixed rows, probed for one document instead of every row
+for every query — and it is refused (exit 2) with the flags whose output lives only in that table
+(`--analyze`, `--bootstrap`, `--heldout`, `--run`, `--fingerprint`, `--verify-reference`,
+`--backend`, `--sparse`, the tuning flags) instead of running beside them and producing nothing:
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --diagnose-doc MED-10
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --diagnose-doc MED-10 \
+  --diagnose-query PLAIN-2 --diagnose-depth 500
+```
+
+By default it diagnoses every **test query that judges the document**. `--diagnose-query <id>`
+narrows it to one, and that query need not judge the document — which is how you ask *why does my
+query not return it* rather than *why does the test set's query not return it*. A document no query
+judges, an id the corpus does not hold, or a query id that does not exist is rejected with the
+reason, so `--dataset all` still diagnoses the corpora that do hold the document.
+
+### Reach, before any rank
+
+The first verdict comes from the index, not from a ranking: a rank says where a document landed,
+never why the set it landed in was reachable at all. The order below is the order the verdict is
+given in — a condition that makes every rank meaningless wins over the ones after it.
+
+| verdict | what was measured |
+|---|---|
+| `Excluded` | `--exclude-query-doc` removes this id from every configuration's ranking, so nothing is probed: no search is launched, and the output says so instead of printing a table of dashes. |
+| `QueryHasNoTerms` | the run's analysis leaves the query with zero terms — every technique receives an empty query. |
+| `DocumentHasNoTerms` | the document is in the index and contributes no terms, so nothing can match against it. |
+| `VocabularyAbsent` | every analyzed query term has df 0: the corpus never held the vocabulary the query asks with. |
+| `AnalysisRemovedOverlap` | no analyzed term in common, but the raw texts do share words and the analysis removes all of them. |
+| `NoVocabularyOverlap` | no analyzed term in common and no shared surface word — a pure vocabulary gap. |
+| `Reachable` | at least one analyzed query term is present in the document. |
+
+The per-query block then prints the lexical facts (analyzed query terms with df and presence, the
+surface words shared *before* analysis and the ones analysis removed, the idf mass the document
+carries and its `--analyze` band), the baseline scorer's own arithmetic — score, length ratio,
+normalization divisor, and the score at the last page slot the document had to reach — and a rank
+per row at the probe depth.
+
+### The two counterfactual probes
+
+Two rows are added beyond the table, both labelled `[probe]`:
+
+- **`BM25 (k1=1.5, b=0) [length probe]`** — same scorer, same index, only the length normalization
+  removed. A rank it reaches inside the page where the baseline does not is the normalization's
+  doing and nothing else's, and the entry quotes the length ratio and the divisor it read.
+- **`BM25 (no analysis) [analysis probe]`** — the same corpus reindexed with a tokenizer carrying
+  no stop list, no stemmer and single characters kept. It separates *the analyzer removed the
+  match* from *the words were never there*, which no rank over the analyzed index can decide.
+
+A probe measures a hypothesis, so it is never counted as « a technique that retrieved the
+document »: `outcome` and its counts are read over shipped rows only.
+
+### What is probed, and at what depth
+
+- **Every fixed row of the table, and no tuned row.** The rows come from the same
+  `Evaluation.BuildConfigurations` call the metrics table uses, so a diagnosis and a table can
+  never disagree about what was probed. Tuned rows are fitted against the query set inside the run
+  and are not paid for here; the report says that rather than leaving them out silently.
+- **`--diagnose-depth` (default 1000) bounds each search**, raised to the top-k page and capped at
+  the corpus: "not returned" should read as "ranked below a thousand", not "ranked 101st".
+- **A cascade row is probed at its shipped candidate pool** rather than at the run's depth, and
+  marked `†` in the table: asking a rerank row for a thousand candidates measures a row no table
+  reports, and past its pool the row cannot surface a document its base engine never returned.
+- **A lane the run never enabled is reported as `not measured`, never as a failure** — a diagnosis
+  that called a lane it never ran "missing" would send the reader looking for a defect in a
+  configuration that was never asked for.
+
+### The verdict
+
+`outcome` is `RetrievedByAll`, `RetrievedByMinority` or `NotSurfaced`, counted over shipped rows
+("1 of 14 leave it outside the top-10" means fourteen rows this harness ships, not sixteen rows
+probed), and `missing` answers the question the flag exists for: the capability the *measurement*
+says is absent, each entry carrying the number that asserts it — a probe's rank, a covered idf
+share with its band, the closest row's rank and score against the page cut. An entry that named a
+capability without naming a row or a rank would be advice, and advice is what a reader cannot
+check.
+
+## Analysis diff
+
+`--analysis-diff <analyzer>` asks what a **second analysis** would change about this corpus, in the
+two units a percentage cannot give: terms and pairs. It replaces the metrics table and is refused
+(exit 2) with the flags whose output lives only in that table — and with `--dense` and `--rerank`,
+which this mode never reads and would otherwise be fetched and encoded for a report that never
+mentions them:
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --analysis-diff english
+```
+
+It prints three things.
+
+**Both fingerprints, side by side.** The fingerprint already counts the run's terms against the
+published one (838,399 against 637,485 on NFCorpus, 31.5% apart, because the default analysis is not
+the reference's); this puts the second analysis's count next to it in one delta.
+
+**The terms only one side indexes**, top ten by document frequency — the vocabulary the counts hide.
+On NFCorpus, default against `english`, that is 15,204 terms only the run has (`of`, `the`, `with`,
+`that`… at df 3 628 to 2 514) against 7,888 only the other has (`studi`, `increas`, `associ`…) — and
+the documents either analysis reduces to zero terms, which is the empty-document condition the
+diagnosis reports as `DocumentHasNoTerms`.
+
+**How many judged (query, document) pairs move reach verdict**, with the transition counts and up to
+twenty ids. Same corpus, same two analyses:
+
+| | |
+|---|---|
+| judged pairs | 12 334 |
+| **moving verdict** | **1 667 (13.5%)** |
+| `Reachable → AnalysisRemovedOverlap` | 1 131 — the stop list took the only word they shared |
+| `NoVocabularyOverlap → Reachable` | 383 — Porter put a word back |
+| `VocabularyAbsent → NoVocabularyOverlap` | 95 — the other analysis's query terms do exist here |
+
+The verdicts are the diagnosis's own: this reads `DocumentDiagnosis.Measure` and
+`DocumentDiagnosis.Reach`, so a pair listed here and the same pair under `--diagnose-doc` are one
+definition rather than two, and the ids are the input to that flag rather than a second opinion.
+
+**What it does not say.** These are verdicts, not ranks: a pair that became reachable is a pair some
+technique *can* score, not one that was retrieved, and nothing here searches. The second index is
+built fresh — `--index-cache` covers the run's own index only, because that file is keyed on one
+analysis and a second analyzer under the same path would either miss every time or be the run's own
+index read as the other analysis.
 
 ## Query-side expansion
 
