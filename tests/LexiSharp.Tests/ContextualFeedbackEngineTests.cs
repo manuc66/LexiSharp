@@ -204,4 +204,27 @@ public class ContextualFeedbackEngineTests
             list.OrderByDescending(a => a.Strength).Select(a => a.DocumentId),
             scores.OrderByDescending(kvp => kvp.Value).Select(kvp => kvp.Key));
     }
+
+    [Fact]
+    public void FuzzyFeedback_DownWeightedChannel_StillKeepsTheExactMatchAhead()
+    {
+        var history = new QueryFeedbackHistory();
+        history.Record("weekly sync", "exact");
+        history.Record("weekly planning", "frequent");
+        history.Record("weekly report", "frequent");
+        history.Record("weekly review", "frequent");
+        history.Record("weekly standup", "frequent");
+
+        var engine = FeedbackAwareTextSearchEngine<Viewer>.CreateMulti(
+            new FixedEngine(("exact", 100), ("frequent", 99.9)),
+            _ => new[] { (History: history, Weight: 0.5) },
+            maxBoost: 50,
+            minSimilarity: 0.1);
+
+        var results = engine.Search("weekly sync", null, new Viewer("ana"));
+
+        // At weight 0.5 the old sum left the exact match with 25 of boost while four half-similar
+        // queries saturated the [-1, 1] clamp at 50. The strongest association keeps it ahead.
+        Assert.Equal("exact", results[0].DocumentId);
+    }
 }

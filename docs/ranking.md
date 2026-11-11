@@ -719,12 +719,19 @@ Two ways to read the history: `GetAssociations` is the exact lookup for a repeat
 `GetFuzzyAssociations` scores every recorded query by term overlap — intersection over the longer
 of the two term sets — so a differently-worded query still reaches the document it led to before.
 Recorded documents carry a strength from how often they were chosen under that query; a query
-sharing no terms with the recorded one contributes nothing.
+sharing no terms with the recorded one contributes nothing. Across several similar queries, a
+document keeps its strongest positive association — many loosely similar queries cannot add up to
+outrank the query that matched it exactly — while negative rewards accumulate separately and can
+cancel that positive evidence.
 
-The engine adds that strength as an additive bonus to the primary score, bounded by `maxBoost`,
-then re-sorts. The bonus lands after the base ranking, so it promotes among what the primary
-ranking already returned and never introduces a document it rejected. That is what lets it
-compose with a boosted or hybrid engine rather than replace one.
+The engine adds that strength to the primary score, bounded by `maxBoost`, then re-sorts. The bonus
+is additive by default; `FeedbackBoostMode.Multiplicative` makes `maxBoost` a relative change
+(`0.5` is at most +50 % at full strength), so the same setting does not depend on the scale of the
+underlying scorer. A `candidatePool` over-fetches from the inner engine and cuts the page after the
+boost, so a document beyond the caller's `Limit` can still enter it; without a pool, the history
+only promotes among what the primary ranking already returned. The pool path also applies
+`Offset` and `MinimumScore` to the boosted ranking rather than to the inner one. That is what lets
+this compose with a boosted or hybrid engine rather than replace one.
 
 `Snapshot` and `Restore` persist the history with its counters intact — a query answered five
 times is stored as five, not as one.

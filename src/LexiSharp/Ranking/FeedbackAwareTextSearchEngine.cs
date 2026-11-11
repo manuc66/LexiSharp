@@ -28,6 +28,40 @@ public sealed class FeedbackAwareTextSearchEngine : ITextSearchEngine, IQueryCos
     /// </summary>
     public const string EngineName = FeedbackAwareTextSearchEngine<Unit>.EngineName;
 
+    /// <summary>
+    /// The constructor shape released in 0.10.0, kept so an assembly compiled against it keeps
+    /// binding after the pool and boost-mode parameters were added.
+    /// </summary>
+    /// <param name="inner">The primary search engine.</param>
+    /// <param name="history">The feedback history to learn from and contribute to.</param>
+    /// <param name="maxBoost">The maximum boost a document can receive from the feedback channel.</param>
+    /// <param name="minSimilarity">Minimum token-overlap similarity for a recorded query to contribute.</param>
+    public FeedbackAwareTextSearchEngine(
+        ITextSearchEngine inner,
+        QueryFeedbackHistory history,
+        double maxBoost,
+        double minSimilarity)
+        : this(inner, history, maxBoost, minSimilarity, candidatePool: 0, boostMode: FeedbackBoostMode.Additive)
+    {
+    }
+
+    /// <summary>
+    /// The constructor shape released in 0.10.0, kept for binary compatibility with callers that
+    /// pass several feedback channels.
+    /// </summary>
+    /// <param name="inner">The primary search engine.</param>
+    /// <param name="histories">The feedback channels, each with its weight.</param>
+    /// <param name="maxBoost">The maximum boost a document can receive from the feedback channel.</param>
+    /// <param name="minSimilarity">Minimum token-overlap similarity for a recorded query to contribute.</param>
+    public FeedbackAwareTextSearchEngine(
+        ITextSearchEngine inner,
+        IEnumerable<(QueryFeedbackHistory History, double Weight)> histories,
+        double maxBoost,
+        double minSimilarity)
+        : this(inner, histories, maxBoost, minSimilarity, candidatePool: 0, boostMode: FeedbackBoostMode.Additive)
+    {
+    }
+
     /// <param name="inner">The primary search engine.</param>
     /// <param name="history">The feedback history to learn from and contribute to.</param>
     /// <param name="maxBoost">
@@ -36,12 +70,26 @@ public sealed class FeedbackAwareTextSearchEngine : ITextSearchEngine, IQueryCos
     /// <param name="minSimilarity">
     /// Minimum token-overlap similarity for a recorded query to reach the current one. Default: 0.3.
     /// </param>
+    /// <param name="candidatePool">
+    /// How many candidates to request from the inner engine before the final page is cut. Default:
+    /// <c>0</c>, which keeps the caller's page and leaves <see cref="SearchOptions.Offset"/> and
+    /// <see cref="SearchOptions.Limit"/> to the inner engine. A positive value over-fetches so a
+    /// boosted document can enter the page from beyond the caller's limit; the page is then cut
+    /// again after the boost.
+    /// </param>
+    /// <param name="boostMode">
+    /// How the feedback strength is applied. <see cref="FeedbackBoostMode.Additive"/> is the
+    /// historical behaviour; <see cref="FeedbackBoostMode.Multiplicative"/> makes
+    /// <paramref name="maxBoost"/> a relative change independent of the scorer's score scale.
+    /// </param>
     public FeedbackAwareTextSearchEngine(
         ITextSearchEngine inner,
         QueryFeedbackHistory history,
         double maxBoost = 1.0,
-        double minSimilarity = 0.3)
-        : this(inner, new[] { (history, 1.0) }, maxBoost, minSimilarity)
+        double minSimilarity = 0.3,
+        int candidatePool = 0,
+        FeedbackBoostMode boostMode = FeedbackBoostMode.Additive)
+        : this(inner, new[] { (history, 1.0) }, maxBoost, minSimilarity, candidatePool, boostMode)
     {
         ArgumentNullException.ThrowIfNull(history);
     }
@@ -54,7 +102,9 @@ public sealed class FeedbackAwareTextSearchEngine : ITextSearchEngine, IQueryCos
         ITextSearchEngine inner,
         IEnumerable<(QueryFeedbackHistory History, double Weight)> histories,
         double maxBoost = 1.0,
-        double minSimilarity = 0.3)
+        double minSimilarity = 0.3,
+        int candidatePool = 0,
+        FeedbackBoostMode boostMode = FeedbackBoostMode.Additive)
     {
         ArgumentNullException.ThrowIfNull(histories);
 
@@ -72,7 +122,13 @@ public sealed class FeedbackAwareTextSearchEngine : ITextSearchEngine, IQueryCos
         }
 
         _histories = list;
-        _inner = FeedbackAwareTextSearchEngine<Unit>.CreateMulti(inner, _ => list, maxBoost, minSimilarity);
+        _inner = FeedbackAwareTextSearchEngine<Unit>.CreateMulti(
+            inner,
+            _ => list,
+            maxBoost,
+            minSimilarity,
+            candidatePool: candidatePool,
+            boostMode: boostMode);
     }
 
     /// <summary>
