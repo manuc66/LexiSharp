@@ -32,6 +32,7 @@ vectors are static files, and the page says which is which.
 - BM25 scoring
 - the demo's 26-document corpus, fetched once from a static JSON file and indexed in the tab
 - "similar documents" over precomputed embeddings, ranked by cosine in the tab
+- `Explain` — the engine's own term-by-term BM25 breakdown behind "why" on every result
 
 ## What is precomputed, and what is not
 
@@ -39,7 +40,7 @@ Two files are fetched once and then used locally:
 
 | File | Produced by | Runs in the tab |
 |---|---|---|
-| `corpus.json` | exported from the server demo's `DemoCorpus.Build()` | BM25 indexing and search |
+| `corpus.json` | `samples/LexiSharp.Demo/corpus.json` — embedded by the server demo, copied to `wwwroot` for the browser | BM25 indexing and search |
 | `embeddings.json` | `scripts/generate-embeddings.py`, with **BAAI/bge-small-en-v1.5** (MIT, 384 dimensions) | loading the vectors and computing cosine |
 
 The embedding model is **not** downloaded, loaded or executed by the page. The vectors were

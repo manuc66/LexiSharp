@@ -36,6 +36,14 @@
     .wasm-similar-head h2 { margin: 0; font-size: 15px; letter-spacing: -0.01em; }
     .wasm-similar-head button { margin-left: auto; }
     .wasm-card-similar .wasm-score { margin-left: auto; }
+    .wasm-explain-meta { color: #475569; font-size: 12.5px; margin: 0 0 12px; }
+    .wasm-terms-wrap { overflow-x: auto; }
+    .wasm-terms { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    .wasm-terms th { text-align: left; color: #64748b; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid #e2e8f0; padding: 0 12px 6px 0; white-space: nowrap; }
+    .wasm-terms td { padding: 6px 12px 6px 0; border-bottom: 1px solid #eef2f7; font-variant-numeric: tabular-nums; }
+    .wasm-terms tr:last-child td { border-bottom: 0; }
+    .wasm-terms td:first-child { font-family: SFMono-Regular, Menlo, Consolas, monospace; }
+    .wasm-term-score { text-align: right; color: #2563eb; }
     .wasm-disclosure { color: #64748b; font-size: 11.5px; line-height: 1.5; margin: 10px 0 0; }
     .wasm-note { color: #64748b; font-size: 12px; margin-top: 22px; }
 </style>
@@ -64,6 +72,60 @@
         <text>· built-in fallback (corpus.json unavailable)</text>
     }
 </p>
+
+@if (_explained is not null)
+{
+    <section class="wasm-similar-panel">
+        <div class="wasm-similar-head">
+            <h2>Why “@TitleOf(_explained.Document)” scored @N(_explained.Explanation.TotalScore)</h2>
+            <button class="wasm-chip" @onclick="CloseExplain">Close</button>
+        </div>
+
+        <p class="wasm-explain-meta">
+            @_explained.Explanation.Algorithm ·
+            document @_explained.Explanation.DocumentLength tokens,
+            corpus average @N(_explained.Explanation.AverageDocumentLength),
+            ratio @N(_explained.Explanation.LengthRatio) ·
+            length normalization @N(_explained.Explanation.LengthNormalization)
+            @foreach (var parameter in _explained.Explanation.Parameters)
+            {
+                <text> · @parameter.Key = @N(parameter.Value)</text>
+            }
+        </p>
+
+        <div class="wasm-terms-wrap">
+            <table class="wasm-terms">
+                <thead>
+                    <tr>
+                        <th>Term</th>
+                        <th>tf</th>
+                        <th>df</th>
+                        <th>idf</th>
+                        <th class="wasm-term-score">contribution</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var term in _explained.Explanation.Terms)
+                    {
+                        <tr>
+                            <td>@term.Term</td>
+                            <td>@N(term.TermFrequency)</td>
+                            <td>@N(term.DocumentFrequency)</td>
+                            <td>@N(term.InverseDocumentFrequency)</td>
+                            <td class="wasm-term-score">@N(term.Score)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <p class="wasm-disclosure">
+            BM25 scored the document in this tab; this breakdown is the engine's own explanation,
+            not a re-derivation. Terms absent from the document are omitted, so the contributions
+            shown are exactly the ones that added up to the score.
+        </p>
+    </section>
+}
 
 @if (_similarTo is not null && _similarResults.Count > 0)
 {
@@ -108,6 +170,7 @@
                     <span class="wasm-cat">@hit.Document.Category</span>
                 }
                 <span class="wasm-actions">
+                    <button class="wasm-similar" @onclick="() => Explain(hit.Document)">why</button>
                     @if (HasSimilar)
                     {
                         <button class="wasm-similar" @onclick="() => ShowSimilar(hit.Document)">similar</button>
@@ -161,6 +224,8 @@ else if (!string.IsNullOrWhiteSpace(Query))
     private IReadOnlyList<SearchResult> Results { get; set; } = Array.Empty<SearchResult>();
     private SearchDocument? _similarTo;
     private IReadOnlyList<SimilarHit> _similarResults = Array.Empty<SimilarHit>();
+    private ExplainedHit? _explained;
+    private string _appliedQuery = string.Empty;
     private string? _embeddingModel;
     private int _embeddingDimension;
     private int _documentCount;
@@ -278,14 +343,17 @@ else if (!string.IsNullOrWhiteSpace(Query))
     private void Search()
     {
         CloseSimilar();
+        CloseExplain();
 
         if (_engine is null || string.IsNullOrWhiteSpace(Query))
         {
+            _appliedQuery = string.Empty;
             Results = Array.Empty<SearchResult>();
             return;
         }
 
-        Results = _engine.Search(Query, new SearchOptions(Limit: 10));
+        _appliedQuery = Query.Trim();
+        Results = _engine.Search(_appliedQuery, new SearchOptions(Limit: 10));
     }
 
     /// <summary>
@@ -295,6 +363,8 @@ else if (!string.IsNullOrWhiteSpace(Query))
     /// </summary>
     private void ShowSimilar(SearchDocument source)
     {
+        CloseExplain();
+
         if (!_vectorsById.TryGetValue(source.Id, out float[]? sourceVector))
             return;
 
@@ -322,5 +392,29 @@ else if (!string.IsNullOrWhiteSpace(Query))
         _similarResults = Array.Empty<SimilarHit>();
     }
 
+    /// <summary>
+    /// Asks the engine for its own breakdown of this document's score under the query that
+    /// produced the visible results. The query is the applied one, not the text box: typing a new
+    /// query without pressing Search must not explain an old result against new text.
+    /// </summary>
+    private void Explain(SearchDocument document)
+    {
+        if (_engine is not IExplainableSearchEngine explainer || _appliedQuery.Length == 0)
+            return;
+
+        ScoreExplanation? explanation = explainer.Explain(document.Id, _appliedQuery);
+        if (explanation is null)
+            return;
+
+        CloseSimilar();
+        _explained = new ExplainedHit(document, explanation);
+    }
+
+    private void CloseExplain() => _explained = null;
+
+    private static string N(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
+
     private sealed record SimilarHit(SearchDocument Document, float Score);
+
+    private sealed record ExplainedHit(SearchDocument Document, ScoreExplanation Explanation);
 }
