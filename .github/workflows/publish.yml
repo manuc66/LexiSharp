@@ -101,7 +101,7 @@ jobs:
       # resolvable without that round trip.
       - name: Create GitHub release
         if: ${{ !contains(steps.ver.outputs.version, '-') }}
-        uses: softprops/action-gh-release@c12583777ecdfd3be55c69cf75464299dc01057e
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3
         with:
           files: |
             nupkgs/*.nupkg
