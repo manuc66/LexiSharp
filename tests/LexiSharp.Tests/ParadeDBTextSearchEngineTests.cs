@@ -396,4 +396,28 @@ public class ParadeDBTextSearchEngineTests
         }
     }
 
+    [SkippableFact]
+    public void Search_RecordsTheScoreStage()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+        Skip.If(!ParadeDBAvailable(ConnectionString!), "pg_search extension unavailable.");
+
+        using var engine = NewEngine();
+
+        try
+        {
+            engine.Add(new SearchDocument("a", "quick brown fox"));
+
+            var trace = new SearchTrace();
+            var results = engine.Search("quick", new SearchOptions(Limit: 10, Trace: trace));
+
+            Assert.NotEmpty(results);
+            Assert.Equal(results.Count, trace.Steps.Count(step => step.Stage == TraceStage.Score));
+            Assert.All(trace.Steps, step => Assert.Equal("ParadeDB BM25", step.Detail));
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
 }

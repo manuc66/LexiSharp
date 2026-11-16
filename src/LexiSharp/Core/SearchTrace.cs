@@ -23,6 +23,17 @@ public enum TraceStage
 
     /// <summary>A router selected a route for the query (per query, not per document).</summary>
     Route = 4,
+
+    /// <summary>
+    /// An engine chose the candidate set a query is scored over (per query, not per document).
+    /// </summary>
+    /// <remarks>
+    /// The detail is the rule the engine applied and what it cost: on the stock-PostgreSQL BM25
+    /// engine, the terms a rare-term gate matched on and the candidates it produced, or the whole
+    /// query when no gate applied. A backend with no candidate choice beyond its index records
+    /// nothing here.
+    /// </remarks>
+    Gate = 5,
 }
 
 /// <summary>
@@ -152,9 +163,15 @@ public sealed class SearchTrace
     /// Records the <see cref="TraceStage.Score"/> step of a page a scoring engine just ranked.
     /// Called with the final page rather than per candidate, so the cost is O(page), not O(corpus).
     /// </summary>
+    /// <remarks>
+    /// Public because a backend outside the core assembly (the PostgreSQL engines) and a custom
+    /// <see cref="ITextSearchEngine"/> both need to report the same stage under the same name; the
+    /// alternative was a friend assembly, which would have kept the seam private to this repository's
+    /// own packages.
+    /// </remarks>
     /// <param name="scorerName">Name of the scorer that produced the scores, used as the step detail.</param>
     /// <param name="page">The ranked page, best first.</param>
-    internal void RecordScoreStage(string scorerName, IReadOnlyList<SearchResult> page)
+    public void RecordScoreStage(string scorerName, IReadOnlyList<SearchResult> page)
     {
         for (int i = 0; i < page.Count; i++)
         {

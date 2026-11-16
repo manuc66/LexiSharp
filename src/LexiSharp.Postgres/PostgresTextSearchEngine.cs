@@ -266,7 +266,9 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable, I
             results.Add(new SearchResult(document.Id, score, document));
         }
 
-        return results.Skip(options.Offset).Take(options.Limit).ToList();
+        var page = results.Skip(options.Offset).Take(options.Limit).ToList();
+        options.Trace?.RecordScoreStage("Postgres lexical", page);
+        return page;
     }
 
     /// <summary>Releases the underlying Npgsql data source.</summary>

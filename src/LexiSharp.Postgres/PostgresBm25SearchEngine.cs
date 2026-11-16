@@ -1,3 +1,5 @@
+using System.Globalization;
+
 using LexiSharp.Core;
 using LexiSharp.Ranking;
 using Npgsql;
@@ -248,9 +250,26 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
         var statistics = _statistics ??= PostgresBm25Statistics.Load(connection, _indexOptions);
         var match = PostgresMatchExpression.Build(_indexOptions, query);
 
-        using var command = CreateCandidatesCommand(connection, match, statistics, queryTerms, options);
+        string[] gateTerms = GateTermsFor(match, statistics, queryTerms);
+
+        using var command = CreateCandidatesCommand(connection, match, gateTerms, options);
 
         List<PostgresBm25Candidate> candidates = ReadCandidates(command, keptTerms, cancellationToken);
+
+        // The gate is a query-level decision, so it is one step with no document id: which rule was
+        // applied, and how many candidates it produced. Recorded even when the count is zero,
+        // because "the gate matched nothing" is the answer a reader is looking for.
+        if (options.Trace is not null)
+        {
+            options.Trace.Record(new TraceStep(
+                TraceStage.Gate,
+                string.Empty,
+                double.NaN,
+                double.NaN,
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"{GateDescription(match, gateTerms)}; {candidates.Count:N0} candidates")));
+        }
 
         if (candidates.Count == 0)
             return Array.Empty<SearchResult>();
@@ -268,7 +287,11 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
 
         Dictionary<string, SearchDocument> documents = ReadDocuments(connection, page, cancellationToken);
 
-        return BuildResults(page, documents);
+        List<SearchResult> results = BuildResults(page, documents);
+
+        options.Trace?.RecordScoreStage("Postgres BM25", results);
+
+        return results;
     }
 
     /// <summary>
@@ -285,8 +308,7 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
     private NpgsqlCommand CreateCandidatesCommand(
         NpgsqlConnection connection,
         PostgresMatchExpression match,
-        PostgresBm25Statistics statistics,
-        string[] queryTerms,
+        string[] gateTerms,
         SearchOptions options)
     {
         var command = connection.CreateCommand();
@@ -298,15 +320,9 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
         // The candidate gate: the query's rare terms when it has any, the whole query otherwise.
         // A GIN index cannot rank, so this is what keeps the scan proportional to the
         // discriminative part of the query instead of to every document its common part matches.
-        //
-        // Only for a free-text query. A mixed query's gate is the phrase conjunction, and the free
-        // terms beside it are scoring-only by contract: substituting the rare-term disjunction for
-        // the phrases would let a document without the phrase in.
         string gate = match.Gate;
 
-        if (_options.RareTermGate
-            && !match.HasPhrases
-            && GateTerms(queryTerms, statistics.DocumentFrequency, _options.RareTermGateBudget) is { Length: > 0 } gateTerms)
+        if (gateTerms.Length > 0)
         {
             gate = "tsv @@ (SELECT string_agg(quote_literal(term), ' | ') FROM unnest(@gateTerms::text[]) AS term)::tsquery";
             command.Parameters.AddWithValue("gateTerms", gateTerms);
@@ -474,6 +490,41 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
         return (int)Math.Min(
             Math.Max(options.CandidatePool, wanted),
             PostgresBm25Options.MaximumCandidatePool);
+    }
+
+    /// <summary>
+    /// The terms the gate applies to this query, or an empty array when it does not apply.
+    /// </summary>
+    /// <remarks>
+    /// Only for a free-text query. A mixed query's gate is the phrase conjunction, and the free
+    /// terms beside it are scoring-only by contract: substituting the rare-term disjunction for the
+    /// phrases would let a document without the phrase in.
+    /// </remarks>
+    private string[] GateTermsFor(
+        PostgresMatchExpression match, PostgresBm25Statistics statistics, string[] queryTerms) =>
+        _options.RareTermGate && !match.HasPhrases
+            ? GateTerms(queryTerms, statistics.DocumentFrequency, _options.RareTermGateBudget)
+            : [];
+
+    /// <summary>The gate's rule in words, for the trace.</summary>
+    private string GateDescription(PostgresMatchExpression match, string[] gateTerms)
+    {
+        if (gateTerms.Length > 0)
+        {
+            return string.Create(
+                CultureInfo.InvariantCulture,
+                $"rare-term gate [{string.Join(", ", gateTerms)}] under a {_options.RareTermGateBudget:N0}-row budget");
+        }
+
+        if (match.HasPhrases)
+            return "phrase gate";
+
+        if (!_options.RareTermGate)
+            return "all terms (gate disabled)";
+
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"all terms (no term within a {_options.RareTermGateBudget:N0}-row budget)");
     }
 
     /// <summary>

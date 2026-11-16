@@ -335,4 +335,21 @@ public class PostgresTextSearchEngineTests
         });
     }
 
+    [SkippableFact]
+    public void Search_RecordsTheScoreStage()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        Run(engine =>
+        {
+            engine.Add(new SearchDocument("a", "quick brown fox"));
+
+            var trace = new SearchTrace();
+            var results = engine.Search("quick", new SearchOptions(Limit: 10, Trace: trace));
+
+            Assert.NotEmpty(results);
+            Assert.Equal(results.Count, trace.Steps.Count(step => step.Stage == TraceStage.Score));
+            Assert.All(trace.Steps, step => Assert.Equal("Postgres lexical", step.Detail));
+        });
+    }
 }
