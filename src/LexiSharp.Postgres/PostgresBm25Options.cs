@@ -64,6 +64,9 @@ public sealed record PostgresBm25Options
     /// <summary>How many matches are re-ranked with BM25 when <see cref="CandidatePool"/> is unset.</summary>
     public const int DefaultCandidatePool = 1000;
 
+    /// <summary>How many candidate rows the rare-term gate may read when unset.</summary>
+    public const int DefaultRareTermGateBudget = 1000;
+
     /// <summary>
     /// The most candidates one query may ask for, shared with every SQL engine's per-query fetch
     /// ceiling. <see cref="CandidatePool"/> = <c>0</c> means this, not an unbounded scan.
@@ -90,6 +93,48 @@ public sealed record PostgresBm25Options
     public PostgresMatchMode MatchMode { get; init; } = PostgresMatchMode.AnyTerm;
 
     /// <summary>
+    /// Whether candidate selection is generated from the query's rare terms (default <c>true</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A GIN index cannot return rows in score order, so the alternative is to score every match
+    /// before the pool cut — and on a corpus where a query's common terms match most of it, that is
+    /// the whole cost of a search. BM25's own idf says the rare terms are the discriminative ones:
+    /// a term held by ten documents carries ~6 nats of idf where one held by half the corpus
+    /// carries ~0.4. The gate is therefore the disjunction of the rarest of the query's terms,
+    /// taken by ascending document frequency until <see cref="RareTermGateBudget"/> rows would be
+    /// read, and only those matches are ranked. The full query still scores them.
+    /// </para>
+    /// <para>
+    /// This is a <b>recall bound</b>, like <see cref="CandidatePool"/>: a document holding none of
+    /// the gated terms cannot be returned, however much of the common part of the query it matches.
+    /// It falls back to the whole query when even the rarest term exceeds the budget, so a corpus
+    /// whose terms are all common keeps the previous behaviour. Measured on BEIR, see the backend
+    /// guide.
+    /// </para>
+    /// </remarks>
+    public bool RareTermGate { get; init; } = true;
+
+    /// <summary>
+    /// How many candidate rows the gate may read (default <c>1,000</c>). Only read when
+    /// <see cref="RareTermGate"/> is on.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The gate is the union of the selected terms' postings, and the sum of their document
+    /// frequencies is an upper bound on its size — so this is a ceiling on rows read, not a
+    /// frequency threshold whose meaning would change with the corpus. Terms are added by
+    /// ascending document frequency while the running sum stays inside the budget; if the rarest
+    /// term alone exceeds it, the query falls back to the whole match set.
+    /// </para>
+    /// <para>
+    /// Raise it for recall, lower it for speed. It is a cost bound first: the query's rare terms
+    /// fit inside it on the corpora this was measured on, which is what makes the gate cheap.
+    /// </para>
+    /// </remarks>
+    public int RareTermGateBudget { get; init; } = DefaultRareTermGateBudget;
+
+    /// <summary>
     /// How many matches are re-ranked with BM25 (default <c>1000</c>).
     /// </summary>
     /// <remarks>
@@ -112,7 +157,8 @@ public sealed record PostgresBm25Options
         AsIndexOptions().IsValid
         && !double.IsNaN(K1) && !double.IsInfinity(K1) && K1 >= 0
         && !double.IsNaN(B) && !double.IsInfinity(B) && B is >= 0 and <= 1
-        && CandidatePool >= 0;
+        && CandidatePool >= 0
+        && RareTermGateBudget >= 1;
 
     /// <summary>Fully qualified table name, e.g. <c>public.lexisharp_documents</c>.</summary>
     public string QualifiedTableName => AsIndexOptions().QualifiedTableName;

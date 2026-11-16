@@ -95,7 +95,9 @@ internal sealed record BackendLane(
     IReadOnlyList<double>? SimilarityThresholds = null,
     string? SparseVectorsDirectory = null,
     PostgresMatchMode? MatchMode = null,
-    int? CandidatePool = null)
+    int? CandidatePool = null,
+    bool? RareTermGate = null,
+    int? RareTermGateBudget = null)
 {
     /// <summary>The <c>ef_search</c> values in force; pgvector's own default when none was given.</summary>
     public IReadOnlyList<int> EfValues => EfSearchValues is { Count: > 0 } values ? values : [40];
@@ -115,7 +117,9 @@ internal sealed record BackendLane(
         IReadOnlyList<double>? similarityThresholds = null,
         string? sparseVectorsDirectory = null,
         PostgresMatchMode? matchMode = null,
-        int? candidatePool = null)
+        int? candidatePool = null,
+        bool? rareTermGate = null,
+        int? rareTermGateBudget = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
@@ -183,6 +187,14 @@ internal sealed record BackendLane(
                 + "pool: the lexical row ranks in SQL, the vector and sparse rows rank by distance after "
                 + "an index scan, and ParadeDB and fuzzy rank their whole match set. Drop the flag, or "
                 + "use --backend bm25.");
+        }
+
+        if (parsed != BackendKind.Bm25 && (rareTermGate is not null || rareTermGateBudget is not null))
+        {
+            throw new ArgumentException(
+                "--backend-gate and --backend-gate-df configure the BM25 engine's candidate gate, which "
+                + "selects candidates from the query's rare terms; the other backends have no such gate. "
+                + "Drop the flags, or use --backend bm25.");
         }
 
         if (parsed is not (BackendKind.Lexical or BackendKind.Bm25) && matchMode is not null)
@@ -266,7 +278,9 @@ internal sealed record BackendLane(
             similarityThresholds,
             sparseVectorsDirectory is null ? null : Path.GetFullPath(sparseVectorsDirectory),
             matchMode,
-            candidatePool);
+            candidatePool,
+            rareTermGate,
+            rareTermGateBudget);
     }
 
     /// <summary>
@@ -292,7 +306,7 @@ internal sealed record BackendLane(
         BackendKind.Bm25 =>
             $"PostgreSQL BM25 (Bm25Scorer over tsvector term frequencies, text search config "
             + $"'{TextSearchConfig}' + unaccent, {MatchText}, {Bm25OperatingPoint}, candidate pool "
-            + $"{EffectivePool:N0}" + FieldWeightsText + ")",
+            + $"{EffectivePool:N0}, {GateText}" + FieldWeightsText + ")",
         BackendKind.ParadeDb =>
             "ParadeDB BM25 (pdb.score, Tantivy)" + Bm25Text
             + " — index over content only, title concatenated into it",
@@ -325,6 +339,18 @@ internal sealed record BackendLane(
     private string MatchText => ResolvedMatchMode == PostgresMatchMode.AnyTerm
         ? "any term"
         : "all terms";
+
+    /// <summary>The candidate gate in words: the rare-term one, or the whole query.</summary>
+    private string GateText => ResolvedRareTermGate
+        ? $"rare-term gate, budget {ResolvedGateBudget:N0} rows"
+        : "no candidate gate";
+
+    /// <summary>The gate the row ran with: the flag when given, the engine's default otherwise.</summary>
+    public bool ResolvedRareTermGate => RareTermGate ?? true;
+
+    /// <summary>The gate's document-frequency threshold: the flag when given, the engine's default otherwise.</summary>
+    public int ResolvedGateBudget =>
+        RareTermGateBudget ?? PostgresBm25Options.DefaultRareTermGateBudget;
 
     /// <summary>The pool in words: a count when bounded, the ceiling when the bound was removed.</summary>
     private string PoolText => EffectivePool == 0
@@ -430,6 +456,12 @@ internal sealed record BackendLane(
             $"The database selects {PoolText} and the engine re-ranks them. A bounded pool bounds "
             + "recall — a document outside it cannot be returned — and does not change the ordering "
             + "inside it.",
+            GateText is "no candidate gate"
+                ? "Every match of the query is a candidate: the database ranks the whole match set, which "
+                  + "is what the row's latency includes."
+                : "Candidates are the matches of the query's terms whose document frequency is at most "
+                  + $"{ResolvedGateBudget:N0}, not of the whole query: a document holding none of "
+                  + "them cannot be returned. The full query still scores the candidates.",
             AnalysisCaveat,
         ],
         _ =>
@@ -549,6 +581,8 @@ internal static class PostgresBackendBenchmark
                     K1 = lane.Bm25?.K1 ?? PostgresBm25Options.DefaultK1,
                     B = lane.Bm25?.B ?? PostgresBm25Options.DefaultB,
                     CandidatePool = lane.EffectivePool,
+                    RareTermGate = lane.ResolvedRareTermGate,
+                    RareTermGateBudget = lane.ResolvedGateBudget,
                 });
 
             return Run(bm25, bm25.DropSchema);

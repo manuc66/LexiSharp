@@ -215,20 +215,23 @@ Out of the box, each engine at its own defaults:
 | ArguAna | 0.320 | not measured | not measured | not measured |
 
 `--backend-match all|any` picks how a multi-term query becomes a `tsquery`: `all` (the lexical row's
-historical behaviour) requires every term, `any` ORs the query's lexemes. `--backend-pool <n>`
-bounds how many matches the BM25 row re-ranks (default 1,000; `0` = exact, up to the engine's
-100,000-row ceiling). The two knobs, and the rows they produce (harness defaults, exponential
-gains):
+historical behaviour) requires every term, `any` ORs the query's lexemes. `--backend-gate rare|off`
+turns the BM25 row's candidate gate on or off, and `--backend-gate-budget <n>` bounds how many rows
+it may read (default 1,000). `--backend-pool <n>` bounds how many of the gate's candidates are
+re-ranked (default 1,000; `0` = the engine's ceiling). The knobs, and the rows they produce (harness
+defaults, exponential gains):
 
-| corpus | `ts_rank_cd` all | `ts_rank_cd` any | BM25 pool 1,000 | BM25 pool 0 | in-memory BM25 | ParadeDB |
-|---|---:|---:|---:|---:|---:|---:|
-| NFCorpus | 0.1864 | 0.1881 | 0.2999 | 0.3072 | 0.308 | 0.3084 |
-| SciFact | 0.0188 | 0.0988 | 0.5636 | **0.6665** | 0.662 | 0.6619 |
+| corpus | `ts_rank_cd` all | `ts_rank_cd` any | BM25 gate 1,000 | BM25 no gate | BM25 pool 0 | in-memory BM25 | ParadeDB |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| NFCorpus | 0.1864 | 0.1881 | **0.3072** | 0.2999 | 0.3072 | 0.308 | 0.3084 |
+| SciFact | 0.0188 | 0.0988 | **0.6665** | 0.5636 | 0.6665 | 0.662 | 0.6619 |
 
 The matching rule is the SciFact story (5.3×) and almost nothing on NFCorpus, whose queries average
-3.4 terms; the ranker is the rest. `--backend bm25 --backend-pool 0` reproduces BM25 to within the
-analysis (PostgreSQL's `simple` config, not the harness tokenizer), which is what makes the pool's
-0.103-point cost on SciFact visible rather than attributed to the scoring.
+3.4 terms; the ranker is the rest. The gate is what makes the BM25 row recover the exact ranking
+(the `pool 0` column) while reading ~1,000 candidate rows instead of the whole match set; the
+no-gate column is the pool-only path, where `ts_rank_cd` coverage chooses the candidates and SciFact
+loses 0.10. `--backend-gate off --backend-pool 0` reproduces untruncated BM25 to within the analysis
+(PostgreSQL's `simple` config, not the harness tokenizer).
 
 What each row is, and is not:
 
@@ -243,10 +246,12 @@ What each row is, and is not:
   *ranking* has no idf (NFCorpus barely moves under `any`, 0.1864 → 0.1881, because its queries
   average 3.4 terms). PostgreSQL's own English analysis (`--backend-config english`) moves NFCorpus
   0.1864 → 0.2043, not closer.
-- **`--backend bm25` is the same corpus with a real BM25 and no extension.** At pool 0 it reads
-  0.3072 / 0.6665 against 0.308 / 0.662 in memory and 0.3084 / 0.6619 for ParadeDB; at the default
-  pool, 0.2999 / 0.5636. The gap between pool 0 and pool 1,000 is recall, not scoring, and it is
-  the reason the flag exists.
+- **`--backend bm25` is the same corpus with a real BM25 and no extension.** At the default gate it
+  reads 0.3072 / 0.6665 against 0.308 / 0.662 in memory and 0.3084 / 0.6619 for ParadeDB; with the
+  gate off, 0.2999 / 0.5636, because the candidate set is then chosen by coverage and truncated.
+  Both columns are recall, not scoring: the score is the same `Bm25Scorer` in every one of them.
+  The gate is a bound — a document holding none of the query's gated terms cannot be returned — and
+  `--backend-gate off` is how to measure that on another corpus.
 - **ArguAna has no row.** Both text engines refuse query text their matcher would read as a prefix
   operator, and 2 of the 1,406 test queries carry a `*` attached to a term. The lane prints that
   refusal and its count instead of a metric over the other 1,404, which would be a different query

@@ -209,34 +209,44 @@ internal static class PostgresLane
                 autoCreateSchema: false),
             () => null),
         new(
-            "bm25 pool 1,000",
+            "bm25 gate 250",
             () => new PostgresBm25SearchEngine(
                 options.Connection,
-                new PostgresBm25Options { Table = table, CandidatePool = 1000 },
+                new PostgresBm25Options { Table = table, CandidatePool = 1000, RareTermGateBudget = 250 },
                 autoCreateSchema: false),
             () => Statistics(() => new PostgresBm25SearchEngine(
                 options.Connection,
-                new PostgresBm25Options { Table = table, CandidatePool = 1000 },
+                new PostgresBm25Options { Table = table, CandidatePool = 1000, RareTermGateBudget = 250 },
                 autoCreateSchema: false))),
         new(
-            "bm25 pool 5,000",
+            "bm25 gate 500",
             () => new PostgresBm25SearchEngine(
                 options.Connection,
-                new PostgresBm25Options { Table = table, CandidatePool = 5000 },
+                new PostgresBm25Options { Table = table, CandidatePool = 1000, RareTermGateBudget = 500 },
                 autoCreateSchema: false),
             () => Statistics(() => new PostgresBm25SearchEngine(
                 options.Connection,
-                new PostgresBm25Options { Table = table, CandidatePool = 5000 },
+                new PostgresBm25Options { Table = table, CandidatePool = 1000, RareTermGateBudget = 500 },
                 autoCreateSchema: false))),
         new(
-            "bm25 pool unbounded",
+            "bm25 gate 1,000",
             () => new PostgresBm25SearchEngine(
                 options.Connection,
-                new PostgresBm25Options { Table = table, CandidatePool = 0 },
+                new PostgresBm25Options { Table = table, CandidatePool = 1000, RareTermGateBudget = 1000 },
                 autoCreateSchema: false),
             () => Statistics(() => new PostgresBm25SearchEngine(
                 options.Connection,
-                new PostgresBm25Options { Table = table, CandidatePool = 0 },
+                new PostgresBm25Options { Table = table, CandidatePool = 1000, RareTermGateBudget = 1000 },
+                autoCreateSchema: false))),
+        new(
+            "bm25 no gate",
+            () => new PostgresBm25SearchEngine(
+                options.Connection,
+                new PostgresBm25Options { Table = table, CandidatePool = 1000, RareTermGate = false },
+                autoCreateSchema: false),
+            () => Statistics(() => new PostgresBm25SearchEngine(
+                options.Connection,
+                new PostgresBm25Options { Table = table, CandidatePool = 1000, RareTermGate = false },
                 autoCreateSchema: false))),
     ];
 

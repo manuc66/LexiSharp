@@ -21,6 +21,16 @@ namespace LexiSharp.Postgres;
 /// index matched — not a second tokenizer's opinion of them.
 /// </para>
 /// <para>
+/// <b>The candidate gate.</b> A GIN index returns posting lists, not rows in score order, so the
+/// only way to cut the cost of a query whose common terms match most of the corpus is to rank a
+/// smaller set. <see cref="PostgresBm25Options.RareTermGate"/> generates candidates from the
+/// query's terms whose document frequency is at most
+/// <see cref="PostgresBm25Options.RareTermGateBudget"/> — the terms BM25's idf says
+/// are the discriminative ones — and scores those with the full query. It is a recall bound:
+/// a document holding none of the rare terms is not returned. See the backend guide for what it
+/// measured.
+/// </para>
+/// <para>
 /// <b>What the pool costs.</b> PostgreSQL selects the <see cref="PostgresBm25Options.CandidatePool"/>
 /// best matches by <c>ts_rank_cd</c> and the engine re-ranks that set; scoring the whole match set
 /// would make a query proportional to the corpus and mean shipping every <c>tsvector</c> to the
@@ -244,6 +254,22 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
         filters.Apply(command);
         match.Bind(command);
 
+        // The candidate gate: the query's rare terms when it has any, the whole query otherwise.
+        // A GIN index cannot rank, so this is what keeps the scan proportional to the
+        // discriminative part of the query instead of to every document its common part matches.
+        string gate = match.Gate;
+
+        // Only for a free-text query. A mixed query's gate is the phrase conjunction, and the free
+        // terms beside it are scoring-only by contract: substituting the rare-term disjunction for
+        // the phrases would let a document without the phrase in.
+        if (_options.RareTermGate
+            && !match.HasPhrases
+            && GateTerms(queryTerms, statistics.DocumentFrequency, _options.RareTermGateBudget) is { Length: > 0 } gateTerms)
+        {
+            gate = "tsv @@ (SELECT string_agg(quote_literal(term), ' | ') FROM unnest(@gateTerms::text[]) AS term)::tsquery";
+            command.Parameters.AddWithValue("gateTerms", gateTerms);
+        }
+
         // Two shapes in one statement: the inner query ranks the match set and keeps the top
         // @pool, carrying only (id, score) so the sort stays in memory; the outer join then reads
         // one tsv per candidate. Selecting content and jsonb here as well would put ~1 KB of
@@ -254,7 +280,7 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
             JOIN (
                 SELECT id, {match.Rank} AS score
                 FROM {_options.QualifiedTableName}
-                WHERE ({match.Gate}){filters.Fragment}
+                WHERE ({gate}){filters.Fragment}
                 ORDER BY score DESC, {PostgresSchema.OrdinalIdTieBreak}
                 LIMIT @pool
             ) s ON t.id = s.id;
@@ -400,6 +426,65 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
         return (int)Math.Min(
             Math.Max(options.CandidatePool, wanted),
             PostgresBm25Options.MaximumCandidatePool);
+    }
+
+    /// <summary>
+    /// The query's terms the candidate gate matches on: the rarest ones, by ascending document
+    /// frequency, while their summed document frequency stays inside <paramref name="budget"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The sum of the selected terms' document frequencies is an upper bound on the gate's match
+    /// set, so the budget is a ceiling on rows read rather than a frequency threshold whose meaning
+    /// would change with the corpus. Terms are added while they fit; when even the rarest one does
+    /// not, the caller falls back to the whole query.
+    /// </para>
+    /// <para>
+    /// Absent terms (<c>df = 0</c>) are skipped: gating on one would match nothing, and it cannot
+    /// contribute to a score either. The order is frequency then ordinal, so the selection does not
+    /// depend on the order a dictionary happened to produce.
+    /// </para>
+    /// </remarks>
+    internal static string[] GateTerms(
+        IReadOnlyList<string> terms,
+        Func<string, int> documentFrequency,
+        int budget)
+    {
+        ArgumentNullException.ThrowIfNull(terms);
+        ArgumentNullException.ThrowIfNull(documentFrequency);
+
+        if (budget <= 0)
+            return [];
+
+        var candidates = new List<(string Term, int DocumentFrequency)>(terms.Count);
+
+        foreach (string term in terms)
+        {
+            int frequency = documentFrequency(term);
+
+            if (frequency > 0)
+                candidates.Add((term, frequency));
+        }
+
+        candidates.Sort(static (left, right) =>
+        {
+            int byFrequency = left.DocumentFrequency.CompareTo(right.DocumentFrequency);
+            return byFrequency != 0 ? byFrequency : string.CompareOrdinal(left.Term, right.Term);
+        });
+
+        var selected = new List<string>(candidates.Count);
+        long bound = 0;
+
+        foreach (var candidate in candidates)
+        {
+            if (bound + candidate.DocumentFrequency > budget)
+                break;
+
+            selected.Add(candidate.Term);
+            bound += candidate.DocumentFrequency;
+        }
+
+        return [.. selected];
     }
 
     private string[] ReadQueryLexemes(NpgsqlConnection connection, string query)

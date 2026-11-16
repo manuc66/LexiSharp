@@ -18,14 +18,19 @@ public class PostgresBm25SearchEngineTests
 
     private static string Table(string suffix) => $"lexisharp_bm25_{suffix}_{Guid.NewGuid():N}"[..44];
 
-    private static PostgresBm25SearchEngine NewEngine(string suffix, Action<PostgresBm25Options>? configure = null)
+    private static PostgresBm25SearchEngine NewEngine(
+        string suffix, Func<PostgresBm25Options, PostgresBm25Options>? configure = null)
     {
         var options = new PostgresBm25Options { Table = Table(suffix) };
-        configure?.Invoke(options);
-        return new PostgresBm25SearchEngine(ConnectionString!, options);
+
+        return new PostgresBm25SearchEngine(
+            ConnectionString!, configure is null ? options : configure(options));
     }
 
-    private static void Run(string suffix, Action<PostgresBm25SearchEngine> body, Action<PostgresBm25Options>? configure = null)
+    private static void Run(
+        string suffix,
+        Action<PostgresBm25SearchEngine> body,
+        Func<PostgresBm25Options, PostgresBm25Options>? configure = null)
     {
         using var engine = NewEngine(suffix, configure);
 
@@ -282,6 +287,108 @@ public class PostgresBm25SearchEngineTests
         int pool = PostgresBm25SearchEngine.PoolSize(options, new SearchOptions(Limit: limit, Offset: offset));
 
         Assert.Equal(expected, pool);
+    }
+
+    [Fact]
+    public void GateTerms_TakesTheRarestTermsThatFitTheBudget()
+    {
+        var frequencies = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["common"] = 900,
+            ["rare"] = 5,
+            ["rarer"] = 1,
+            ["absent"] = 0,
+        };
+
+        string[] terms = PostgresBm25SearchEngine.GateTerms(
+            ["common", "rare", "rarer", "absent"], term => frequencies[term], budget: 10);
+
+        // 1 + 5 <= 10, and adding 900 would not.
+        Assert.Equal(["rarer", "rare"], terms);
+    }
+
+    [Fact]
+    public void GateTerms_FallsBackWhenTheRarestTermExceedsTheBudget()
+    {
+        var frequencies = new Dictionary<string, int> { ["a"] = 20, ["b"] = 30 };
+
+        string[] terms = PostgresBm25SearchEngine.GateTerms(
+            ["a", "b"], term => frequencies[term], budget: 10);
+
+        // Empty is the caller's signal to gate on the whole query: a gate it cannot afford is not
+        // a smaller gate, it is a different query.
+        Assert.Empty(terms);
+    }
+
+    [Fact]
+    public void GateTerms_IsDeterministicOnEqualFrequencies()
+    {
+        var frequencies = new Dictionary<string, int> { ["b"] = 5, ["a"] = 5 };
+
+        string[] terms = PostgresBm25SearchEngine.GateTerms(
+            ["b", "a"], term => frequencies[term], budget: 100);
+
+        Assert.Equal(["a", "b"], terms);
+    }
+
+    [SkippableFact]
+    public void RareTermGate_ExcludesADocumentThatMatchesOnlyCommonTerms()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        // df(alpha) = 1, df(beta) = 2. With a budget of 2, only alpha fits: the gate is alpha, and
+        // d2 — which matches beta but not alpha — is not a candidate. With the gate off, it is.
+        Run("gate", engine =>
+        {
+            engine.Index(
+            [
+                new("d1", "alpha beta"),
+                new("d2", "beta gamma"),
+                new("d3", "gamma delta"),
+            ]);
+
+            Assert.Equal("d1", Assert.Single(engine.Search("alpha beta")).DocumentId);
+        }, options => options with { RareTermGateBudget = 2 });
+
+        Run("nogate", engine =>
+        {
+            engine.Index(
+            [
+                new("d1", "alpha beta"),
+                new("d2", "beta gamma"),
+                new("d3", "gamma delta"),
+            ]);
+
+            Assert.Equal(
+                ["d1", "d2"],
+                engine.Search("alpha beta", new SearchOptions(Limit: 10))
+                    .Select(result => result.DocumentId)
+                    .Order(StringComparer.Ordinal));
+        }, options => options with { RareTermGateBudget = 2, RareTermGate = false });
+    }
+
+    [SkippableFact]
+    public void RareTermGate_FallsBackToTheWholeQueryWhenNothingFitsTheBudget()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        // df(beta) = 2 and df(gamma) = 2, both above a budget of 1: the gate is empty, so the
+        // engine ranks the whole match set and every matching document comes back.
+        Run("gatefallback", engine =>
+        {
+            engine.Index(
+            [
+                new("d1", "alpha beta"),
+                new("d2", "beta gamma"),
+                new("d3", "gamma delta"),
+            ]);
+
+            Assert.Equal(
+                ["d1", "d2", "d3"],
+                engine.Search("beta gamma", new SearchOptions(Limit: 10))
+                    .Select(result => result.DocumentId)
+                    .Order(StringComparer.Ordinal));
+        }, options => options with { RareTermGateBudget = 1 });
     }
 
     [Fact]

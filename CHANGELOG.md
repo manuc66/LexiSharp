@@ -8,12 +8,10 @@
   `CREATE EXTENSION unaccent`. That is what makes a real BM25 available on RDS, Cloud SQL and Azure
   Database for PostgreSQL, where ParadeDB's `pg_search` cannot be installed. `N`, the average
   length and each term's document frequency come from one cached `ts_stat` snapshot (invalidated by
-  writes, rebuildable with `RefreshStatistics()`); PostgreSQL selects the best `CandidatePool`
-  matches by `ts_rank_cd` (default 1,000, `0` for the exact ranking) and the engine re-ranks them,
-  because scoring every match would make a query proportional to the corpus. Measured at pool 0:
-  **0.3072 nDCG@10 on NFCorpus and 0.6665 on SciFact**, against 0.308 / 0.662 for the in-memory
-  scorer and 0.3084 / 0.6619 for ParadeDB. At the default pool the same rows read 0.2999 / 0.5636 —
-  the difference is recall, and it is stated rather than hidden.
+  writes, rebuildable with `RefreshStatistics()`), while the term frequencies and the length come
+  from the candidate row's own vector. Measured with the candidate gate below: **0.3072 nDCG@10 on
+  NFCorpus and 0.6665 on SciFact**, against 0.308 / 0.662 for the in-memory scorer and 0.3084 /
+  0.6619 for ParadeDB.
 
 - **`PostgresIndexOptions.MatchMode`** (`PostgresMatchMode.AllTerms | AnyTerm`): how a multi-term
   query becomes a `tsquery` on the lexical engine. `AllTerms` is the previous behaviour
@@ -22,16 +20,28 @@
   the corpus: SciFact moves 0.0188 → 0.0988 nDCG@10 (5.3×), while the ranker is still the rest —
   0.0988 is far from BM25's 0.662 — and NFCorpus barely moves (0.1864 → 0.1881).
 
-- **`--backend bm25`, `--backend-match all|any` and `--backend-pool <n>`** in
+- **A candidate gate on the stock-PostgreSQL BM25** (`RareTermGate`, on by default). A GIN index
+  cannot return rows in score order, so without it a query whose common terms
+  match most of the corpus pays a full scan. The gate generates candidates from the query's rarest
+  terms — ascending document frequency while their summed frequency stays inside
+  `RareTermGateBudget` (default 1,000 rows) — and scores them with the whole query. It is a recall
+  bound, it falls back to the whole match set when even the rarest term exceeds the budget, and a
+  quoted phrase bypasses it. Measured at the default budget it reads the exact ranking's nDCG on
+  both BEIR corpora (0.3072 / 0.6665) at 10.0 / 58.8 ms p50, against 0.2999 / 0.5636 at 25.7 /
+  265.0 ms with the gate off.
+
+- **`--backend bm25`, `--backend-match all|any`, `--backend-gate rare|off`, `--backend-gate-budget`
+  and `--backend-pool <n>`** in
   `bench/LexiSharp.Eval`, so the portable BM25 row and the match rule are measured by the same
   harness, corpus and qrels as every other row.
 
 - **`postgres` lane in `bench/LexiSharp.Benchmarks`**: index build, statistics build and search
   latency (p50/p95/p99/mean) of the stock-PostgreSQL text engines on the BEIR corpora, per match
-  rule and per candidate-pool size, interleaved so one row does not inherit another's cache state.
-  It is the measurement the quality harness deliberately does not take. On NFCorpus the pool-1,000
-  BM25 row reads 16.0 ms p50 / 37.3 ms mean; on SciFact 203.3 / 210.7 ms, of which the OR
-  candidate selection alone is 170.1 / 177.6 ms. `--keep` leaves the table for `EXPLAIN`.
+  rule, candidate-gate budget and pool size, interleaved so one row does not inherit another's
+  cache state. It is the measurement the quality harness deliberately does not take. At the default
+  gate the BM25 row reads 10.0 ms p50 / 17.8 ms mean on NFCorpus and 58.8 / 63.9 ms on SciFact,
+  against 25.7 / 50.0 and 265.0 / 284.4 ms with the gate off. `--keep` leaves the table for
+  `EXPLAIN`.
 
 ### Changed
 

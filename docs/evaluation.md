@@ -480,10 +480,10 @@ Out of the box, each engine at its own defaults (`k1=1.5, b=0.75` here, `1.2, 0.
 The two knobs that moved `ts_rank_cd` and then closed the gap, measured on the same corpora and the
 same qrels (harness defaults, exponential gains, 10 retrieved at 10):
 
-| corpus | `ts_rank_cd` all terms | `ts_rank_cd` any term | BM25 pool 1,000 | BM25 pool 0 | in-memory BM25 | ParadeDB |
-|---|---:|---:|---:|---:|---:|---:|
-| NFCorpus | 0.1864 | 0.1881 | 0.2999 | 0.3072 | 0.308 | 0.3084 |
-| SciFact | 0.0188 | 0.0988 | 0.5636 | **0.6665** | 0.662 | 0.6619 |
+| corpus | `ts_rank_cd` all terms | `ts_rank_cd` any term | BM25, gate 1,000 | BM25, no gate | BM25 pool 0 | in-memory BM25 | ParadeDB |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| NFCorpus | 0.1864 | 0.1881 | **0.3072** | 0.2999 | 0.3072 | 0.308 | 0.3084 |
+| SciFact | 0.0188 | 0.0988 | **0.6665** | 0.5636 | 0.6665 | 0.662 | 0.6619 |
 
 - **ParadeDB is a BM25 and reads where this library's BM25 reads.** At matched parameters the two
   differ by 0.0005 on NFCorpus and 0.0083 on SciFact, which is analysis rather than ranking: the
@@ -513,11 +513,13 @@ same qrels (harness defaults, exponential gains, 10 retrieved at 10):
   skip — a gate that cannot fail. They are reproducible from the command above, and nothing catches
   a drift in them.
 - **`--backend bm25` closes the ranker gap with no extension.** It scores the same `tsvector` term
-  frequencies with `Bm25Scorer`, and at an unbounded pool reads 0.3072 / 0.6665 against the
+  frequencies with `Bm25Scorer`, and at the default rare-term gate reads 0.3072 / 0.6665 against the
   in-memory row's 0.308 / 0.662 and ParadeDB's 0.3084 / 0.6619 — so what is left is analysis, not
-  arithmetic. The default pool of 1,000 reads 0.2999 / 0.5636: on SciFact, where a thirteen-term
-  query matches half the corpus, the pool is the whole 0.10 difference. That is the trade
-  `--backend-pool` states, and the reason the row prints the pool it ran with.
+  arithmetic. The gate is a candidate-recall bound, not a scoring change: it generates candidates
+  from the query's rarest terms and scores them with the whole query. With the gate off, the pool of
+  1,000 reads 0.2999 / 0.5636, because the candidates are chosen by `ts_rank_cd` coverage rather
+  than by idf — on SciFact that truncation is the whole 0.10 difference. The numbers behind the
+  choice, and what it costs in milliseconds, are on the [backend guide](backends.md#bm25-over-stock-postgresql-postgresbm25searchengine).
 - **`ts_rank_cd`'s and ParadeDB's scores are PostgreSQL-native and not numerically comparable**
   with `Bm25Scorer`; the stock-PostgreSQL BM25 row's are `Bm25Scorer`'s and are. The metric
   columns compare either way. The analysis is PostgreSQL's own, not this library's tokenizer, which
