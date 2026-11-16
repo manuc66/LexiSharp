@@ -691,7 +691,7 @@ public static class Program
         (ITokenizer tokenizer, string analysisDescription, TokenizerOptions tokenizerOptions) = BuildAnalysis(analyzer, stem);
 
         IReadOnlyList<BeirDataset> datasets = datasetArg == "all"
-            ? BeirDataset.All
+            ? BeirDataset.All.Where(dataset => dataset.InAll).ToList()
             : [BeirDataset.Resolve(datasetArg)];
 
         IReranker? reranker = null;

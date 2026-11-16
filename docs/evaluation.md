@@ -520,6 +520,11 @@ same qrels (harness defaults, exponential gains, 10 retrieved at 10):
   1,000 reads 0.2999 / 0.5636, because the candidates are chosen by `ts_rank_cd` coverage rather
   than by idf — on SciFact that truncation is the whole 0.10 difference. The numbers behind the
   choice, and what it costs in milliseconds, are on the [backend guide](backends.md#bm25-over-stock-postgresql-postgresbm25searchengine).
+- **The gate on a corpus of another nature.** FiQA-2018 is a selectable dataset (`--dataset fiqa`)
+  but not part of `--dataset all` or the pinned comparison. On its 57,638 documents and 648 test
+  queries, the stock-PostgreSQL BM25 row reads **0.2061** nDCG@10 with the gate and **0.1077**
+  without it at pool 1,000; Anserini's published BM25 is 0.2361 with its own analysis. Same cause as
+  SciFact: the ungated candidates are chosen by coverage and truncated, the gated ones by idf.
 - **`ts_rank_cd`'s and ParadeDB's scores are PostgreSQL-native and not numerically comparable**
   with `Bm25Scorer`; the stock-PostgreSQL BM25 row's are `Bm25Scorer`'s and are. The metric
   columns compare either way. The analysis is PostgreSQL's own, not this library's tokenizer, which

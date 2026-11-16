@@ -43,6 +43,13 @@
   against 25.7 / 50.0 and 265.0 / 284.4 ms with the gate off. `--keep` leaves the table for
   `EXPLAIN`.
 
+- **FiQA-2018 as a fourth selectable corpus** (`--dataset fiqa`; 57,638 documents, 648 test
+  queries). It is not part of `--dataset all` or the pinned comparison: it is the candidate gate's
+  evidence on a corpus of another nature (financial Q&A, short queries). At pool 1,000 the gate
+  reads **0.2061** nDCG@10 against **0.1077** without it; Anserini's published BM25 is 0.2361 with
+  its own analysis. Same cause as SciFact: the ungated candidates are chosen by coverage and
+  truncated, the gated ones by idf.
+
 - **`SearchTrace` on the SQL backends, and a `TraceStage.Gate`.** The PostgreSQL engines now record
   the `Score` stage for the page they return — `Postgres lexical`, `Postgres BM25`, `pgvector`,
   `sparsevec`, `pg_trgm`, `ParadeDB BM25` — where they previously ignored `SearchOptions.Trace`
