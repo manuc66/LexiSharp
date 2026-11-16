@@ -24,6 +24,13 @@ namespace LexiSharp.Eval;
 /// </remarks>
 internal static class ReferenceVerifier
 {
+    /// <summary>
+    /// The depth the reference's run files are written at, and therefore the depth a rounded pin has
+    /// to retrieve before it can be read back: the reader's tie-break can promote the document at
+    /// rank 11 into the measured top ten when it ties the tenth score.
+    /// </summary>
+    private const int ReferenceRunDepth = 1000;
+
     public static async Task<int> RunAsync(
         PinnedReference pinned, string dataBaseDir, bool write, CancellationToken cancellationToken)
     {
@@ -184,14 +191,27 @@ internal static class ReferenceVerifier
             // on BEIR queries a straight quote is ordinary prose and a query language collapses it
             // (146 of ArguAna's 1,406 test queries carry one). The field exists so the pin says
             // which of the two it was recorded under.
-            var retrieved = engine
+            // A rounded pin is a run file, and a run file's reader can move a document from beyond
+            // rank 10 into the top 10 when it ties the tenth score. The published ArguAna run was
+            // written at depth 1000; retrieving only 10 leaves four queries reading 0.3974 instead of
+            // the reader's 0.3970, because the document that decides those four is the eleventh.
+            int depth = pin.ScoreRounding ? ReferenceRunDepth : MetricDepth.Cutoff;
+
+            IReadOnlyList<SearchResult> hits = engine
                 .Search(query.Text, new SearchOptions(
-                    10,
+                    depth,
                     ExcludedDocumentIds: excluded,
                     ParseQuerySyntax: pin.QuerySyntax)
-                    .WithScoreRounding(pin.ScoreRounding ? ScoreRounding.FourDecimals : ScoreRounding.None))
-                .Select(result => result.DocumentId)
-                .ToArray();
+                    .WithScoreRounding(pin.ScoreRounding ? ScoreRounding.FourDecimals : ScoreRounding.None));
+
+            // A rounded pin is replaying a run file, and a run file is ranked by its reader: score
+            // descending, then document id descending. Measuring the engine's tie-break against a
+            // published number computed by trec_eval is what made ArguAna read 0.4005 where the same
+            // ranking read 0.3970 from the file.
+            if (pin.ScoreRounding)
+                hits = Evaluation.RunFileOrder(hits);
+
+            var retrieved = hits.Select(result => result.DocumentId).ToArray();
 
             total += RetrievalMetrics.NdcgAtK(retrieved, corpus.TestRelevance[query.Id], 10, gain);
         }

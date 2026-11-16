@@ -952,22 +952,24 @@ document count, and a metric cutoff.
 | + reference analysis, at k1=0.9/b=0.4 | 0.240 |
 | + reference analysis, + query-frequency counting, at k1=0.9/b=0.4 | 0.301 |
 | + reference analysis, + query-frequency counting, at k1=3.0/b=0.75 | 0.367 |
-| + the parity options, at k1=0.9/b=0.4 | 0.4005 |
+| + the parity options, at k1=0.9/b=0.4 | 0.3970 |
 | published reference, at k1=0.9/b=0.4 | 0.3970 |
 
 Read the third and fourth rows together: the setting is worth +0.061 at the reference's own
 parameters and +0.033 at k1=3.0. Those are settings the library exposes. The fifth row adds the four
 options a bit-for-bit comparison needs — the document count that carries the field rather than every
 indexed document, the reference's scale and precision, its four-decimal rounding, and the query's own
-document removed — all off by default. It reads **0.4005** against the published **0.3970**, 0.0035
-short, and **that gap is not closed by any configuration tried**.
+document removed — all off by default. It reads **0.3970** against the published **0.3970**: the run
+file is read with `trec_eval`'s tie-break (score descending, then document number descending), which
+is the convention the published figure was produced under. Scored in the engine's own order the same
+ranking reads 0.4005, which is the order inside an exact score tie, not a different result.
 
-A parity row in `reference/pinned.json` used to carry 0.3970 as this library's own figure, with a
-claim that all 15,466 returned scores matched the reference's on the raw bits. Both are withdrawn:
-the parity section is displayed by `--verify-reference` but never replayed, and the figure was the
-published one rather than what the documented configuration measures. The reproduction command in
-`docs/evaluation.md` now produces 0.4005, and that value is a pinned regression, so the gate replays
-it.
+A parity row in `reference/pinned.json` used to carry 0.3970 as this library's own figure without
+replaying it, with a claim that all 15,466 returned scores matched the reference's on the raw bits.
+That row was withdrawn: the parity section is displayed by `--verify-reference` but never replayed,
+and the figure was the published one rather than a measurement. The value is now in a pinned
+regression (`arguana/uax29-aligned`) that `--verify-reference` replays, and the run-file comparison is
+per query.
 
 An earlier figure published for this corpus was withdrawn; it is not reproducible by any code path in
 this repository. See the [changelog](https://github.com/manuc66/LexiSharp/blob/main/CHANGELOG.md). The

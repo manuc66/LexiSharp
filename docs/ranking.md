@@ -97,10 +97,13 @@ rather than a constructor parameter for the same reason: naming the call is the 
 something other than searching is being asked for.
 
 With `saturationConstant: false`, single precision, reference statistics and the rounding, this
-library reads **0.4005** on ArguAna against the published **0.3970**, 0.0035 short. The bit-level
-raw-score comparison this paragraph used to report for all 15,466 (query, document) pairs is
-withdrawn: the figure it belonged to is not what the documented configuration measures, and no
-configuration tried reproduces it. See [Evaluation](evaluation.md).
+library reads **0.3970** on ArguAna against the published **0.3970**, equal to four decimals once the
+run file is read by `trec_eval`'s tie-break (score descending, then document number descending).
+Scored in the engine's own order the same ranking reads 0.4005; the difference is the order inside an
+exact score tie, not the ranking. The bit-level raw-score comparison this paragraph used to report for
+all 15,466 (query, document) pairs is withdrawn: the figure it belonged to is not what the documented
+configuration measures, and equal scores do not by themselves settle an aggregate that depends on the
+reader's tie order. See [Evaluation](evaluation.md).
 
 ## BM25 variants
 

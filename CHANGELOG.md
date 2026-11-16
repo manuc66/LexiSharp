@@ -1,3 +1,22 @@
+## [Unreleased]
+
+### Fixed
+
+- **The evaluation harness measured a rounded run in the engine's tie-break, not in the run reader's.**
+  The four-decimal rounding reproduces what the reference writes down, and a written run is read back
+  by `trec_eval`, which ignores the rank column and breaks an exact score tie by document number
+  **descending** (`comp_sim_docno` in `form_res_rels.c`). The harness kept the engine's order
+  (document id ascending), so on ArguAna it reported **0.4005** where `trec_eval` reads **0.3970**
+  from the same file: 5,699 exact duplicate scores, 183 queries with a tie in the top 10, 84 queries
+  whose nDCG differs. Applying the reader's tie-break to a rounded run makes the two per-query equal,
+  1,406 of 1,406, and the pin `arguana/uax29-aligned` is re-recorded from 0.4005 to **0.3970** as a
+  measured value, not a copied one. The replay also retrieves at the reference run's depth (1,000)
+  rather than 10: a document at rank 11 can enter the top ten by tying the tenth score, and that
+  boundary alone is worth 0.0004 in the aggregate, across four queries. NFCorpus and SciFact are
+  unchanged; no configuration had a tie inside their top ten. The table header now names the depth
+  the metrics are measured at (`MetricDepth.Cutoff`) instead of `--top-k`, which had printed
+  `nDCG@1000` over an nDCG@10 value.
+
 ## [1.0.0] — 2026-11-10
 
 The first stable release. The public API is now versioned by semantic versioning: a breaking
