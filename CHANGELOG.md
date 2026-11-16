@@ -1,5 +1,38 @@
 ## [Unreleased]
 
+### Added
+
+- **`PostgresBm25SearchEngine`** (`LexiSharp.Postgres`): Okapi BM25 over **stock PostgreSQL**. The
+  `tsvector` column and its GIN index do the matching and `Bm25Scorer` does the ranking over the
+  term frequencies the vector already stores, so the only server-side requirement is
+  `CREATE EXTENSION unaccent`. That is what makes a real BM25 available on RDS, Cloud SQL and Azure
+  Database for PostgreSQL, where ParadeDB's `pg_search` cannot be installed. `N`, the average
+  length and each term's document frequency come from one cached `ts_stat` snapshot (invalidated by
+  writes, rebuildable with `RefreshStatistics()`); PostgreSQL selects the best `CandidatePool`
+  matches by `ts_rank_cd` (default 1,000, `0` for the exact ranking) and the engine re-ranks them,
+  because scoring every match would make a query proportional to the corpus. Measured at pool 0:
+  **0.3072 nDCG@10 on NFCorpus and 0.6665 on SciFact**, against 0.308 / 0.662 for the in-memory
+  scorer and 0.3084 / 0.6619 for ParadeDB. At the default pool the same rows read 0.2999 / 0.5636 —
+  the difference is recall, and it is stated rather than hidden.
+
+- **`PostgresIndexOptions.MatchMode`** (`PostgresMatchMode.AllTerms | AnyTerm`): how a multi-term
+  query becomes a `tsquery` on the lexical engine. `AllTerms` is the previous behaviour
+  (`websearch_to_tsquery`, AND); `AnyTerm` ORs the query's lexemes, takes them from the column's own
+  configuration, and keeps quoted phrases as hard gates. On long queries the AND rule was what buried
+  the corpus: SciFact moves 0.0188 → 0.0988 nDCG@10 (5.3×), while the ranker is still the rest —
+  0.0988 is far from BM25's 0.662 — and NFCorpus barely moves (0.1864 → 0.1881).
+
+- **`--backend bm25`, `--backend-match all|any` and `--backend-pool <n>`** in
+  `bench/LexiSharp.Eval`, so the portable BM25 row and the match rule are measured by the same
+  harness, corpus and qrels as every other row.
+
+### Changed
+
+- The shared documents table's upsert and row reader are now one implementation
+  (`PostgresDocumentWriter`/`PostgresDocumentReader`), used by the lexical and BM25 engines, and the
+  `tsquery` a search is matched and ranked with is built once (`PostgresMatchExpression`). A query
+  that means one thing at the gate cannot mean another at the rank.
+
 ### Fixed
 
 - **The evaluation harness measured a rounded run in the engine's tie-break, not in the run reader's.**
@@ -16,6 +49,11 @@
   unchanged; no configuration had a tie inside their top ten. The table header now names the depth
   the metrics are measured at (`MetricDepth.Cutoff`) instead of `--top-k`, which had printed
   `nDCG@1000` over an nDCG@10 value.
+
+- **The evaluation page attributed `ts_rank_cd`'s NFCorpus gap to its matching rule.** It is not:
+  OR-ing the terms moves NFCorpus 0.1864 → 0.1881, so the gap there is the ranker (coverage has no
+  idf). On SciFact the rule is worth 5.3× and the ranker is still the rest. The rows behind both
+  statements are now published.
 
 ## [1.0.0] — 2026-11-10
 

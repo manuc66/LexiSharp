@@ -448,7 +448,9 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-
 ```
 
 `--backend lexical` measures `PostgresTextSearchEngine` (`tsvector` + `ts_rank_cd`);
-`--backend paradedb` measures `ParadeDBTextSearchEngine` (`pg_search` + `pdb.score`, Tantivy's BM25);
+`--backend bm25` measures `PostgresBm25SearchEngine` (BM25 over the same `tsvector` term
+frequencies, no extension); `--backend paradedb` measures `ParadeDBTextSearchEngine` (`pg_search` +
+`pdb.score`, Tantivy's BM25);
 `--backend vector` measures `PostgresVectorSearchEngine` over the cached dense embeddings, with one
 row per `ef_search`; `--backend fuzzy` measures `PostgresFuzzySearchEngine`, with one row per
 `pg_trgm` similarity threshold; `--backend sparse` measures `PostgresSparseSearchEngine` over the
@@ -475,6 +477,14 @@ Out of the box, each engine at its own defaults (`k1=1.5, b=0.75` here, `1.2, 0.
 | SciFact | 0.662 | 0.6619 | 0.0188 | not measured |
 | ArguAna | 0.320 | not measured | not measured | not measured |
 
+The two knobs that moved `ts_rank_cd` and then closed the gap, measured on the same corpora and the
+same qrels (harness defaults, exponential gains, 10 retrieved at 10):
+
+| corpus | `ts_rank_cd` all terms | `ts_rank_cd` any term | BM25 pool 1,000 | BM25 pool 0 | in-memory BM25 | ParadeDB |
+|---|---:|---:|---:|---:|---:|---:|
+| NFCorpus | 0.1864 | 0.1881 | 0.2999 | 0.3072 | 0.308 | 0.3084 |
+| SciFact | 0.0188 | 0.0988 | 0.5636 | **0.6665** | 0.662 | 0.6619 |
+
 - **ParadeDB is a BM25 and reads where this library's BM25 reads.** At matched parameters the two
   differ by 0.0005 on NFCorpus and 0.0083 on SciFact, which is analysis rather than ranking: the
   index is built on `pdb.simple` with ASCII folding, the title is concatenated into the indexed
@@ -482,10 +492,13 @@ Out of the box, each engine at its own defaults (`k1=1.5, b=0.75` here, `1.2, 0.
   (`|||`) rather than this library's scored term loop. It is not a reproduction, and it is not
   bit-identical.
 - **`ts_rank_cd` is not BM25** — it is coverage-based and takes no k1/b, so `--backend-bm25` is
-  refused with it rather than silently ignored. Most of its distance from the BM25 column is the
-  matching rule rather than the ranking: `websearch_to_tsquery` ANDs every term, so a match is a
-  document containing all of them. NFCorpus's test queries average 3.4 words and read 0.1864;
-  SciFact's average 13.1 and read 0.0188. PostgreSQL's own English analysis
+  refused with it rather than silently ignored. Its distance from BM25 has two causes, and the
+  rows above separate them. The *matching* rule is `websearch_to_tsquery`'s AND; `--backend-match
+  any` ORs the query's lexemes instead, which is worth 0.0188 → 0.0988 on SciFact (a 5.3× lift,
+  because a thirteen-term query matched with AND leaves almost nothing to rank) and 0.1864 →
+  0.1881 on NFCorpus (whose queries average 3.4 terms, so the relevant documents usually do
+  contain all of them). What remains after the rule is the *ranker*: coverage has no idf, so a
+  common word counts as much as a rare one. PostgreSQL's own English analysis
   (`--backend-config english`) moves NFCorpus 0.1864 → 0.2043, not closer. Weighting the title with
   `--backend-field-weights title=A` leaves both rows essentially unchanged — NFCorpus 0.1869,
   SciFact 0.0188 — and [the backend guide](backends.md#postgresql-backend-lexisharpostgres) carries
@@ -499,10 +512,17 @@ Out of the box, each engine at its own defaults (`k1=1.5, b=0.75` here, `1.2, 0.
   parameters, and the pinned job runs without a PostgreSQL service, so a pin there could only ever
   skip — a gate that cannot fail. They are reproducible from the command above, and nothing catches
   a drift in them.
-- **Scores are PostgreSQL-native and not numerically comparable** with `Bm25Scorer`; the metric
-  columns are. The analysis is PostgreSQL's own, not this library's tokenizer, which is why these
-  rows are not comparable with the published figures or with the aligned rows either — the
-  parameter-matched table above compares two analyses, not two implementations of one.
+- **`--backend bm25` closes the ranker gap with no extension.** It scores the same `tsvector` term
+  frequencies with `Bm25Scorer`, and at an unbounded pool reads 0.3072 / 0.6665 against the
+  in-memory row's 0.308 / 0.662 and ParadeDB's 0.3084 / 0.6619 — so what is left is analysis, not
+  arithmetic. The default pool of 1,000 reads 0.2999 / 0.5636: on SciFact, where a thirteen-term
+  query matches half the corpus, the pool is the whole 0.10 difference. That is the trade
+  `--backend-pool` states, and the reason the row prints the pool it ran with.
+- **`ts_rank_cd`'s and ParadeDB's scores are PostgreSQL-native and not numerically comparable**
+  with `Bm25Scorer`; the stock-PostgreSQL BM25 row's are `Bm25Scorer`'s and are. The metric
+  columns compare either way. The analysis is PostgreSQL's own, not this library's tokenizer, which
+  is why these rows are not comparable with the published figures or with the aligned rows either —
+  the parameter-matched table above compares two analyses, not two implementations of one.
 
 The vector engine is measured the same way, over the harness's cached embeddings, with one row per
 `ef_search` — `--backend vector --backend-ef 10,40,160`, which needs `--dense`:

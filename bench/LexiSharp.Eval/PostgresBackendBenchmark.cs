@@ -15,6 +15,13 @@ internal enum BackendKind
     /// <summary><c>tsvector</c> + <c>ts_rank_cd</c> over stock PostgreSQL: coverage-based, not BM25.</summary>
     Lexical,
 
+    /// <summary>
+    /// <c>tsvector</c> term frequencies + <see cref="LexiSharp.Ranking.Bm25Scorer"/> over stock
+    /// PostgreSQL: a real BM25 with no extension, unlike <see cref="Lexical"/>, and with no
+    /// <c>pg_search</c> install, unlike <see cref="ParadeDb"/>.
+    /// </summary>
+    Bm25,
+
     /// <summary><c>pg_search</c> + <c>pdb.score</c>: Okapi BM25 computed by Tantivy.</summary>
     ParadeDb,
 
@@ -59,6 +66,12 @@ internal enum BackendKind
 /// normalisation to go with them. Without a weighted <c>title</c>, a document's body counts as
 /// much as its title and the row measures nothing new.
 /// </param>
+/// <param name="MatchMode">
+/// How a multi-term query is matched on the lexical and BM25 rows, or <c>null</c> for each
+/// engine's own default: AND for the lexical row (what it has always run) and OR for BM25, whose
+/// ranking needs a candidate set to rank. The rule is stated in the row's name either way, because
+/// it moves the number further than most ranking changes.
+/// </param>
 /// <param name="SimilarityThresholds">
 /// The <c>pg_trgm</c> similarity thresholds a fuzzy row is measured at, one row each. The threshold
 /// is the <c>%</c> operator's match rule (<c>set_limit</c>), not a ranking parameter: a document
@@ -80,7 +93,9 @@ internal sealed record BackendLane(
     IReadOnlyList<int>? EfSearchValues = null,
     IReadOnlyDictionary<string, PostgresFieldWeight>? FieldWeights = null,
     IReadOnlyList<double>? SimilarityThresholds = null,
-    string? SparseVectorsDirectory = null)
+    string? SparseVectorsDirectory = null,
+    PostgresMatchMode? MatchMode = null,
+    int? CandidatePool = null)
 {
     /// <summary>The <c>ef_search</c> values in force; pgvector's own default when none was given.</summary>
     public IReadOnlyList<int> EfValues => EfSearchValues is { Count: > 0 } values ? values : [40];
@@ -98,19 +113,22 @@ internal sealed record BackendLane(
         IReadOnlyList<int>? efSearchValues = null,
         IReadOnlyDictionary<string, PostgresFieldWeight>? fieldWeights = null,
         IReadOnlyList<double>? similarityThresholds = null,
-        string? sparseVectorsDirectory = null)
+        string? sparseVectorsDirectory = null,
+        PostgresMatchMode? matchMode = null,
+        int? candidatePool = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
         BackendKind parsed = kind switch
         {
             "lexical" => BackendKind.Lexical,
+            "bm25" => BackendKind.Bm25,
             "paradedb" => BackendKind.ParadeDb,
             "vector" => BackendKind.Vector,
             "fuzzy" => BackendKind.Fuzzy,
             "sparse" => BackendKind.Sparse,
             _ => throw new ArgumentException(
-                $"--backend expects 'lexical', 'paradedb', 'vector', 'fuzzy' or 'sparse', got '{kind}'."),
+                $"--backend expects 'lexical', 'bm25', 'paradedb', 'vector', 'fuzzy' or 'sparse', got '{kind}'."),
         };
 
         if (parsed == BackendKind.Sparse)
@@ -154,7 +172,25 @@ internal sealed record BackendLane(
         {
             throw new ArgumentException(
                 "--backend-bm25 sets k1/b, and ts_rank_cd has neither: the lexical row ranks by coverage "
-                + "and takes no parameter. Drop the flag, or use --backend paradedb.");
+                + "and takes no parameter. Drop the flag, or use --backend bm25 (stock PostgreSQL, no "
+                + "extension) or --backend paradedb.");
+        }
+
+        if (parsed != BackendKind.Bm25 && candidatePool is not null)
+        {
+            throw new ArgumentException(
+                "--backend-pool bounds the matches the BM25 engine re-ranks, and no other backend has a "
+                + "pool: the lexical row ranks in SQL, the vector and sparse rows rank by distance after "
+                + "an index scan, and ParadeDB and fuzzy rank their whole match set. Drop the flag, or "
+                + "use --backend bm25.");
+        }
+
+        if (parsed is not (BackendKind.Lexical or BackendKind.Bm25) && matchMode is not null)
+        {
+            throw new ArgumentException(
+                "--backend-match selects the tsquery rule the lexical and BM25 engines match with, and the "
+                + "vector, sparse, ParadeDB and fuzzy rows rank by an embedding, a dot product, pdb.score or "
+                + "trigram similarity. Drop the flag, or use --backend lexical or --backend bm25.");
         }
 
         if (parsed == BackendKind.ParadeDb && textSearchConfig != "simple")
@@ -228,7 +264,9 @@ internal sealed record BackendLane(
         return new BackendLane(
             parsed, connectionString, textSearchConfig, bm25, efSearchValues, fieldWeights,
             similarityThresholds,
-            sparseVectorsDirectory is null ? null : Path.GetFullPath(sparseVectorsDirectory));
+            sparseVectorsDirectory is null ? null : Path.GetFullPath(sparseVectorsDirectory),
+            matchMode,
+            candidatePool);
     }
 
     /// <summary>
@@ -251,6 +289,10 @@ internal sealed record BackendLane(
     /// <summary>Names the engine and its analysis, because a nDCG without them is not a figure.</summary>
     public string Description => Kind switch
     {
+        BackendKind.Bm25 =>
+            $"PostgreSQL BM25 (Bm25Scorer over tsvector term frequencies, text search config "
+            + $"'{TextSearchConfig}' + unaccent, {MatchText}, {Bm25OperatingPoint}, candidate pool "
+            + $"{EffectivePool:N0}" + FieldWeightsText + ")",
         BackendKind.ParadeDb =>
             "ParadeDB BM25 (pdb.score, Tantivy)" + Bm25Text
             + " — index over content only, title concatenated into it",
@@ -264,9 +306,37 @@ internal sealed record BackendLane(
         BackendKind.Sparse =>
             "pgvector sparsevec (inner product) + HNSW (m = 16, ef_construction = 64), pgvector's "
             + "default hnsw.ef_search 40, and the same table after DROP INDEX",
-        _ => $"PostgreSQL lexical (ts_rank_cd, text search config '{TextSearchConfig}' + unaccent"
-            + FieldWeightsText + ")",
+        _ => $"PostgreSQL lexical (ts_rank_cd, text search config '{TextSearchConfig}' + unaccent, "
+            + $"{MatchText}" + FieldWeightsText + ")",
     };
+
+    /// <summary>The pool the BM25 row ran with: the flag when given, the engine's default otherwise.</summary>
+    public int EffectivePool => CandidatePool ?? PostgresBm25Options.DefaultCandidatePool;
+
+    /// <summary>
+    /// The rule the row actually ran under: the flag when given, otherwise each engine's own
+    /// default — AND for the lexical row (unchanged since it was measured) and OR for BM25, whose
+    /// ranking needs a candidate set to rank.
+    /// </summary>
+    public PostgresMatchMode ResolvedMatchMode =>
+        MatchMode ?? (Kind == BackendKind.Bm25 ? PostgresMatchMode.AnyTerm : PostgresMatchMode.AllTerms);
+
+    /// <summary>The match rule in words, because two nDCGs under one name are two different rows.</summary>
+    private string MatchText => ResolvedMatchMode == PostgresMatchMode.AnyTerm
+        ? "any term"
+        : "all terms";
+
+    /// <summary>The pool in words: a count when bounded, the ceiling when the bound was removed.</summary>
+    private string PoolText => EffectivePool == 0
+        ? $"every match up to the engine's {PostgresBm25Options.MaximumCandidatePool:N0}-row ceiling (pool unbounded)"
+        : $"the top {EffectivePool:N0} matches by ts_rank_cd";
+
+    /// <summary>The k1/b the BM25 engine ran at: the flag when given, the engine's defaults otherwise.</summary>
+    private string Bm25OperatingPoint => Bm25 is { } parameters
+        ? string.Create(CultureInfo.InvariantCulture, $"k1={parameters.K1:0.##}, b={parameters.B:0.##}")
+        : string.Create(
+            CultureInfo.InvariantCulture,
+            $"k1={PostgresBm25Options.DefaultK1:0.##}, b={PostgresBm25Options.DefaultB:0.##}");
 
     private static string FormatThreshold(double threshold) =>
         threshold.ToString("0.####", CultureInfo.InvariantCulture);
@@ -351,10 +421,24 @@ internal sealed record BackendLane(
             + "the lexical and vector rows refuse — which is the query set the in-memory sparse row "
             + "is scored on.",
         ],
+        BackendKind.Bm25 =>
+        [
+            "The ranking is Bm25Scorer over the term frequencies the tsv column stores: N, the average "
+            + "length and each term's document frequency come from one ts_stat snapshot of the table, so "
+            + "the scores are on the in-memory scorer's scale — comparable with the in-memory BM25 row, and "
+            + "not with ts_rank_cd's or pdb.score's.",
+            $"The database selects {PoolText} and the engine re-ranks them. A bounded pool bounds "
+            + "recall — a document outside it cannot be returned — and does not change the ordering "
+            + "inside it.",
+            AnalysisCaveat,
+        ],
         _ =>
         [
-            "ts_rank_cd is a coverage-based rank, not BM25, and it takes no k1/b. Its ORDER BY has no "
-            + "tie-break, so the order among equal scores is the executor's and can differ between runs.",
+            "ts_rank_cd is a coverage-based rank, not BM25, and it takes no k1/b. Equal scores are broken "
+            + "by the document id, ordinally, in the SQL and in the C# side alike.",
+            "The match rule is in the row's name: 'all terms' is websearch_to_tsquery's AND, 'any term' is "
+            + "one tsquery OR-ing the query's lexemes. It changes which documents are candidates, not how "
+            + "they are ranked, and it moves this row further than any ranking change would.",
             FieldWeights is { Count: > 0 }
                 ? "The weighting is a tsvector class per field, so what it changes is the ratio between "
                 + "classes (A = 1.0 against D = 0.1 in ts_rank_cd's default mapping). It has no per-field "
@@ -453,6 +537,23 @@ internal static class PostgresBackendBenchmark
             return Run(parade, parade.DropSchema);
         }
 
+        if (lane.Kind == BackendKind.Bm25)
+        {
+            using var bm25 = new PostgresBm25SearchEngine(
+                lane.ConnectionString,
+                new PostgresBm25Options
+                {
+                    Table = table,
+                    TextSearchConfig = lane.TextSearchConfig,
+                    MatchMode = lane.ResolvedMatchMode,
+                    K1 = lane.Bm25?.K1 ?? PostgresBm25Options.DefaultK1,
+                    B = lane.Bm25?.B ?? PostgresBm25Options.DefaultB,
+                    CandidatePool = lane.EffectivePool,
+                });
+
+            return Run(bm25, bm25.DropSchema);
+        }
+
         using var lexical = new PostgresTextSearchEngine(
             lane.ConnectionString,
             new PostgresIndexOptions
@@ -460,6 +561,7 @@ internal static class PostgresBackendBenchmark
                 Table = table,
                 TextSearchConfig = lane.TextSearchConfig,
                 FieldWeights = lane.FieldWeights,
+                MatchMode = lane.ResolvedMatchMode,
             });
 
         return Run(lexical, lexical.DropSchema);
