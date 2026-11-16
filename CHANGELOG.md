@@ -26,12 +26,26 @@
   `bench/LexiSharp.Eval`, so the portable BM25 row and the match rule are measured by the same
   harness, corpus and qrels as every other row.
 
+- **`postgres` lane in `bench/LexiSharp.Benchmarks`**: index build, statistics build and search
+  latency (p50/p95/p99/mean) of the stock-PostgreSQL text engines on the BEIR corpora, per match
+  rule and per candidate-pool size, interleaved so one row does not inherit another's cache state.
+  It is the measurement the quality harness deliberately does not take. On NFCorpus the pool-1,000
+  BM25 row reads 16.0 ms p50 / 37.3 ms mean; on SciFact 203.3 / 210.7 ms, of which the OR
+  candidate selection alone is 170.1 / 177.6 ms. `--keep` leaves the table for `EXPLAIN`.
+
 ### Changed
 
 - The shared documents table's upsert and row reader are now one implementation
   (`PostgresDocumentWriter`/`PostgresDocumentReader`), used by the lexical and BM25 engines, and the
   `tsquery` a search is matched and ranked with is built once (`PostgresMatchExpression`). A query
   that means one thing at the gate cannot mean another at the rank.
+
+- **The BM25 candidate read is two-phase.** The candidate query ranks ids and returns one
+  `tsvector` per candidate; the page's documents are fetched afterwards, by id. Carrying content,
+  category and jsonb through the sort made PostgreSQL spill it to disk. The per-candidate
+  `tsvector` reader also keeps only the query's terms now, while still counting every position for
+  the document length. On NFCorpus the pool-1,000 row moved from 26.9 ms to 16.0 ms at the median
+  and from 63.7 ms to 37.3 ms at the mean.
 
 ### Fixed
 

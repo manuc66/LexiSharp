@@ -229,6 +229,10 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
         if (queryTerms.Length == 0)
             return Array.Empty<SearchResult>();
 
+        // The query's terms, as the set the per-candidate reader keeps: the length needs every
+        // position, the frequencies only need these.
+        var keptTerms = new HashSet<string>(queryTerms, StringComparer.Ordinal);
+
         // Benign race: two concurrent searches may build the snapshot twice and both publish a
         // complete one. A reference assignment is atomic, so no reader can see a half-built object.
         var statistics = _statistics ??= PostgresBm25Statistics.Load(connection, _indexOptions);
@@ -240,12 +244,20 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
         filters.Apply(command);
         match.Bind(command);
 
+        // Two shapes in one statement: the inner query ranks the match set and keeps the top
+        // @pool, carrying only (id, score) so the sort stays in memory; the outer join then reads
+        // one tsv per candidate. Selecting content and jsonb here as well would put ~1 KB of
+        // payload per row into the sort, which PostgreSQL answered by spilling it to disk.
         string candidatesSql = $"""
-            SELECT id, content, category, fields, text_fields, tsv::text
-            FROM {_options.QualifiedTableName}
-            WHERE ({match.Gate}){filters.Fragment}
-            ORDER BY {match.Rank} DESC, {PostgresSchema.OrdinalIdTieBreak}
-            LIMIT @pool;
+            SELECT t.id, t.tsv::text
+            FROM {_options.QualifiedTableName} t
+            JOIN (
+                SELECT id, {match.Rank} AS score
+                FROM {_options.QualifiedTableName}
+                WHERE ({match.Gate}){filters.Fragment}
+                ORDER BY score DESC, {PostgresSchema.OrdinalIdTieBreak}
+                LIMIT @pool
+            ) s ON t.id = s.id;
             """;
 
         // Identifiers/config only are interpolated (validated [A-Za-z0-9_] and quoted); query text is parameterized.
@@ -259,11 +271,10 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
         {
             while (reader.Read())
             {
-                SearchDocument document = PostgresDocumentReader.Read(reader);
                 var (termFrequencies, length) =
-                    PostgresTsvText.Parse(reader.IsDBNull(5) ? null : reader.GetString(5));
+                    PostgresTsvText.Parse(reader.IsDBNull(1) ? null : reader.GetString(1), keptTerms);
 
-                candidates.Add(new PostgresBm25Candidate(document, termFrequencies, length));
+                candidates.Add(new PostgresBm25Candidate(reader.GetString(0), termFrequencies, length));
             }
         }
 
@@ -271,11 +282,11 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
             return Array.Empty<SearchResult>();
 
         var view = new PostgresBm25IndexView(statistics, candidates);
-        var results = new List<SearchResult>(candidates.Count);
+        var scored = new List<(string DocumentId, double Score)>(candidates.Count);
 
         foreach (PostgresBm25Candidate candidate in candidates)
         {
-            double score = _scorer.Score(candidate.Document.Id, queryTerms, view);
+            double score = _scorer.Score(candidate.DocumentId, queryTerms, view);
 
             if (double.IsNaN(score) || double.IsInfinity(score) || score <= 0)
                 continue;
@@ -283,21 +294,85 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
             if (score < options.MinimumScore)
                 continue;
 
-            if (!PostgresDocumentExclusion.Passes(options, candidate.Document.Id))
+            if (!PostgresDocumentExclusion.Passes(options, candidate.DocumentId))
                 continue;
 
-            results.Add(new SearchResult(candidate.Document.Id, score, candidate.Document));
+            scored.Add((candidate.DocumentId, score));
         }
 
         // Score descending, then the ordinal id: the same tie-break the SQL engines write into
         // their ORDER BY, applied here because the ordering is computed in this process.
-        results.Sort(static (left, right) =>
+        scored.Sort(static (left, right) =>
         {
             int byScore = right.Score.CompareTo(left.Score);
             return byScore != 0 ? byScore : string.CompareOrdinal(left.DocumentId, right.DocumentId);
         });
 
-        return results.Skip(options.Offset).Take(options.Limit).ToList();
+        List<(string DocumentId, double Score)> page = scored
+            .Skip(options.Offset)
+            .Take(options.Limit)
+            .ToList();
+
+        if (page.Count == 0)
+            return Array.Empty<SearchResult>();
+
+        Dictionary<string, SearchDocument> documents = ReadDocuments(connection, page, cancellationToken);
+
+        // A document deleted between the two reads is skipped rather than returned without its
+        // content. The window is not refilled: the alternative is a third query for a row that
+        // another writer is deleting, and the page is a read of a corpus that moved.
+        var results = new List<SearchResult>(page.Count);
+
+        foreach (var (documentId, score) in page)
+        {
+            if (documents.TryGetValue(documentId, out SearchDocument? document))
+                results.Add(new SearchResult(documentId, score, document));
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Reads the documents of the page, by id — the second half of the two-phase read.
+    /// </summary>
+    /// <remarks>
+    /// The candidate query fetched ids and term frequencies for the whole pool; only the page's
+    /// rows need their content, category and fields. One statement with <c>= ANY(@ids)</c> rather
+    /// than one per id: it is the same round trip for a page of ten.
+    /// </remarks>
+    private Dictionary<string, SearchDocument> ReadDocuments(
+        NpgsqlConnection connection,
+        IReadOnlyList<(string DocumentId, double Score)> page,
+        CancellationToken cancellationToken)
+    {
+        var ids = new string[page.Count];
+
+        for (int i = 0; i < page.Count; i++)
+            ids[i] = page[i].DocumentId;
+
+        using var command = connection.CreateCommand();
+
+        command.CommandText = $"""
+            SELECT id, content, category, fields, text_fields
+            FROM {_options.QualifiedTableName}
+            WHERE id = ANY(@ids);
+            """; // NOSONAR:S2077 (identifier only, validated + quoted)
+
+        command.Parameters.AddWithValue("ids", ids);
+
+        var documents = new Dictionary<string, SearchDocument>(page.Count, StringComparer.Ordinal);
+
+        using (var cancelling = PostgresCancellation.Register(command, cancellationToken))
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                SearchDocument document = PostgresDocumentReader.Read(reader);
+                documents[document.Id] = document;
+            }
+        }
+
+        return documents;
     }
 
     /// <summary>Releases the underlying Npgsql data source.</summary>

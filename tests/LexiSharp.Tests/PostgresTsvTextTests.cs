@@ -85,6 +85,29 @@ public class PostgresTsvTextTests
     }
 
     [Fact]
+    public void Parse_WithKeepReadsOnlyTheWantedFrequenciesAndTheExactLength()
+    {
+        var (terms, length) = PostgresTsvText.Parse(
+            "'a':1,2 'b':3 'o''brien':4", new HashSet<string>(["a", "o'brien"], StringComparer.Ordinal));
+
+        Assert.Equal(2, terms["a"]);
+        Assert.Equal(1, terms["o'brien"]);
+        Assert.False(terms.ContainsKey("b"));
+
+        // The length is every position, including the lexeme whose string was skipped.
+        Assert.Equal(4, length);
+    }
+
+    [Fact]
+    public void Parse_WithAnEmptyKeepStillCountsTheLength()
+    {
+        var (terms, length) = PostgresTsvText.Parse("'a':1,2 'b':3", []);
+
+        Assert.Empty(terms);
+        Assert.Equal(3, length);
+    }
+
+    [Fact]
     public void Format_RoundTripsThroughParse()
     {
         var frequencies = new Dictionary<string, int>(StringComparer.Ordinal)
