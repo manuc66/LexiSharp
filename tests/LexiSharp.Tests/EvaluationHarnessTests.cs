@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using LexiSharp.Core;
 using LexiSharp.Eval;
 using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
@@ -157,6 +158,26 @@ public class EvaluationHarnessTests
         Assert.Empty(heldOut.Rows);
         Assert.NotNull(heldOut.NotRunReason);
         Assert.Contains("no tuned row was fitted", heldOut.NotRunReason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ARoundedRunIsMeasuredInTheOrderItsReaderReconstructs()
+    {
+        // A run file's rank column is ignored by trec_eval: it sorts by score descending and breaks
+        // an exact tie by document id *descending*. Rounding deliberately puts scores on the same
+        // ten-thousandth, and the walk-down cannot always separate them (at a score of 118, float
+        // spacing is coarser than the millionth it subtracts), so the reader's tie-break is what the
+        // published number was measured with. The engine's own order is document id ascending.
+        var hits = new[]
+        {
+            new SearchResult("a", 10.0, new SearchDocument("a", string.Empty)),
+            new SearchResult("b", 10.0, new SearchDocument("b", string.Empty)),
+            new SearchResult("c", 11.0, new SearchDocument("c", string.Empty)),
+        };
+
+        Assert.Equal(
+            ["c", "b", "a"],
+            Evaluation.RunFileOrder(hits).Select(hit => hit.DocumentId));
     }
 
     private static BeirCorpus Corpus() => new()

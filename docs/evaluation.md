@@ -36,16 +36,17 @@ comparison. nDCG@10:
 | ArguAna | defaults | 0.320 | 0.315 | +1.6 % |
 | NFCorpus | aligned: uax29 analysis, k1=0.9, b=0.4, reference conventions | 0.3218 | 0.3218 | 0.0000 |
 | SciFact | aligned: same conventions | 0.6789 | 0.6789 | 0.0000 |
-| ArguAna | aligned | 0.4005 | 0.3970 at k1=0.9, b=0.4 | −0.0035 |
+| ArguAna | aligned | 0.3970 | 0.3970 at k1=0.9, b=0.4 | 0.0000 |
 
 The **defaults** rows answer *what the library does out of the box*: no stemming, stop words
 kept. The **aligned** rows answer *is this comparable to the published figure* — and with the
 reference's own analyzer, its parameters, its gain convention, its repeated-term rule, its index
 statistics, its score rounding, its omitted saturation constant and its single precision, the two
-agree to the fourth decimal on NFCorpus and SciFact. On ArguAna this library reads **0.4005** against
-the published **0.3970** — 0.0035 short under the same conventions — and that gap is not reproduced by
-any configuration tried. The gap between the two row groups is configuration, not ranking; the
-ArguAna gap is not yet explained.
+agree to the fourth decimal on all three corpora. The gap between the two row groups is configuration,
+not ranking. On ArguAna the aligned row reads **0.3970** when the metric is computed the way the
+published figure was: on a run file, whose reader breaks an exact score tie by document number
+descending. Computing it in the engine's own tie-break reads 0.4005 on the same ranking — the same
+index, the same scores, the same documents — and is not a different result.
 
 ### Paired bootstrap over queries
 
@@ -59,23 +60,25 @@ the family of configurations in the table.
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-tuned \
   --bootstrap --analyzer uax29 --ndcg-gain linear --reference-bm25 0.9,0.4 \
   --query-term-frequency --reference-index-statistics --reference-score-rounding \
-  --omit-saturation-constant --single-precision-bm25
+  --omit-saturation-constant --single-precision-bm25 --top-k 1000
 ```
 
-The aligned rows, with their intervals:
+The parity rows retrieve at the reference run's depth (1,000) even though they measure at 10: a
+document at rank 11 can tie the tenth score and be promoted into the measured top ten by the reader's
+tie-break. The aligned rows, with their intervals:
 
 | Corpus | nDCG@10 [95 % CI] | Δ vs BM25 1.5/0.75 [95 % CI] | p | p (Holm) |
 |---|---:|---:|---:|---:|
 | NFCorpus | 0.3218 [0.2869, 0.3564] | −0.0042 [−0.0083, 0.0000] | 0.048 | 0.240 |
 | SciFact | 0.6789 [0.6334, 0.7237] | −0.0087 [−0.0202, +0.0032] | 0.151 | 1.000 |
-| ArguAna | 0.4005 [0.3820, 0.4194] | −0.0879 [−0.0967, −0.0794] | 0.0001 | 0.001 |
+| ArguAna | 0.3970 [0.3787, 0.4155] | −0.0875 [−0.0963, −0.0791] | 0.0001 | 0.0014 |
 
 The published figures (0.325, 0.665, 0.397) all fall **inside** those intervals. Equality to four
 decimals is a property of the point estimate, not evidence that the two systems are statistically
 equivalent. The NFCorpus difference is the one the Holm correction removes: across 14
 configurations, a raw p=0.048 is not a family-wise result. The ArguAna difference is not removed:
-under the same exclusion convention, BM25 1.5/0.75 reads **0.4884** [0.4697, 0.5077], 0.0879 above
-the aligned 0.9/0.4 row (paired difference [0.0794, 0.0967], p<0.0001, Holm p=0.001). The aligned
+under the same exclusion convention, BM25 1.5/0.75 reads **0.4845** [0.4661, 0.5035], 0.0875 above
+the aligned 0.9/0.4 row (paired difference [0.0791, 0.0963], p<0.0001, Holm p=0.0014). The aligned
 row is a reproduction target, not the best operating point.
 
 The bootstrap covers the table `Evaluation.Run` produces: the lexical scorers, their variants, the
@@ -142,9 +145,11 @@ the reference's published term count on NFCorpus and SciFact. Adding the four ar
 precision) brings both figures to the published ones at four decimals: this library reads
 **0.32175501** and **0.67890943** unrounded, against a reference published as 0.3218 and 0.6789.
 The published figures are rounded to four decimals, so the score comparison cannot see beyond that;
-what can be seen, and is exact, is the index — see below. Bit-level score parity — the only claim
-that would settle the ranking — exists on ArguAna, where 15,466 of 15,466 compared scores match, and
-is not established on these two. Both fingerprints and both scores are pinned
+what can be seen, and is exact, is the index — see below. Bit-level score parity was measured on
+ArguAna, where 15,466 of 15,466 compared scores match, and is not established on these two. It is not
+the claim that settles an aggregate, though: equal scores still leave the order inside a tie to the
+run reader, which is the 0.0035 the ArguAna section below resolves. Both fingerprints and both scores
+are pinned
 (`nfcorpus/uax29`, `scifact/uax29`, `nfcorpus/uax29-aligned`, `scifact/uax29-aligned`), so
 `--verify-reference` replays them.
 
@@ -161,25 +166,37 @@ zero tolerance. Term for term, not only in total: diffing this library's token m
 Lucene 10.5.2's over these files leaves **zero** tokens on either side for NFCorpus and SciFact, and
 ArguAna contains none of the characters the two rules touch. The indexes are the same index.
 
-**ArguAna: the metric is reproduced, and so are the raw scores.** The two are verified by different
-means and the distinction is the point.
+**ArguAna: the metric is reproduced, per query.** The aggregate and the scores are verified by
+different means, and the distinction is the point: the scores were already the same, and the aggregate
+was not, because equal scores leave the order inside a tie to the file's reader.
 
 The aggregate is verified without this repository's own metric code being involved. `trec_eval` 9.0.8,
 run on a `trec_run` this harness writes at that configuration, reads nDCG@10 **0.3970** and recall@100
-**0.9324** — the two published figures, to four decimals. This harness reads 0.3970 on the same run.
-The metrics are computed differently and agree; where they do not, the difference is 0.0004, confined
-to the 102 of 1,406 queries whose returned scores contain a tie. A tie is the plausible mechanism,
-being the only property those 102 queries share, and it is not established: neither the order written
-in the run file, nor document id, nor a reversal of the tied group reproduces `trec_eval`'s reading.
-Which order produced the published figure is not established either.
+**0.9324** — the two published figures, to four decimals. This harness reads 0.3970 on the same run,
+and the agreement is per query, not only in aggregate: once the two read the file the same way, all
+1,406 query values agree to four decimals.
+
+The rule that makes them agree is not a tolerance. `trec_eval` ignores the rank column, sorts the file
+by score descending, and breaks an exact score tie by document number **descending**
+(`comp_sim_docno` in `form_res_rels.c`). The four-decimal rounding this harness applies to reproduce a
+written run deliberately puts scores on the same ten-thousandth, and the walk-down that is meant to
+separate a tied group cannot always do it: at an ArguAna score of 118, the float spacing is coarser
+than the millionth it subtracts. The parity run therefore contains **5,699** exact duplicate scores;
+**183** queries have a tie inside the top 10; **84** change nDCG when the reader's order replaces the
+engine's. Read in the engine's order the same file averages **0.4005**, read by `trec_eval`'s rule it
+averages **0.3970**. A document at rank 11 can even enter the top 10 when it ties the tenth score,
+which is why the parity run retrieves 1,000 deep and not 10. The harness now applies the reader's
+tie-break to a rounded run, so the two numbers are the same measurement.
 
 One thing is worth knowing about reading a metric from this harness, because it changed a number
 that looked like a ranking result. The harness measures at **rank 10**, not at the depth the run
 retrieved, and the two being the same value is a coincidence of the default: a bit-for-bit
-reproduction run retrieves one document deeper than it measures, so measuring at the retrieval depth
-reported nDCG@11 under a heading reading nDCG@10. Retrieval depth and evaluation depth are different
-things, and the cutoff is named (`MetricDepth`) and independent of `--top-k`. The table below
-holds the full set of figures the published config produces, at the cutoff:
+reproduction run retrieves at the reference run's depth, so measuring at the retrieval depth reported
+nDCG@11 under a heading reading nDCG@10. Retrieval depth and evaluation depth are different things,
+and the cutoff is named (`MetricDepth`) and independent of `--top-k`. For a rounded run the retrieval
+depth is not arbitrary either: the reader's tie-break can promote the document at rank 11 into the
+measured top ten, so the parity run retrieves 1,000 documents and measures ten. The table below holds
+the full set of figures the published config produces, at the cutoff:
 
 | | LexiSharp | reference | Δ |
 |---|---:|---:|---:|
@@ -190,9 +207,11 @@ holds the full set of figures the published config produces, at the cutoff:
 | MAP@100 | 0.3280 | 0.3280 | 0.0000 |
 | reciprocal rank | 0.3282 | 0.3282 | 0.0000 |
 
-**What is reproduced is the scores, and on the raw bits.** A metric sees an order, and an order can
-agree while every number behind it differs — which is exactly what was happening. Against a run produced
-by the reference implementation's own searcher over its own index, for all 1,406 test queries:
+**Equal scores are necessary, and not sufficient.** A metric sees an order, and an order can agree
+while every number behind it differs — that is what the three arithmetic options above fixed. The
+converse is also true, and it is what the 0.0035 was: equal scores leave the order inside a tie to
+whoever reads the file, and the reader's rule is part of the published number. Measured against a run
+produced by the reference implementation's own searcher over its own index, for all 1,406 test queries:
 
 | | paired scores identical on the raw bits |
 |---|---:|
@@ -201,7 +220,11 @@ by the reference implementation's own searcher over its own index, for all 1,406
 | … and the reference's scale, precision and rounding | **14,168 / 14,168 — 100.00 %** |
 
 At the depth the comparison runs, one document deeper than the metric is measured at, the count is
-**15,466 / 15,466** over all 1,406 queries.
+**15,466 / 15,466** over all 1,406 queries. That comparison was recorded earlier and is not
+re-asserted as this row's parity claim: the reference's per-query run file is not published here, and
+bit-identical scores do not settle an aggregate that depends on the reader's order inside a tie. The
+reproducible claim is the aggregate under that order, **0.3970**, which both `trec_eval` and this
+harness now measure.
 
 The three differences that got there, each behind an option whose default is unchanged:
 
@@ -323,14 +346,16 @@ two settings could not have produced different rankings. The engine hands the sc
 list, the setting is observable through `Search`, and `QueryTermWeightingTests` fails if it ever stops
 being.
 
-**ArguAna is 0.0035 short, and that is the measured state.** Under the reference's analyzer,
+**ArguAna is 0.3970, and the 0.0035 was the reader's tie-break.** Under the reference's analyzer,
 parameters, gain convention, repeated-term rule, exclusion and arithmetic, this library reads
-**0.4005** where the reference publishes **0.3970**. A parity row used to carry 0.3970 as this
-library's own figure; it was the published number, not a measurement — the parity section is
-displayed by `--verify-reference` but never replayed, so nothing caught the difference. That row is
-withdrawn, the value is now a pinned regression (`arguana/uax29-aligned`), and the raw-score claim
-that went with it is withdrawn too. The cause is not established: the index is term for term the
-reference's, so what remains is the scorer's arithmetic, and no configuration tried here closes it.
+**0.3970** where the reference publishes **0.3970**. The 0.4005 this page used to report was the same
+ranking scored in the engine's order, with an exact score tie broken by document id ascending instead
+of the run reader's descending rule. The index is term for term the reference's and the scores are the
+same; there is no scorer-arithmetic gap left to close. The row is a pinned regression
+(`arguana/uax29-aligned`) at 0.3970, and the run-file comparison is per query: 1,406 of 1,406 values
+agree with `trec_eval` once the same tie-break is applied. The earlier note that the parity row
+carried the published figure as a measurement is still true of that row; it is not true of this pin,
+which is replayed by `--verify-reference`.
 
 The reference is also **newer than the table it is first compared against**: a current per-corpus
 regression for this exact index puts ArguAna at 0.3970, not the 0.315 of the 2021 paper.
