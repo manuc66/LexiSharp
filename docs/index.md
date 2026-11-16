@@ -96,7 +96,10 @@ twice. Every figure below is reproducible with a command on the
   plain BM25 scorer reaches nDCG@10 **0.3218** on NFCorpus and **0.6789** on SciFact, against
   **0.3218 / 0.6789** — equal to the fourth decimal, with an index that matches the reference's
   term for term. On ArguAna, at the reference's own k1=0.9/b=0.4 and under the same conventions, it
-  reaches **0.4005** against **0.3970**, 0.0035 short. Under the library's own defaults the same scorer reads
+  reaches **0.3970** against **0.3970** — equal to the fourth decimal on a run file read by
+  `trec_eval`, whose tie-break the harness now applies to a rounded run. The same ranking scored in
+  the engine's own tie-break reads 0.4005; that is a different order inside an exact tie, not a
+  different result. Under the library's own defaults the same scorer reads
   0.308 / 0.662 / 0.320; that difference is the configuration, not the ranking. The corpora are md5-verified on download, the harness ships no
   licence over them, and every number here is pinned and re-checked by the `Pinned reference`
   workflow.

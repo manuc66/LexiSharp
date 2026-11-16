@@ -718,20 +718,27 @@ internal static class Evaluation
         {
             EvaluatedQuery evaluated = queries[i];
 
-            string[] retrieved = engine.Search(
-                    evaluated.Query.Text,
-                    // The rounding is a reproduction of what the reference writes down, not a scoring
-                    // choice, so it is off unless the run asks for it: on it, the metrics measure a
-                    // different ranking function.
-                    new SearchOptions(
-                        topK,
-                        ExcludedDocumentIds: evaluated.Excluded,
-                        ParseQuerySyntax: parseQuerySyntax)
-                    .WithScoreRounding(scoreRounding
-                        ? ScoreRounding.FourDecimals
-                        : ScoreRounding.None))
-                .Select(result => result.DocumentId)
-                .ToArray();
+            IReadOnlyList<SearchResult> hits = engine.Search(
+                evaluated.Query.Text,
+                // The rounding is a reproduction of what the reference writes down, not a scoring
+                // choice, so it is off unless the run asks for it: on it, the metrics measure a
+                // different ranking function.
+                new SearchOptions(
+                    topK,
+                    ExcludedDocumentIds: evaluated.Excluded,
+                    ParseQuerySyntax: parseQuerySyntax)
+                .WithScoreRounding(scoreRounding
+                    ? ScoreRounding.FourDecimals
+                    : ScoreRounding.None));
+
+            // Rounding merges scores that were distinct into a tie, and a run file is read back by a
+            // tool whose tie-break is part of the published number. Measuring the engine's order
+            // instead would score a ranking no run file contains: on ArguAna that is 0.4005 against
+            // the 0.3970 a reader computes from the same file.
+            if (scoreRounding)
+                hits = RunFileOrder(hits);
+
+            string[] retrieved = hits.Select(result => result.DocumentId).ToArray();
 
             string[] relevant = evaluated.Graded.Keys.ToArray();
 
@@ -800,6 +807,33 @@ internal static class Evaluation
                 $"Configuration '{name}' left a query unscored, so its per-query analysis is incomplete."))
                 .ToList());
     }
+
+    /// <summary>
+    /// Rewrites a page into the order a run file's reader reconstructs: score descending, then
+    /// document id descending.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is <c>trec_eval</c>'s <c>comp_sim_docno</c>, which is what turns a run file into a
+    /// ranking: the file's rank column is ignored, and the scores are sorted with
+    /// <c>strcmp(p2-&gt;docno, p1-&gt;docno)</c> on an exact tie. The order matters because
+    /// <see cref="ScoreRounding.FourDecimals"/> deliberately rounds scores onto the same
+    /// ten-thousandth, so a tie the engine had already broken becomes an exact tie in the file. The
+    /// walk-down step cannot always separate it either: at an ArguAna score of 118 the float spacing
+    /// is larger than the one-millionth it subtracts, so the scores stay bit-identical and the reader's
+    /// tie-break decides.
+    /// </para>
+    /// <para>
+    /// Only the reproduction path calls this. Without rounding, an exact tie is the engine's own and
+    /// its configured <see cref="TieBreak"/> is the ranking being measured; with rounding, the run file
+    /// is the object being measured, and the engine order is a ranking that file no longer carries.
+    /// </para>
+    /// </remarks>
+    internal static SearchResult[] RunFileOrder(IReadOnlyList<SearchResult> results) =>
+        results
+            .OrderByDescending(result => result.Score)
+            .ThenByDescending(result => result.DocumentId, StringComparer.Ordinal)
+            .ToArray();
 
     private static string RunTuned(
         ITextIndex index,

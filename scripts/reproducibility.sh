@@ -215,7 +215,13 @@ eval_corpus() {
 
 # The parity row that used to be a gap: ArguAna at the reference's own k1 and b under the reference
 # analysis, which now reproduces 0.3970. Gated, because the gap it replaced was 0.033 of nDCG and a
-# silent regression back into it would otherwise pass every other stage here. Three of the settings it
+# silent regression back into it would otherwise pass every other stage here. The metric is read in
+# the run reader's order, not the engine's: score descending, then document number descending, which
+# is what trec_eval does with the file this stage writes. That matters because the four-decimal
+# rounding deliberately creates exact ties; the engine's document-id-ascending order reads 0.4005 on
+# the same ranking. The run retrieves 1,000 deep because the reader can promote the 11th document
+# into the measured top ten when it ties the tenth score, so --top-k 10 would read 0.3974.
+# Three of the settings it
 # needs are opt-in, so they are named here rather than hidden in a preset: --analyzer uax29 selects
 # the reference segmentation, --reference-index-statistics checks the index against the reference's own
 # term count before any score is computed, and --query-term-frequency counts a repeated query term once

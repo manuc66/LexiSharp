@@ -68,7 +68,7 @@ aligned to the published figures:
 |---|---:|---:|
 | NFCorpus | 0.3218 | 0.3218 |
 | SciFact | 0.6789 | 0.6789 |
-| ArguAna | 0.4005 | 0.3970 |
+| ArguAna | 0.3970 | 0.3970 |
 
 Point estimates; the harness also reports paired-bootstrap 95 % CIs. Under the library's own
 default analysis and parameters the same scorer reads 0.308 / 0.662 / 0.320 — the difference is
@@ -113,8 +113,10 @@ linear classifier): [text analysis →](docs/text-analysis.md).
 - **net10.0**, **1.0.0**: the public API is stable within a major version. Breaking changes
   require a major release, additions are minor and fixes are patches. Pin a major version and
   read the [changelog](CHANGELOG.md).
-- ArguAna reads 0.4005 against 0.3970 published (0.0035 short; cause not established). An earlier
-  ArguAna figure was withdrawn and is not reproducible by any code path.
+- ArguAna reads 0.3970 against 0.3970 published, equal to four decimals on a run file read by
+  `trec_eval`; the 0.4005 an earlier version reported was the same ranking under the engine's own
+  tie-break inside an exact score tie. An earlier ArguAna figure was withdrawn and is not
+  reproducible by any code path.
 - Not every engine/scorer/reranker/merger combination is tested; treat unusual pairings as
   supported but unproven until tested on your data.
 - SQL backends are measured on ranking for the engines that rank on their own; sparse and fuzzy
