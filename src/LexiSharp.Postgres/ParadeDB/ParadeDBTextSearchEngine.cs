@@ -302,7 +302,9 @@ public sealed class ParadeDBTextSearchEngine : ITextSearchEngine, IDisposable, I
             results.Add(new SearchResult(document.Id, score, document));
         }
 
-        return results.Skip(options.Offset).Take(options.Limit).ToList();
+        var page = results.Skip(options.Offset).Take(options.Limit).ToList();
+        options.Trace?.RecordScoreStage("ParadeDB BM25", page);
+        return page;
     }
 
     private static bool PassesFilters(SearchOptions options, SearchDocument document)

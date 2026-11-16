@@ -987,6 +987,8 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
             .Select(x => new SearchResult(x.Key, x.Value, documents[x.Key]))
             .ToList();
 
+        options.Trace?.RecordScoreStage("pgvector", results);
+
         return new SearchOutcome(results, contributions);
     }
 

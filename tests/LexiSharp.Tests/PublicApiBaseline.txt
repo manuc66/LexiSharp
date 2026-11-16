@@ -352,6 +352,7 @@ F|LexiSharp.Core.SearchTrace|DefaultCapacity|System.Int32|static|256
 F|LexiSharp.Core.TextFields|Default|System.String|static|
 F|LexiSharp.Core.TextFields|PositionGap|System.Int32|static|2
 F|LexiSharp.Core.TraceStage|Boost|LexiSharp.Core.TraceStage|static|3
+F|LexiSharp.Core.TraceStage|Gate|LexiSharp.Core.TraceStage|static|5
 F|LexiSharp.Core.TraceStage|Merge|LexiSharp.Core.TraceStage|static|1
 F|LexiSharp.Core.TraceStage|Rerank|LexiSharp.Core.TraceStage|static|2
 F|LexiSharp.Core.TraceStage|Route|LexiSharp.Core.TraceStage|static|4
@@ -1220,6 +1221,7 @@ M|LexiSharp.Core.SearchRoute|System.String ToString()
 M|LexiSharp.Core.SearchRoute|Void Deconstruct(System.String ByRef, LexiSharp.Core.ITextSearchEngine ByRef, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.MetadataFilter] ByRef)
 M|LexiSharp.Core.SearchTrace|System.Collections.Generic.IReadOnlyDictionary`2[LexiSharp.Core.TraceStage,System.Int32] StageCounts()
 M|LexiSharp.Core.SearchTrace|Void Record(LexiSharp.Core.TraceStep ByRef)
+M|LexiSharp.Core.SearchTrace|Void RecordScoreStage(System.String, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult])
 M|LexiSharp.Core.SparseEmbeddingProviderExtensions|System.Threading.Tasks.Task`1[System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Single]] GetSparseEmbeddingAsync(LexiSharp.Core.ISparseEmbeddingProvider, System.String, System.Threading.CancellationToken)
 M|LexiSharp.Core.StageRetrievalMetrics|Boolean Equals(LexiSharp.Core.StageRetrievalMetrics)
 M|LexiSharp.Core.StageRetrievalMetrics|Boolean Equals(System.Object)

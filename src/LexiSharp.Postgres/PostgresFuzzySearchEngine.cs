@@ -300,7 +300,9 @@ public sealed class PostgresFuzzySearchEngine : ITextSearchEngine, IDisposable, 
             results.Add(new SearchResult(document.Id, score, document));
         }
 
-        return results.Skip(options.Offset).Take(options.Limit).ToList();
+        var page = results.Skip(options.Offset).Take(options.Limit).ToList();
+        options.Trace?.RecordScoreStage("pg_trgm", page);
+        return page;
     }
 
     /// <summary>Releases the underlying Npgsql data source.</summary>
