@@ -364,7 +364,9 @@ a document holding none of the gated terms cannot be returned by any score.
 Two fallbacks keep it honest. When even the rarest term exceeds the budget, the thread falls back to
 the whole match set, so a corpus of common terms keeps the previous behaviour. And a quoted phrase
 bypasses the gate entirely: the phrase is the query's contract, and a disjunction of terms must not
-stand in for it. `CandidatePool` still bounds how many of the gate's candidates are read (default
+stand in for it. The choice is recorded as a `TraceStage.Gate` step — the terms, the budget and the
+candidate count — when `SearchOptions.Trace` is set; see
+[observability](observability.md#the-candidate-gate-and-the-sql-backends). `CandidatePool` still bounds how many of the gate's candidates are read (default
 1,000); with the gate on it rarely binds.
 
 **What it buys, in quality.** nDCG@10 over the same corpora, queries and qrels:
