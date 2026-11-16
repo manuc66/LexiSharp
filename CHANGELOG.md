@@ -43,6 +43,15 @@
   against 25.7 / 50.0 and 265.0 / 284.4 ms with the gate off. `--keep` leaves the table for
   `EXPLAIN`.
 
+- **`SearchTrace` on the SQL backends, and a `TraceStage.Gate`.** The PostgreSQL engines now record
+  the `Score` stage for the page they return — `Postgres lexical`, `Postgres BM25`, `pgvector`,
+  `sparsevec`, `pg_trgm`, `ParadeDB BM25` — where they previously ignored `SearchOptions.Trace`
+  entirely. The stock-PostgreSQL BM25 engine also records one query-level `Gate` step naming the
+  rule that chose its candidate set (the rare terms and their budget, `phrase gate`, or the whole
+  query) and the candidate count, so a result missing because no gate term matched is
+  distinguishable from one that scored badly. `SearchTrace.RecordScoreStage` is public for the same
+  reason: a custom engine outside the core assembly needs to report the stage under the same name.
+
 ### Changed
 
 - The shared documents table's upsert and row reader are now one implementation

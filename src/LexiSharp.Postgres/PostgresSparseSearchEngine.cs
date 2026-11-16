@@ -365,7 +365,9 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
             }
         }
 
-        return results.Skip(options.Offset).Take(options.Limit).ToList();
+        var page = results.Skip(options.Offset).Take(options.Limit).ToList();
+        options.Trace?.RecordScoreStage("sparsevec", page);
+        return page;
     }
 
     /// <summary>Releases the underlying Npgsql data source.</summary>

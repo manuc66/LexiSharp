@@ -313,4 +313,19 @@ public class PostgresFuzzySearchEngineTests
         });
     }
 
+    [SkippableFact]
+    public void Search_RecordsTheScoreStage()
+    {
+        Run(engine =>
+        {
+            engine.Add(Doc("a", "classic rock"));
+
+            var trace = new SearchTrace();
+            var results = engine.Search("classic", new SearchOptions(Limit: 10, Trace: trace));
+
+            Assert.NotEmpty(results);
+            Assert.Equal(results.Count, trace.Steps.Count(step => step.Stage == TraceStage.Score));
+            Assert.All(trace.Steps, step => Assert.Equal("pg_trgm", step.Detail));
+        });
+    }
 }

@@ -346,4 +346,23 @@ public class PostgresSparseSearchEngineTests
                 Filters: new[] { new MetadataFilter("kind", MetadataFilterOperator.Equal, "nope") })));
         });
     }
+
+    [SkippableFact]
+    public void Search_RecordsTheScoreStage()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+        Skip.If(!VectorExtensionAvailable(), "vector extension unavailable.");
+
+        Run(engine =>
+        {
+            engine.Add(Doc("red", "red apple"));
+
+            var trace = new SearchTrace();
+            var results = engine.Search("red apple", new SearchOptions(Limit: 10, Trace: trace));
+
+            Assert.NotEmpty(results);
+            Assert.Equal(results.Count, trace.Steps.Count(step => step.Stage == TraceStage.Score));
+            Assert.All(trace.Steps, step => Assert.Equal("sparsevec", step.Detail));
+        });
+    }
 }

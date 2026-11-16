@@ -547,4 +547,45 @@ public class PostgresBm25SearchEngineTests
         Assert.Throws<ArgumentException>(() => new PostgresBm25SearchEngine(
             connection, new PostgresBm25Options { CandidatePool = -1 }, autoCreateSchema: false));
     }
+
+    [SkippableFact]
+    public void Search_RecordsTheGateAndTheScoreStage()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        Run("trace", engine =>
+        {
+            engine.Index(Corpus);
+
+            var trace = new SearchTrace();
+            var results = engine.Search("quick brown", new SearchOptions(Limit: 10, Trace: trace));
+
+            TraceStep gate = trace.Steps.Single(step => step.Stage == TraceStage.Gate);
+            Assert.Equal(string.Empty, gate.DocumentId);
+            Assert.True(double.IsNaN(gate.Before));
+            Assert.Contains("rare-term gate", gate.Detail!, StringComparison.Ordinal);
+            Assert.Contains("candidates", gate.Detail!, StringComparison.Ordinal);
+
+            var scored = trace.Steps.Where(step => step.Stage == TraceStage.Score).ToList();
+            Assert.Equal(results.Count, scored.Count);
+            Assert.All(scored, step => Assert.Equal("Postgres BM25", step.Detail));
+        });
+    }
+
+    [SkippableFact]
+    public void Search_RecordsWhyTheGateWasNotApplied()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        Run("tracenotgate", engine =>
+        {
+            engine.Index(Corpus);
+
+            var trace = new SearchTrace();
+            engine.Search("quick brown", new SearchOptions(Limit: 10, Trace: trace));
+
+            TraceStep gate = trace.Steps.Single(step => step.Stage == TraceStage.Gate);
+            Assert.Contains("gate disabled", gate.Detail!, StringComparison.Ordinal);
+        }, options => options with { RareTermGate = false });
+    }
 }

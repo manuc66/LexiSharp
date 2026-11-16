@@ -27,8 +27,8 @@ allocates and records nothing.
 
 `Explain` breaks down one scorer's arithmetic. `SearchTrace` goes further: it records **every stage
 a document passed through**, so a final rank can be walked back stage by stage — which engine
-scored it, what each merger contributed, what the reranker changed, what the boost did, and which
-route ran.
+scored it, what each merger contributed, what the reranker changed, what the boost did, which
+route ran, and — on the PostgreSQL backends — which candidate set the query was scored over.
 
 ```csharp
 using LexiSharp.Core;
@@ -71,6 +71,28 @@ Measured with `HybridTraceBenchmarks`, two engines over 2 000 documents: the unt
 allocates **exactly the same bytes** with and without this row (60.1 KB per search), because
 nothing below the `trace is null` guard executes; the traced path allocates **1.4 KB more**
 (71.0 → 72.4 KB), one step and one string per search against the ten already written per document.
+
+### The candidate gate, and the SQL backends
+
+The PostgreSQL engines record the same `Score` stage as the in-memory ones, under a name that says
+where the score came from — `Postgres lexical`, `Postgres BM25`, `pgvector`, `sparsevec`, `pg_trgm`
+or `ParadeDB BM25` — so a hybrid pipeline that mixes a SQL channel with an in-memory one explains
+both halves the same way. The page is what is recorded: the stage is bounded by `Limit`, never by
+the corpus.
+
+The stock-PostgreSQL BM25 engine adds one query-level `Gate` row, with an empty document id and
+`NaN` scores, before any document row:
+
+```
+// gate             NaN -> NaN  rare-term gate [brown, quick] under a 1,000-row budget; 120 candidates
+```
+
+It names the rule that chose the candidate set — the terms the rare-term gate matched on, or
+`all terms (gate disabled)`, `phrase gate`, `all terms (no term within a 1,000-row budget)` — and
+how many candidates it produced. That is the one decision on this backend a reader cannot
+reconstruct from the page: the score is `Bm25Scorer`'s, but *which* documents were eligible to be
+scored is the gate's, and a result that is missing from the page because no rare term matched it is
+otherwise indistinguishable from one that scored badly.
 
 **Cost — what is measured and what is not.** Measured with BenchmarkDotNet's `MemoryDiagnoser` and
 stable across repeated runs: a saturated trace allocates **0 additional bytes** per search
