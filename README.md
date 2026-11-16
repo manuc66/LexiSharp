@@ -99,7 +99,7 @@ service.
 | Package | What it adds |
 |---|---|
 | `LexiSharp` | Core: index, scorers, fusion, reranking, metrics, traces — no dependencies |
-| `LexiSharp.Postgres` | tsvector · pgvector · sparsevec · pg_trgm · pg_search (Tantivy) BM25 |
+| `LexiSharp.Postgres` | tsvector · BM25 without an extension · pgvector · sparsevec · pg_trgm · pg_search (Tantivy) BM25 |
 | `LexiSharp.Onnx` | Local ONNX embeddings and cross-encoder reranking (no model shipped) |
 | `LexiSharp.MessagePack` | Binary persistence for the in-memory index |
 | `LexiSharp.AspNetCore` | `GET /search` minimal-API endpoint over `LexiSharpIndex<T>` |
@@ -119,6 +119,13 @@ linear classifier): [text analysis →](docs/text-analysis.md).
   reproducible by any code path.
 - Not every engine/scorer/reranker/merger combination is tested; treat unusual pairings as
   supported but unproven until tested on your data.
+- The stock-PostgreSQL BM25 re-ranks a bounded candidate pool (1,000 by default): the pool bounds
+  recall, and on SciFact it costs 0.10 nDCG@10 against the exact ranking. `CandidatePool = 0`
+  removes the bound. The rare-term gate is on by default and is what makes the path usable: it
+  reads ~59 ms p50 on a 5,000-document corpus with 13-term queries, against ~265 ms with the gate
+  off. It is a recall bound — a document holding none of the query's rare terms cannot be returned
+  — measured on two scientific corpora. The ParadeDB engine needs `pg_search`, which no major
+  managed service lets you install; the `tsvector`, BM25 and `pg_trgm` engines do not.
 - SQL backends are measured on ranking for the engines that rank on their own; sparse and fuzzy
   engines are covered by integration tests only.
 

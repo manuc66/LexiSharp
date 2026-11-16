@@ -118,6 +118,21 @@ public static class Program
         // with the file the run actually read.
         string? sparseVectorsDir = null;
 
+        // The lexical and BM25 rows' tsquery rule: "all" (the historical AND) or "any" (a
+        // disjunction of the query's lexemes). Parsed with the lane below, so a typo fails on a
+        // message rather than an unhandled exception.
+        string? backendMatch = null;
+
+        // The BM25 row's re-rank pool. A flag because it is the one knob that trades recall for
+        // cost, and a measurement of what the pool costs is what a reader needs to set it.
+        string? backendPool = null;
+
+        // The BM25 row's candidate gate: rare terms or the whole query, and the document-frequency
+        // ceiling a term must stay under. Two flags because the second only means anything with
+        // the first.
+        string? backendGate = null;
+        string? backendGateBudget = null;
+
         // The lexical row's tsv weighting, as "title=A[,summary=B]" — parsed after the pair check
         // below, so a malformed spec fails on a message rather than an unhandled exception.
         string? backendFieldWeights = null;
@@ -341,6 +356,18 @@ public static class Program
                 case "--backend-bm25" when i + 1 < args.Length:
                     backendBm25 = ParseBm25Parameters(args[++i]);
                     break;
+                case "--backend-match" when i + 1 < args.Length:
+                    backendMatch = args[++i];
+                    break;
+                case "--backend-pool" when i + 1 < args.Length:
+                    backendPool = args[++i];
+                    break;
+                case "--backend-gate" when i + 1 < args.Length:
+                    backendGate = args[++i];
+                    break;
+                case "--backend-gate-budget" when i + 1 < args.Length:
+                    backendGateBudget = args[++i];
+                    break;
                 case "--backend-ef" when i + 1 < args.Length:
                     backendEfValues.AddRange(ParsePositiveInts(args[++i], "--backend-ef"));
                     break;
@@ -550,6 +577,14 @@ public static class Program
             return 2;
         }
 
+        if (backendMatch is not null && backendKind is null)
+        {
+            Console.Error.WriteLine(
+                "--backend-match selects the tsquery rule the lexical and BM25 engines match with, so it " +
+                "needs --backend lexical or --backend bm25 with --backend-connection.");
+            return 2;
+        }
+
         BackendLane? backendLane = null;
 
         if (backendKind is not null && backendConnection is not null)
@@ -564,7 +599,11 @@ public static class Program
                     backendEfValues,
                     backendFieldWeights is null ? null : ParseFieldWeights(backendFieldWeights),
                     backendThresholds,
-                    sparseVectorsDir);
+                    sparseVectorsDir,
+                    backendMatch is null ? null : ParseMatchMode(backendMatch),
+                    backendPool is null ? null : ParseNonNegative(backendPool, "--backend-pool"),
+                    backendGate is null ? null : ParseGate(backendGate),
+                    backendGateBudget is null ? null : ParsePositive(backendGateBudget, "--backend-gate-budget"));
             }
             catch (ArgumentException error)
             {
@@ -1830,13 +1869,35 @@ public static class Program
     }
 
     /// <summary>
+    /// <c>--backend-match</c>: the tsquery rule the lexical and BM25 rows match with. Spelled
+    /// <c>all</c> and <c>any</c> because those are the two English words <c>websearch_to_tsquery</c>
+    /// and a disjunction of lexemes are — <c>ands</c>/<c>ors</c> would name an operator, not a rule.
+    /// </summary>
+    /// <summary><c>--backend-gate</c>: the BM25 candidate gate, spelled by what it selects.</summary>
+    private static bool ParseGate(string value) =>
+        value.ToLowerInvariant() switch
+        {
+            "rare" => true,
+            "off" or "none" => false,
+            _ => throw new ArgumentException($"--backend-gate expects 'rare' or 'off', got '{value}'."),
+        };
+
+    private static PostgresMatchMode ParseMatchMode(string value) =>
+        value.ToLowerInvariant() switch
+        {
+            "all" => PostgresMatchMode.AllTerms,
+            "any" => PostgresMatchMode.AnyTerm,
+            _ => throw new ArgumentException(
+                $"--backend-match expects 'all' or 'any', got '{value}'."),
+        };
+
+    /// <summary>
     /// Parses <c>title=A,summary=B</c> into the class map the lexical backend indexes with. The
     /// class names are PostgreSQL's own four; a value that is not one is refused by name rather
     /// than quantized to the nearest, because a silent approximation here would be a number
     /// measured under a weighting nobody asked for.
     /// </summary>
-    private static IReadOnlyDictionary<string, PostgresFieldWeight> ParseFieldWeights(string value)
-    {
+    private static IReadOnlyDictionary<string, PostgresFieldWeight> ParseFieldWeights(string value)    {
         var weights = new Dictionary<string, PostgresFieldWeight>(StringComparer.Ordinal);
 
         foreach (string pair in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
@@ -1937,9 +1998,9 @@ public static class Program
                      [--rerank-cache <dir>]
                      [--diagnose-doc <id>] [--diagnose-query <id>] [--diagnose-depth <n>]
                      [--analysis-diff <analyzer>]
-                     [--backend <lexical|paradedb|vector|fuzzy|sparse> --backend-connection <s>]
-                     [--backend-bm25 <k1,b>] [--backend-ef <list>] [--backend-threshold <list>]
-                     [--backend-config <name>]
+                     [--backend <lexical|bm25|paradedb|vector|fuzzy|sparse> --backend-connection <s>]
+                     [--backend-bm25 <k1,b>] [--backend-match <all|any>] [--backend-ef <list>]
+                     [--backend-threshold <list>] [--backend-config <name>]
                      [--sparse <vectors-dir>]
 
               --data <dir>      Base directory for datasets (default: <project>/data).
@@ -2127,7 +2188,9 @@ public static class Program
                                 The target database needs the vector extension.
               --backend <name>  Add a retrieval-quality row measured through a SQL backend on the same
                                 corpus, queries and qrels: 'lexical' (tsvector + ts_rank_cd over stock
-                                PostgreSQL), 'paradedb' (pg_search + pdb.score, Okapi BM25 computed
+                                PostgreSQL), 'bm25' (BM25 over the same tsvector term frequencies,
+                                computed by this library, over stock PostgreSQL — no extension beyond
+                                unaccent), 'paradedb' (pg_search + pdb.score, Okapi BM25 computed
                                 by Tantivy; needs the paradedb image), 'vector' (pgvector HNSW over
                                 the cached dense embeddings, needs --dense), 'fuzzy' (pg_trgm
                                 similarity, one row per similarity threshold) or 'sparse' (pgvector
@@ -2140,19 +2203,45 @@ public static class Program
                                 lexisharp_eval_<dataset> and drops it afterwards, so it never reads or
                                 empties a table an application uses.
               --backend-config <name>
-                                PostgreSQL text search configuration for the lexical backend (default:
-                                simple). This is the row's analysis: 'english' applies PostgreSQL's own
-                                Snowball stemmer and stop list, which is close to — and not identical
-                                with — the harness's --analyzer english. Not read by ParadeDB, the
-                                vector, sparse or fuzzy engines.
+                                PostgreSQL text search configuration for the lexical and bm25 backends
+                                (default: simple). This is the row's analysis: 'english' applies
+                                PostgreSQL's own Snowball stemmer and stop list, which is close to —
+                                and not identical with — the harness's --analyzer english. Not read by
+                                ParadeDB, the vector, sparse or fuzzy engines.
               --backend-bm25 <k1,b>
                                 k1 and b the ParadeDB backend is indexed with, e.g. 0.9,0.4 — the
                                 parameters the published baselines were produced at. pg_search takes
                                 them per field at index creation, so the row is built at these values
                                 rather than re-weighted afterwards. Omitted, Tantivy's defaults
-                                (k1=1.2, b=0.75) apply. Refused with --backend lexical, whose
-                                ts_rank_cd has no such parameter, and with the vector, sparse and
-                                fuzzy backends, which have no k1/b.
+                                (k1=1.2, b=0.75) apply. For --backend bm25 the same flag sets the
+                                engine's parameters, whose own defaults are 1.5,0.75. Refused with
+                                --backend lexical, whose ts_rank_cd has no such parameter, and with
+                                the vector, sparse and fuzzy backends, which have no k1/b.
+              --backend-gate <rare|off>
+                                How the bm25 backend generates candidates: 'rare' (default) gates on
+                                the query's rarest terms until --backend-gate-budget rows are
+                                read, then scores those with the whole query; 'off' scores every
+                                match of the query. A rare-term gate is a recall bound:
+                                a document holding none of the rare terms is not returned. Refused
+                                with the other backends, which have no such gate.
+              --backend-gate-budget <n>
+                                How many candidate rows --backend-gate rare may read, by ascending
+                                term document frequency (default 1000). If even the rarest term
+                                exceeds it, the row falls back to the whole match set.
+              --backend-pool <n>
+                                How many matches the bm25 backend re-ranks, default 1000. The database
+                                selects them by ts_rank_cd and the engine scores them with BM25, so the
+                                pool bounds recall: a document outside it cannot be returned at any
+                                page size. It is widened to the requested page and capped at 100,000.
+                                0 removes the bound up to that ceiling — the exact ranking, at a cost
+                                that grows with the match set. Refused with the other backends.
+              --backend-match <all|any>
+                                How the lexical and bm25 backends turn a multi-term query into a
+                                tsquery: 'all' (default) requires every term, websearch_to_tsquery's
+                                rule; 'any' ORs the query's lexemes, so a document holding one of them
+                                is a candidate. The rule decides most of ts_rank_cd's distance from
+                                BM25 on long queries. Refused with the other backends, which do not
+                                match by tsquery.
               --backend-ef <list>
                                 pgvector hnsw.ef_search values the vector backend is measured at,
                                 comma-separated (e.g. 10,40,160). One row per value, over one index:

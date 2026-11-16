@@ -185,6 +185,7 @@ same qrels as the table above, through the same metric code at the same depth:
 | `--backend` | engine | ranking | needs |
 |---|---|---|---|
 | `lexical` | `PostgresTextSearchEngine` | `ts_rank_cd` | stock PostgreSQL (the lane installs `unaccent`) |
+| `bm25` | `PostgresBm25SearchEngine` | `Bm25Scorer` over the `tsvector` term frequencies | stock PostgreSQL (the lane installs `unaccent`) |
 | `paradedb` | `ParadeDBTextSearchEngine` | `pdb.score`, Tantivy's BM25 | `paradedb/paradedb:pg16` (`pg_search`) |
 | `vector` | `PostgresVectorSearchEngine` | cosine over pgvector HNSW | `--dense` (it ranks the cached e5 vectors) |
 | `fuzzy` | `PostgresFuzzySearchEngine` | `similarity(content, query)` over `pg_trgm` | stock PostgreSQL (the lane installs `pg_trgm`) |
@@ -213,6 +214,25 @@ Out of the box, each engine at its own defaults:
 | SciFact | 0.662 | 0.6619 | 0.0188 | not measured |
 | ArguAna | 0.320 | not measured | not measured | not measured |
 
+`--backend-match all|any` picks how a multi-term query becomes a `tsquery`: `all` (the lexical row's
+historical behaviour) requires every term, `any` ORs the query's lexemes. `--backend-gate rare|off`
+turns the BM25 row's candidate gate on or off, and `--backend-gate-budget <n>` bounds how many rows
+it may read (default 1,000). `--backend-pool <n>` bounds how many of the gate's candidates are
+re-ranked (default 1,000; `0` = the engine's ceiling). The knobs, and the rows they produce (harness
+defaults, exponential gains):
+
+| corpus | `ts_rank_cd` all | `ts_rank_cd` any | BM25 gate 1,000 | BM25 no gate | BM25 pool 0 | in-memory BM25 | ParadeDB |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| NFCorpus | 0.1864 | 0.1881 | **0.3072** | 0.2999 | 0.3072 | 0.308 | 0.3084 |
+| SciFact | 0.0188 | 0.0988 | **0.6665** | 0.5636 | 0.6665 | 0.662 | 0.6619 |
+
+The matching rule is the SciFact story (5.3×) and almost nothing on NFCorpus, whose queries average
+3.4 terms; the ranker is the rest. The gate is what makes the BM25 row recover the exact ranking
+(the `pool 0` column) while reading ~1,000 candidate rows instead of the whole match set; the
+no-gate column is the pool-only path, where `ts_rank_cd` coverage chooses the candidates and SciFact
+loses 0.10. `--backend-gate off --backend-pool 0` reproduces untruncated BM25 to within the analysis
+(PostgreSQL's `simple` config, not the harness tokenizer).
+
 What each row is, and is not:
 
 - **ParadeDB is a BM25 and reads where this library's BM25 reads.** At matched parameters the two
@@ -221,11 +241,17 @@ What each row is, and is not:
   because the `pg_search` index covers `content` alone, and the matcher is a disjunction (`|||`)
   rather than this library's scored term loop. Not a reproduction, and not bit-identical.
 - **`ts_rank_cd` is not BM25** — it is coverage-based and takes no k1/b, so `--backend-bm25` is
-  refused with it rather than silently ignored. Most of its distance from the BM25 column is the
-  *matching* rule rather than the ranking: `websearch_to_tsquery` ANDs every term, so its idea of a
-  match is a document containing all of them. NFCorpus's test queries average 3.4 words and read
-  0.1864; SciFact's average 13.1 and read 0.0188. PostgreSQL's own English analysis
-  (`--backend-config english`) moves NFCorpus 0.1864 → 0.2043, not closer.
+  refused with it rather than silently ignored. Its distance has two causes, separated by the table
+  above: the AND *matching* rule buries long queries (SciFact 0.0188 → 0.0988 under `any`), and the
+  *ranking* has no idf (NFCorpus barely moves under `any`, 0.1864 → 0.1881, because its queries
+  average 3.4 terms). PostgreSQL's own English analysis (`--backend-config english`) moves NFCorpus
+  0.1864 → 0.2043, not closer.
+- **`--backend bm25` is the same corpus with a real BM25 and no extension.** At the default gate it
+  reads 0.3072 / 0.6665 against 0.308 / 0.662 in memory and 0.3084 / 0.6619 for ParadeDB; with the
+  gate off, 0.2999 / 0.5636, because the candidate set is then chosen by coverage and truncated.
+  Both columns are recall, not scoring: the score is the same `Bm25Scorer` in every one of them.
+  The gate is a bound — a document holding none of the query's gated terms cannot be returned — and
+  `--backend-gate off` is how to measure that on another corpus.
 - **ArguAna has no row.** Both text engines refuse query text their matcher would read as a prefix
   operator, and 2 of the 1,406 test queries carry a `*` attached to a term. The lane prints that
   refusal and its count instead of a metric over the other 1,404, which would be a different query

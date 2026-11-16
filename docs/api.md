@@ -503,11 +503,14 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
+| `PostgresBm25Options` | record | — | Naming, analysis and ranking options for the stock-PostgreSQL BM25 engine. |
+| `PostgresBm25SearchEngine` | class | `IDisposable`, `IQuerySyntaxSupport`, `ITextSearchEngine` | Okapi BM25 on stock PostgreSQL: the tsvector column and GIN index do the matching, and Bm25Scorer does the ranking over the term frequencies the vector already… |
 | `PostgresFieldWeight` | enum | — | The four weight classes a tsvector lexeme can carry, which setweight writes and ts_rank_cd reads back through its weights array. |
 | `PostgresFuzzyOptions` | record | — | Naming and behavior options for the PostgresFuzzySearchEngine. |
 | `PostgresFuzzySearchEngine` | class | `IDisposable`, `IQuerySyntaxSupport`, `ITextSearchEngine` | PostgreSQL-backed ITextSearchEngine for approximate, typo-tolerant matching on top of the pg_trgm extension (trigram similarity) and fuzzystrmatch (levenshtein… |
 | `PostgresIndexOptions` | record | — | Naming and behavior options for the PostgreSQL-backed index. |
-| `PostgresSchema` | class | — | Shared DDL for the documents table. Used by the lexical (tsvector), vector (pgvector ANN) and ParadeDB (pg_search BM25) engines so they can all point at the… |
+| `PostgresMatchMode` | enum | — | How the lexical engine turns a multi-term query into a match. |
+| `PostgresSchema` | class | — | Shared DDL for the documents table. Used by the lexical (tsvector), BM25 (PostgresBm25SearchEngine), vector (pgvector ANN) and ParadeDB (pg_search BM25) engines… |
 | `PostgresSparseOptions` | record | — | Naming, vocabulary and behavior options for the pgvector sparsevec index. The table layout is shared with the lexical engine so both engines can serve a single… |
 | `PostgresSparseSearchEngine` | class | `IDisposable`, `IQuerySyntaxSupport`, `ITextSearchEngine` | PostgreSQL-backed learned-sparse search engine (pgvector sparsevec + HNSW): stores each document's learned sparse vector (SPLADE-style term weights) in the… |
 | `PostgresTextSearchEngine` | class | `IDisposable`, `IQuerySyntaxSupport`, `ITextSearchEngine` | PostgreSQL-backed ITextSearchEngine: lexical full-text search over a tsvector column with a GIN index, queried with websearch_to_tsquery and ranked with… |

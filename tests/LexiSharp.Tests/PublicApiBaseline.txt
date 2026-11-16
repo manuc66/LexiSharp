@@ -216,6 +216,8 @@ C|LexiSharp.Onnx.SentencePieceOnnxTokenizerOptions|Void .ctor()
 C|LexiSharp.Onnx.SentencePieceOnnxTokenizer|Void .ctor(System.String, LexiSharp.Onnx.SentencePieceOnnxTokenizerOptions)
 C|LexiSharp.ParadeDB.ParadeDBOptions|Void .ctor()
 C|LexiSharp.ParadeDB.ParadeDBTextSearchEngine|Void .ctor(System.String, LexiSharp.ParadeDB.ParadeDBOptions, System.Nullable`1[System.Boolean])
+C|LexiSharp.Postgres.PostgresBm25Options|Void .ctor()
+C|LexiSharp.Postgres.PostgresBm25SearchEngine|Void .ctor(System.String, LexiSharp.Postgres.PostgresBm25Options, System.Nullable`1[System.Boolean])
 C|LexiSharp.Postgres.PostgresFuzzyOptions|Void .ctor()
 C|LexiSharp.Postgres.PostgresFuzzySearchEngine|Void .ctor(System.String, LexiSharp.Postgres.PostgresFuzzyOptions, System.Nullable`1[System.Boolean])
 C|LexiSharp.Postgres.PostgresIndexOptions|Void .ctor()
@@ -397,10 +399,17 @@ F|LexiSharp.Onnx.OnnxPooling|Mean|LexiSharp.Onnx.OnnxPooling|static|1
 F|LexiSharp.Onnx.OnnxScoreTransform|None|LexiSharp.Onnx.OnnxScoreTransform|static|0
 F|LexiSharp.Onnx.OnnxScoreTransform|Sigmoid|LexiSharp.Onnx.OnnxScoreTransform|static|1
 F|LexiSharp.Onnx.OnnxScoreTransform|Softmax|LexiSharp.Onnx.OnnxScoreTransform|static|2
+F|LexiSharp.Postgres.PostgresBm25Options|DefaultB|System.Double|static|0.75
+F|LexiSharp.Postgres.PostgresBm25Options|DefaultCandidatePool|System.Int32|static|1000
+F|LexiSharp.Postgres.PostgresBm25Options|DefaultK1|System.Double|static|1.5
+F|LexiSharp.Postgres.PostgresBm25Options|DefaultRareTermGateBudget|System.Int32|static|1000
+F|LexiSharp.Postgres.PostgresBm25Options|MaximumCandidatePool|System.Int32|static|100000
 F|LexiSharp.Postgres.PostgresFieldWeight|A|LexiSharp.Postgres.PostgresFieldWeight|static|0
 F|LexiSharp.Postgres.PostgresFieldWeight|B|LexiSharp.Postgres.PostgresFieldWeight|static|1
 F|LexiSharp.Postgres.PostgresFieldWeight|C|LexiSharp.Postgres.PostgresFieldWeight|static|2
 F|LexiSharp.Postgres.PostgresFieldWeight|D|LexiSharp.Postgres.PostgresFieldWeight|static|3
+F|LexiSharp.Postgres.PostgresMatchMode|AllTerms|LexiSharp.Postgres.PostgresMatchMode|static|0
+F|LexiSharp.Postgres.PostgresMatchMode|AnyTerm|LexiSharp.Postgres.PostgresMatchMode|static|1
 F|LexiSharp.Postgres.SparseDistance|Cosine|LexiSharp.Postgres.SparseDistance|static|1
 F|LexiSharp.Postgres.SparseDistance|InnerProduct|LexiSharp.Postgres.SparseDistance|static|0
 F|LexiSharp.Postgres.SparseDistance|L1|LexiSharp.Postgres.SparseDistance|static|3
@@ -1625,6 +1634,20 @@ M|LexiSharp.ParadeDB.ParadeDBTextSearchEngine|Void Index(System.Collections.Gene
 M|LexiSharp.PathSafety|Boolean IsSafe(System.String)
 M|LexiSharp.PathSafety|Void ThrowIfUnsafe(System.String, System.String)
 M|LexiSharp.Postgres.IColumnAwareEmbeddingProvider|System.Threading.Tasks.Task`1[System.ReadOnlyMemory`1[System.Single]] GetTextEmbeddingAsync(System.String, LexiSharp.Core.EmbeddingUse, System.String, System.Threading.CancellationToken)
+M|LexiSharp.Postgres.PostgresBm25Options|Boolean Equals(LexiSharp.Postgres.PostgresBm25Options)
+M|LexiSharp.Postgres.PostgresBm25Options|Boolean Equals(System.Object)
+M|LexiSharp.Postgres.PostgresBm25Options|Int32 GetHashCode()
+M|LexiSharp.Postgres.PostgresBm25Options|System.String ToString()
+M|LexiSharp.Postgres.PostgresBm25SearchEngine|Boolean Remove(System.String)
+M|LexiSharp.Postgres.PostgresBm25SearchEngine|Int32 RefreshStatistics()
+M|LexiSharp.Postgres.PostgresBm25SearchEngine|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult] Search(System.String, LexiSharp.Core.SearchOptions, System.Threading.CancellationToken)
+M|LexiSharp.Postgres.PostgresBm25SearchEngine|System.Threading.Tasks.Task EnsureSchemaAsync(System.Threading.CancellationToken)
+M|LexiSharp.Postgres.PostgresBm25SearchEngine|Void Add(LexiSharp.Core.SearchDocument)
+M|LexiSharp.Postgres.PostgresBm25SearchEngine|Void Clear()
+M|LexiSharp.Postgres.PostgresBm25SearchEngine|Void Dispose()
+M|LexiSharp.Postgres.PostgresBm25SearchEngine|Void DropSchema()
+M|LexiSharp.Postgres.PostgresBm25SearchEngine|Void EnsureSchema()
+M|LexiSharp.Postgres.PostgresBm25SearchEngine|Void Index(System.Collections.Generic.IEnumerable`1[LexiSharp.Core.SearchDocument])
 M|LexiSharp.Postgres.PostgresFuzzyOptions|Boolean Equals(LexiSharp.Postgres.PostgresFuzzyOptions)
 M|LexiSharp.Postgres.PostgresFuzzyOptions|Boolean Equals(System.Object)
 M|LexiSharp.Postgres.PostgresFuzzyOptions|Int32 GetHashCode()
@@ -2652,6 +2675,20 @@ P|LexiSharp.ParadeDB.ParadeDBOptions|QualifiedTableName|System.String|get
 P|LexiSharp.ParadeDB.ParadeDBOptions|Schema|System.String|getset
 P|LexiSharp.ParadeDB.ParadeDBOptions|Table|System.String|getset
 P|LexiSharp.ParadeDB.ParadeDBTextSearchEngine|SupportedQueryFeatures|LexiSharp.Core.QueryFeatures|get
+P|LexiSharp.Postgres.PostgresBm25Options|AutoCreateSchema|System.Boolean|getset
+P|LexiSharp.Postgres.PostgresBm25Options|B|System.Double|getset
+P|LexiSharp.Postgres.PostgresBm25Options|CandidatePool|System.Int32|getset
+P|LexiSharp.Postgres.PostgresBm25Options|DefaultFieldWeight|LexiSharp.Postgres.PostgresFieldWeight|getset
+P|LexiSharp.Postgres.PostgresBm25Options|FieldWeights|System.Collections.Generic.IReadOnlyDictionary<System.String,LexiSharp.Postgres.PostgresFieldWeight>|getset
+P|LexiSharp.Postgres.PostgresBm25Options|K1|System.Double|getset
+P|LexiSharp.Postgres.PostgresBm25Options|MatchMode|LexiSharp.Postgres.PostgresMatchMode|getset
+P|LexiSharp.Postgres.PostgresBm25Options|QualifiedTableName|System.String|get
+P|LexiSharp.Postgres.PostgresBm25Options|RareTermGateBudget|System.Int32|getset
+P|LexiSharp.Postgres.PostgresBm25Options|RareTermGate|System.Boolean|getset
+P|LexiSharp.Postgres.PostgresBm25Options|Schema|System.String|getset
+P|LexiSharp.Postgres.PostgresBm25Options|Table|System.String|getset
+P|LexiSharp.Postgres.PostgresBm25Options|TextSearchConfig|System.String|getset
+P|LexiSharp.Postgres.PostgresBm25SearchEngine|SupportedQueryFeatures|LexiSharp.Core.QueryFeatures|get
 P|LexiSharp.Postgres.PostgresFuzzyOptions|AutoCreateSchema|System.Boolean|getset
 P|LexiSharp.Postgres.PostgresFuzzyOptions|ContentField|System.String|getset
 P|LexiSharp.Postgres.PostgresFuzzyOptions|IncludePhonetic|System.Boolean|getset
@@ -2667,6 +2704,7 @@ P|LexiSharp.Postgres.PostgresFuzzySearchEngine|SupportedQueryFeatures|LexiSharp.
 P|LexiSharp.Postgres.PostgresIndexOptions|AutoCreateSchema|System.Boolean|getset
 P|LexiSharp.Postgres.PostgresIndexOptions|DefaultFieldWeight|LexiSharp.Postgres.PostgresFieldWeight|getset
 P|LexiSharp.Postgres.PostgresIndexOptions|FieldWeights|System.Collections.Generic.IReadOnlyDictionary<System.String,LexiSharp.Postgres.PostgresFieldWeight>|getset
+P|LexiSharp.Postgres.PostgresIndexOptions|MatchMode|LexiSharp.Postgres.PostgresMatchMode|getset
 P|LexiSharp.Postgres.PostgresIndexOptions|QualifiedTableName|System.String|get
 P|LexiSharp.Postgres.PostgresIndexOptions|Schema|System.String|getset
 P|LexiSharp.Postgres.PostgresIndexOptions|Table|System.String|getset
@@ -3137,10 +3175,13 @@ T|LexiSharp.ParadeDB.ParadeDBOptions|class||System.IEquatable<LexiSharp.ParadeDB
 T|LexiSharp.ParadeDB.ParadeDBTextSearchEngine|class||LexiSharp.Core.IQuerySyntaxSupport,LexiSharp.Core.ITextSearchEngine,System.IDisposable
 T|LexiSharp.PathSafety|class||
 T|LexiSharp.Postgres.IColumnAwareEmbeddingProvider|interface||LexiSharp.Core.IEmbeddingProvider
+T|LexiSharp.Postgres.PostgresBm25Options|class||System.IEquatable<LexiSharp.Postgres.PostgresBm25Options>
+T|LexiSharp.Postgres.PostgresBm25SearchEngine|class||LexiSharp.Core.IQuerySyntaxSupport,LexiSharp.Core.ITextSearchEngine,System.IDisposable
 T|LexiSharp.Postgres.PostgresFieldWeight|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
 T|LexiSharp.Postgres.PostgresFuzzyOptions|class||System.IEquatable<LexiSharp.Postgres.PostgresFuzzyOptions>
 T|LexiSharp.Postgres.PostgresFuzzySearchEngine|class||LexiSharp.Core.IQuerySyntaxSupport,LexiSharp.Core.ITextSearchEngine,System.IDisposable
 T|LexiSharp.Postgres.PostgresIndexOptions|class||System.IEquatable<LexiSharp.Postgres.PostgresIndexOptions>
+T|LexiSharp.Postgres.PostgresMatchMode|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
 T|LexiSharp.Postgres.PostgresSchema|class||
 T|LexiSharp.Postgres.PostgresSparseOptions|class||System.IEquatable<LexiSharp.Postgres.PostgresSparseOptions>
 T|LexiSharp.Postgres.PostgresSparseSearchEngine|class||LexiSharp.Core.IQuerySyntaxSupport,LexiSharp.Core.ITextSearchEngine,System.IDisposable

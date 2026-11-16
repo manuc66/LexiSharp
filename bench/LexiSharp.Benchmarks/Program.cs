@@ -56,6 +56,13 @@ public static class Program
             return;
         }
 
+        // Index, corpus statistics and query latency of the stock-PostgreSQL text engines. See PostgresLane.
+        if (args.Length > 0 && args[0] == "postgres")
+        {
+            PostgresLane.Run(args[1..]);
+            return;
+        }
+
         var switcher = new BenchmarkSwitcher(new[]
         {
             typeof(TokenizerBenchmarks),

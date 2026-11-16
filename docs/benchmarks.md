@@ -1612,6 +1612,71 @@ whose fetch buffer became per thread on 2026-11-02 — but it does **not** verif
 returned; the deterministic test for that is `SegmentReaderConcurrencyTests`, which drives the copy step
 through a barrier rather than hoping for a schedule. A wrong answer would not fail this lane.
 
+## PostgreSQL lane (`postgres`): what a search costs on stock PostgreSQL
+
+The quality table in [evaluation](evaluation.md#the-sql-backends-on-the-same-corpora) says which
+backend ranks better; this lane says what a search costs on the one that has to run where
+`pg_search` cannot be installed. Same two BEIR corpora, same test queries, one process, one thread,
+a page of 10, the engine's own pooled `NpgsqlDataSource` warmed, and a PostgreSQL 16 server in a
+container on the same host.
+
+```bash
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- postgres \
+  --dataset nfcorpus,scifact \
+  --connection "Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp"
+```
+
+Measured 2026-11-16 on an 8-core Linux host, .NET 10.0.14, two passes over every query, p50/p95/p99
+by nearest rank. The index is built once per corpus and shared by every row; the rows are
+interleaved per query, so a gate budget does not inherit the previous row's cache state or its GC.
+
+| corpus (documents) | engine | index | stats build | p50 | p95 | p99 | mean | q/s |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| NFCorpus (3,633) | `ts_rank_cd`, all terms | 3.3 s | — | 0.9 ms | 1.8 ms | 3.4 ms | 1.0 ms | 982 |
+| NFCorpus | `ts_rank_cd`, any term | | — | 6.6 ms | 100.9 ms | 136.7 ms | 28.3 ms | 35 |
+| NFCorpus | BM25, gate 250 | | 268 ms | 5.0 ms | 17.6 ms | 25.3 ms | 7.0 ms | 143 |
+| NFCorpus | BM25, gate 500 | | 224 ms | 7.0 ms | 28.4 ms | 38.9 ms | 10.5 ms | 95 |
+| NFCorpus | BM25, gate 1,000 (default) | | 210 ms | 10.0 ms | 55.2 ms | 66.0 ms | 17.8 ms | 56 |
+| NFCorpus | BM25, no gate | | 227 ms | 25.7 ms | 148.1 ms | 177.3 ms | 50.0 ms | 20 |
+| SciFact (5,183) | `ts_rank_cd`, all terms | 6.5 s | — | 0.8 ms | 2.6 ms | 3.8 ms | 1.1 ms | 936 |
+| SciFact | `ts_rank_cd`, any term | | — | 219.3 ms | 498.4 ms | 649.9 ms | 239.5 ms | 4 |
+| SciFact | BM25, gate 250 | | 450 ms | 15.7 ms | 36.6 ms | 51.5 ms | 17.8 ms | 56 |
+| SciFact | BM25, gate 500 | | 384 ms | 31.4 ms | 68.7 ms | 88.1 ms | 34.3 ms | 29 |
+| SciFact | BM25, gate 1,000 (default) | | 387 ms | 58.8 ms | 119.8 ms | 153.0 ms | 63.9 ms | 16 |
+| SciFact | BM25, no gate | | 434 ms | 265.0 ms | 531.8 ms | 734.3 ms | 284.4 ms | 4 |
+
+What the table says, and what it does not:
+
+- **The candidate selection dominates, not the BM25 arithmetic.** On SciFact the lexical
+  `any term` row alone is 219 ms: a thirteen-term query matches almost the whole corpus, and
+  `ts_rank_cd` is computed for every match. The BM25 row without a gate is 265 ms.
+- **The rare-term gate removes that scan.** It generates candidates from the query's rarest terms,
+  by ascending document frequency while their summed document frequency stays inside the budget
+  (1,000 rows by default), and scores them with the whole query. On SciFact that is 265 ms → 59 ms
+  at the default budget and 16 ms at 250; on NFCorpus 25.7 → 10.0 ms. It also recovers the exact
+  ranking's nDCG on both corpora, which the ungated pool does not
+  ([backends](backends.md#bm25-over-stock-postgresql-postgresbm25searchengine)).
+- **The pool is mostly a fallback knob now.** With the gate on, the pool rarely binds; the gate's
+  budget is the cost control that matters. With the gate off, the pool is what truncates, and on
+  SciFact that truncation is 0.10 nDCG@10.
+- **`stats build` is not a search.** It is the `ts_stat` walk a `PostgresBm25SearchEngine` pays on
+  its first search after a write, measured by calling `RefreshStatistics()` explicitly. A write and
+  a search in a tight loop pays ~200-450 ms per corpus of this size.
+- **It is not a speed comparison with `pg_search`.** That engine answers from its own inverted
+  index instead of ranking a candidate set inside PostgreSQL, which is why it exists. This lane
+  measures the portable path; the extension is the one to measure when it can be installed.
+- **The gate is a recall bound.** Both corpora are scientific and entity-rich, which is its best
+  case; a rare term that is a false friend can gate out relevant documents. `--backend-gate off`
+  measures that on another corpus.
+
+Two reads make the BM25 rows what they are: the candidate query ranks ids and carries one
+`tsvector` per candidate, and the page's documents are fetched afterwards; the per-candidate
+`tsvector` reader keeps only the query's terms and counts every position for the length without
+allocating the skipped strings. Before those two changes, NFCorpus's pool-1,000 row read 26.9 ms
+p50 / 63.7 ms mean (and the first, uncontended run read 45 ms / 112 ms). `--keep` leaves the table
+in place for `EXPLAIN`; the plan that mattered was a sort spilling to disk because the candidate
+rows carried content and jsonb.
+
 ## Tokenizer (`TokenizerBenchmarks`)
 
 Tokenizing the same text under different normalizations. The `Ratio` column is only
@@ -1778,6 +1843,9 @@ dotnet run --project bench/LexiSharp.Benchmarks -c Release -- cursor 100000 --mi
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- store 100000
 # posting entries a block bound can skip, per query and corpus size (see the pruning lane above):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- wand 100000
+# stock-PostgreSQL index, statistics and query latency, per engine and pool size (see the PostgreSQL lane above):
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- postgres --dataset nfcorpus,scifact \
+  --connection "Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp"
 # one shared index at 1/2/4/8 callers, raw and synchronized (see the concurrency lane above):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- concurrency --runs 5
 # the same callers against a committed store, array and mapped (see the concurrency lane above):

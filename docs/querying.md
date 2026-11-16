@@ -174,7 +174,7 @@ raw text is then that backend's own grammar to read.
 | Engine | Query syntax |
 |---|---|
 | `RankedTextSearchEngine` | phrases, prefix/fuzzy, required and prohibited terms; field scopes when its scorer and index declare them (see [Which engines honor field scopes](#which-engines-honor-field-scopes)) |
-| `PostgresTextSearchEngine`, `ParadeDBTextSearchEngine` | phrases |
+| `PostgresTextSearchEngine`, `PostgresBm25SearchEngine`, `ParadeDBTextSearchEngine` | phrases |
 | `PostgresFuzzySearchEngine`, `PostgresVectorSearchEngine`, `PostgresSparseSearchEngine`, `InMemoryVectorSearchEngine`, `SparseTextSearchEngine` | plain queries only |
 
 The SQL backends are declared unsupported rather than approximated: the lexical engine forwards
@@ -256,7 +256,7 @@ statistics but not per-field positions answers a scoped single term and throws
 |---|---|
 | `RankedTextSearchEngine` + `Bm25FScorer` over an `IFieldStatisticsIndex` | yes |
 | `RankedTextSearchEngine` + any other scorer, or over an index without field statistics | refused |
-| `PostgresTextSearchEngine`, `ParadeDBTextSearchEngine` | refused when `KnownFields` is set; otherwise the prefix is text |
+| `PostgresTextSearchEngine`, `PostgresBm25SearchEngine`, `ParadeDBTextSearchEngine` | refused when `KnownFields` is set; otherwise the prefix is text |
 | `PostgresFuzzySearchEngine`, `PostgresVectorSearchEngine`, `PostgresSparseSearchEngine`, `InMemoryVectorSearchEngine`, `SparseTextSearchEngine` | refused when `KnownFields` is set; otherwise the prefix is text |
 
 The SQL backends have no field model in their table (the text is one `tsvector`/`pg_search`
