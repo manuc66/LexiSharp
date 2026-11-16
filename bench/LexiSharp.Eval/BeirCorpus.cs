@@ -49,7 +49,8 @@ internal sealed record BeirDataset(
     long? PublishedTotalTerms = null,
     int? Documents = null,
     int? NonEmptyDocuments = null,
-    string? PublishedSource = null)
+    string? PublishedSource = null,
+    bool InAll = true)
 {
     public static readonly IReadOnlyList<BeirDataset> All =
     [
@@ -86,6 +87,21 @@ internal sealed record BeirDataset(
             Documents: 8_674,
             NonEmptyDocuments: 8_673,
             PublishedSource: "https://github.com/castorini/anserini/blob/master/src/main/resources/reproduce/from-document-collection/configs/beir-v1.0.0-arguana.flat.yaml"),
+        // Not part of --dataset all: the three above are the pinned comparison, and this one is the
+        // candidate gate's evidence on a corpus of another nature (financial Q&A, short queries).
+        // The 38 documents with no text are why Anserini indexes 57,600 of the file's 57,638.
+        new(
+            "fiqa",
+            "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/fiqa.zip",
+            "17918ed23cd04fb15047f73e6c3bd9d9",
+            Bm25Ndcg10Ref: 0.236,
+            Graded: false,
+            PublishedNdcg10Ref: 0.2361,
+            PublishedTotalTerms: 5_288_635,
+            Documents: 57_600,
+            NonEmptyDocuments: 57_600,
+            PublishedSource: "https://github.com/castorini/anserini/blob/master/src/main/resources/reproduce/from-document-collection/configs/beir-v1.0.0-fiqa.flat.yaml",
+            InAll: false),
     ];
 
     public static BeirDataset Resolve(string name)

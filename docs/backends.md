@@ -382,6 +382,12 @@ by; on SciFact that truncation is the whole 0.10 gap. The gate chooses by idf in
 candidate set is small enough not to truncate. Lowering the budget trades a little quality on
 NFCorpus for speed; raising it changes nothing here.
 
+**A corpus of another nature.** FiQA-2018 (`--dataset fiqa`; 57,638 documents, 648 test queries,
+financial Q&A with short queries) is not part of the pinned three. At the same settings the gate
+reads **0.2061** nDCG@10 and the ungated pool **0.1077**, against Anserini's published **0.2361**
+for its own analysis. The pattern is SciFact's rather than a scientific-corpus accident: the
+ungated pool truncates a coverage-ranked candidate set, and the gate's idf-selected one does not.
+
 **What it costs, in time.** The evaluation harness reports quality and not time on purpose; the
 [PostgreSQL lane](benchmarks.md#postgresql-lane-postgres-what-a-search-costs-on-stock-postgresql)
 measures the other half — one process, one thread, a pooled data source, a page of 10, on a local
@@ -404,9 +410,10 @@ server. p50 / mean:
 - **The statistics build is the first search after a write**, not a search: `ts_stat` walks the
   table, and the column is measured on its own so it does not hide inside a p99.
 
-Two facts about the evidence, because they bound the claim. Both corpora are scientific and their
-queries are rich in specific terms — SciFact's rarest query term has a median document frequency of
-1 — which is the case the gate is built for. And the failure mode is real: a rare term that is a
+Two facts about the evidence, because they bound the claim. Two of the three corpora measured
+(NFCorpus, SciFact) are scientific and rich in specific terms — SciFact's rarest query term has a
+median document frequency of 1 — which is the gate's best case; the third, FiQA, is financial with
+short queries and shows the same direction. And the failure mode is real: a rare term that is a
 false friend (a name variant, an entity absent from the relevant documents) can gate them out. The
 harness flag `--backend-gate off` is how to measure that on your own corpus.
 

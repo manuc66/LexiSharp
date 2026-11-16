@@ -46,6 +46,7 @@ BEIR's own code is Apache-2.0; that license covers the repository, not the data 
 | SciFact | CC BY 4.0 | **ODC-By 1.0** (abstracts from Semantic Scholar S2ORC) | [`allenai/scifact` LICENSE.md](https://github.com/allenai/scifact/blob/master/LICENSE.md) |
 | NFCorpus | **unconfirmed** | **unconfirmed** | dataset homepage states no data license |
 | ArguAna | **unconfirmed** | **unconfirmed** | dataset homepage unreachable (HTTP 403) at time of writing |
+| FiQA-2018 | **unconfirmed** | **unconfirmed** | re-packaged by BEIR; no license stated in this repository |
 
 Two things worth stating rather than glossing over:
 
@@ -70,7 +71,8 @@ benchmark CLI is hand-built and owned by this project rather than sliced out of 
 dotnet run --project bench/LexiSharp.Eval -c Release                          # NFCorpus, full
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset scifact     # SciFact
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset arguana --no-tuned   # ArguAna, skip oracle
-dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset all --no-tuned       # all datasets
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset fiqa                # FiQA-2018 (not in --dataset all)
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset all --no-tuned       # the three pinned datasets
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dense               # add dense retrieval (e5-small)
 dotnet run --project bench/LexiSharp.Eval -c Release -- --rerank              # add cross-encoder reranking (MiniLM)
 dotnet run --project bench/LexiSharp.Eval -c Release -- --rerank-top 50       # rerank depth (default 100)
@@ -227,7 +229,12 @@ defaults, exponential gains):
 | SciFact | 0.0188 | 0.0988 | **0.6665** | 0.5636 | 0.6665 | 0.662 | 0.6619 |
 
 The matching rule is the SciFact story (5.3×) and almost nothing on NFCorpus, whose queries average
-3.4 terms; the ranker is the rest. The gate is what makes the BM25 row recover the exact ranking
+3.4 terms; the ranker is the rest.
+
+`--dataset fiqa` adds a corpus of another nature (57,638 documents, 648 test queries, financial Q&A
+with short queries) without joining `--dataset all` or the pinned table. On it the gate reads
+**0.2061** nDCG@10 against **0.1077** with the gate off at pool 1,000; Anserini's published BM25 is
+0.2361 with its own analysis. The direction is SciFact's, not a scientific-corpus accident. The gate is what makes the BM25 row recover the exact ranking
 (the `pool 0` column) while reading ~1,000 candidate rows instead of the whole match set; the
 no-gate column is the pool-only path, where `ts_rank_cd` coverage chooses the candidates and SciFact
 loses 0.10. `--backend-gate off --backend-pool 0` reproduces untruncated BM25 to within the analysis
