@@ -104,6 +104,32 @@ internal sealed class PostgresBm25Statistics
         return new PostgresBm25Statistics(documentCount, corpusTokenCount, terms);
     }
 
+    /// <summary>
+    /// Builds a snapshot from counts a caller already has.
+    /// </summary>
+    /// <remarks>
+    /// The seam a test uses, and the shape a caller that reads the two counts elsewhere would
+    /// want. <see cref="Load"/> could go through it, but it already has the counts in the form it
+    /// reads them and copying them twice would be work for no reader.
+    /// </remarks>
+    internal static PostgresBm25Statistics From(
+        int documentCount,
+        IReadOnlyDictionary<string, (int DocumentFrequency, int CorpusFrequency)> terms)
+    {
+        ArgumentNullException.ThrowIfNull(terms);
+
+        var copy = new Dictionary<string, TermStatistics>(terms.Count, StringComparer.Ordinal);
+        long corpusTokenCount = 0;
+
+        foreach (var (term, counts) in terms)
+        {
+            copy[term] = new TermStatistics(counts.DocumentFrequency, counts.CorpusFrequency);
+            corpusTokenCount += counts.CorpusFrequency;
+        }
+
+        return new PostgresBm25Statistics(documentCount, corpusTokenCount, copy);
+    }
+
     /// <summary>One term's two counts, kept together so they cannot be read apart.</summary>
     private readonly record struct TermStatistics(int DocumentFrequency, int CorpusFrequency);
 }
