@@ -339,9 +339,8 @@ engine.Add(new SearchDocument("1", "the quick brown fox jumps over the lazy dog"
 engine.Search("quick fox");   // Bm25Scorer scores, not ts_rank_cd's
 ```
 
-It exists because `pg_search` (next section) is the faster route to BM25 and the one with the
-mature Tantivy index, but it needs a preloaded library, and no major managed service lets you
-install one. This engine needs `CREATE EXTENSION unaccent` and nothing else, so on RDS, Cloud SQL
+It exists because `pg_search` (next section) is the faster route to BM25, but it needs a preloaded
+library, and no major managed service lets you install one. This engine needs `CREATE EXTENSION unaccent` and nothing else, so on RDS, Cloud SQL
 and Azure Database for PostgreSQL the only server-side step is allowing that one extension.
 
 **Where the numbers come from.** `N`, the average document length and every query term's document
@@ -397,8 +396,8 @@ server. p50 / mean:
 - **The pool is no longer the interesting knob.** With the gate on, `pool 0` and `pool 1,000` read
   the same (SciFact 50.1 vs 49.7 ms in the lane); the pool matters on the ungated path, where it is
   the thing that truncates.
-- **It is still not a speed replacement for `pg_search`.** Tantivy answers from its own inverted
-  index instead of ranking a candidate set inside PostgreSQL, which is why the extension exists.
+- **It is still not a speed replacement for `pg_search`.** That engine answers from its own
+  inverted index instead of ranking a candidate set inside PostgreSQL, which is why it exists.
   What this engine buys is portability; the table is its price.
 - **The statistics build is the first search after a write**, not a search: `ts_stat` walks the
   table, and the column is measured on its own so it does not hide inside a p99.

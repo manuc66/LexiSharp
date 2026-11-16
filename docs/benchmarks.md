@@ -1662,8 +1662,8 @@ What the table says, and what it does not:
 - **`stats build` is not a search.** It is the `ts_stat` walk a `PostgresBm25SearchEngine` pays on
   its first search after a write, measured by calling `RefreshStatistics()` explicitly. A write and
   a search in a tight loop pays ~200-450 ms per corpus of this size.
-- **It is not a speed comparison with `pg_search`.** Tantivy answers from its own inverted index
-  instead of ranking a candidate set inside PostgreSQL, which is why the extension exists. This lane
+- **It is not a speed comparison with `pg_search`.** That engine answers from its own inverted
+  index instead of ranking a candidate set inside PostgreSQL, which is why it exists. This lane
   measures the portable path; the extension is the one to measure when it can be installed.
 - **The gate is a recall bound.** Both corpora are scientific and entity-rich, which is its best
   case; a rare term that is a false friend can gate out relevant documents. `--backend-gate off`
