@@ -2,6 +2,7 @@ using LexiSharp.Core;
 using LexiSharp.Indexing;
 using LexiSharp.Postgres;
 using LexiSharp.Ranking;
+using Npgsql;
 using Xunit;
 
 namespace LexiSharp.Tests;
@@ -42,6 +43,19 @@ public class PostgresBm25SearchEngineTests
         {
             engine.DropSchema();
         }
+    }
+
+    /// <summary>Whether the physical table exists, asked of the server rather than inferred.</summary>
+    private static bool TableExists(string table)
+    {
+        using var connection = new NpgsqlConnection(ConnectionString!);
+        connection.Open();
+
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT to_regclass(@name) IS NOT NULL";
+        command.Parameters.AddWithValue("name", "public." + table);
+
+        return (bool)command.ExecuteScalar()!;
     }
 
     /// <summary>
@@ -389,6 +403,134 @@ public class PostgresBm25SearchEngineTests
                     .Select(result => result.DocumentId)
                     .Order(StringComparer.Ordinal));
         }, options => options with { RareTermGateBudget = 1 });
+    }
+
+    [Fact]
+    public void GateTerms_WithAZeroBudgetSelectsNothing()
+    {
+        Assert.Empty(PostgresBm25SearchEngine.GateTerms(["a"], _ => 1, budget: 0));
+    }
+
+    [SkippableFact]
+    public void EnsureSchema_IsIdempotentAndNamesItsTable()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        using var engine = NewEngine("schema");
+
+        try
+        {
+            // The constructor already installed it; this is the early return.
+            engine.EnsureSchema();
+
+            Assert.True(TableExists(engine.TestTableName));
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    [SkippableFact]
+    public async Task EnsureSchemaAsync_CreatesTheTableWhenTheConstructorDidNot()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        using var engine = new PostgresBm25SearchEngine(
+            ConnectionString!,
+            new PostgresBm25Options { Table = Table("async") },
+            autoCreateSchema: false);
+
+        try
+        {
+            Assert.False(TableExists(engine.TestTableName));
+
+            await engine.EnsureSchemaAsync();
+
+            // The second call is the early return.
+            await engine.EnsureSchemaAsync();
+
+            engine.Add(new SearchDocument("d1", "quick brown fox"));
+
+            Assert.Equal("d1", engine.Search("quick").Single().DocumentId);
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    [SkippableFact]
+    public void Constructor_AutoCreateSchemaFalseLeavesTheTableAlone()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        using var engine = new PostgresBm25SearchEngine(
+            ConnectionString!,
+            new PostgresBm25Options { Table = Table("noschema") },
+            autoCreateSchema: false);
+
+        Assert.False(TableExists(engine.TestTableName));
+    }
+
+    [SkippableFact]
+    public void Search_OnAQueryOfStopWordsReturnsNothing()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        Run("stopwords", engine =>
+        {
+            engine.Add(new SearchDocument("d1", "the quick brown fox"));
+
+            // Every term is a stop word under the English configuration, so the query has no
+            // lexeme at all and there is nothing to gate or score.
+            Assert.Empty(engine.Search("the of and"));
+        }, options => options with { TextSearchConfig = "english" });
+    }
+
+    [SkippableFact]
+    public void Search_HonoursMinimumScore()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        Run("minscore", engine =>
+        {
+            engine.Index(Corpus);
+
+            Assert.NotEmpty(engine.Search("quick", new SearchOptions(Limit: 10)));
+            Assert.Empty(engine.Search("quick", new SearchOptions(Limit: 10, MinimumScore: double.MaxValue)));
+        });
+    }
+
+    [SkippableFact]
+    public void Search_WithQuerySyntaxOffTreatsTheTextAsAValue()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        Run("syntaxoff", engine =>
+        {
+            engine.Index(Corpus);
+
+            // ParseQuerySyntax: false is the caller saying "literal text": the parser is not
+            // consulted, and the phrase is still matched by the engine's own split.
+            Assert.NotEmpty(engine.Search("\"brown fox\"", new SearchOptions(Limit: 10, ParseQuerySyntax: false)));
+        });
+    }
+
+    [SkippableFact]
+    public void Clear_EmptiesTheCorpusAndTheNextSearchRebuildsTheSnapshot()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        Run("clear", engine =>
+        {
+            engine.Index(Corpus);
+            Assert.NotEmpty(engine.Search("quick"));
+
+            engine.Clear();
+
+            Assert.Empty(engine.Search("quick"));
+        });
     }
 
     [Fact]

@@ -66,7 +66,12 @@ internal static class PostgresTsvText
         while (TryReadLexeme(text, ref i, out int start, out int end, out bool escaped))
         {
             if (end <= start)
+            {
+                // Still consume the position list: an empty lexeme is not a token, but leaving its
+                // ":1" unread would make the outer loop see ':' forever.
+                _ = ReadCount(text, ref i);
                 continue;
+            }
 
             int count = ReadCount(text, ref i);
             length += count;

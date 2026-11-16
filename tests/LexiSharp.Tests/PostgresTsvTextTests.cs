@@ -108,6 +108,66 @@ public class PostgresTsvTextTests
     }
 
     [Fact]
+    public void Parse_ReadsAnUnquotedLexeme()
+    {
+        // Defensive path: no released version writes one, but swallowing it into the next token
+        // would mis-attribute its positions.
+        var (terms, length) = PostgresTsvText.Parse("abc:1,2 'd':3");
+
+        Assert.Equal(2, terms["abc"]);
+        Assert.Equal(1, terms["d"]);
+        Assert.Equal(3, length);
+    }
+
+    [Fact]
+    public void Parse_SkipsAnEmptyLexemeWithoutLooping()
+    {
+        // An empty quoted lexeme is not a token, but its position list still has to be consumed:
+        // leaving the ':' unread made the outer loop spin forever before this was pinned.
+        var (terms, length) = PostgresTsvText.Parse("'':1 'a':2");
+
+        Assert.Equal(1, terms["a"]);
+        Assert.Equal(1, length);
+    }
+
+    [Fact]
+    public void Parse_ReadsAnUnterminatedLexemeToTheEnd()
+    {
+        var (terms, length) = PostgresTsvText.Parse("'abc");
+
+        Assert.Equal(1, terms["abc"]);
+        Assert.Equal(1, length);
+    }
+
+    [Fact]
+    public void Parse_WithKeepUnescapesAnEscapedLexeme()
+    {
+        var (terms, _) = PostgresTsvText.Parse(
+            "'o''brien':1 'other':2", new HashSet<string>(["o'brien"], StringComparer.Ordinal));
+
+        Assert.Equal(1, terms["o'brien"]);
+        Assert.False(terms.ContainsKey("other"));
+    }
+
+    [Fact]
+    public void Parse_TreatsAMalformedPositionListAsOneOccurrence()
+    {
+        var (terms, length) = PostgresTsvText.Parse("'a':x 'b':2");
+
+        Assert.Equal(1, terms["a"]);
+        Assert.Equal(1, terms["b"]);
+        Assert.Equal(2, length);
+    }
+
+    [Fact]
+    public void Parse_UnescapesATrailingDoubledQuote()
+    {
+        var (terms, _) = PostgresTsvText.Parse("'a''':1");
+
+        Assert.Equal(1, terms["a'"]);
+    }
+
+    [Fact]
     public void Format_RoundTripsThroughParse()
     {
         var frequencies = new Dictionary<string, int>(StringComparer.Ordinal)
