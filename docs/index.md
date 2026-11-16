@@ -115,8 +115,11 @@ twice. Every figure below is reproducible with a command on the
 - **The SQL backends, on the same corpora.** The PostgreSQL text, BM25 and vector engines are
   scored over the same queries and qrels as the in-memory table: at matched k1=0.9/b=0.4, ParadeDB's
   Tantivy BM25 reads **0.3055** and **0.6633** on NFCorpus and SciFact against this library's
-  **0.305** and **0.655**, `ts_rank_cd` reads **0.1864** and **0.0188** — mostly its matcher, which
-  ANDs every term — and pgvector at `ef_search` 10/40/160 reads **0.2882 / 0.2960 / 0.3013** on
+  **0.305** and **0.655**, `ts_rank_cd` reads **0.1864** and **0.0188**: its matcher ANDs every
+  term, and OR-ing them (`--backend-match any`) recovers **0.0988** on SciFact but only **0.1881**
+  on NFCorpus, so the rest of that gap is the ranker. The stock-PostgreSQL BM25 engine closes it
+  with no extension: **0.3072** and **0.6665** at an unbounded candidate pool, **0.2999** and
+  **0.5636** at its default 1,000. pgvector at `ef_search` 10/40/160 reads **0.2882 / 0.2960 / 0.3013** on
   NFCorpus against the exact in-memory dense row's **0.304**, and **0.5998 / 0.6528 / 0.6550** on
   SciFact against **0.655**: that gap is the index's cost in nDCG. ArguAna produces no row from any
   of the three: the text engines reject 2 of its 1,406 test queries, and the vector engine rejects
@@ -155,7 +158,7 @@ twice. Every figure below is reproducible with a command on the
 | [Rerankers and hybrid search](pipelines.md) | rerankers (MMR, cascade, cross-encoder, MaxSim), hybrid federation, cost-based and intent-based routing |
 | [Dense, sparse and query expansion](embeddings.md) | dense, learned-sparse and corpus-derived expansion, all behind consumer-supplied seams |
 | [Classification and text analysis](text-analysis.md) | lexical similarity, keyword extraction, Naive Bayes, trees/forest/linear, centroids, nearest neighbours and blends |
-| [PostgreSQL and ParadeDB backends](backends.md) | PostgreSQL lexical / vector / sparse / fuzzy, ParadeDB BM25, what the integration tests cover |
+| [PostgreSQL and ParadeDB backends](backends.md) | PostgreSQL lexical / BM25 / vector / sparse / fuzzy, ParadeDB BM25, managed-service support, what the integration tests cover |
 | [Search traces and telemetry](observability.md) | `SearchTrace`, production telemetry, source agreement, calibrated score confidence |
 | [Retrieval quality and IR metrics](evaluation.md) | the BEIR numbers in full, IR metrics, the benchmark CLI, per-query diffs, parameter tuning |
 | [Allocation and latency benchmarks](benchmarks.md) | allocations and timings, with the machine they came from and the command to reproduce them |
