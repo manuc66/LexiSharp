@@ -2,9 +2,14 @@ using LexiSharp.Core;
 
 namespace LexiSharp.Postgres;
 
-/// <summary>One re-ranked match: its document, its term frequencies and its length.</summary>
+/// <summary>One re-ranked match: its id, its term frequencies and its length.</summary>
+/// <remarks>
+/// The document itself is not carried: the candidate query fetches only <c>id</c> and the
+/// <c>tsvector</c> for the whole pool, and the page's documents are fetched after scoring. A
+/// thousand rows of content and jsonb are transferred to be thrown away otherwise.
+/// </remarks>
 internal sealed record PostgresBm25Candidate(
-    SearchDocument Document,
+    string DocumentId,
     IReadOnlyDictionary<string, int> TermFrequencies,
     int Length);
 
@@ -23,7 +28,8 @@ internal sealed record PostgresBm25Candidate(
 /// <para>
 /// Positions are not kept. Nothing on the BM25 path reads them, and a caller that asks gets
 /// <see cref="NotSupportedException"/> rather than an empty list that would read as "the term
-/// occurs nowhere".
+/// occurs nowhere". The same goes for the documents: this view scores a candidate pool, and the
+/// page's documents are fetched once the pool has been ranked.
 /// </para>
 /// </remarks>
 internal sealed class PostgresBm25IndexView : IReadOnlyTextIndex
@@ -39,12 +45,15 @@ internal sealed class PostgresBm25IndexView : IReadOnlyTextIndex
 
         _statistics = statistics;
         _candidates = candidates;
-        _byId = candidates.ToDictionary(candidate => candidate.Document.Id, StringComparer.Ordinal);
+        _byId = candidates.ToDictionary(candidate => candidate.DocumentId, StringComparer.Ordinal);
     }
 
     /// <inheritdoc />
+    /// <exception cref="NotSupportedException">Always: the pool carries ids, not documents.</exception>
     public IReadOnlyCollection<SearchDocument> Documents =>
-        _candidates.Select(candidate => candidate.Document).ToList();
+        throw new NotSupportedException(
+            "The BM25 candidate pool carries ids and term frequencies. The page's documents are "
+            + "fetched after the pool is scored.");
 
     /// <inheritdoc />
     public int Count => _candidates.Count;
@@ -94,14 +103,9 @@ internal sealed class PostgresBm25IndexView : IReadOnlyTextIndex
     public int DocumentLength(string documentId) => Candidate(documentId).Length;
 
     /// <inheritdoc />
+    /// <remarks>Always false: this view is a scoring view, and holds no documents.</remarks>
     public bool TryGetDocument(string documentId, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out SearchDocument? document)
     {
-        if (documentId is not null && _byId.TryGetValue(documentId, out PostgresBm25Candidate? candidate))
-        {
-            document = candidate.Document;
-            return true;
-        }
-
         document = null;
         return false;
     }

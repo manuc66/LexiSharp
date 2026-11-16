@@ -368,6 +368,43 @@ SciFact: on a corpus where a thirteen-term query matches half of it, the pool's 
 the whole gap. Raise the pool, or set it to `0`, when the match sets are that large — the cost is
 one `tsvector` per match transferred and parsed per query.
 
+**What it costs, in milliseconds.** The evaluation harness reports quality and not time on purpose;
+the [PostgreSQL lane](benchmarks.md#postgresql-lane-postgres-what-a-search-costs-on-stock-postgresql)
+measures the other half — one process, one thread, a pooled data source, a page of 10, on a local
+server:
+
+| corpus (documents) | engine | stats build | p50 | p95 | mean |
+|---|---|---:|---:|---:|---:|
+| NFCorpus (3,633) | `ts_rank_cd`, all terms | — | 0.6 ms | 1.3 ms | 0.7 ms |
+| NFCorpus | `ts_rank_cd`, any term | — | 4.1 ms | 74.6 ms | 21.3 ms |
+| NFCorpus | BM25, pool 1,000 | 220 ms | 16.0 ms | 107.3 ms | 37.3 ms |
+| NFCorpus | BM25, pool 0 | 201 ms | 15.8 ms | 177.1 ms | 58.1 ms |
+| SciFact (5,183) | `ts_rank_cd`, all terms | — | 0.7 ms | 0.8 ms | 0.7 ms |
+| SciFact | `ts_rank_cd`, any term | — | 170.1 ms | 347.2 ms | 177.6 ms |
+| SciFact | BM25, pool 1,000 | 252 ms | 203.3 ms | 385.2 ms | 210.7 ms |
+| SciFact | BM25, pool 0 | 246 ms | 299.7 ms | 490.0 ms | 301.0 ms |
+
+- **The candidate selection is the cost, not the BM25.** On SciFact the `any term` row alone is
+  170 ms: a thirteen-term query matches nearly the whole corpus, and `ts_rank_cd` is evaluated over
+  every match before the pool cut. The BM25 row adds about 30 ms on top of that. On NFCorpus the
+  selection is 4 ms at the median with a long tail, because the match set is smaller.
+- **On a small corpus with long queries, OR matching is a full scan.** That is the recall it buys,
+  and it is the lexical engine's cost as much as this one's.
+- **The pool is a quality knob more than a time one.** Halving it to 500 costs 0.005 nDCG@10 on
+  NFCorpus and 0.077 on SciFact and barely moves the median; doubling it costs 0.10 in SciFact's
+  tail. 1,000 is the default for that reason.
+- **This is not a speed replacement for `pg_search`.** Tantivy answers from its own inverted index
+  instead of ranking the match set in PostgreSQL, which is why the extension exists. What this
+  engine buys is portability; the table is its price.
+- **The statistics build is the first search after a write**, not a search: `ts_stat` walks the
+  table, and the column is measured on its own so it does not hide inside a p99.
+
+The read is two-phase for this reason: the candidate query ranks ids and carries one `tsvector` per
+candidate, and the page's documents are fetched afterwards, so a thousand candidates do not drag a
+thousand contents and jsonb rows through the sort. The per-candidate reader keeps the query's terms
+and counts the rest without allocating their strings. On NFCorpus those two changes took the
+pool-1,000 row from 27 ms to 16 ms at the median and from 64 ms to 37 ms at the mean.
+
 **What it is not.** The analysis is PostgreSQL's, not this library's tokenizer, so it matches the
 in-memory rows at most and no published figure. Weights (`FieldWeights`) are a `ts_rank_cd`
 concept and do not reach this ranking.
