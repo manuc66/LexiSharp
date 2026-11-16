@@ -1,5 +1,62 @@
 ## [Unreleased]
 
+### Added
+
+- **`PostgresBm25SearchEngine`** (`LexiSharp.Postgres`): Okapi BM25 over **stock PostgreSQL**. The
+  `tsvector` column and its GIN index do the matching and `Bm25Scorer` does the ranking over the
+  term frequencies the vector already stores, so the only server-side requirement is
+  `CREATE EXTENSION unaccent`. That is what makes a real BM25 available on RDS, Cloud SQL and Azure
+  Database for PostgreSQL, where ParadeDB's `pg_search` cannot be installed. `N`, the average
+  length and each term's document frequency come from one cached `ts_stat` snapshot (invalidated by
+  writes, rebuildable with `RefreshStatistics()`), while the term frequencies and the length come
+  from the candidate row's own vector. Measured with the candidate gate below: **0.3072 nDCG@10 on
+  NFCorpus and 0.6665 on SciFact**, against 0.308 / 0.662 for the in-memory scorer and 0.3084 /
+  0.6619 for ParadeDB.
+
+- **`PostgresIndexOptions.MatchMode`** (`PostgresMatchMode.AllTerms | AnyTerm`): how a multi-term
+  query becomes a `tsquery` on the lexical engine. `AllTerms` is the previous behaviour
+  (`websearch_to_tsquery`, AND); `AnyTerm` ORs the query's lexemes, takes them from the column's own
+  configuration, and keeps quoted phrases as hard gates. On long queries the AND rule was what buried
+  the corpus: SciFact moves 0.0188 → 0.0988 nDCG@10 (5.3×), while the ranker is still the rest —
+  0.0988 is far from BM25's 0.662 — and NFCorpus barely moves (0.1864 → 0.1881).
+
+- **A candidate gate on the stock-PostgreSQL BM25** (`RareTermGate`, on by default). A GIN index
+  cannot return rows in score order, so without it a query whose common terms
+  match most of the corpus pays a full scan. The gate generates candidates from the query's rarest
+  terms — ascending document frequency while their summed frequency stays inside
+  `RareTermGateBudget` (default 1,000 rows) — and scores them with the whole query. It is a recall
+  bound, it falls back to the whole match set when even the rarest term exceeds the budget, and a
+  quoted phrase bypasses it. Measured at the default budget it reads the exact ranking's nDCG on
+  both BEIR corpora (0.3072 / 0.6665) at 10.0 / 58.8 ms p50, against 0.2999 / 0.5636 at 25.7 /
+  265.0 ms with the gate off.
+
+- **`--backend bm25`, `--backend-match all|any`, `--backend-gate rare|off`, `--backend-gate-budget`
+  and `--backend-pool <n>`** in
+  `bench/LexiSharp.Eval`, so the portable BM25 row and the match rule are measured by the same
+  harness, corpus and qrels as every other row.
+
+- **`postgres` lane in `bench/LexiSharp.Benchmarks`**: index build, statistics build and search
+  latency (p50/p95/p99/mean) of the stock-PostgreSQL text engines on the BEIR corpora, per match
+  rule, candidate-gate budget and pool size, interleaved so one row does not inherit another's
+  cache state. It is the measurement the quality harness deliberately does not take. At the default
+  gate the BM25 row reads 10.0 ms p50 / 17.8 ms mean on NFCorpus and 58.8 / 63.9 ms on SciFact,
+  against 25.7 / 50.0 and 265.0 / 284.4 ms with the gate off. `--keep` leaves the table for
+  `EXPLAIN`.
+
+### Changed
+
+- The shared documents table's upsert and row reader are now one implementation
+  (`PostgresDocumentWriter`/`PostgresDocumentReader`), used by the lexical and BM25 engines, and the
+  `tsquery` a search is matched and ranked with is built once (`PostgresMatchExpression`). A query
+  that means one thing at the gate cannot mean another at the rank.
+
+- **The BM25 candidate read is two-phase.** The candidate query ranks ids and returns one
+  `tsvector` per candidate; the page's documents are fetched afterwards, by id. Carrying content,
+  category and jsonb through the sort made PostgreSQL spill it to disk. The per-candidate
+  `tsvector` reader also keeps only the query's terms now, while still counting every position for
+  the document length. On NFCorpus the pool-1,000 row moved from 26.9 ms to 16.0 ms at the median
+  and from 63.7 ms to 37.3 ms at the mean.
+
 ### Fixed
 
 - **The evaluation harness measured a rounded run in the engine's tie-break, not in the run reader's.**
@@ -16,6 +73,11 @@
   unchanged; no configuration had a tie inside their top ten. The table header now names the depth
   the metrics are measured at (`MetricDepth.Cutoff`) instead of `--top-k`, which had printed
   `nDCG@1000` over an nDCG@10 value.
+
+- **The evaluation page attributed `ts_rank_cd`'s NFCorpus gap to its matching rule.** It is not:
+  OR-ing the terms moves NFCorpus 0.1864 → 0.1881, so the gap there is the ranker (coverage has no
+  idf). On SciFact the rule is worth 5.3× and the ranker is still the rest. The rows behind both
+  statements are now published.
 
 ## [1.0.0] — 2026-11-10
 

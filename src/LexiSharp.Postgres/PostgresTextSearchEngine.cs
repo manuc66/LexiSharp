@@ -1,6 +1,5 @@
 using LexiSharp.Core;
 using Npgsql;
-using NpgsqlTypes;
 
 namespace LexiSharp.Postgres;
 
@@ -36,7 +35,15 @@ namespace LexiSharp.Postgres;
 /// <para>
 /// Ranking uses the database's native <c>ts_rank_cd</c>, so scores are <b>not</b> numerically
 /// comparable to LexiSharp's BM25/TF-IDF. When identical scoring matters, wrap this engine in
-/// the hybrid package's merger strategy (re-rank on the union) or recompute scores in C#.
+/// the hybrid package's merger strategy (re-rank on the union), recompute scores in C#, or use
+/// <see cref="PostgresBm25SearchEngine"/>, which ranks the same rows with BM25 and no extension.
+/// </para>
+/// <para>
+/// <see cref="PostgresIndexOptions.MatchMode"/> decides how a multi-term query becomes a
+/// <c>tsquery</c>: <see cref="PostgresMatchMode.AllTerms"/> (the default, and what this engine has
+/// always issued) requires every term, <see cref="PostgresMatchMode.AnyTerm"/> ORs the query's
+/// lexemes. The mode changes the candidate set, not the ranking — <c>ts_rank_cd</c> is coverage
+/// based either way.
 /// </para>
 /// <para>
 /// Embeddings/ANN (<c>pgvector</c>) are intentionally not created here: add a
@@ -212,54 +219,14 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable, I
 
         // Mixed queries honor the same contract as the stock engine: quoted segments are a hard
         // corpus gate (each phrase must appear, AND-ed) while the free terms only contribute to
-        // scoring. Gating on the whole query (websearch_to_tsquery) would wrongly require the
-        // free terms too. A query without quotes keeps its exact previous behavior.
-        var segments = QueryParser.SplitRaw(query);
-
-        string gateCondition;
-        string rankExpression;
-
-        if (segments.Phrases.Count == 0)
-        {
-            gateCondition = $"tsv @@ websearch_to_tsquery('{_options.TextSearchConfig}', unaccent(@query))";
-            rankExpression = $"websearch_to_tsquery('{_options.TextSearchConfig}', unaccent(@query))";
-            command.Parameters.AddWithValue("query", query);
-        }
-        else
-        {
-            var gates = new List<string>(segments.Phrases.Count);
-            var ranks = new List<string>(segments.Phrases.Count + 1);
-
-            if (!string.IsNullOrWhiteSpace(segments.FreeText))
-            {
-                ranks.Add($"websearch_to_tsquery('{_options.TextSearchConfig}', unaccent(@freeText))");
-                command.Parameters.AddWithValue("freeText", segments.FreeText);
-            }
-
-            for (int i = 0; i < segments.Phrases.Count; i++)
-            {
-                gates.Add($"tsv @@ phraseto_tsquery('{_options.TextSearchConfig}', unaccent(@phrase{i}))");
-                ranks.Add($"phraseto_tsquery('{_options.TextSearchConfig}', unaccent(@phrase{i}))");
-                command.Parameters.AddWithValue($"phrase{i}", segments.Phrases[i]);
-            }
-
-            gateCondition = string.Join(" AND ", gates);
-            // OR the free terms with each phrase so a phrase-only match still scores above zero
-            // (the ts_rank_cd of the full AND query is 0 when a free term is missing).
-            rankExpression = string.Join(" || ", ranks);
-        }
-
-        // The weights array is the class-to-value mapping the stored letters are read through, so
-        // the query side of a weighted index is stated here rather than left to ts_rank_cd's
-        // default. Without FieldWeights the call is the one the engine has always issued.
-        string rank = PostgresSchema.RankWeightsArray(_options) is { } weights
-            ? $"ts_rank_cd({weights}, tsv, {rankExpression})"
-            : $"ts_rank_cd(tsv, {rankExpression})";
+        // scoring. A query without quotes is matched by PostgresIndexOptions.MatchMode.
+        var match = PostgresMatchExpression.Build(_options, query);
+        match.Bind(command);
 
         string searchSql = $"""
-            SELECT id, content, category, fields, text_fields, {rank} AS score
+            SELECT id, content, category, fields, text_fields, {match.Rank} AS score
             FROM {_options.QualifiedTableName}
-            WHERE ({gateCondition}){filters.Fragment}
+            WHERE ({match.Gate}){filters.Fragment}
             ORDER BY score DESC, {PostgresSchema.OrdinalIdTieBreak}
             LIMIT @limit;
             """;
@@ -305,72 +272,8 @@ public sealed class PostgresTextSearchEngine : ITextSearchEngine, IDisposable, I
     /// <summary>Releases the underlying Npgsql data source.</summary>
     public void Dispose() => _dataSource.Dispose();
 
-    private void Insert(NpgsqlConnection connection, NpgsqlTransaction? transaction, SearchDocument document)
-    {
-        using var command = connection.CreateCommand();
+    private void Insert(NpgsqlConnection connection, NpgsqlTransaction? transaction, SearchDocument document) =>
+        PostgresDocumentWriter.Insert(connection, transaction, _options, document);
 
-        string tsvExpr = PostgresSchema.TsvExpression(_options, "@content", "@text_fields");
-        string tsvExprUpsert = PostgresSchema.TsvExpression(_options, "EXCLUDED.content", "EXCLUDED.text_fields");
-
-        string insertSql = $"""
-            INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, tsv)
-            VALUES (@id, @content, @category, @fields, @text_fields, {tsvExpr})
-            ON CONFLICT (id) DO UPDATE
-                SET content = EXCLUDED.content,
-                    category = EXCLUDED.category,
-                    fields = EXCLUDED.fields,
-                    text_fields = EXCLUDED.text_fields,
-                    tsv = {tsvExprUpsert};
-            """;
-
-        // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); values are parameters.
-        command.CommandText = insertSql; // NOSONAR:S2077
-
-        if (transaction is not null)
-            command.Transaction = transaction;
-
-        command.Parameters.AddWithValue("id", document.Id);
-        command.Parameters.AddWithValue("content", document.Text);
-        command.Parameters.AddWithValue("category", (object?)document.Category ?? DBNull.Value);
-
-        var fieldsParameter = command.Parameters.AddWithValue(
-            "fields",
-            document.Fields is null ? DBNull.Value : System.Text.Json.JsonSerializer.Serialize(document.Fields, PostgresJsonContext.Default.IReadOnlyDictionaryStringString));
-        fieldsParameter.NpgsqlDbType = NpgsqlDbType.Jsonb;
-
-        NpgsqlParameter textFieldsParameter;
-        if (document.TextFields is not null)
-        {
-            textFieldsParameter = command.Parameters.AddWithValue(
-                "text_fields",
-                System.Text.Json.JsonSerializer.Serialize(document.TextFields, PostgresJsonContext.Default.IReadOnlyDictionaryStringString));
-            textFieldsParameter.NpgsqlDbType = NpgsqlDbType.Jsonb;
-        }
-        else
-        {
-            textFieldsParameter = command.Parameters.AddWithValue("text_fields", DBNull.Value);
-            textFieldsParameter.NpgsqlDbType = NpgsqlDbType.Jsonb;
-        }
-
-        command.ExecuteNonQuery();
-    }
-
-    private static SearchDocument ReadDocument(NpgsqlDataReader reader)
-    {
-        string id = reader.GetString(0);
-        string content = reader.GetString(1);
-        string? category = reader.IsDBNull(2) ? null : reader.GetString(2);
-        var fields = reader.IsDBNull(3) ? null : DeserializeFields(reader.GetString(3));
-        var textFields = reader.IsDBNull(4) ? null : DeserializeFields(reader.GetString(4));
-
-        return new SearchDocument(id, content, fields, category, textFields);
-    }
-
-    private static IReadOnlyDictionary<string, string>? DeserializeFields(string? json)
-    {
-        if (string.IsNullOrEmpty(json))
-            return null;
-
-        return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json, PostgresJsonContext.Default.DictionaryStringString);
-    }
+    private static SearchDocument ReadDocument(NpgsqlDataReader reader) => PostgresDocumentReader.Read(reader);
 }

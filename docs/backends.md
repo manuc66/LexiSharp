@@ -2,8 +2,9 @@
 title: PostgreSQL and ParadeDB backends
 nav_order: 9
 description: >-
-  Full-text search on tsvector, pgvector nearest-neighbour search, sparse
-  retrieval, pg_trgm fuzzy search, and true BM25 on ParadeDB pg_search.
+  Full-text search on tsvector, BM25 without an extension, pgvector
+  nearest-neighbour search, sparse retrieval, pg_trgm fuzzy search, and true BM25 on ParadeDB
+  pg_search.
 ---
 
 # PostgreSQL and ParadeDB backends
@@ -17,27 +18,30 @@ than a rewrite.
 | `LexiSharp` | records, interfaces, in-memory index, scorers, tokenizer, all decorators | **nothing** |
 | `LexiSharp.MessagePack` | binary persistence for the in-memory index and the sparse engine | MessagePack |
 | `LexiSharp.AspNetCore` | a `GET /search` minimal-API endpoint | ASP.NET Core |
-| `LexiSharp.Postgres` | lexical, vector, sparse, fuzzy and BM25 engines over PostgreSQL | Npgsql |
+| `LexiSharp.Postgres` | lexical, BM25, vector, sparse and fuzzy engines over PostgreSQL | Npgsql |
 
-`LexiSharp.Postgres` ships five engines over **one shared documents table**, picked at
+`LexiSharp.Postgres` ships six engines over **one shared documents table**, picked at
 instantiation:
 
 - **Lexical** — `tsvector` + GIN + `unaccent`, ranked with `ts_rank_cd`.
+- **BM25 (stock PostgreSQL)** — `PostgresBm25SearchEngine`: BM25 over the term frequencies the
+  `tsvector` column already stores, computed by `Bm25Scorer`. No extension beyond `unaccent`, so
+  it runs where `pg_search` cannot be installed.
 - **Vector** — ANN over `pgvector` (HNSW or IVFFlat), fed by your own `IEmbeddingProvider`.
 - **Sparse** — learned-sparse ANN over `pgvector sparsevec` (HNSW only), fed by your own
   `ISparseEmbeddingProvider`.
 - **Fuzzy** — approximate typo-tolerant matching over `pg_trgm`, optionally refined with
   `fuzzystrmatch`.
-- **BM25** — `ParadeDBTextSearchEngine`, true Okapi BM25 computed by Tantivy through
-  `pg_search` rather than `ts_rank_cd`. **The extension is AGPL-3 licensed** — fine for
-  SaaS and internal use, worth a review if you distribute the stack.
+- **BM25 (ParadeDB)** — `ParadeDBTextSearchEngine`, true Okapi BM25 computed by Tantivy through
+  `pg_search`. **The extension is AGPL-3 licensed** — fine for SaaS and internal use, worth a
+  review if you distribute the stack.
 
 **What is verified, and what is not.** The integration tests run against a live PostgreSQL
 in CI (`pgvector/pgvector:pg16` and `paradedb/paradedb:pg16`) and self-skip without
 `POSTGRES_TEST_CONNECTION`, so what they cover is executed on every build: schema
 installation, the query paths, and exact cosine behaviour for the vector engine. Retrieval
-*quality* is measured for the five engines that rank on their own: the evaluation harness's
-`--backend lexical|paradedb|vector|fuzzy|sparse` adds a nDCG row for the same BEIR corpus,
+*quality* is measured for the six engines that rank on their own: the evaluation harness's
+`--backend lexical|bm25|paradedb|vector|fuzzy|sparse` adds a nDCG row for the same BEIR corpus,
 queries and qrels as the in-memory table, and [the evaluation
 page](evaluation.md#the-sql-backends-on-the-same-corpora) carries the figures and what each one is
 comparable with. `--backend sparse` indexes the same precomputed SPLADE vectors as the in-memory
@@ -152,8 +156,8 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-
 | SciFact (300 queries) | 0.0188 | 0.0188 | 0.0188 |
 
 The direction is consistent with the title carrying a little signal on NFCorpus and none on a
-corpus whose queries are long enough that `websearch_to_tsquery`'s AND gate, not the ranking,
-decides the match set. A difference this small on one host is a measurement of this configuration,
+corpus whose queries are long enough for the AND gate to leave too little to rank for a weighting
+to show through. A difference this small on one host is a measurement of this configuration,
 not a claim that field weighting does not work: the classes are coarse (four buckets, fixed
 values), and the engine has no per-field length to normalise against.
 
@@ -218,6 +222,31 @@ By default the integration tests are skipped unless `POSTGRES_TEST_CONNECTION` p
 live instance (e.g. `Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp`).
 The vector and sparse tests additionally require the `vector` extension: use the
 `pgvector/pgvector:pg16` image (lexical tests only need stock PostgreSQL).
+
+**Match rule (`MatchMode`).** A multi-term query becomes a `tsquery` in one of two ways:
+
+| mode | expression | a document must contain |
+|---|---|---|
+| `AllTerms` (default) | `websearch_to_tsquery` | every term |
+| `AnyTerm` | one `tsquery` OR-ing the query's lexemes | any term |
+
+`AnyTerm` takes its lexemes from `to_tsvector`, so they come from the column's own
+configuration; it is a bag of words (the websearch operators `or`, `-term` and a trailing `*` are
+not honoured) and quoted phrases are still hard gates. It changes which documents are candidates,
+not how they are ranked — still `ts_rank_cd`.
+
+On this repository's BEIR runs the rule is worth more than the ranking difference on long queries,
+and close to nothing on short ones:
+
+| corpus | `AllTerms` | `AnyTerm` |
+|---|---:|---:|
+| NFCorpus (queries average 3.4 terms) | 0.1864 | 0.1881 |
+| SciFact (13.1 terms) | 0.0188 | 0.0988 |
+
+SciFact is where the AND rule buries the corpus: requiring all thirteen terms of an abstract leaves
+almost nothing to rank. NFCorpus barely moves, because three terms usually do co-occur — its
+distance from BM25 is the ranker, not the rule. `AnyTerm` still lands far from BM25's 0.662 on
+SciFact, which is what `PostgresBm25SearchEngine` (below) is for.
 
 **Sparse (`PostgresSparseSearchEngine`)** — learned-sparse ANN over `pgvector sparsevec`
 (HNSW only — IVFFlat is unavailable for `sparsevec`), fed by your own sparse model:
@@ -296,6 +325,99 @@ are in-sample: each threshold was scored on the qrels it is reported against, so
 upper bound and not a tuned configuration. `Nearest` mode, the Levenshtein and phonetic refinements,
 and `%>`/`word_similarity` are not measured.
 
+## BM25 over stock PostgreSQL (`PostgresBm25SearchEngine`)
+
+True Okapi BM25 with **no extension beyond `unaccent`**. The `tsvector` column and its GIN index do
+the matching — the same table, the same DDL and the same `tsv` expression as the lexical engine —
+and `Bm25Scorer` does the ranking over the term frequencies the vector already stores.
+
+```csharp
+using LexiSharp.Postgres;
+
+ITextSearchEngine engine = new PostgresBm25SearchEngine(connectionString);
+engine.Add(new SearchDocument("1", "the quick brown fox jumps over the lazy dog"));
+engine.Search("quick fox");   // Bm25Scorer scores, not ts_rank_cd's
+```
+
+It exists because `pg_search` (next section) is the faster route to BM25, but it needs a preloaded
+library, and no major managed service lets you install one. This engine needs `CREATE EXTENSION unaccent` and nothing else, so on RDS, Cloud SQL
+and Azure Database for PostgreSQL the only server-side step is allowing that one extension.
+
+**Where the numbers come from.** `N`, the average document length and every query term's document
+frequency are read once through `ts_stat` and cached; the term frequencies and the length come from
+the candidate row's own `tsvector`. The query passes through the same text search configuration as
+the column, so the scorer sums over the terms the index matched. Any write through the engine
+invalidates the snapshot and the next search rebuilds it; a write by another engine on the shared
+table (or a bulk load) does not, and `RefreshStatistics()` is how that caller says so. Scores are
+on `Bm25Scorer`'s scale, unlike `ts_rank_cd`'s and `pdb.score`'s, so they are comparable with the
+in-memory BM25 row.
+
+**The candidate gate.** A GIN index cannot return rows in score order, so without a gate the only
+option is to score every match before the pool cut — and a query whose common terms match most of
+the corpus then costs a full scan. `RareTermGate` (on by default) generates candidates from the
+query's **rarest terms** instead: terms are taken by ascending document frequency while their summed
+document frequency stays inside `RareTermGateBudget` (default 1,000 rows), and only those matches are
+ranked. The full query still scores them. This is what BM25's own idf says to do — a term held by ten
+documents carries about 6 nats, one held by half the corpus about 0.4 — and it is a **recall bound**:
+a document holding none of the gated terms cannot be returned by any score.
+
+Two fallbacks keep it honest. When even the rarest term exceeds the budget, the thread falls back to
+the whole match set, so a corpus of common terms keeps the previous behaviour. And a quoted phrase
+bypasses the gate entirely: the phrase is the query's contract, and a disjunction of terms must not
+stand in for it. `CandidatePool` still bounds how many of the gate's candidates are read (default
+1,000); with the gate on it rarely binds.
+
+**What it buys, in quality.** nDCG@10 over the same corpora, queries and qrels:
+
+| corpus | no gate | gate, 250 rows | gate, 500 rows | gate, 1,000 rows | exact (no gate, pool 0) |
+|---|---:|---:|---:|---:|---:|
+| NFCorpus | 0.2999 | 0.3036 | 0.3053 | **0.3072** | 0.3072 |
+| SciFact | 0.5636 | 0.6643 | 0.6665 | **0.6665** | 0.6665 |
+
+At the default budget the gate reads the exact ranking's nDCG on both corpora. The ungated row does
+not because its 1,000 candidates are chosen by `ts_rank_cd` coverage, which is not what BM25 ranks
+by; on SciFact that truncation is the whole 0.10 gap. The gate chooses by idf instead, and its
+candidate set is small enough not to truncate. Lowering the budget trades a little quality on
+NFCorpus for speed; raising it changes nothing here.
+
+**What it costs, in time.** The evaluation harness reports quality and not time on purpose; the
+[PostgreSQL lane](benchmarks.md#postgresql-lane-postgres-what-a-search-costs-on-stock-postgresql)
+measures the other half — one process, one thread, a pooled data source, a page of 10, on a local
+server. p50 / mean:
+
+| corpus (documents) | `ts_rank_cd`, any term | BM25, no gate | gate, 250 | gate, 500 | gate, 1,000 |
+|---|---:|---:|---:|---:|---:|
+| NFCorpus (3,633) | 6.6 / 28.3 ms | 25.7 / 50.0 ms | 5.0 / 7.0 ms | 7.0 / 10.5 ms | **10.0 / 17.8 ms** |
+| SciFact (5,183) | 219 / 240 ms | 265 / 284 ms | 15.7 / 17.8 ms | 31.4 / 34.3 ms | **58.8 / 63.9 ms** |
+
+- **The scan was the cost, and the gate removes it.** On SciFact the ungated row is 265 ms because a
+  thirteen-term query matches nearly the whole corpus and `ts_rank_cd` is evaluated over every
+  match; the gated row is 59 ms, and 16 ms at a 250-row budget.
+- **The pool is no longer the interesting knob.** With the gate on, `pool 0` and `pool 1,000` read
+  the same (SciFact 50.1 vs 49.7 ms in the lane); the pool matters on the ungated path, where it is
+  the thing that truncates.
+- **It is still not a speed replacement for `pg_search`.** That engine answers from its own
+  inverted index instead of ranking a candidate set inside PostgreSQL, which is why it exists.
+  What this engine buys is portability; the table is its price.
+- **The statistics build is the first search after a write**, not a search: `ts_stat` walks the
+  table, and the column is measured on its own so it does not hide inside a p99.
+
+Two facts about the evidence, because they bound the claim. Both corpora are scientific and their
+queries are rich in specific terms — SciFact's rarest query term has a median document frequency of
+1 — which is the case the gate is built for. And the failure mode is real: a rare term that is a
+false friend (a name variant, an entity absent from the relevant documents) can gate them out. The
+harness flag `--backend-gate off` is how to measure that on your own corpus.
+
+The read is two-phase: the candidate query ranks ids and carries one `tsvector` per candidate, and
+the page's documents are fetched afterwards, so a thousand candidates do not drag a thousand contents
+and jsonb rows through the sort. The per-candidate reader keeps the query's terms and counts the rest
+without allocating their strings. On NFCorpus those two changes took the ungated pool-1,000 row from
+27 ms to 16 ms at the median and from 64 ms to 37 ms at the mean.
+
+**What it is not.** The analysis is PostgreSQL's, not this library's tokenizer, so it matches the
+in-memory rows at most and no published figure. Weights (`FieldWeights`) are a `ts_rank_cd`
+concept and do not reach this ranking.
+
 ## ParadeDB BM25 backend (`ParadeDBTextSearchEngine`)
 
 Okapi BM25 ranking computed by Tantivy inside PostgreSQL through the `pg_search`
@@ -342,11 +464,41 @@ the in-memory engines return under the default `TieBreak.DocumentId`. The statem
 page differently after a plan change. `TieBreak.InsertionOrder` has no counterpart on a SQL table
 and is ignored there: the id order is the answer.
 
-BM25 scores are PostgreSQL-native, so they are **not** numerically comparable to
-`Bm25Scorer`/`TfIdfScorer` — use the hybrid engine's `ReciprocalRankFusionMerger` (or
-re-rank) for a single cross-engine ordering. Note the extension is **AGPL-3 licensed**: fine
-for SaaS/internal use, but review it if you distribute the stack.
+ParadeDB's scores are Tantivy's and PostgreSQL-native, so they are **not** numerically comparable
+to `Bm25Scorer`/`TfIdfScorer` — use the hybrid engine's `ReciprocalRankFusionMerger` (or re-rank)
+for a single cross-engine ordering. The stock-PostgreSQL BM25 engine above is the opposite: its
+scores are `Bm25Scorer`'s. Note the extension is **AGPL-3 licensed**: fine for SaaS/internal use,
+but review it if you distribute the stack.
 
-By default the tests are skipped unless `POSTGRES_TEST_CONNECTION` points at a live instance
-**with `pg_search` available** (the `paradedb/paradedb:pg16` image ships it, preloaded) —
-they self-skip when the extension is absent.
+## Managed PostgreSQL
+
+What each engine needs server-side, and whether the large managed services provide it:
+
+| requirement | RDS / Aurora | Cloud SQL | Azure Database for PostgreSQL |
+|---|---|---|---|
+| `unaccent`, `pg_trgm`, `fuzzystrmatch` | yes | yes | yes |
+| `pgvector` (vector engine) | yes | yes | yes |
+| `pgvector` ≥ 0.7.0 (sparse engine, `sparsevec` + HNSW) | yes on current majors | version-gated | yes on current majors; older servers ship 0.5.1, which has no `sparsevec` |
+| `pg_search` (ParadeDB engine) | **no** | **no** | **no** |
+
+Everything else the engines need is stock PostgreSQL: the lexical and BM25 engines run anywhere,
+and the fuzzy engine needs only contrib.
+
+Three things bite in practice:
+
+- **`CREATE EXTENSION` is privileged.** RDS wants `rds_superuser`, Cloud SQL `cloudsqlsuperuser`,
+  Azure `azure_pg_admin`. A deployment role without it fails at `EnsureSchema`, not at first query.
+- **Azure and Cloud SQL gate extension installation by allow-list.** On Azure the extension must
+  also be listed in the `azure.extensions` server parameter before `CREATE EXTENSION` succeeds.
+  Set it in the deployment steps, not in application code.
+- **`pg_search` is not installable on any of the three.** It is a preloaded library plus an index
+  access method, and the managed services ship a curated extension list. The portable BM25 is
+  `PostgresBm25SearchEngine`; if you want ParadeDB itself, run it beside the managed database (it
+  documents logical replication from RDS, Cloud SQL, Azure, Supabase and Neon into a ParadeDB
+  cluster) or use a managed ParadeDB offering.
+
+By default the tests are skipped unless `POSTGRES_TEST_CONNECTION` points at a live instance. What
+each group needs is what its engine needs: the lexical and BM25 tests run on stock PostgreSQL with
+contrib (`unaccent`), the vector and sparse tests need `pgvector` (`pgvector/pgvector:pg16`), and
+the ParadeDB tests need `pg_search` (`paradedb/paradedb:pg16`, which ships it preloaded) — they
+self-skip when the extension is absent.
