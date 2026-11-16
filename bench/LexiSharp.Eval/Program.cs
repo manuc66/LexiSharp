@@ -127,6 +127,12 @@ public static class Program
         // cost, and a measurement of what the pool costs is what a reader needs to set it.
         string? backendPool = null;
 
+        // The BM25 row's candidate gate: rare terms or the whole query, and the document-frequency
+        // ceiling a term must stay under. Two flags because the second only means anything with
+        // the first.
+        string? backendGate = null;
+        string? backendGateBudget = null;
+
         // The lexical row's tsv weighting, as "title=A[,summary=B]" — parsed after the pair check
         // below, so a malformed spec fails on a message rather than an unhandled exception.
         string? backendFieldWeights = null;
@@ -355,6 +361,12 @@ public static class Program
                     break;
                 case "--backend-pool" when i + 1 < args.Length:
                     backendPool = args[++i];
+                    break;
+                case "--backend-gate" when i + 1 < args.Length:
+                    backendGate = args[++i];
+                    break;
+                case "--backend-gate-budget" when i + 1 < args.Length:
+                    backendGateBudget = args[++i];
                     break;
                 case "--backend-ef" when i + 1 < args.Length:
                     backendEfValues.AddRange(ParsePositiveInts(args[++i], "--backend-ef"));
@@ -589,7 +601,9 @@ public static class Program
                     backendThresholds,
                     sparseVectorsDir,
                     backendMatch is null ? null : ParseMatchMode(backendMatch),
-                    backendPool is null ? null : ParseNonNegative(backendPool, "--backend-pool"));
+                    backendPool is null ? null : ParseNonNegative(backendPool, "--backend-pool"),
+                    backendGate is null ? null : ParseGate(backendGate),
+                    backendGateBudget is null ? null : ParsePositive(backendGateBudget, "--backend-gate-budget"));
             }
             catch (ArgumentException error)
             {
@@ -1859,6 +1873,15 @@ public static class Program
     /// <c>all</c> and <c>any</c> because those are the two English words <c>websearch_to_tsquery</c>
     /// and a disjunction of lexemes are — <c>ands</c>/<c>ors</c> would name an operator, not a rule.
     /// </summary>
+    /// <summary><c>--backend-gate</c>: the BM25 candidate gate, spelled by what it selects.</summary>
+    private static bool ParseGate(string value) =>
+        value.ToLowerInvariant() switch
+        {
+            "rare" => true,
+            "off" or "none" => false,
+            _ => throw new ArgumentException($"--backend-gate expects 'rare' or 'off', got '{value}'."),
+        };
+
     private static PostgresMatchMode ParseMatchMode(string value) =>
         value.ToLowerInvariant() switch
         {
@@ -2194,6 +2217,17 @@ public static class Program
                                 engine's parameters, whose own defaults are 1.5,0.75. Refused with
                                 --backend lexical, whose ts_rank_cd has no such parameter, and with
                                 the vector, sparse and fuzzy backends, which have no k1/b.
+              --backend-gate <rare|off>
+                                How the bm25 backend generates candidates: 'rare' (default) gates on
+                                the query's rarest terms until --backend-gate-budget rows are
+                                read, then scores those with the whole query; 'off' scores every
+                                match of the query. A rare-term gate is a recall bound:
+                                a document holding none of the rare terms is not returned. Refused
+                                with the other backends, which have no such gate.
+              --backend-gate-budget <n>
+                                How many candidate rows --backend-gate rare may read, by ascending
+                                term document frequency (default 1000). If even the rarest term
+                                exceeds it, the row falls back to the whole match set.
               --backend-pool <n>
                                 How many matches the bm25 backend re-ranks, default 1000. The database
                                 selects them by ts_rank_cd and the engine scores them with BM25, so the

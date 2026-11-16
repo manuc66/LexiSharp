@@ -353,57 +353,67 @@ table (or a bulk load) does not, and `RefreshStatistics()` is how that caller sa
 on `Bm25Scorer`'s scale, unlike `ts_rank_cd`'s and `pdb.score`'s, so they are comparable with the
 in-memory BM25 row.
 
-**The candidate pool.** PostgreSQL selects the best `CandidatePool` matches by `ts_rank_cd`
-(default 1,000; `0` removes the bound up to the engine's 100,000-row ceiling) and only those are
-re-ranked. The pool bounds recall — a document outside it cannot be returned — and does not change
-the ordering inside it. On the same BEIR corpora:
+**The candidate gate.** A GIN index cannot return rows in score order, so without a gate the only
+option is to score every match before the pool cut — and a query whose common terms match most of
+the corpus then costs a full scan. `RareTermGate` (on by default) generates candidates from the
+query's **rarest terms** instead: terms are taken by ascending document frequency while their summed
+document frequency stays inside `RareTermGateBudget` (default 1,000 rows), and only those matches are
+ranked. The full query still scores them. This is what BM25's own idf says to do — a term held by ten
+documents carries about 6 nats, one held by half the corpus about 0.4 — and it is a **recall bound**:
+a document holding none of the gated terms cannot be returned by any score.
 
-| corpus | pool 1,000 | pool 0 (exact) | in-memory BM25 | ParadeDB |
-|---|---:|---:|---:|---:|
-| NFCorpus | 0.2999 | 0.3072 | 0.308 | 0.3084 |
-| SciFact | 0.5636 | 0.6665 | 0.662 | 0.6619 |
+Two fallbacks keep it honest. When even the rarest term exceeds the budget, the thread falls back to
+the whole match set, so a corpus of common terms keeps the previous behaviour. And a quoted phrase
+bypasses the gate entirely: the phrase is the query's contract, and a disjunction of terms must not
+stand in for it. `CandidatePool` still bounds how many of the gate's candidates are read (default
+1,000); with the gate on it rarely binds.
 
-At the default pool the row is within 0.008 of the in-memory BM25 on NFCorpus and 0.10 short on
-SciFact: on a corpus where a thirteen-term query matches half of it, the pool's 1,000 candidates are
-the whole gap. Raise the pool, or set it to `0`, when the match sets are that large — the cost is
-one `tsvector` per match transferred and parsed per query.
+**What it buys, in quality.** nDCG@10 over the same corpora, queries and qrels:
 
-**What it costs, in milliseconds.** The evaluation harness reports quality and not time on purpose;
-the [PostgreSQL lane](benchmarks.md#postgresql-lane-postgres-what-a-search-costs-on-stock-postgresql)
+| corpus | no gate | gate, 250 rows | gate, 500 rows | gate, 1,000 rows | exact (no gate, pool 0) |
+|---|---:|---:|---:|---:|---:|
+| NFCorpus | 0.2999 | 0.3036 | 0.3053 | **0.3072** | 0.3072 |
+| SciFact | 0.5636 | 0.6643 | 0.6665 | **0.6665** | 0.6665 |
+
+At the default budget the gate reads the exact ranking's nDCG on both corpora. The ungated row does
+not because its 1,000 candidates are chosen by `ts_rank_cd` coverage, which is not what BM25 ranks
+by; on SciFact that truncation is the whole 0.10 gap. The gate chooses by idf instead, and its
+candidate set is small enough not to truncate. Lowering the budget trades a little quality on
+NFCorpus for speed; raising it changes nothing here.
+
+**What it costs, in time.** The evaluation harness reports quality and not time on purpose; the
+[PostgreSQL lane](benchmarks.md#postgresql-lane-postgres-what-a-search-costs-on-stock-postgresql)
 measures the other half — one process, one thread, a pooled data source, a page of 10, on a local
-server:
+server. p50 / mean:
 
-| corpus (documents) | engine | stats build | p50 | p95 | mean |
-|---|---|---:|---:|---:|---:|
-| NFCorpus (3,633) | `ts_rank_cd`, all terms | — | 0.6 ms | 1.3 ms | 0.7 ms |
-| NFCorpus | `ts_rank_cd`, any term | — | 4.1 ms | 74.6 ms | 21.3 ms |
-| NFCorpus | BM25, pool 1,000 | 220 ms | 16.0 ms | 107.3 ms | 37.3 ms |
-| NFCorpus | BM25, pool 0 | 201 ms | 15.8 ms | 177.1 ms | 58.1 ms |
-| SciFact (5,183) | `ts_rank_cd`, all terms | — | 0.7 ms | 0.8 ms | 0.7 ms |
-| SciFact | `ts_rank_cd`, any term | — | 170.1 ms | 347.2 ms | 177.6 ms |
-| SciFact | BM25, pool 1,000 | 252 ms | 203.3 ms | 385.2 ms | 210.7 ms |
-| SciFact | BM25, pool 0 | 246 ms | 299.7 ms | 490.0 ms | 301.0 ms |
+| corpus (documents) | `ts_rank_cd`, any term | BM25, no gate | gate, 250 | gate, 500 | gate, 1,000 |
+|---|---:|---:|---:|---:|---:|
+| NFCorpus (3,633) | 6.6 / 28.3 ms | 25.7 / 50.0 ms | 5.0 / 7.0 ms | 7.0 / 10.5 ms | **10.0 / 17.8 ms** |
+| SciFact (5,183) | 219 / 240 ms | 265 / 284 ms | 15.7 / 17.8 ms | 31.4 / 34.3 ms | **58.8 / 63.9 ms** |
 
-- **The candidate selection is the cost, not the BM25.** On SciFact the `any term` row alone is
-  170 ms: a thirteen-term query matches nearly the whole corpus, and `ts_rank_cd` is evaluated over
-  every match before the pool cut. The BM25 row adds about 30 ms on top of that. On NFCorpus the
-  selection is 4 ms at the median with a long tail, because the match set is smaller.
-- **On a small corpus with long queries, OR matching is a full scan.** That is the recall it buys,
-  and it is the lexical engine's cost as much as this one's.
-- **The pool is a quality knob more than a time one.** Halving it to 500 costs 0.005 nDCG@10 on
-  NFCorpus and 0.077 on SciFact and barely moves the median; doubling it costs 0.10 in SciFact's
-  tail. 1,000 is the default for that reason.
-- **This is not a speed replacement for `pg_search`.** Tantivy answers from its own inverted index
-  instead of ranking the match set in PostgreSQL, which is why the extension exists. What this
-  engine buys is portability; the table is its price.
+- **The scan was the cost, and the gate removes it.** On SciFact the ungated row is 265 ms because a
+  thirteen-term query matches nearly the whole corpus and `ts_rank_cd` is evaluated over every
+  match; the gated row is 59 ms, and 16 ms at a 250-row budget.
+- **The pool is no longer the interesting knob.** With the gate on, `pool 0` and `pool 1,000` read
+  the same (SciFact 50.1 vs 49.7 ms in the lane); the pool matters on the ungated path, where it is
+  the thing that truncates.
+- **It is still not a speed replacement for `pg_search`.** Tantivy answers from its own inverted
+  index instead of ranking a candidate set inside PostgreSQL, which is why the extension exists.
+  What this engine buys is portability; the table is its price.
 - **The statistics build is the first search after a write**, not a search: `ts_stat` walks the
   table, and the column is measured on its own so it does not hide inside a p99.
 
-The read is two-phase for this reason: the candidate query ranks ids and carries one `tsvector` per
-candidate, and the page's documents are fetched afterwards, so a thousand candidates do not drag a
-thousand contents and jsonb rows through the sort. The per-candidate reader keeps the query's terms
-and counts the rest without allocating their strings. On NFCorpus those two changes took the
-pool-1,000 row from 27 ms to 16 ms at the median and from 64 ms to 37 ms at the mean.
+Two facts about the evidence, because they bound the claim. Both corpora are scientific and their
+queries are rich in specific terms — SciFact's rarest query term has a median document frequency of
+1 — which is the case the gate is built for. And the failure mode is real: a rare term that is a
+false friend (a name variant, an entity absent from the relevant documents) can gate them out. The
+harness flag `--backend-gate off` is how to measure that on your own corpus.
+
+The read is two-phase: the candidate query ranks ids and carries one `tsvector` per candidate, and
+the page's documents are fetched afterwards, so a thousand candidates do not drag a thousand contents
+and jsonb rows through the sort. The per-candidate reader keeps the query's terms and counts the rest
+without allocating their strings. On NFCorpus those two changes took the ungated pool-1,000 row from
+27 ms to 16 ms at the median and from 64 ms to 37 ms at the mean.
 
 **What it is not.** The analysis is PostgreSQL's, not this library's tokenizer, so it matches the
 in-memory rows at most and no published figure. Weights (`FieldWeights`) are a `ts_rank_cd`

@@ -27,11 +27,12 @@ internal sealed class PostgresMatchExpression
     private readonly IReadOnlyList<KeyValuePair<string, string>> _parameters;
 
     private PostgresMatchExpression(
-        string gate, string rank, IReadOnlyList<KeyValuePair<string, string>> parameters)
+        string gate, string rank, IReadOnlyList<KeyValuePair<string, string>> parameters, bool hasPhrases)
     {
         Gate = gate;
         Rank = rank;
         _parameters = parameters;
+        HasPhrases = hasPhrases;
     }
 
     /// <summary>The <c>tsquery</c> a row must match, as an SQL predicate on <c>tsv</c>.</summary>
@@ -39,6 +40,13 @@ internal sealed class PostgresMatchExpression
 
     /// <summary>The expression <c>ts_rank_cd</c> is called with, weights included.</summary>
     public string Rank { get; }
+
+    /// <summary>
+    /// Whether the gate is made of quoted phrases. A gate that is <c>false</c> matches the query's
+    /// terms by the match mode; one that is <c>true</c> is a conjunction of phrase predicates, and
+    /// nothing may be substituted for it — the phrase is the query's contract.
+    /// </summary>
+    public bool HasPhrases { get; }
 
     /// <summary>Builds the expression for one query.</summary>
     /// <param name="options">Naming, analysis and match-mode options.</param>
@@ -94,7 +102,7 @@ internal sealed class PostgresMatchExpression
             ? $"ts_rank_cd({weights}, tsv, {rank})"
             : $"ts_rank_cd(tsv, {rank})";
 
-        return new PostgresMatchExpression(gate, rankSql, parameters);
+        return new PostgresMatchExpression(gate, rankSql, parameters, segments.Phrases.Count > 0);
     }
 
     /// <summary>Adds the query's parameters to a command, under the names the expressions use.</summary>

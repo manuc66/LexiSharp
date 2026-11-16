@@ -402,6 +402,7 @@ F|LexiSharp.Onnx.OnnxScoreTransform|Softmax|LexiSharp.Onnx.OnnxScoreTransform|st
 F|LexiSharp.Postgres.PostgresBm25Options|DefaultB|System.Double|static|0.75
 F|LexiSharp.Postgres.PostgresBm25Options|DefaultCandidatePool|System.Int32|static|1000
 F|LexiSharp.Postgres.PostgresBm25Options|DefaultK1|System.Double|static|1.5
+F|LexiSharp.Postgres.PostgresBm25Options|DefaultRareTermGateBudget|System.Int32|static|1000
 F|LexiSharp.Postgres.PostgresBm25Options|MaximumCandidatePool|System.Int32|static|100000
 F|LexiSharp.Postgres.PostgresFieldWeight|A|LexiSharp.Postgres.PostgresFieldWeight|static|0
 F|LexiSharp.Postgres.PostgresFieldWeight|B|LexiSharp.Postgres.PostgresFieldWeight|static|1
@@ -2682,6 +2683,8 @@ P|LexiSharp.Postgres.PostgresBm25Options|FieldWeights|System.Collections.Generic
 P|LexiSharp.Postgres.PostgresBm25Options|K1|System.Double|getset
 P|LexiSharp.Postgres.PostgresBm25Options|MatchMode|LexiSharp.Postgres.PostgresMatchMode|getset
 P|LexiSharp.Postgres.PostgresBm25Options|QualifiedTableName|System.String|get
+P|LexiSharp.Postgres.PostgresBm25Options|RareTermGateBudget|System.Int32|getset
+P|LexiSharp.Postgres.PostgresBm25Options|RareTermGate|System.Boolean|getset
 P|LexiSharp.Postgres.PostgresBm25Options|Schema|System.String|getset
 P|LexiSharp.Postgres.PostgresBm25Options|Table|System.String|getset
 P|LexiSharp.Postgres.PostgresBm25Options|TextSearchConfig|System.String|getset

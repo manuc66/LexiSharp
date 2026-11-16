@@ -1628,39 +1628,46 @@ dotnet run --project bench/LexiSharp.Benchmarks -c Release -- postgres \
 
 Measured 2026-11-16 on an 8-core Linux host, .NET 10.0.14, two passes over every query, p50/p95/p99
 by nearest rank. The index is built once per corpus and shared by every row; the rows are
-interleaved per query, so a pool size does not inherit the previous row's cache state or its GC.
+interleaved per query, so a gate budget does not inherit the previous row's cache state or its GC.
 
 | corpus (documents) | engine | index | stats build | p50 | p95 | p99 | mean | q/s |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
-| NFCorpus (3,633) | `ts_rank_cd`, all terms | 2.9 s | — | 0.6 ms | 1.3 ms | 1.7 ms | 0.7 ms | 1,459 |
-| NFCorpus | `ts_rank_cd`, any term | | — | 4.1 ms | 74.6 ms | 102.3 ms | 21.3 ms | 47 |
-| NFCorpus | BM25, pool 1,000 | | 220 ms | 16.0 ms | 107.3 ms | 131.1 ms | 37.3 ms | 27 |
-| NFCorpus | BM25, pool 5,000 | | 205 ms | 15.7 ms | 176.9 ms | 202.2 ms | 57.7 ms | 17 |
-| NFCorpus | BM25, pool 0 | | 201 ms | 15.8 ms | 177.1 ms | 209.0 ms | 58.1 ms | 17 |
-| SciFact (5,183) | `ts_rank_cd`, all terms | 3.5 s | — | 0.7 ms | 0.8 ms | 1.3 ms | 0.7 ms | 1,433 |
-| SciFact | `ts_rank_cd`, any term | | — | 170.1 ms | 347.2 ms | 425.0 ms | 177.6 ms | 6 |
-| SciFact | BM25, pool 1,000 | | 252 ms | 203.3 ms | 385.2 ms | 466.7 ms | 210.7 ms | 5 |
-| SciFact | BM25, pool 5,000 | | 248 ms | 300.2 ms | 483.4 ms | 569.6 ms | 301.2 ms | 3 |
-| SciFact | BM25, pool 0 | | 246 ms | 299.7 ms | 490.0 ms | 570.4 ms | 301.0 ms | 3 |
+| NFCorpus (3,633) | `ts_rank_cd`, all terms | 3.3 s | — | 0.9 ms | 1.8 ms | 3.4 ms | 1.0 ms | 982 |
+| NFCorpus | `ts_rank_cd`, any term | | — | 6.6 ms | 100.9 ms | 136.7 ms | 28.3 ms | 35 |
+| NFCorpus | BM25, gate 250 | | 268 ms | 5.0 ms | 17.6 ms | 25.3 ms | 7.0 ms | 143 |
+| NFCorpus | BM25, gate 500 | | 224 ms | 7.0 ms | 28.4 ms | 38.9 ms | 10.5 ms | 95 |
+| NFCorpus | BM25, gate 1,000 (default) | | 210 ms | 10.0 ms | 55.2 ms | 66.0 ms | 17.8 ms | 56 |
+| NFCorpus | BM25, no gate | | 227 ms | 25.7 ms | 148.1 ms | 177.3 ms | 50.0 ms | 20 |
+| SciFact (5,183) | `ts_rank_cd`, all terms | 6.5 s | — | 0.8 ms | 2.6 ms | 3.8 ms | 1.1 ms | 936 |
+| SciFact | `ts_rank_cd`, any term | | — | 219.3 ms | 498.4 ms | 649.9 ms | 239.5 ms | 4 |
+| SciFact | BM25, gate 250 | | 450 ms | 15.7 ms | 36.6 ms | 51.5 ms | 17.8 ms | 56 |
+| SciFact | BM25, gate 500 | | 384 ms | 31.4 ms | 68.7 ms | 88.1 ms | 34.3 ms | 29 |
+| SciFact | BM25, gate 1,000 (default) | | 387 ms | 58.8 ms | 119.8 ms | 153.0 ms | 63.9 ms | 16 |
+| SciFact | BM25, no gate | | 434 ms | 265.0 ms | 531.8 ms | 734.3 ms | 284.4 ms | 4 |
 
 What the table says, and what it does not:
 
 - **The candidate selection dominates, not the BM25 arithmetic.** On SciFact the lexical
-  `any term` row is already 170 ms: a thirteen-term query matches almost the whole corpus, and
-  `ts_rank_cd` is computed for every match before the pool cut. The BM25 row adds about 30 ms.
-  On NFCorpus the same selection is 4 ms at the median, and the BM25 row is 16 ms.
-- **OR matching on a small corpus with long queries is a scan.** The all-terms rows are two to
-  three orders of magnitude faster because the AND match set is tiny and the GIN index answers it
-  directly. That is the recall the any-term rule buys, priced.
-- **The pool is mostly a quality knob.** 500 candidates cost 0.005 nDCG@10 on NFCorpus and 0.077
-  on SciFact ([evaluation](evaluation.md)) and barely move the median; 5,000 and 0 differ from
-  each other only in the tail. The default of 1,000 is chosen from both tables.
+  `any term` row alone is 219 ms: a thirteen-term query matches almost the whole corpus, and
+  `ts_rank_cd` is computed for every match. The BM25 row without a gate is 265 ms.
+- **The rare-term gate removes that scan.** It generates candidates from the query's rarest terms,
+  by ascending document frequency while their summed document frequency stays inside the budget
+  (1,000 rows by default), and scores them with the whole query. On SciFact that is 265 ms → 59 ms
+  at the default budget and 16 ms at 250; on NFCorpus 25.7 → 10.0 ms. It also recovers the exact
+  ranking's nDCG on both corpora, which the ungated pool does not
+  ([backends](backends.md#bm25-over-stock-postgresql-postgresbm25searchengine)).
+- **The pool is mostly a fallback knob now.** With the gate on, the pool rarely binds; the gate's
+  budget is the cost control that matters. With the gate off, the pool is what truncates, and on
+  SciFact that truncation is 0.10 nDCG@10.
 - **`stats build` is not a search.** It is the `ts_stat` walk a `PostgresBm25SearchEngine` pays on
   its first search after a write, measured by calling `RefreshStatistics()` explicitly. A write and
-  a search in a tight loop pays ~200-250 ms per corpus of this size.
+  a search in a tight loop pays ~200-450 ms per corpus of this size.
 - **It is not a speed comparison with `pg_search`.** Tantivy answers from its own inverted index
-  instead of ranking the match set inside PostgreSQL, which is why the extension exists. This lane
+  instead of ranking a candidate set inside PostgreSQL, which is why the extension exists. This lane
   measures the portable path; the extension is the one to measure when it can be installed.
+- **The gate is a recall bound.** Both corpora are scientific and entity-rich, which is its best
+  case; a rare term that is a false friend can gate out relevant documents. `--backend-gate off`
+  measures that on another corpus.
 
 Two reads make the BM25 rows what they are: the candidate query ranks ids and carries one
 `tsvector` per candidate, and the page's documents are fetched afterwards; the per-candidate
