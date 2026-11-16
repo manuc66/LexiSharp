@@ -18,6 +18,18 @@ namespace LexiSharp.Tests;
 public class EvaluationHarnessTests
 {
     [Fact]
+    public void FiqaIsSelectableButNotPartOfAll()
+    {
+        // It is the candidate gate's evidence on a corpus of another nature, not a fourth row in
+        // the pinned comparison: --dataset all must keep meaning the three the tables were built on.
+        BeirDataset fiqa = BeirDataset.Resolve("fiqa");
+
+        Assert.False(fiqa.InAll);
+        Assert.Equal(3, BeirDataset.All.Count(dataset => dataset.InAll));
+        Assert.DoesNotContain("fiqa", BeirDataset.All.Where(dataset => dataset.InAll).Select(dataset => dataset.Name));
+    }
+
+    [Fact]
     public void TheBm25FTunedRowIsOptInAndSaysWhetherWeightingHelped()
     {
         BeirCorpus corpus = Corpus();
