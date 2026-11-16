@@ -123,155 +123,18 @@ internal sealed record BackendLane(
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-        BackendKind parsed = kind switch
-        {
-            "lexical" => BackendKind.Lexical,
-            "bm25" => BackendKind.Bm25,
-            "paradedb" => BackendKind.ParadeDb,
-            "vector" => BackendKind.Vector,
-            "fuzzy" => BackendKind.Fuzzy,
-            "sparse" => BackendKind.Sparse,
-            _ => throw new ArgumentException(
-                $"--backend expects 'lexical', 'bm25', 'paradedb', 'vector', 'fuzzy' or 'sparse', got '{kind}'."),
-        };
+        BackendKind parsed = ParseKind(kind);
 
-        if (parsed == BackendKind.Sparse)
-        {
-            if (string.IsNullOrWhiteSpace(sparseVectorsDirectory))
-            {
-                throw new ArgumentException(
-                    "--backend sparse measures PostgresSparseSearchEngine over precomputed learned-sparse "
-                    + "vectors, and the engine has no model of its own: give them with --sparse <dir>, the "
-                    + "same directory the in-memory sparse row reads. --dense is not a substitute — those "
-                    + "are the dense lane's embeddings, not sparse term weights.");
-            }
-
-            if (bm25 is not null)
-            {
-                throw new ArgumentException(
-                    "--backend-bm25 sets k1/b, and the sparse row ranks by the inner product of two "
-                    + "learned sparse vectors: no BM25 parameter reaches it. Drop the flag.");
-            }
-
-            if (textSearchConfig != "simple")
-            {
-                throw new ArgumentException(
-                    $"--backend-config '{textSearchConfig}' is PostgreSQL's text search configuration, "
-                    + "which the sparse engine never reads: the shared table's tsv column is written but "
-                    + "the sparse ranking is a dot product over term coordinates. Drop the flag, or use "
-                    + "--backend lexical.");
-            }
-
-            if (efSearchValues is { Count: > 0 })
-            {
-                throw new ArgumentException(
-                    "--backend-ef sets pgvector's hnsw.ef_search, and PostgresSparseSearchEngine has no "
-                    + "option that reaches it: the sparse row is measured at pgvector's default 40. Set "
-                    + "it on the server (a database-level setting applies, because the engine never "
-                    + "overrides it) and say so in the row beside the number, or drop the flag.");
-            }
-        }
-
-        if (parsed == BackendKind.Lexical && bm25 is not null)
-        {
-            throw new ArgumentException(
-                "--backend-bm25 sets k1/b, and ts_rank_cd has neither: the lexical row ranks by coverage "
-                + "and takes no parameter. Drop the flag, or use --backend bm25 (stock PostgreSQL, no "
-                + "extension) or --backend paradedb.");
-        }
-
-        if (parsed != BackendKind.Bm25 && candidatePool is not null)
-        {
-            throw new ArgumentException(
-                "--backend-pool bounds the matches the BM25 engine re-ranks, and no other backend has a "
-                + "pool: the lexical row ranks in SQL, the vector and sparse rows rank by distance after "
-                + "an index scan, and ParadeDB and fuzzy rank their whole match set. Drop the flag, or "
-                + "use --backend bm25.");
-        }
-
-        if (parsed != BackendKind.Bm25 && (rareTermGate is not null || rareTermGateBudget is not null))
-        {
-            throw new ArgumentException(
-                "--backend-gate and --backend-gate-df configure the BM25 engine's candidate gate, which "
-                + "selects candidates from the query's rare terms; the other backends have no such gate. "
-                + "Drop the flags, or use --backend bm25.");
-        }
-
-        if (parsed is not (BackendKind.Lexical or BackendKind.Bm25) && matchMode is not null)
-        {
-            throw new ArgumentException(
-                "--backend-match selects the tsquery rule the lexical and BM25 engines match with, and the "
-                + "vector, sparse, ParadeDB and fuzzy rows rank by an embedding, a dot product, pdb.score or "
-                + "trigram similarity. Drop the flag, or use --backend lexical or --backend bm25.");
-        }
-
-        if (parsed == BackendKind.ParadeDb && textSearchConfig != "simple")
-        {
-            throw new ArgumentException(
-                $"--backend-config '{textSearchConfig}' selects PostgreSQL's text search configuration, "
-                + "which the lexical engine reads and ParadeDB does not. Drop the flag, or use "
-                + "--backend lexical.");
-        }
-
-        if (parsed == BackendKind.Vector)
-        {
-            if (bm25 is not null)
-            {
-                throw new ArgumentException(
-                    "--backend-bm25 sets k1/b, which no BM25 parameter reaches in a vector index: the "
-                    + "ranking there is cosine distance over embeddings. Drop the flag.");
-            }
-
-            if (textSearchConfig != "simple")
-            {
-                throw new ArgumentException(
-                    $"--backend-config '{textSearchConfig}' is PostgreSQL's text search configuration, "
-                    + "which the vector engine never reads: its documents are ranked by embedding. Drop "
-                    + "the flag, or use --backend lexical.");
-            }
-        }
-
-        if (parsed == BackendKind.Fuzzy)
-        {
-            if (bm25 is not null)
-            {
-                throw new ArgumentException(
-                    "--backend-bm25 sets k1/b, which no BM25 parameter reaches in a trigram index: the "
-                    + "ranking there is similarity over character trigrams. Drop the flag.");
-            }
-
-            if (textSearchConfig != "simple")
-            {
-                throw new ArgumentException(
-                    $"--backend-config '{textSearchConfig}' is PostgreSQL's text search configuration, "
-                    + "which the fuzzy engine never reads: its documents are matched by trigram "
-                    + "similarity. Drop the flag, or use --backend lexical.");
-            }
-        }
-
-        if (parsed != BackendKind.Vector && efSearchValues is { Count: > 0 })
-        {
-            throw new ArgumentException(
-                "--backend-ef sets pgvector's hnsw.ef_search, which only the vector backend reads. "
-                + "Drop the flag, or use --backend vector.");
-        }
-
-        if (parsed != BackendKind.Fuzzy && similarityThresholds is { Count: > 0 })
-        {
-            throw new ArgumentException(
-                "--backend-threshold sets pg_trgm's similarity threshold, which only the fuzzy backend "
-                + "reads: the other engines match by term or by embedding and have no threshold. Drop "
-                + "the flag, or use --backend fuzzy.");
-        }
-
-        if (parsed != BackendKind.Lexical && fieldWeights is { Count: > 0 })
-        {
-            throw new ArgumentException(
-                "--backend-field-weights configures setweight on the tsv column, which only the lexical "
-                + "backend ranks with: the vector, sparse, ParadeDB and fuzzy rows are ranked by an "
-                + "embedding, by a sparse dot product, by pdb.score or by trigram similarity. Drop the "
-                + "flag, or use --backend lexical.");
-        }
+        RefuseSparseOptions(parsed, sparseVectorsDirectory, bm25, textSearchConfig, efSearchValues);
+        RefuseLexicalOptions(parsed, bm25);
+        RefuseParadeDbOptions(parsed, textSearchConfig);
+        RefuseVectorOptions(parsed, bm25, textSearchConfig);
+        RefuseFuzzyOptions(parsed, bm25, textSearchConfig);
+        RefuseBm25OnlyOptions(parsed, candidatePool, rareTermGate, rareTermGateBudget);
+        RefuseMatchMode(parsed, matchMode);
+        RefuseEfSearch(parsed, efSearchValues);
+        RefuseThresholds(parsed, similarityThresholds);
+        RefuseFieldWeights(parsed, fieldWeights);
 
         return new BackendLane(
             parsed, connectionString, textSearchConfig, bm25, efSearchValues, fieldWeights,
@@ -281,6 +144,209 @@ internal sealed record BackendLane(
             candidatePool,
             rareTermGate,
             rareTermGateBudget);
+    }
+
+    private static BackendKind ParseKind(string kind) => kind switch
+    {
+        "lexical" => BackendKind.Lexical,
+        "bm25" => BackendKind.Bm25,
+        "paradedb" => BackendKind.ParadeDb,
+        "vector" => BackendKind.Vector,
+        "fuzzy" => BackendKind.Fuzzy,
+        "sparse" => BackendKind.Sparse,
+        _ => throw new ArgumentException(
+            $"--backend expects 'lexical', 'bm25', 'paradedb', 'vector', 'fuzzy' or 'sparse', got '{kind}'."),
+    };
+
+    /// <summary>A sparse row needs its vectors directory and reads none of the text options.</summary>
+    private static void RefuseSparseOptions(
+        BackendKind parsed,
+        string? sparseVectorsDirectory,
+        Bm25Parameters? bm25,
+        string textSearchConfig,
+        IReadOnlyList<int>? efSearchValues)
+    {
+        if (parsed != BackendKind.Sparse)
+            return;
+
+        if (string.IsNullOrWhiteSpace(sparseVectorsDirectory))
+        {
+            throw new ArgumentException(
+                "--backend sparse measures PostgresSparseSearchEngine over precomputed learned-sparse "
+                + "vectors, and the engine has no model of its own: give them with --sparse <dir>, the "
+                + "same directory the in-memory sparse row reads. --dense is not a substitute — those "
+                + "are the dense lane's embeddings, not sparse term weights.");
+        }
+
+        if (bm25 is not null)
+        {
+            throw new ArgumentException(
+                "--backend-bm25 sets k1/b, and the sparse row ranks by the inner product of two "
+                + "learned sparse vectors: no BM25 parameter reaches it. Drop the flag.");
+        }
+
+        if (textSearchConfig != "simple")
+        {
+            throw new ArgumentException(
+                $"--backend-config '{textSearchConfig}' is PostgreSQL's text search configuration, "
+                + "which the sparse engine never reads: the shared table's tsv column is written but "
+                + "the sparse ranking is a dot product over term coordinates. Drop the flag, or use "
+                + "--backend lexical.");
+        }
+
+        if (efSearchValues is { Count: > 0 })
+        {
+            throw new ArgumentException(
+                "--backend-ef sets pgvector's hnsw.ef_search, and PostgresSparseSearchEngine has no "
+                + "option that reaches it: the sparse row is measured at pgvector's default 40. Set "
+                + "it on the server (a database-level setting applies, because the engine never "
+                + "overrides it) and say so in the row beside the number, or drop the flag.");
+        }
+    }
+
+    /// <summary><c>ts_rank_cd</c> takes no k1/b.</summary>
+    private static void RefuseLexicalOptions(BackendKind parsed, Bm25Parameters? bm25)
+    {
+        if (parsed == BackendKind.Lexical && bm25 is not null)
+        {
+            throw new ArgumentException(
+                "--backend-bm25 sets k1/b, and ts_rank_cd has neither: the lexical row ranks by coverage "
+                + "and takes no parameter. Drop the flag, or use --backend bm25 (stock PostgreSQL, no "
+                + "extension) or --backend paradedb.");
+        }
+    }
+
+    /// <summary>ParadeDB builds its own index and does not read the text search configuration.</summary>
+    private static void RefuseParadeDbOptions(BackendKind parsed, string textSearchConfig)
+    {
+        if (parsed == BackendKind.ParadeDb && textSearchConfig != "simple")
+        {
+            throw new ArgumentException(
+                $"--backend-config '{textSearchConfig}' selects PostgreSQL's text search configuration, "
+                + "which the lexical engine reads and ParadeDB does not. Drop the flag, or use "
+                + "--backend lexical.");
+        }
+    }
+
+    /// <summary>An embedding index has no BM25 parameter and no text search configuration.</summary>
+    private static void RefuseVectorOptions(BackendKind parsed, Bm25Parameters? bm25, string textSearchConfig)
+    {
+        if (parsed != BackendKind.Vector)
+            return;
+
+        if (bm25 is not null)
+        {
+            throw new ArgumentException(
+                "--backend-bm25 sets k1/b, which no BM25 parameter reaches in a vector index: the "
+                + "ranking there is cosine distance over embeddings. Drop the flag.");
+        }
+
+        if (textSearchConfig != "simple")
+        {
+            throw new ArgumentException(
+                $"--backend-config '{textSearchConfig}' is PostgreSQL's text search configuration, "
+                + "which the vector engine never reads: its documents are ranked by embedding. Drop "
+                + "the flag, or use --backend lexical.");
+        }
+    }
+
+    /// <summary>A trigram index has no BM25 parameter and no text search configuration.</summary>
+    private static void RefuseFuzzyOptions(BackendKind parsed, Bm25Parameters? bm25, string textSearchConfig)
+    {
+        if (parsed != BackendKind.Fuzzy)
+            return;
+
+        if (bm25 is not null)
+        {
+            throw new ArgumentException(
+                "--backend-bm25 sets k1/b, which no BM25 parameter reaches in a trigram index: the "
+                + "ranking there is similarity over character trigrams. Drop the flag.");
+        }
+
+        if (textSearchConfig != "simple")
+        {
+            throw new ArgumentException(
+                $"--backend-config '{textSearchConfig}' is PostgreSQL's text search configuration, "
+                + "which the fuzzy engine never reads: its documents are matched by trigram "
+                + "similarity. Drop the flag, or use --backend lexical.");
+        }
+    }
+
+    /// <summary>The pool and the gate exist only on the stock-PostgreSQL BM25 engine.</summary>
+    private static void RefuseBm25OnlyOptions(
+        BackendKind parsed,
+        int? candidatePool,
+        bool? rareTermGate,
+        int? rareTermGateBudget)
+    {
+        if (parsed == BackendKind.Bm25)
+            return;
+
+        if (candidatePool is not null)
+        {
+            throw new ArgumentException(
+                "--backend-pool bounds the matches the BM25 engine re-ranks, and no other backend has a "
+                + "pool: the lexical row ranks in SQL, the vector and sparse rows rank by distance after "
+                + "an index scan, and ParadeDB and fuzzy rank their whole match set. Drop the flag, or "
+                + "use --backend bm25.");
+        }
+
+        if (rareTermGate is not null || rareTermGateBudget is not null)
+        {
+            throw new ArgumentException(
+                "--backend-gate and --backend-gate-budget configure the BM25 engine's candidate gate, "
+                + "which selects candidates from the query's rare terms; the other backends have no "
+                + "such gate. Drop the flags, or use --backend bm25.");
+        }
+    }
+
+    /// <summary>The tsquery match rule is the lexical and BM25 engines' alone.</summary>
+    private static void RefuseMatchMode(BackendKind parsed, PostgresMatchMode? matchMode)
+    {
+        if (parsed is not (BackendKind.Lexical or BackendKind.Bm25) && matchMode is not null)
+        {
+            throw new ArgumentException(
+                "--backend-match selects the tsquery rule the lexical and BM25 engines match with, and the "
+                + "vector, sparse, ParadeDB and fuzzy rows rank by an embedding, a dot product, pdb.score or "
+                + "trigram similarity. Drop the flag, or use --backend lexical or --backend bm25.");
+        }
+    }
+
+    /// <summary><c>hnsw.ef_search</c> is the vector engine's.</summary>
+    private static void RefuseEfSearch(BackendKind parsed, IReadOnlyList<int>? efSearchValues)
+    {
+        if (parsed != BackendKind.Vector && efSearchValues is { Count: > 0 })
+        {
+            throw new ArgumentException(
+                "--backend-ef sets pgvector's hnsw.ef_search, which only the vector backend reads. "
+                + "Drop the flag, or use --backend vector.");
+        }
+    }
+
+    /// <summary><c>pg_trgm</c>'s threshold is the fuzzy engine's.</summary>
+    private static void RefuseThresholds(BackendKind parsed, IReadOnlyList<double>? similarityThresholds)
+    {
+        if (parsed != BackendKind.Fuzzy && similarityThresholds is { Count: > 0 })
+        {
+            throw new ArgumentException(
+                "--backend-threshold sets pg_trgm's similarity threshold, which only the fuzzy backend "
+                + "reads: the other engines match by term or by embedding and have no threshold. Drop "
+                + "the flag, or use --backend fuzzy.");
+        }
+    }
+
+    /// <summary><c>setweight</c> classes are read by <c>ts_rank_cd</c>, so they are the lexical row's.</summary>
+    private static void RefuseFieldWeights(
+        BackendKind parsed, IReadOnlyDictionary<string, PostgresFieldWeight>? fieldWeights)
+    {
+        if (parsed != BackendKind.Lexical && fieldWeights is { Count: > 0 })
+        {
+            throw new ArgumentException(
+                "--backend-field-weights configures setweight on the tsv column, which only the lexical "
+                + "backend ranks with: the vector, sparse, ParadeDB and fuzzy rows are ranked by an "
+                + "embedding, by a sparse dot product, by pdb.score or by trigram similarity. Drop the "
+                + "flag, or use --backend lexical.");
+        }
     }
 
     /// <summary>
