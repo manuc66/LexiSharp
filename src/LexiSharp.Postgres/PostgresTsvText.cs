@@ -57,93 +57,115 @@ internal static class PostgresTsvText
             return (terms, length);
 
         HashSet<string>.AlternateLookup<ReadOnlySpan<char>> lookup = default;
-        bool filtered = keep is not null;
 
-        if (filtered)
-            lookup = keep!.GetAlternateLookup<ReadOnlySpan<char>>();
+        if (keep is not null)
+            lookup = keep.GetAlternateLookup<ReadOnlySpan<char>>();
 
         int i = 0;
 
-        while (i < text.Length)
+        while (TryReadLexeme(text, ref i, out int start, out int end, out bool escaped))
         {
-            while (i < text.Length && char.IsWhiteSpace(text[i]))
-                i++;
-
-            if (i >= text.Length)
-                break;
-
-            int start;
-            int end;
-            bool escaped = false;
-
-            if (text[i] == '\'')
-            {
-                i++;
-                start = i;
-
-                while (i < text.Length)
-                {
-                    if (text[i] == '\'')
-                    {
-                        // A doubled quote is the escape; a single one closes the lexeme.
-                        if (i + 1 < text.Length && text[i + 1] == '\'')
-                        {
-                            escaped = true;
-                            i += 2;
-                            continue;
-                        }
-
-                        break;
-                    }
-
-                    i++;
-                }
-
-                end = i;
-
-                if (i < text.Length)
-                    i++;
-            }
-            else
-            {
-                // Defensive: every released version quotes lexemes, but an unquoted one would
-                // otherwise be swallowed into the next token's positions.
-                start = i;
-
-                while (i < text.Length && text[i] != ':' && !char.IsWhiteSpace(text[i]))
-                    i++;
-
-                end = i;
-            }
-
             if (end <= start)
                 continue;
 
             int count = ReadCount(text, ref i);
             length += count;
 
-            if (!filtered)
-            {
-                string lexeme = escaped ? Unescape(text, start, end) : text[start..end];
-                terms[lexeme] = terms.GetValueOrDefault(lexeme) + count;
-                continue;
-            }
-
-            if (!escaped)
-            {
-                if (lookup.TryGetValue(text.AsSpan(start, end - start), out string? kept))
-                    terms[kept] = terms.GetValueOrDefault(kept) + count;
-
-                continue;
-            }
-
-            string unescaped = Unescape(text, start, end);
-
-            if (keep!.Contains(unescaped))
-                terms[unescaped] = terms.GetValueOrDefault(unescaped) + count;
+            Record(terms, text, start, end, escaped, count, keep, lookup);
         }
 
         return (terms, length);
+    }
+
+    /// <summary>
+    /// Reads one lexeme at <paramref name="i"/>, skipping leading whitespace and advancing past the
+    /// closing quote. Returns false at the end of the value.
+    /// </summary>
+    private static bool TryReadLexeme(
+        string text, ref int i, out int start, out int end, out bool escaped)
+    {
+        start = 0;
+        end = 0;
+        escaped = false;
+
+        while (i < text.Length && char.IsWhiteSpace(text[i]))
+            i++;
+
+        if (i >= text.Length)
+            return false;
+
+        if (text[i] == '\'')
+        {
+            i++;
+            start = i;
+
+            while (i < text.Length)
+            {
+                if (text[i] == '\'')
+                {
+                    // A doubled quote is the escape; a single one closes the lexeme.
+                    if (i + 1 < text.Length && text[i + 1] == '\'')
+                    {
+                        escaped = true;
+                        i += 2;
+                        continue;
+                    }
+
+                    break;
+                }
+
+                i++;
+            }
+
+            end = i;
+
+            if (i < text.Length)
+                i++;
+
+            return true;
+        }
+
+        // Defensive: every released version quotes lexemes, but an unquoted one would otherwise be
+        // swallowed into the next token's positions.
+        start = i;
+
+        while (i < text.Length && text[i] != ':' && !char.IsWhiteSpace(text[i]))
+            i++;
+
+        end = i;
+        return true;
+    }
+
+    /// <summary>Adds one lexeme's occurrences to the frequency map, honoring the <c>keep</c> set.</summary>
+    private static void Record(
+        Dictionary<string, int> terms,
+        string text,
+        int start,
+        int end,
+        bool escaped,
+        int count,
+        HashSet<string>? keep,
+        HashSet<string>.AlternateLookup<ReadOnlySpan<char>> lookup)
+    {
+        if (keep is null)
+        {
+            string lexeme = escaped ? Unescape(text, start, end) : text[start..end];
+            terms[lexeme] = terms.GetValueOrDefault(lexeme) + count;
+            return;
+        }
+
+        if (!escaped)
+        {
+            if (lookup.TryGetValue(text.AsSpan(start, end - start), out string? kept))
+                terms[kept] = terms.GetValueOrDefault(kept) + count;
+
+            return;
+        }
+
+        string unescaped = Unescape(text, start, end);
+
+        if (keep.Contains(unescaped))
+            terms[unescaped] = terms.GetValueOrDefault(unescaped) + count;
     }
 
     /// <summary>

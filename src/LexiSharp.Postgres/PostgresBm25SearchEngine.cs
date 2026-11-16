@@ -248,7 +248,48 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
         var statistics = _statistics ??= PostgresBm25Statistics.Load(connection, _indexOptions);
         var match = PostgresMatchExpression.Build(_indexOptions, query);
 
-        using var command = connection.CreateCommand();
+        using var command = CreateCandidatesCommand(connection, match, statistics, queryTerms, options);
+
+        List<PostgresBm25Candidate> candidates = ReadCandidates(command, keptTerms, cancellationToken);
+
+        if (candidates.Count == 0)
+            return Array.Empty<SearchResult>();
+
+        List<(string DocumentId, double Score)> scored =
+            ScoreCandidates(candidates, queryTerms, statistics, options);
+
+        List<(string DocumentId, double Score)> page = scored
+            .Skip(options.Offset)
+            .Take(options.Limit)
+            .ToList();
+
+        if (page.Count == 0)
+            return Array.Empty<SearchResult>();
+
+        Dictionary<string, SearchDocument> documents = ReadDocuments(connection, page, cancellationToken);
+
+        return BuildResults(page, documents);
+    }
+
+    /// <summary>
+    /// Builds the candidate query: the match expression, the metadata filters, the rare-term gate
+    /// and the pool, in one statement.
+    /// </summary>
+    /// <remarks>
+    /// Two shapes in one statement: the inner query ranks the match set and keeps the top
+    /// <c>@pool</c>, carrying only <c>(id, score)</c> so the sort stays in memory; the outer join
+    /// then reads one <c>tsv</c> per candidate. Selecting content and jsonb here as well would put
+    /// about a kilobyte of payload per row into the sort, which PostgreSQL answered by spilling it
+    /// to disk.
+    /// </remarks>
+    private NpgsqlCommand CreateCandidatesCommand(
+        NpgsqlConnection connection,
+        PostgresMatchExpression match,
+        PostgresBm25Statistics statistics,
+        string[] queryTerms,
+        SearchOptions options)
+    {
+        var command = connection.CreateCommand();
 
         var filters = PostgresMetadataFilterSql.Build(options.Filters);
         filters.Apply(command);
@@ -257,11 +298,12 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
         // The candidate gate: the query's rare terms when it has any, the whole query otherwise.
         // A GIN index cannot rank, so this is what keeps the scan proportional to the
         // discriminative part of the query instead of to every document its common part matches.
-        string gate = match.Gate;
-
+        //
         // Only for a free-text query. A mixed query's gate is the phrase conjunction, and the free
         // terms beside it are scoring-only by contract: substituting the rare-term disjunction for
         // the phrases would let a document without the phrase in.
+        string gate = match.Gate;
+
         if (_options.RareTermGate
             && !match.HasPhrases
             && GateTerms(queryTerms, statistics.DocumentFrequency, _options.RareTermGateBudget) is { Length: > 0 } gateTerms)
@@ -270,11 +312,7 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
             command.Parameters.AddWithValue("gateTerms", gateTerms);
         }
 
-        // Two shapes in one statement: the inner query ranks the match set and keeps the top
-        // @pool, carrying only (id, score) so the sort stays in memory; the outer join then reads
-        // one tsv per candidate. Selecting content and jsonb here as well would put ~1 KB of
-        // payload per row into the sort, which PostgreSQL answered by spilling it to disk.
-        string candidatesSql = $"""
+        command.CommandText = $"""
             SELECT t.id, t.tsv::text
             FROM {_options.QualifiedTableName} t
             JOIN (
@@ -284,12 +322,17 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
                 ORDER BY score DESC, {PostgresSchema.OrdinalIdTieBreak}
                 LIMIT @pool
             ) s ON t.id = s.id;
-            """;
+            """; // NOSONAR:S2077 (identifiers validated and quoted; query text parameterized)
 
-        // Identifiers/config only are interpolated (validated [A-Za-z0-9_] and quoted); query text is parameterized.
-        command.CommandText = candidatesSql; // NOSONAR:S2077
         command.Parameters.AddWithValue("pool", PoolSize(_options, options));
 
+        return command;
+    }
+
+    /// <summary>Reads the candidate rows: an id and the term frequencies the gate and the scorer need.</summary>
+    private static List<PostgresBm25Candidate> ReadCandidates(
+        NpgsqlCommand command, HashSet<string> keptTerms, CancellationToken cancellationToken)
+    {
         var candidates = new List<PostgresBm25Candidate>();
 
         using (var cancelling = PostgresCancellation.Register(command, cancellationToken))
@@ -304,9 +347,16 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
             }
         }
 
-        if (candidates.Count == 0)
-            return Array.Empty<SearchResult>();
+        return candidates;
+    }
 
+    /// <summary>Scores the candidates with BM25 and returns the survivors, best first.</summary>
+    private List<(string DocumentId, double Score)> ScoreCandidates(
+        List<PostgresBm25Candidate> candidates,
+        string[] queryTerms,
+        PostgresBm25Statistics statistics,
+        SearchOptions options)
+    {
         var view = new PostgresBm25IndexView(statistics, candidates);
         var scored = new List<(string DocumentId, double Score)>(candidates.Count);
 
@@ -334,19 +384,17 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
             return byScore != 0 ? byScore : string.CompareOrdinal(left.DocumentId, right.DocumentId);
         });
 
-        List<(string DocumentId, double Score)> page = scored
-            .Skip(options.Offset)
-            .Take(options.Limit)
-            .ToList();
+        return scored;
+    }
 
-        if (page.Count == 0)
-            return Array.Empty<SearchResult>();
-
-        Dictionary<string, SearchDocument> documents = ReadDocuments(connection, page, cancellationToken);
-
-        // A document deleted between the two reads is skipped rather than returned without its
-        // content. The window is not refilled: the alternative is a third query for a row that
-        // another writer is deleting, and the page is a read of a corpus that moved.
+    /// <summary>
+    /// Pairs the page's scores with the documents read for it, skipping a row another writer
+    /// deleted between the two reads.
+    /// </summary>
+    private static List<SearchResult> BuildResults(
+        List<(string DocumentId, double Score)> page,
+        Dictionary<string, SearchDocument> documents)
+    {
         var results = new List<SearchResult>(page.Count);
 
         foreach (var (documentId, score) in page)
