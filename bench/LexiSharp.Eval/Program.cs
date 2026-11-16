@@ -1149,7 +1149,7 @@ public static class Program
                 referenceBm25 ?? new Bm25Parameters(0.9, 0.4), parseQuerySyntax);
         }
 
-        PrintTable(results, topK, jobs);
+        PrintTable(results, jobs);
 
         if (bootstrap)
             RetrievalBootstrap.Print(results, bootstrapBaseline, bootstrapResamples, bootstrapCorrection);
@@ -1597,9 +1597,14 @@ public static class Program
             $"--expand-ranking expects 'count', 'pmi' or 'both', got '{value}'."),
     };
 
-    private static void PrintTable(IReadOnlyList<ConfigResult> results, int topK, int jobs)
+    private static void PrintTable(IReadOnlyList<ConfigResult> results, int jobs)
     {
-        var header = new[] { "Config", $"nDCG@{topK}", $"MAP@{topK}", $"MRR@{topK}", $"R@{topK}", "Queries", "Wall" };
+        // The header names the depth the metrics are measured at, not the depth the run retrieved.
+        // --top-k 1000 still scores at rank 10 (MetricDepth.Cutoff), and printing "nDCG@1000" over an
+        // nDCG@10 value is a label a reader has no way to catch: the parity command retrieves 1,000
+        // documents to compare scores one by one and measures ten.
+        int depth = MetricDepth.Cutoff;
+        var header = new[] { "Config", $"nDCG@{depth}", $"MAP@{depth}", $"MRR@{depth}", $"R@{depth}", "Queries", "Wall" };
         var widths = new[] { 30, 9, 9, 9, 9, 8, 8 };
 
         Console.WriteLine();
