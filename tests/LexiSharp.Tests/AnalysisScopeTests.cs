@@ -74,6 +74,13 @@ public class AnalysisScopeTests
 
     [Theory]
     [MemberData(nameof(Analyses))]
+    public void ANarrowNoBreakSpaceStillSplitsOutsideTheMode(string analyzer)
+    {
+        Assert.Equal(["ab", "cd"], Build(analyzer).Tokenize("ab\u202Fcd"));
+    }
+
+    [Theory]
+    [MemberData(nameof(Analyses))]
     public void ALongTokenIsNotChoppedOutsideTheMode(string analyzer)
     {
         Assert.Equal([new string('x', 468)], Build(analyzer).Tokenize(new string('x', 468)));

@@ -165,6 +165,31 @@ public class WordSegmentationTests
         Assert.Equal(WordSegmentation.Flat, TokenizerOptions.Default.WordSegmentation);
         Assert.Equal(["1", "2", "3"], tokenizer.Tokenize("1,2,3"));
     }
+
+    /// <summary>
+    /// U+202F, the narrow no-break space, is <c>Word_Break=ExtendNumLet</c> in the reference's
+    /// Unicode data — a connector, not a separator. It joins the word on either side, and a leading
+    /// one belongs to the token: FiQA's section sign + U+202F + <c>1950.6</c> is one term in the
+    /// reference index, where this library had <c>1950.6</c> alone.
+    /// </summary>
+    [Fact]
+    public void TheNarrowNoBreakSpaceIsPartOfTheWord()
+    {
+        // Folding would decompose U+202F to a plain space before the term is emitted, which is not
+        // what the uax29 analysis does, so the configuration states that.
+        var tokenizer = new Tokenizer(new TokenizerOptions
+        {
+            KeepSingleCharTerms = true,
+            FoldDiacritics = false,
+            WordSegmentation = WordSegmentation.UnicodeWordBoundaries,
+        });
+
+        Assert.Equal(["\u202F1950.6"], tokenizer.Tokenize("\u202F1950.6"));
+        Assert.Equal(["a\u202Fb"], tokenizer.Tokenize("a\u202Fb"));
+        Assert.Equal(["12\u202Fab"], tokenizer.Tokenize("12\u202Fab"));
+        Assert.Equal(["a\u202F"], tokenizer.Tokenize("a\u202F"));
+        Assert.Empty(tokenizer.Tokenize("\u202F"));
+    }
 }
 /// <summary>
 /// The two rules that closed the last term gap against the reference index: the middle dot joins two

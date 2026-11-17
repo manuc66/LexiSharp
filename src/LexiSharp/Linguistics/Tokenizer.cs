@@ -390,6 +390,17 @@ public sealed class Tokenizer : ISpanTokenizer
                     && LeadsWordAt(text, position + 1);
             }
 
+            // U+202F joins the same way from the other side of the ASCII boundary: the reference's
+            // word-break data calls it ExtendNumLet, so a leading one belongs to the token that
+            // follows it. FiQA's section sign + U+202F + `1950.6` is one term, the space included.
+            if (!beginsWord
+                && IsExtendNumLetAt(text, position)
+                && position + 1 < text.Length
+                && LeadsWordAt(text, position + 1))
+            {
+                beginsWord = true;
+            }
+
             if (!beginsWord)
             {
                 position++;
@@ -432,11 +443,12 @@ public sealed class Tokenizer : ISpanTokenizer
                         continue;
                     }
                 }
-                else if (StartsWordAt(text, position) || ContinuesWordAt(text, position))
+                else if (StartsWordAt(text, position) || ContinuesWordAt(text, position) || IsExtendNumLetAt(text, position))
                 {
-                    // A non-ASCII word character, or a combining mark that continues one. Decode to learn
-                    // how many UTF-16 units it spans, since a surrogate pair is two chars and the boundary
-                    // has to land between runes.
+                    // A non-ASCII word character, a combining mark or format character that
+                    // continues one, or U+202F. Decode to learn how many UTF-16 units it spans,
+                    // since a surrogate pair is two chars and the boundary has to land between
+                    // runes.
                     Rune.DecodeFromUtf16(text[position..], out _, out int runeLength);
                     position += runeLength;
                     continue;
@@ -611,6 +623,22 @@ public sealed class Tokenizer : ISpanTokenizer
         return Rune.DecodeFromUtf16(text[position..], out Rune rune, out _) == OperationStatus.Done
                && WordBreakClasses.IsIdeographic(rune);
     }
+
+    /// <summary>
+    /// Whether the character at <paramref name="position"/> is U+202F, the narrow no-break space,
+    /// which the reference's word-break data classes as <c>ExtendNumLet</c> instead of a separator.
+    /// </summary>
+    /// <remarks>
+    /// <c>ExtendNumLet</c> is a small class — the underscore, U+202F, four connector punctuation
+    /// characters and their presentation forms — and only U+202F is handled here, because it is the
+    /// only member a corpus in this repository has shown to matter: FiQA's section sign, U+202F and
+    /// <c>1950.6</c> form one term in the reference, the space and all. The rest can join, split or
+    /// be dropped without a measured consequence yet, and adding them speculatively would change
+    /// documents no corpus here exercises. Only the measured boundaries consult this; the flat and
+    /// identifier analyses still treat the character as a separator.
+    /// </remarks>
+    private bool IsExtendNumLetAt(ReadOnlySpan<char> text, int position) =>
+        _conditionalJoins && text[position] == '\u202F';
 
     /// <summary>
     /// Whether <paramref name="rune"/> is one of the three Unicode mark categories.
