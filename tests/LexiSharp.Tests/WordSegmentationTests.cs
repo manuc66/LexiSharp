@@ -206,8 +206,12 @@ public class SymbolAndMiddleDotTests
     }
 
     [Fact]
-    public void WithoutTheOptionASymbolIsStillDropped()
+    public void AnEmojiSymbolIsATermWithoutTheOptionAndANonEmojiSymbolIsNot()
     {
-        Assert.Equal(["aspirin"], Segmenter().Tokenize("Aspirin®"));
+        // `®` carries the emoji property, so the mode emits it on its own; `°` does not, and the
+        // reference drops it. SymbolTerms is then redundant for the four characters the uax29
+        // analysis used to list — it remains for configurations that want an explicit set.
+        Assert.Equal(["aspirin", "®"], Segmenter().Tokenize("Aspirin®"));
+        Assert.Equal(["20", "c"], Segmenter().Tokenize("20°c"));
     }
 }
