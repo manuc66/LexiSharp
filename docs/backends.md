@@ -386,9 +386,11 @@ NFCorpus for speed; raising it changes nothing here.
 financial Q&A with short queries) is not part of the pinned three. Under this table's analysis —
 `simple` + `unaccent`, k1=1.5/b=0.75 — the gate reads **0.2061** nDCG@10 and the ungated pool
 **0.1077**. That is not comparable with Anserini's published **0.2361**, which is Lucene's English
-analysis at k1=0.9/b=0.4: align both (`--analyzer english --reference-bm25 0.9,0.4`,
-`--backend-config english --backend-bm25 0.9,0.4`) and the in-memory BM25 reads 0.237 against
-0.2361, this engine **0.2291**. The pattern is SciFact's rather than a scientific-corpus accident:
+analysis at k1=0.9/b=0.4. Under the reference's own conventions — `--analyzer uax29`, linear gains,
+k1=0.9/b=0.4, query-term frequency, reference index statistics, score rounding, omitted saturation
+constant, single precision, depth 1,000 — the in-memory row reads **0.236** against 0.2361 and the
+paper's 0.236: the figure is reproduced. This engine cannot use `uax29`; with its closest
+configuration (`english`, k1=0.9/b=0.4) it reads **0.2291**. The pattern is SciFact's rather than a scientific-corpus accident:
 the ungated pool truncates a coverage-ranked candidate set, and the gate's idf-selected one does
 not.
 
