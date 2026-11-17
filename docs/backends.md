@@ -390,7 +390,10 @@ analysis at k1=0.9/b=0.4. Under the reference's own conventions — `--analyzer 
 k1=0.9/b=0.4, query-term frequency, reference index statistics, score rounding, omitted saturation
 constant, single precision, depth 1,000 — the in-memory row reads **0.236** against 0.2361 and the
 paper's 0.236: the figure is reproduced. This engine cannot use `uax29`; with its closest
-configuration (`english`, k1=0.9/b=0.4) it reads **0.2291**. The pattern is SciFact's rather than a scientific-corpus accident:
+configuration (`english`, k1=0.9/b=0.4) it reads **0.2291**. The gap was decomposed: a PostgreSQL
+configuration with the reference's 33-word stop list and Snowball reads 0.2196, so the stop list is
+not the cause (the longer stock list helps) and the remainder is the stemmer and the parser — not
+replaceable on stock PostgreSQL. The pattern is SciFact's rather than a scientific-corpus accident:
 the ungated pool truncates a coverage-ranked candidate set, and the gate's idf-selected one does
 not.
 

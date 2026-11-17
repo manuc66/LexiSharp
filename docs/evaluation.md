@@ -531,7 +531,10 @@ same qrels (harness defaults, exponential gains, 10 retrieved at 10):
   the published **0.2361** (the paper's 0.236): the figure is reproduced at the precision it was
   published at. The PostgreSQL row cannot use `uax29`; with its closest configuration (`english`,
   k1=0.9/b=0.4) it reads **0.2291**, the same ~0.007 analysis gap the other corpora show, not a gate
-  cost. The gate's direction is SciFact's:
+  cost. Where the gap sits was measured rather than assumed: a PostgreSQL configuration carrying the
+  reference's 33-word stop list and its Snowball stemmer reads **0.2196**, so the stop list is not
+  the cause — the longer stock list helps here — and what remains is the stemmer and the parser,
+  which stock PostgreSQL cannot replace without an extension. The gate's direction is SciFact's:
   the ungated candidates are chosen by coverage and truncated, the gated ones by idf.
 - **`ts_rank_cd`'s and ParadeDB's scores are PostgreSQL-native and not numerically comparable**
   with `Bm25Scorer`; the stock-PostgreSQL BM25 row's are `Bm25Scorer`'s and are. The metric
