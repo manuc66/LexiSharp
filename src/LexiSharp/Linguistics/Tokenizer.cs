@@ -343,121 +343,224 @@ public sealed class Tokenizer : ISpanTokenizer
 
         while (position < text.Length)
         {
-            // A configured symbol is a term of its own and does not extend the word beside it:
-            // `Aspirin®` is `aspirin` and `®`, not `aspirin®`. Checked before the word logic
-            // because a symbol is neither a word character nor a joiner.
-            if (_symbolTerms is not null && text[position] >= 128 && _symbolTerms.Contains(text[position]))
-            {
-                if (_options.KeepSingleCharTerms)
-                {
-                    string symbol = NormalizeToken(text.Slice(position, 1));
-
-                    if (_stopWords is null || !_stopWords.Contains(symbol))
-                    {
-                        if (_options.Stemmer is not null)
-                            symbol = _options.Stemmer.Stem(symbol);
-
-                        terms?.Add(symbol);
-                        spans?.Add(new TokenSpan(symbol, position, 1));
-                    }
-                }
-
-                position++;
+            if (EmitStandaloneAt(text, ref position, terms, spans))
                 continue;
-            }
 
-            bool beginsWord = StartsWordAt(text, position);
-
-            // An unconditional joiner can open a token when a word character follows it: measured
-            // `_630888` indexes whole and `_alpha` as `_alpha`, so the underscore is part of the word
-            // here — while `-alpha` is just `alpha`, so this is the underscore's rule and not a rule
-            // about any separator. Tested here rather than inside the run scan, because the run scan
-            // only asks whether a word continues past a character it is already inside.
-            //
-            // A run of joiners on its own is not a token: `_`, `__` and `___` alone all produce nothing.
-            // So the joiners have to lead to a word character, not merely to another joiner, and
-            // `ContinuesWord` is what finds the word character at the far end of the run.
-            if (!beginsWord)
-            {
-                beginsWord = text[position] < 128
-                    && RuleFor(text[position]) == JoinRule.Always
-                    && position + 1 < text.Length
-                    && LeadsWordAt(text, position + 1);
-            }
-
-            if (!beginsWord)
+            if (!BeginsWordAt(text, position))
             {
                 position++;
                 continue;
             }
 
             int start = position;
-            position++;
+            position = ConsumeLeadingJoiners(text, position + 1);
+            position = ScanWordRun(text, position);
 
-            // An unconditional joiner that opens the token belongs to it, even though nothing precedes
-            // it for the "word character on both sides" test to succeed on. Measured: `_630888` indexes
-            // whole, `_alpha` as `_alpha` and `__alpha` as `__alpha` — while `-alpha` is just `alpha`,
-            // so this is the underscore's rule and not a rule about any separator. Every leading joiner
-            // is consumed here, including a run of them, because the run scan below only asks whether a
-            // word continues past a character it is already inside.
-            while (position < text.Length && RuleFor(text[position]) == JoinRule.Always
-                && position + 1 < text.Length && ContinuesWord(text, position + 1))
+            EmitWordRun(text, start, position, terms, spans);
+        }
+    }
+
+    /// <summary>
+    /// Emits the character at <paramref name="position"/> as a term of its own when it is one, and
+    /// advances past it.
+    /// </summary>
+    /// <remarks>
+    /// A configured symbol is a term of its own and does not extend the word beside it:
+    /// <c>Aspirin®</c> is <c>aspirin</c> and <c>®</c>, not <c>aspirin®</c>. Under the measured
+    /// boundaries an emoji or an ideograph is the same kind of term: the reference's grammar starts
+    /// an emoji token on every <c>Extended_Pictographic</c> code point and on nothing else, and
+    /// emits each Han ideograph alone (<c>理财</c> is <c>理</c> and <c>财</c>). Both are checked
+    /// before the word logic because neither may open a run.
+    /// </remarks>
+    private bool EmitStandaloneAt(
+        ReadOnlySpan<char> text, ref int position, List<string>? terms, List<TokenSpan>? spans)
+    {
+        if (_symbolTerms is not null && text[position] >= 128 && _symbolTerms.Contains(text[position]))
+        {
+            EmitStandalone(text, position, 1, terms, spans);
+            position++;
+            return true;
+        }
+
+        if (_conditionalJoins
+            && text[position] >= 128
+            && Rune.DecodeFromUtf16(text[position..], out Rune standalone, out int standaloneLength) == OperationStatus.Done
+            && (WordBreakClasses.IsEmoji(standalone) || WordBreakClasses.IsIdeographic(standalone)))
+        {
+            EmitStandalone(text, position, standaloneLength, terms, spans);
+            position += standaloneLength;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Whether a token starts at <paramref name="position"/>.</summary>
+    /// <remarks>
+    /// An unconditional joiner can open a token when a word character follows it: measured
+    /// <c>_630888</c> indexes whole and <c>_alpha</c> as <c>_alpha</c>, so the underscore is part of
+    /// the word — while <c>-alpha</c> is just <c>alpha</c>. A run of joiners on its own is not a
+    /// token, so the joiners have to lead to a word character, not merely to another joiner.
+    /// U+202F joins the same way from the other side of the ASCII boundary: the reference's
+    /// word-break data calls it <c>ExtendNumLet</c>, so a leading one belongs to the token that
+    /// follows it (FiQA's section sign + U+202F + <c>1950.6</c> is one term).
+    /// </remarks>
+    private bool BeginsWordAt(ReadOnlySpan<char> text, int position)
+    {
+        if (StartsWordAt(text, position))
+            return true;
+
+        if (text[position] < 128
+            && RuleFor(text[position]) == JoinRule.Always
+            && position + 1 < text.Length
+            && LeadsWordAt(text, position + 1))
+        {
+            return true;
+        }
+
+        return IsExtendNumLetAt(text, position)
+            && position + 1 < text.Length
+            && LeadsWordAt(text, position + 1);
+    }
+
+    /// <summary>
+    /// Consumes the unconditional joiners that open a token and returns the position after them.
+    /// </summary>
+    /// <remarks>
+    /// A leading joiner belongs to the token even though nothing precedes it for the "word
+    /// character on both sides" test to succeed on: <c>_630888</c> indexes whole, <c>_alpha</c> as
+    /// <c>_alpha</c>, <c>__alpha</c> as <c>__alpha</c> — while <c>-alpha</c> is just <c>alpha</c>.
+    /// The whole run is consumed here because <see cref="ScanWordRun"/> only asks whether a word
+    /// continues past a character it is already inside.
+    /// </remarks>
+    private int ConsumeLeadingJoiners(ReadOnlySpan<char> text, int position)
+    {
+        while (position < text.Length
+            && RuleFor(text[position]) == JoinRule.Always
+            && position + 1 < text.Length
+            && ContinuesWord(text, position + 1))
+        {
+            position++;
+        }
+
+        return position;
+    }
+
+    /// <summary>
+    /// Walks the word that starts at <paramref name="position"/> and returns where it ends.
+    /// </summary>
+    /// <remarks>
+    /// ASCII runs are skipped in bulk: everything up to the first non-letter or non-digit is inside
+    /// the word. A non-ASCII word character, a combining mark or format character that continues
+    /// one, or U+202F advances by its rune length, since a surrogate pair is two chars and the
+    /// boundary has to land between runes. An ideograph always ends the run: the reference emits it
+    /// alone, so <c>abc尺def</c> is three terms and not one.
+    /// </remarks>
+    private int ScanWordRun(ReadOnlySpan<char> text, int position)
+    {
+        while (position < text.Length)
+        {
+            if (_conditionalJoins && IsIdeographicAt(text, position))
+                break;
+
+            if (text[position] < 128)
+            {
+                int relativeEnd = text[position..].IndexOfAnyExcept(AsciiWordChars);
+
+                if (relativeEnd != 0)
+                {
+                    position += relativeEnd < 0 ? text.Length - position : relativeEnd;
+                    continue;
+                }
+            }
+            else if (StartsWordAt(text, position) || ContinuesWordAt(text, position) || IsExtendNumLetAt(text, position))
+            {
+                Rune.DecodeFromUtf16(text[position..], out _, out int runeLength);
+                position += runeLength;
+                continue;
+            }
+
+            if (JoinsToNext(text, position))
             {
                 position++;
+                continue;
             }
 
-            while (position < text.Length)
-            {
-                if (text[position] < 128)
-                {
-                    // Bulk-skip the rest of an ASCII word run: everything up to the first character
-                    // that is not an ASCII letter or digit is inside the word. A negative result means
-                    // every remaining character matches, so the run reaches the end of the text — the
-                    // case a token at the very end of the input would otherwise fall into.
-                    int relativeEnd = text[position..].IndexOfAnyExcept(AsciiWordChars);
-
-                    if (relativeEnd != 0)
-                    {
-                        position += relativeEnd < 0 ? text.Length - position : relativeEnd;
-                        continue;
-                    }
-                }
-                else if (StartsWordAt(text, position) || ContinuesWordAt(text, position))
-                {
-                    // A non-ASCII word character, or a combining mark that continues one. Decode to learn
-                    // how many UTF-16 units it spans, since a surrogate pair is two chars and the boundary
-                    // has to land between runes.
-                    Rune.DecodeFromUtf16(text[position..], out _, out int runeLength);
-                    position += runeLength;
-                    continue;
-                }
-
-                if (JoinsToNext(text, position))
-                {
-                    position++;
-                    continue;
-                }
-
-                break;
-            }
-
-            if (position - start < 2 && !_options.KeepSingleCharTerms)
-                continue;
-
-            string term = NormalizeToken(text.Slice(start, position - start));
-
-            if (_stripPossessives && EndsWithPossessive(term))
-                term = term[..^2];
-
-            if (_stopWords is not null && _stopWords.Contains(term))
-                continue;
-
-            if (_options.Stemmer is not null)
-                term = _options.Stemmer.Stem(term);
-
-            terms?.Add(term);
-            spans?.Add(new TokenSpan(term, start, position - start));
+            break;
         }
+
+        return position;
+    }
+
+    /// <summary>
+    /// Emits the word occupying <c>[start, end)</c>, chopped the way the reference's scanner chops a
+    /// token longer than its input buffer.
+    /// </summary>
+    /// <remarks>
+    /// The reference tokenizer fills a buffer of 255 UTF-16 units and emits what it has when a token
+    /// reaches the end of it, then continues scanning the rest as a new token: a 468-character token
+    /// is indexed as one of 255 and one of 213, both terms. That is a property of the scanner, not a
+    /// length filter — nothing is dropped — and it is reproduced only for
+    /// <see cref="WordSegmentation.UnicodeWordBoundaries"/>, where the scanner being reproduced is
+    /// what the mode means. The identifiers analysis also runs through this scan and must keep
+    /// emitting a long identifier whole.
+    /// <para>
+    /// A boundary that would land inside a surrogate pair moves back one unit, because the reference
+    /// scanner holds a trailing high surrogate over to the next refill rather than splitting it.
+    /// </para>
+    /// </remarks>
+    private void EmitWordRun(
+        ReadOnlySpan<char> text,
+        int start,
+        int end,
+        List<string>? terms,
+        List<TokenSpan>? spans)
+    {
+        var none = new NormalizedTermsBuilder(default, enabled: false);
+
+        do
+        {
+            int chunkEnd = _conditionalJoins ? Math.Min(start + MaxTokenLength, end) : end;
+
+            if (chunkEnd < end && chunkEnd - start > 1 && char.IsHighSurrogate(text[chunkEnd - 1]))
+                chunkEnd--;
+
+            EmitWord(text, start, chunkEnd, terms, spans, ref none);
+            start = chunkEnd;
+        }
+        while (start < end);
+    }
+
+    /// <summary>
+    /// Emits a one-code-point term that the reference tokenizes on its own — a configured symbol,
+    /// an emoji, an ideograph — through the same normalization, stop-word and stemming pipeline as
+    /// a word.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="TokenizerOptions.KeepSingleCharTerms"/> still decides whether it survives, because
+    /// that is the option a caller uses to ask for no one-character terms at all; the uax29 analysis
+    /// sets it, so every symbol, emoji and ideograph reaches the index.
+    /// </remarks>
+    private void EmitStandalone(
+        ReadOnlySpan<char> text,
+        int start,
+        int length,
+        List<string>? terms,
+        List<TokenSpan>? spans)
+    {
+        if (!_options.KeepSingleCharTerms)
+            return;
+
+        string term = NormalizeToken(text.Slice(start, length));
+
+        if (_stopWords is not null && _stopWords.Contains(term))
+            return;
+
+        if (_options.Stemmer is not null)
+            term = _options.Stemmer.Stem(term);
+
+        terms?.Add(term);
+        spans?.Add(new TokenSpan(term, start, length));
     }
 
     /// <summary>
@@ -500,8 +603,8 @@ public sealed class Tokenizer : ISpanTokenizer
     }
 
     /// <summary>
-    /// Whether the character at <paramref name="position"/> continues a word: a combining mark does, a
-    /// mark cannot start one.
+    /// Whether the character at <paramref name="position"/> continues a word: a combining mark or a
+    /// format character does, and neither can start one.
     /// </summary>
     /// <remarks>
     /// Measured, and the asymmetry is the point: <c>a◌̇b</c> is one token and <c>a◌̇</c> is one token,
@@ -512,15 +615,55 @@ public sealed class Tokenizer : ISpanTokenizer
     /// two. On the BEIR corpora in this repository the effect is tiny but real: ArguAna holds no combining
     /// mark at all, SciFact none either, NFCorpus four characters out of 5,779,318.
     /// </para>
+    /// <para>
+    /// A format character is the same kind of thing for the reference's word-break data: it cannot
+    /// open a word and does not close one. FiQA holds two terms that depend on it — a byte-order
+    /// mark inside <c>1990</c> and a left-to-right mark after <c>bank</c> — where this library
+    /// split the word at the format character and lost the term.
+    /// </para>
     /// </remarks>
-    private static bool ContinuesWordAt(ReadOnlySpan<char> text, int position)
+    private bool ContinuesWordAt(ReadOnlySpan<char> text, int position)
     {
         if (text[position] < 128)
             return false;
 
-        return Rune.DecodeFromUtf16(text[position..], out Rune rune, out _) == OperationStatus.Done
-               && IsCombiningMark(rune);
+        if (Rune.DecodeFromUtf16(text[position..], out Rune rune, out _) != OperationStatus.Done)
+            return false;
+
+        // Format characters extend a word only under the measured boundaries, where the reference's
+        // word-break data says so. The identifiers analysis shares this scan and keeps its behavior:
+        // a format character still ends the identifier there.
+        return IsCombiningMark(rune) || (_conditionalJoins && WordBreakClasses.IsFormatExtend(rune));
     }
+
+    /// <summary>
+    /// Whether an ideograph starts at <paramref name="position"/> — a term of its own under the
+    /// measured boundaries rather than part of the run beside it.
+    /// </summary>
+    private static bool IsIdeographicAt(ReadOnlySpan<char> text, int position)
+    {
+        if (text[position] < 0x2E80)
+            return false;
+
+        return Rune.DecodeFromUtf16(text[position..], out Rune rune, out _) == OperationStatus.Done
+               && WordBreakClasses.IsIdeographic(rune);
+    }
+
+    /// <summary>
+    /// Whether the character at <paramref name="position"/> is U+202F, the narrow no-break space,
+    /// which the reference's word-break data classes as <c>ExtendNumLet</c> instead of a separator.
+    /// </summary>
+    /// <remarks>
+    /// <c>ExtendNumLet</c> is a small class — the underscore, U+202F, four connector punctuation
+    /// characters and their presentation forms — and only U+202F is handled here, because it is the
+    /// only member a corpus in this repository has shown to matter: FiQA's section sign, U+202F and
+    /// <c>1950.6</c> form one term in the reference, the space and all. The rest can join, split or
+    /// be dropped without a measured consequence yet, and adding them speculatively would change
+    /// documents no corpus here exercises. Only the measured boundaries consult this; the flat and
+    /// identifier analyses still treat the character as a separator.
+    /// </remarks>
+    private bool IsExtendNumLetAt(ReadOnlySpan<char> text, int position) =>
+        _conditionalJoins && text[position] == '\u202F';
 
     /// <summary>
     /// Whether <paramref name="rune"/> is one of the three Unicode mark categories.
@@ -668,6 +811,25 @@ public sealed class Tokenizer : ISpanTokenizer
 
     private static CharClass ClassAt(ReadOnlySpan<char> text, int index)
     {
+        // A combining mark takes its class from the character it modifies. The stop in `tɕɛ̝.bʌl`
+        // sits between two letters, but the character immediately before it is U+031D, a mark; the
+        // reference joins the full stop on both sides being letters, so the class has to be read
+        // past the mark rather than off it. A format character is skipped for the same reason: it
+        // belongs to the word it sits in and has no class of its own.
+        while (index >= 0 && text[index] >= 128)
+        {
+            if (Rune.DecodeLastFromUtf16(text[..(index + 1)], out Rune mark, out int markLength) != OperationStatus.Done
+                || (!IsCombiningMark(mark) && !WordBreakClasses.IsFormatExtend(mark)))
+            {
+                break;
+            }
+
+            index -= markLength;
+        }
+
+        if (index < 0)
+            return CharClass.Other;
+
         char c = text[index];
 
         if (c < 128)
@@ -909,4 +1071,11 @@ public sealed class Tokenizer : ISpanTokenizer
     /// implementation's disagree on, measured over 505 positions whose lowercase differs.
     /// </summary>
     private const char TurkishDottedI = 'İ';
+
+    /// <summary>
+    /// The longest token the reference tokenizer emits before it continues with the rest as another
+    /// token. Its scanner's buffer is 255 UTF-16 units, so a longer token is chopped at that width —
+    /// not dropped, as the claim about Lucene's <c>maxTokenLength</c> is sometimes read.
+    /// </summary>
+    private const int MaxTokenLength = 255;
 }

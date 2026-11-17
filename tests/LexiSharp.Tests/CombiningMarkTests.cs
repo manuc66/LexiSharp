@@ -87,4 +87,19 @@ public class CombiningMarkTests
         Assert.Equal(["क़"], tokenizer.Tokenize("क़"));
         Assert.Equal(["ẋ"], tokenizer.Tokenize("ẋ"));
     }
+
+    /// <summary>
+    /// A mark does not change the class of the word that ends with it, so a separator that joins two
+    /// letters still joins when a mark sits between the last letter and the separator. FiQA's
+    /// <c>tɕɛ̝.bʌl</c> is one term in the reference; reading the class off U+031D — a mark, neither a
+    /// letter nor a digit — split it into two and was the whole of that document's difference.
+    /// </summary>
+    [Fact]
+    public void AMarkBeforeTheSeparatorDoesNotChangeTheWordClass()
+    {
+        Assert.Equal(["tɕɛ̝.bʌl"], Tokenizing().Tokenize("tɕɛ̝.bʌl"));
+        Assert.Equal(["ab" + Dot + ".cd"], Tokenizing().Tokenize("ab" + Dot + ".cd"));
+        Assert.Equal(["ab" + Dot + ":cd"], Tokenizing().Tokenize("ab" + Dot + ":cd"));
+        Assert.Equal(["12" + Dot + ",34"], Tokenizing().Tokenize("12" + Dot + ",34"));
+    }
 }
