@@ -525,10 +525,13 @@ same qrels (harness defaults, exponential gains, 10 retrieved at 10):
   no stemming, no stop list — the stock-PostgreSQL BM25 row reads **0.2061** nDCG@10 with the gate
   and **0.1077** without it at pool 1,000. Those are **not** comparable with Anserini's published
   0.2361: that figure is Lucene's English analysis at k1=0.9/b=0.4, and this row is PostgreSQL's
-  `simple` configuration at 1.5/0.75. Aligning both (`--analyzer english --reference-bm25 0.9,0.4`,
-  and `--backend-config english --backend-bm25 0.9,0.4` for the SQL row), the in-memory BM25 reads
-  **0.237** against the published **0.2361**, and the PostgreSQL row reads **0.2291** — the same
-  ~0.007 analysis gap the other corpora show, not a gate cost. The gate's direction is SciFact's:
+  `simple` configuration at 1.5/0.75. Under the reference's own conventions — `--analyzer uax29`, linear
+  gains, k1=0.9/b=0.4, query-term frequency, reference index statistics, score rounding, omitted
+  saturation constant, single precision, depth 1,000 — the in-memory BM25 reads **0.236** against
+  the published **0.2361** (the paper's 0.236): the figure is reproduced at the precision it was
+  published at. The PostgreSQL row cannot use `uax29`; with its closest configuration (`english`,
+  k1=0.9/b=0.4) it reads **0.2291**, the same ~0.007 analysis gap the other corpora show, not a gate
+  cost. The gate's direction is SciFact's:
   the ungated candidates are chosen by coverage and truncated, the gated ones by idf.
 - **`ts_rank_cd`'s and ParadeDB's scores are PostgreSQL-native and not numerically comparable**
   with `Bm25Scorer`; the stock-PostgreSQL BM25 row's are `Bm25Scorer`'s and are. The metric
