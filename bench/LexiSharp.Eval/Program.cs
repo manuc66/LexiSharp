@@ -1207,8 +1207,10 @@ public static class Program
         Console.WriteLine(
             "Note: absolute scores depend on the analysis, which is why the run states it. The " +
             "relative ordering of the configs above is meaningful within a run; the comparison to " +
-            "the published reference is meaningful only under the analysis the reference used " +
-            "(--analyzer english for the published figures).");
+            "the published reference is meaningful only under the analysis and conventions the " +
+            "reference used: --analyzer uax29, --ndcg-gain linear, --reference-bm25 0.9,0.4, " +
+            "--query-term-frequency, --reference-index-statistics, --reference-score-rounding, " +
+            "--omit-saturation-constant, --single-precision-bm25 and --top-k 1000.");
 
         if (backendLane is not null)
         {
