@@ -542,8 +542,8 @@ public sealed class Tokenizer : ISpanTokenizer
     }
 
     /// <summary>
-    /// Whether the character at <paramref name="position"/> continues a word: a combining mark does, a
-    /// mark cannot start one.
+    /// Whether the character at <paramref name="position"/> continues a word: a combining mark or a
+    /// format character does, and neither can start one.
     /// </summary>
     /// <remarks>
     /// Measured, and the asymmetry is the point: <c>a◌̇b</c> is one token and <c>a◌̇</c> is one token,
@@ -554,14 +554,25 @@ public sealed class Tokenizer : ISpanTokenizer
     /// two. On the BEIR corpora in this repository the effect is tiny but real: ArguAna holds no combining
     /// mark at all, SciFact none either, NFCorpus four characters out of 5,779,318.
     /// </para>
+    /// <para>
+    /// A format character is the same kind of thing for the reference's word-break data: it cannot
+    /// open a word and does not close one. FiQA holds two terms that depend on it — a byte-order
+    /// mark inside <c>1990</c> and a left-to-right mark after <c>bank</c> — where this library
+    /// split the word at the format character and lost the term.
+    /// </para>
     /// </remarks>
-    private static bool ContinuesWordAt(ReadOnlySpan<char> text, int position)
+    private bool ContinuesWordAt(ReadOnlySpan<char> text, int position)
     {
         if (text[position] < 128)
             return false;
 
-        return Rune.DecodeFromUtf16(text[position..], out Rune rune, out _) == OperationStatus.Done
-               && IsCombiningMark(rune);
+        if (Rune.DecodeFromUtf16(text[position..], out Rune rune, out _) != OperationStatus.Done)
+            return false;
+
+        // Format characters extend a word only under the measured boundaries, where the reference's
+        // word-break data says so. The identifiers analysis shares this scan and keeps its behavior:
+        // a format character still ends the identifier there.
+        return IsCombiningMark(rune) || (_conditionalJoins && WordBreakClasses.IsFormatExtend(rune));
     }
 
     /// <summary>
@@ -725,11 +736,12 @@ public sealed class Tokenizer : ISpanTokenizer
         // A combining mark takes its class from the character it modifies. The stop in `tɕɛ̝.bʌl`
         // sits between two letters, but the character immediately before it is U+031D, a mark; the
         // reference joins the full stop on both sides being letters, so the class has to be read
-        // past the mark rather than off it.
+        // past the mark rather than off it. A format character is skipped for the same reason: it
+        // belongs to the word it sits in and has no class of its own.
         while (index >= 0 && text[index] >= 128)
         {
             if (Rune.DecodeLastFromUtf16(text[..(index + 1)], out Rune mark, out int markLength) != OperationStatus.Done
-                || !IsCombiningMark(mark))
+                || (!IsCombiningMark(mark) && !WordBreakClasses.IsFormatExtend(mark)))
             {
                 break;
             }

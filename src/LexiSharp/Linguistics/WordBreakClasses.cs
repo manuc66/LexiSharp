@@ -85,6 +85,37 @@ internal static class WordBreakClasses
     ];
 
     /// <summary>
+    /// Whether <paramref name="rune"/> is a format character the reference's word-break data lets a
+    /// word continue through: a soft hyphen, a byte-order mark, a left-to-right mark, and the other
+    /// <c>Word_Break=Format</c> code points.
+    /// </summary>
+    /// <remarks>
+    /// A format character cannot open a word, but it does not end one: a byte-order mark between
+    /// the digits of <c>1990</c>, or a left-to-right mark after <c>bank</c>, stays inside the term
+    /// in the reference index. U+200B is deliberately absent — it is <c>Word_Break=Other</c>, and
+    /// the reference splits a word around it, which this library already did.
+    /// </remarks>
+    public static bool IsFormatExtend(Rune rune)
+    {
+        if (rune.Value < 0xAD)
+            return false;
+
+        return InRanges(rune.Value, FormatRanges);
+    }
+
+    /// <summary>
+    /// The <c>Word_Break=Format</c> and <c>Word_Break=ZWJ</c> code points of Unicode 12.1 that are
+    /// format characters, plus U+200C, whose word-break class is <c>Extend</c>, as adjacent
+    /// <c>[start, end]</c> pairs sorted ascending.
+    /// </summary>
+    private static readonly int[] FormatRanges =
+    [
+        0xAD, 0xAD, 0x600, 0x605, 0x61C, 0x61C, 0x6DD, 0x6DD, 0x70F, 0x70F, 0x8E2, 0x8E2, 0x180E, 0x180E, 0x200C, 0x200F,
+        0x202A, 0x202E, 0x2060, 0x2064, 0x2066, 0x206F, 0xFEFF, 0xFEFF, 0xFFF9, 0xFFFB, 0x110BD, 0x110BD, 0x110CD, 0x110CD, 0x13430, 0x13438,
+        0x1BCA0, 0x1BCA3, 0x1D173, 0x1D17A, 0xE0001, 0xE0001, 0xE0020, 0xE007F,
+    ];
+
+    /// <summary>
     /// Whether <paramref name="value"/> falls inside one of the <c>[start, end]</c> pairs in
     /// <paramref name="ranges"/>.
     /// </summary>
