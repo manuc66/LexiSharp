@@ -348,21 +348,23 @@ public sealed class Tokenizer : ISpanTokenizer
             // because a symbol is neither a word character nor a joiner.
             if (_symbolTerms is not null && text[position] >= 128 && _symbolTerms.Contains(text[position]))
             {
-                if (_options.KeepSingleCharTerms)
-                {
-                    string symbol = NormalizeToken(text.Slice(position, 1));
-
-                    if (_stopWords is null || !_stopWords.Contains(symbol))
-                    {
-                        if (_options.Stemmer is not null)
-                            symbol = _options.Stemmer.Stem(symbol);
-
-                        terms?.Add(symbol);
-                        spans?.Add(new TokenSpan(symbol, position, 1));
-                    }
-                }
-
+                EmitStandalone(text, position, 1, terms, spans);
                 position++;
+                continue;
+            }
+
+            // Under the measured boundaries an emoji is a term of its own, listed as a symbol or
+            // not: the reference's grammar starts an emoji token on every `Extended_Pictographic`
+            // code point and on nothing else. That distinction is why this asks the emoji property
+            // rather than the character category — `✔`, `♦` and `😂` are terms in FiQA's index,
+            // while `°`, `■` and `№` are dropped by both implementations.
+            if (_conditionalJoins
+                && text[position] >= 128
+                && Rune.DecodeFromUtf16(text[position..], out Rune standalone, out int standaloneLength) == OperationStatus.Done
+                && WordBreakClasses.IsEmoji(standalone))
+            {
+                EmitStandalone(text, position, standaloneLength, terms, spans);
+                position += standaloneLength;
                 continue;
             }
 
@@ -461,6 +463,38 @@ public sealed class Tokenizer : ISpanTokenizer
     }
 
     /// <summary>
+    /// Emits a one-code-point term that the reference tokenizes on its own — a configured symbol,
+    /// an emoji, an ideograph — through the same normalization, stop-word and stemming pipeline as
+    /// a word.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="TokenizerOptions.KeepSingleCharTerms"/> still decides whether it survives, because
+    /// that is the option a caller uses to ask for no one-character terms at all; the uax29 analysis
+    /// sets it, so every symbol, emoji and ideograph reaches the index.
+    /// </remarks>
+    private void EmitStandalone(
+        ReadOnlySpan<char> text,
+        int start,
+        int length,
+        List<string>? terms,
+        List<TokenSpan>? spans)
+    {
+        if (!_options.KeepSingleCharTerms)
+            return;
+
+        string term = NormalizeToken(text.Slice(start, length));
+
+        if (_stopWords is not null && _stopWords.Contains(term))
+            return;
+
+        if (_options.Stemmer is not null)
+            term = _options.Stemmer.Stem(term);
+
+        terms?.Add(term);
+        spans?.Add(new TokenSpan(term, start, length));
+    }
+
+    /// <summary>
     /// Whether <paramref name="term"/> ends in the two-character possessive <c>'s</c> or <c>’s</c>.
     /// </summary>
     /// <remarks>
@@ -537,8 +571,7 @@ public sealed class Tokenizer : ISpanTokenizer
 
     /// <summary>Whether a word starts at <paramref name="position"/>. A joiner never starts one.</summary>
     private static bool StartsWordAt(ReadOnlySpan<char> text, int position)
-    {
-        char c = text[position];
+    {        char c = text[position];
 
         if (c < 128)
             return AsciiWordChars.Contains(c);
