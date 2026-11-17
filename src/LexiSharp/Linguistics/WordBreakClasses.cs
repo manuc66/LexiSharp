@@ -4,7 +4,8 @@ namespace LexiSharp.Linguistics;
 
 /// <summary>
 /// The Unicode character classes the reference word tokenizer tests directly, which the base class
-/// library does not expose: the emoji property and the ideographic script.
+/// library does not expose: the emoji property, the ideographic script and the word-continuing
+/// format class.
 /// </summary>
 /// <remarks>
 /// <para>

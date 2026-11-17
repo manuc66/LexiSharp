@@ -451,23 +451,47 @@ public sealed class Tokenizer : ISpanTokenizer
                 break;
             }
 
-            if (position - start < 2 && !_options.KeepSingleCharTerms)
-                continue;
-
-            string term = NormalizeToken(text.Slice(start, position - start));
-
-            if (_stripPossessives && EndsWithPossessive(term))
-                term = term[..^2];
-
-            if (_stopWords is not null && _stopWords.Contains(term))
-                continue;
-
-            if (_options.Stemmer is not null)
-                term = _options.Stemmer.Stem(term);
-
-            terms?.Add(term);
-            spans?.Add(new TokenSpan(term, start, position - start));
+            EmitWordRun(text, start, position, terms, spans);
         }
+    }
+
+    /// <summary>
+    /// Emits the word occupying <c>[start, end)</c>, chopped the way the reference's scanner chops a
+    /// token longer than its input buffer.
+    /// </summary>
+    /// <remarks>
+    /// The reference tokenizer fills a buffer of 255 UTF-16 units and emits what it has when a token
+    /// reaches the end of it, then continues scanning the rest as a new token: a 468-character token
+    /// is indexed as one of 255 and one of 213, both terms. That is a property of the scanner, not a
+    /// length filter — nothing is dropped — and it is reproduced only for
+    /// <see cref="WordSegmentation.UnicodeWordBoundaries"/>, where the scanner being reproduced is
+    /// what the mode means. The identifiers analysis also runs through this scan and must keep
+    /// emitting a long identifier whole.
+    /// <para>
+    /// A boundary that would land inside a surrogate pair moves back one unit, because the reference
+    /// scanner holds a trailing high surrogate over to the next refill rather than splitting it.
+    /// </para>
+    /// </remarks>
+    private void EmitWordRun(
+        ReadOnlySpan<char> text,
+        int start,
+        int end,
+        List<string>? terms,
+        List<TokenSpan>? spans)
+    {
+        var none = new NormalizedTermsBuilder(default, enabled: false);
+
+        do
+        {
+            int chunkEnd = _conditionalJoins ? Math.Min(start + MaxTokenLength, end) : end;
+
+            if (chunkEnd < end && chunkEnd - start > 1 && char.IsHighSurrogate(text[chunkEnd - 1]))
+                chunkEnd--;
+
+            EmitWord(text, start, chunkEnd, terms, spans, ref none);
+            start = chunkEnd;
+        }
+        while (start < end);
     }
 
     /// <summary>
@@ -603,7 +627,8 @@ public sealed class Tokenizer : ISpanTokenizer
 
     /// <summary>Whether a word starts at <paramref name="position"/>. A joiner never starts one.</summary>
     private static bool StartsWordAt(ReadOnlySpan<char> text, int position)
-    {        char c = text[position];
+    {
+        char c = text[position];
 
         if (c < 128)
             return AsciiWordChars.Contains(c);
@@ -993,4 +1018,11 @@ public sealed class Tokenizer : ISpanTokenizer
     /// implementation's disagree on, measured over 505 positions whose lowercase differs.
     /// </summary>
     private const char TurkishDottedI = 'İ';
+
+    /// <summary>
+    /// The longest token the reference tokenizer emits before it continues with the rest as another
+    /// token. Its scanner's buffer is 255 UTF-16 units, so a longer token is chopped at that width —
+    /// not dropped, as the claim about Lucene's <c>maxTokenLength</c> is sometimes read.
+    /// </summary>
+    private const int MaxTokenLength = 255;
 }
