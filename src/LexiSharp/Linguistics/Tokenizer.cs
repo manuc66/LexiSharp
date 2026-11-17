@@ -358,10 +358,13 @@ public sealed class Tokenizer : ISpanTokenizer
             // code point and on nothing else. That distinction is why this asks the emoji property
             // rather than the character category — `✔`, `♦` and `😂` are terms in FiQA's index,
             // while `°`, `■` and `№` are dropped by both implementations.
+            //
+            // An ideograph is the same kind of term: `理财` is `理` and `财`, and `6尺` is `6` and
+            // `尺`. Both are checked before the word logic because neither may open a run.
             if (_conditionalJoins
                 && text[position] >= 128
                 && Rune.DecodeFromUtf16(text[position..], out Rune standalone, out int standaloneLength) == OperationStatus.Done
-                && WordBreakClasses.IsEmoji(standalone))
+                && (WordBreakClasses.IsEmoji(standalone) || WordBreakClasses.IsIdeographic(standalone)))
             {
                 EmitStandalone(text, position, standaloneLength, terms, spans);
                 position += standaloneLength;
@@ -410,6 +413,11 @@ public sealed class Tokenizer : ISpanTokenizer
 
             while (position < text.Length)
             {
+                // An ideograph ends the run: the reference emits it as a token of its own, so
+                // `abc尺def` is three terms and not one.
+                if (_conditionalJoins && IsIdeographicAt(text, position))
+                    break;
+
                 if (text[position] < 128)
                 {
                     // Bulk-skip the rest of an ASCII word run: everything up to the first character
@@ -554,6 +562,19 @@ public sealed class Tokenizer : ISpanTokenizer
 
         return Rune.DecodeFromUtf16(text[position..], out Rune rune, out _) == OperationStatus.Done
                && IsCombiningMark(rune);
+    }
+
+    /// <summary>
+    /// Whether an ideograph starts at <paramref name="position"/> — a term of its own under the
+    /// measured boundaries rather than part of the run beside it.
+    /// </summary>
+    private static bool IsIdeographicAt(ReadOnlySpan<char> text, int position)
+    {
+        if (text[position] < 0x2E80)
+            return false;
+
+        return Rune.DecodeFromUtf16(text[position..], out Rune rune, out _) == OperationStatus.Done
+               && WordBreakClasses.IsIdeographic(rune);
     }
 
     /// <summary>

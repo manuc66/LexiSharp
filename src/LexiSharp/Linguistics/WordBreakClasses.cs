@@ -57,6 +57,34 @@ internal static class WordBreakClasses
     ];
 
     /// <summary>
+    /// Whether <paramref name="rune"/> is a CJK ideograph: a character with the <c>Han</c> script
+    /// that the reference grammar tokenizes one code point at a time.
+    /// </summary>
+    /// <remarks>
+    /// The exceptions are the script's word letters: U+3005 and U+303B, the ideographic iteration
+    /// marks, are <c>Script=Han</c> but <c>Word_Break=ALetter</c>, so the reference folds them into
+    /// an alphanumeric run instead of emitting them alone. U+3007, the ideographic number zero,
+    /// stays here because it is <c>Word_Break=Other</c>.
+    /// </remarks>
+    public static bool IsIdeographic(Rune rune)
+    {
+        if (rune.Value < 0x2E80)
+            return false;
+
+        return InRanges(rune.Value, IdeographicRanges);
+    }
+
+    /// <summary>
+    /// The <c>Script=Han</c> code points of Unicode 12.1 that are not word letters, as adjacent
+    /// <c>[start, end]</c> pairs sorted ascending.
+    /// </summary>
+    private static readonly int[] IdeographicRanges =
+    [
+        0x2E80, 0x2E99, 0x2E9B, 0x2EF3, 0x2F00, 0x2FD5, 0x3007, 0x3007, 0x3021, 0x3029, 0x3038, 0x303A, 0x3400, 0x4DB5, 0x4E00, 0x9FEF,
+        0xF900, 0xFA6D, 0xFA70, 0xFAD9, 0x20000, 0x2A6D6, 0x2A700, 0x2B734, 0x2B740, 0x2B81D, 0x2B820, 0x2CEA1, 0x2CEB0, 0x2EBE0, 0x2F800, 0x2FA1D,
+    ];
+
+    /// <summary>
     /// Whether <paramref name="value"/> falls inside one of the <c>[start, end]</c> pairs in
     /// <paramref name="ranges"/>.
     /// </summary>
