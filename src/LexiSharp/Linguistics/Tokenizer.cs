@@ -343,128 +343,153 @@ public sealed class Tokenizer : ISpanTokenizer
 
         while (position < text.Length)
         {
-            // A configured symbol is a term of its own and does not extend the word beside it:
-            // `Aspirin®` is `aspirin` and `®`, not `aspirin®`. Checked before the word logic
-            // because a symbol is neither a word character nor a joiner.
-            if (_symbolTerms is not null && text[position] >= 128 && _symbolTerms.Contains(text[position]))
-            {
-                EmitStandalone(text, position, 1, terms, spans);
-                position++;
+            if (EmitStandaloneAt(text, ref position, terms, spans))
                 continue;
-            }
 
-            // Under the measured boundaries an emoji is a term of its own, listed as a symbol or
-            // not: the reference's grammar starts an emoji token on every `Extended_Pictographic`
-            // code point and on nothing else. That distinction is why this asks the emoji property
-            // rather than the character category — `✔`, `♦` and `😂` are terms in FiQA's index,
-            // while `°`, `■` and `№` are dropped by both implementations.
-            //
-            // An ideograph is the same kind of term: `理财` is `理` and `财`, and `6尺` is `6` and
-            // `尺`. Both are checked before the word logic because neither may open a run.
-            if (_conditionalJoins
-                && text[position] >= 128
-                && Rune.DecodeFromUtf16(text[position..], out Rune standalone, out int standaloneLength) == OperationStatus.Done
-                && (WordBreakClasses.IsEmoji(standalone) || WordBreakClasses.IsIdeographic(standalone)))
-            {
-                EmitStandalone(text, position, standaloneLength, terms, spans);
-                position += standaloneLength;
-                continue;
-            }
-
-            bool beginsWord = StartsWordAt(text, position);
-
-            // An unconditional joiner can open a token when a word character follows it: measured
-            // `_630888` indexes whole and `_alpha` as `_alpha`, so the underscore is part of the word
-            // here — while `-alpha` is just `alpha`, so this is the underscore's rule and not a rule
-            // about any separator. Tested here rather than inside the run scan, because the run scan
-            // only asks whether a word continues past a character it is already inside.
-            //
-            // A run of joiners on its own is not a token: `_`, `__` and `___` alone all produce nothing.
-            // So the joiners have to lead to a word character, not merely to another joiner, and
-            // `ContinuesWord` is what finds the word character at the far end of the run.
-            if (!beginsWord)
-            {
-                beginsWord = text[position] < 128
-                    && RuleFor(text[position]) == JoinRule.Always
-                    && position + 1 < text.Length
-                    && LeadsWordAt(text, position + 1);
-            }
-
-            // U+202F joins the same way from the other side of the ASCII boundary: the reference's
-            // word-break data calls it ExtendNumLet, so a leading one belongs to the token that
-            // follows it. FiQA's section sign + U+202F + `1950.6` is one term, the space included.
-            if (!beginsWord
-                && IsExtendNumLetAt(text, position)
-                && position + 1 < text.Length
-                && LeadsWordAt(text, position + 1))
-            {
-                beginsWord = true;
-            }
-
-            if (!beginsWord)
+            if (!BeginsWordAt(text, position))
             {
                 position++;
                 continue;
             }
 
             int start = position;
-            position++;
-
-            // An unconditional joiner that opens the token belongs to it, even though nothing precedes
-            // it for the "word character on both sides" test to succeed on. Measured: `_630888` indexes
-            // whole, `_alpha` as `_alpha` and `__alpha` as `__alpha` — while `-alpha` is just `alpha`,
-            // so this is the underscore's rule and not a rule about any separator. Every leading joiner
-            // is consumed here, including a run of them, because the run scan below only asks whether a
-            // word continues past a character it is already inside.
-            while (position < text.Length && RuleFor(text[position]) == JoinRule.Always
-                && position + 1 < text.Length && ContinuesWord(text, position + 1))
-            {
-                position++;
-            }
-
-            while (position < text.Length)
-            {
-                // An ideograph ends the run: the reference emits it as a token of its own, so
-                // `abc尺def` is three terms and not one.
-                if (_conditionalJoins && IsIdeographicAt(text, position))
-                    break;
-
-                if (text[position] < 128)
-                {
-                    // Bulk-skip the rest of an ASCII word run: everything up to the first character
-                    // that is not an ASCII letter or digit is inside the word. A negative result means
-                    // every remaining character matches, so the run reaches the end of the text — the
-                    // case a token at the very end of the input would otherwise fall into.
-                    int relativeEnd = text[position..].IndexOfAnyExcept(AsciiWordChars);
-
-                    if (relativeEnd != 0)
-                    {
-                        position += relativeEnd < 0 ? text.Length - position : relativeEnd;
-                        continue;
-                    }
-                }
-                else if (StartsWordAt(text, position) || ContinuesWordAt(text, position) || IsExtendNumLetAt(text, position))
-                {
-                    // A non-ASCII word character, a combining mark or format character that
-                    // continues one, or U+202F. Decode to learn how many UTF-16 units it spans,
-                    // since a surrogate pair is two chars and the boundary has to land between
-                    // runes.
-                    Rune.DecodeFromUtf16(text[position..], out _, out int runeLength);
-                    position += runeLength;
-                    continue;
-                }
-
-                if (JoinsToNext(text, position))
-                {
-                    position++;
-                    continue;
-                }
-
-                break;
-            }
+            position = ConsumeLeadingJoiners(text, position + 1);
+            position = ScanWordRun(text, position);
 
             EmitWordRun(text, start, position, terms, spans);
         }
+    }
+
+    /// <summary>
+    /// Emits the character at <paramref name="position"/> as a term of its own when it is one, and
+    /// advances past it.
+    /// </summary>
+    /// <remarks>
+    /// A configured symbol is a term of its own and does not extend the word beside it:
+    /// <c>Aspirin®</c> is <c>aspirin</c> and <c>®</c>, not <c>aspirin®</c>. Under the measured
+    /// boundaries an emoji or an ideograph is the same kind of term: the reference's grammar starts
+    /// an emoji token on every <c>Extended_Pictographic</c> code point and on nothing else, and
+    /// emits each Han ideograph alone (<c>理财</c> is <c>理</c> and <c>财</c>). Both are checked
+    /// before the word logic because neither may open a run.
+    /// </remarks>
+    private bool EmitStandaloneAt(
+        ReadOnlySpan<char> text, ref int position, List<string>? terms, List<TokenSpan>? spans)
+    {
+        if (_symbolTerms is not null && text[position] >= 128 && _symbolTerms.Contains(text[position]))
+        {
+            EmitStandalone(text, position, 1, terms, spans);
+            position++;
+            return true;
+        }
+
+        if (_conditionalJoins
+            && text[position] >= 128
+            && Rune.DecodeFromUtf16(text[position..], out Rune standalone, out int standaloneLength) == OperationStatus.Done
+            && (WordBreakClasses.IsEmoji(standalone) || WordBreakClasses.IsIdeographic(standalone)))
+        {
+            EmitStandalone(text, position, standaloneLength, terms, spans);
+            position += standaloneLength;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Whether a token starts at <paramref name="position"/>.</summary>
+    /// <remarks>
+    /// An unconditional joiner can open a token when a word character follows it: measured
+    /// <c>_630888</c> indexes whole and <c>_alpha</c> as <c>_alpha</c>, so the underscore is part of
+    /// the word — while <c>-alpha</c> is just <c>alpha</c>. A run of joiners on its own is not a
+    /// token, so the joiners have to lead to a word character, not merely to another joiner.
+    /// U+202F joins the same way from the other side of the ASCII boundary: the reference's
+    /// word-break data calls it <c>ExtendNumLet</c>, so a leading one belongs to the token that
+    /// follows it (FiQA's section sign + U+202F + <c>1950.6</c> is one term).
+    /// </remarks>
+    private bool BeginsWordAt(ReadOnlySpan<char> text, int position)
+    {
+        if (StartsWordAt(text, position))
+            return true;
+
+        if (text[position] < 128
+            && RuleFor(text[position]) == JoinRule.Always
+            && position + 1 < text.Length
+            && LeadsWordAt(text, position + 1))
+        {
+            return true;
+        }
+
+        return IsExtendNumLetAt(text, position)
+            && position + 1 < text.Length
+            && LeadsWordAt(text, position + 1);
+    }
+
+    /// <summary>
+    /// Consumes the unconditional joiners that open a token and returns the position after them.
+    /// </summary>
+    /// <remarks>
+    /// A leading joiner belongs to the token even though nothing precedes it for the "word
+    /// character on both sides" test to succeed on: <c>_630888</c> indexes whole, <c>_alpha</c> as
+    /// <c>_alpha</c>, <c>__alpha</c> as <c>__alpha</c> — while <c>-alpha</c> is just <c>alpha</c>.
+    /// The whole run is consumed here because <see cref="ScanWordRun"/> only asks whether a word
+    /// continues past a character it is already inside.
+    /// </remarks>
+    private int ConsumeLeadingJoiners(ReadOnlySpan<char> text, int position)
+    {
+        while (position < text.Length
+            && RuleFor(text[position]) == JoinRule.Always
+            && position + 1 < text.Length
+            && ContinuesWord(text, position + 1))
+        {
+            position++;
+        }
+
+        return position;
+    }
+
+    /// <summary>
+    /// Walks the word that starts at <paramref name="position"/> and returns where it ends.
+    /// </summary>
+    /// <remarks>
+    /// ASCII runs are skipped in bulk: everything up to the first non-letter or non-digit is inside
+    /// the word. A non-ASCII word character, a combining mark or format character that continues
+    /// one, or U+202F advances by its rune length, since a surrogate pair is two chars and the
+    /// boundary has to land between runes. An ideograph always ends the run: the reference emits it
+    /// alone, so <c>abc尺def</c> is three terms and not one.
+    /// </remarks>
+    private int ScanWordRun(ReadOnlySpan<char> text, int position)
+    {
+        while (position < text.Length)
+        {
+            if (_conditionalJoins && IsIdeographicAt(text, position))
+                break;
+
+            if (text[position] < 128)
+            {
+                int relativeEnd = text[position..].IndexOfAnyExcept(AsciiWordChars);
+
+                if (relativeEnd != 0)
+                {
+                    position += relativeEnd < 0 ? text.Length - position : relativeEnd;
+                    continue;
+                }
+            }
+            else if (StartsWordAt(text, position) || ContinuesWordAt(text, position) || IsExtendNumLetAt(text, position))
+            {
+                Rune.DecodeFromUtf16(text[position..], out _, out int runeLength);
+                position += runeLength;
+                continue;
+            }
+
+            if (JoinsToNext(text, position))
+            {
+                position++;
+                continue;
+            }
+
+            break;
+        }
+
+        return position;
     }
 
     /// <summary>
