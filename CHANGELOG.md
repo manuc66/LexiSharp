@@ -43,6 +43,17 @@
   against 25.7 / 50.0 and 265.0 / 284.4 ms with the gate off. `--keep` leaves the table for
   `EXPLAIN`.
 
+- **`uax29` now reproduces Lucene 10.5.2's `StandardTokenizer` term for term.** Under
+  `WordSegmentation.UnicodeWordBoundaries`, the tokenizer emits Extended_Pictographic symbols
+  (Unicode 12.1, the revision the reference grammar declares), one term per Han ideograph, keeps
+  combining marks and format characters inside the word, chops a token at the reference's 255-unit
+  buffer, and treats U+202F as a word extender. The other analyzers are unchanged, pinned by
+  `AnalysisScopeTests`. FiQA-2018's index now holds the reference's **5,288,635** terms and its
+  per-document term stream is **byte-identical** to Lucene 10.5.2's `EnglishAnalyzer`; the
+  NFCorpus/SciFact/ArguAna fingerprints and aligned scores are unchanged. Multi-code-point emoji
+  sequences (ZWJ, flags, keycaps, skin tones) are the one knowingly unimplemented rule — FiQA
+  contains none, and a test pins the divergence.
+
 - **FiQA-2018 as a fourth selectable corpus** (`--dataset fiqa`; 57,638 documents, 648 test
   queries). It is not part of `--dataset all` or the pinned comparison: it is the candidate gate's
   evidence on a corpus of another nature (financial Q&A, short queries). At pool 1,000 the gate
