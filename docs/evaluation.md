@@ -529,7 +529,12 @@ same qrels (harness defaults, exponential gains, 10 retrieved at 10):
   gains, k1=0.9/b=0.4, query-term frequency, reference index statistics, score rounding, omitted
   saturation constant, single precision, depth 1,000 — the in-memory BM25 reads **0.236** against
   the published **0.2361** (the paper's 0.236): the figure is reproduced at the precision it was
-  published at. The PostgreSQL row cannot use `uax29`; with its closest configuration (`english`,
+  published at. The index is the reference's, not merely a close one: `--fingerprint` reports
+  5,288,635 terms, and the per-document term stream is byte-identical to Lucene 10.5.2's
+  `EnglishAnalyzer` over the corpus (Extended_Pictographic symbols, one term per Han ideograph,
+  combining marks, format characters, the 255-unit token chop, U+202F). Multi-code-point emoji
+  sequences are the one knowingly unimplemented rule — FiQA contains none, and a test pins the
+  divergence. The PostgreSQL row cannot use `uax29`; with its closest configuration (`english`,
   k1=0.9/b=0.4) it reads **0.2291**, the same ~0.007 analysis gap the other corpora show, not a gate
   cost. Where the gap sits was measured rather than assumed: a PostgreSQL configuration carrying the
   reference's 33-word stop list and its Snowball stemmer reads **0.2196**, so the stop list is not
