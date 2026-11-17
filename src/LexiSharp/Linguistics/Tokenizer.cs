@@ -722,6 +722,24 @@ public sealed class Tokenizer : ISpanTokenizer
 
     private static CharClass ClassAt(ReadOnlySpan<char> text, int index)
     {
+        // A combining mark takes its class from the character it modifies. The stop in `tɕɛ̝.bʌl`
+        // sits between two letters, but the character immediately before it is U+031D, a mark; the
+        // reference joins the full stop on both sides being letters, so the class has to be read
+        // past the mark rather than off it.
+        while (index >= 0 && text[index] >= 128)
+        {
+            if (Rune.DecodeLastFromUtf16(text[..(index + 1)], out Rune mark, out int markLength) != OperationStatus.Done
+                || !IsCombiningMark(mark))
+            {
+                break;
+            }
+
+            index -= markLength;
+        }
+
+        if (index < 0)
+            return CharClass.Other;
+
         char c = text[index];
 
         if (c < 128)
