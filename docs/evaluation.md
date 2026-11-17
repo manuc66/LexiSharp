@@ -521,10 +521,15 @@ same qrels (harness defaults, exponential gains, 10 retrieved at 10):
   than by idf — on SciFact that truncation is the whole 0.10 difference. The numbers behind the
   choice, and what it costs in milliseconds, are on the [backend guide](backends.md#bm25-over-stock-postgresql-postgresbm25searchengine).
 - **The gate on a corpus of another nature.** FiQA-2018 is a selectable dataset (`--dataset fiqa`)
-  but not part of `--dataset all` or the pinned comparison. On its 57,638 documents and 648 test
-  queries, the stock-PostgreSQL BM25 row reads **0.2061** nDCG@10 with the gate and **0.1077**
-  without it at pool 1,000; Anserini's published BM25 is 0.2361 with its own analysis. Same cause as
-  SciFact: the ungated candidates are chosen by coverage and truncated, the gated ones by idf.
+  but not part of `--dataset all` or the pinned comparison. Under the library's default analysis —
+  no stemming, no stop list — the stock-PostgreSQL BM25 row reads **0.2061** nDCG@10 with the gate
+  and **0.1077** without it at pool 1,000. Those are **not** comparable with Anserini's published
+  0.2361: that figure is Lucene's English analysis at k1=0.9/b=0.4, and this row is PostgreSQL's
+  `simple` configuration at 1.5/0.75. Aligning both (`--analyzer english --reference-bm25 0.9,0.4`,
+  and `--backend-config english --backend-bm25 0.9,0.4` for the SQL row), the in-memory BM25 reads
+  **0.237** against the published **0.2361**, and the PostgreSQL row reads **0.2291** — the same
+  ~0.007 analysis gap the other corpora show, not a gate cost. The gate's direction is SciFact's:
+  the ungated candidates are chosen by coverage and truncated, the gated ones by idf.
 - **`ts_rank_cd`'s and ParadeDB's scores are PostgreSQL-native and not numerically comparable**
   with `Bm25Scorer`; the stock-PostgreSQL BM25 row's are `Bm25Scorer`'s and are. The metric
   columns compare either way. The analysis is PostgreSQL's own, not this library's tokenizer, which
