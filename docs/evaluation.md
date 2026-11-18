@@ -541,6 +541,29 @@ same qrels (harness defaults, exponential gains, 10 retrieved at 10):
   the cause — the longer stock list helps here — and what remains is the stemmer and the parser,
   which stock PostgreSQL cannot replace without an extension. The gate's direction is SciFact's:
   the ungated candidates are chosen by coverage and truncated, the gated ones by idf.
+- **`--backend-analysis lexisharp` puts the reference analysis inside the SQL row, and the exact
+  row then *is* the in-memory row.** FiQA, k1=0.9/b=0.4, linear gains, depth 1,000, same arithmetic:
+
+  | FiQA-2018 row | nDCG@10 |
+  |---|---:|
+  | in-memory `uax29` | 0.2378 |
+  | SQL `lexisharp`, gate off, pool unbounded | 0.2371 |
+  | SQL `lexisharp`, default rare-term gate | 0.2201 |
+  | SQL `database` (`english`), gate off, pool unbounded | 0.2430 |
+  | SQL `database` (`english`), default rare-term gate | 0.2291 |
+
+  The exact row differs from the in-memory `uax29` row by 0.0007, and that is **one query out of
+  648**: its text carries a double quote, which this engine reads as a phrase delimiter (its
+  documented behaviour in both modes) while the harness's `--query-syntax off` row reads as a
+  separator. Every one of the other 647 queries scores identically. On NFCorpus and SciFact at the
+  same parameters the *gated* rows already agree to the query — 0.320358 vs 0.321054, one query
+  apart on NFCorpus, and 0.679510 identical on SciFact — because there the gate reads the exact
+  ranking. On FiQA the gate is a recall bound that costs about 0.014–0.017, in either analysis:
+  the 0.2291 row was gate **and** analysis, not analysis alone, which is why the stock `english`
+  analysis is not behind the published 0.2361 at all (its exact row, 0.2430, is above it). What the
+  analysis change buys is the in-memory `uax29` row's stability under options a PostgreSQL
+  configuration cannot express, reproduced in SQL.
+
 - **`ts_rank_cd`'s and ParadeDB's scores are PostgreSQL-native and not numerically comparable**
   with `Bm25Scorer`; the stock-PostgreSQL BM25 row's are `Bm25Scorer`'s and are. The metric
   columns compare either way. The analysis is PostgreSQL's own, not this library's tokenizer, which

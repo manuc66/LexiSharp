@@ -2,6 +2,31 @@
 
 ### Added
 
+- **`PostgresAnalysis.LexiSharp`** (`LexiSharp.Postgres`): the stock-PostgreSQL BM25 engine can now
+  analyse text with this library's own tokenizer instead of `to_tsvector`. `PostgresBm25Options.Analysis`
+  keeps `Database` as the default (no behaviour change, every PostgreSQL dictionary still applies);
+  `LexiSharp` tokenizes each document and query with `Tokenizer` and writes the lexemes and positions
+  into a separate `tsv_bm25` column with its own GIN index, while the server `tsv` is still written so
+  the lexical engine reads the same rows. `AnalysisOptions` defaults to
+  `PostgresBm25Options.ReferenceAnalysisOptions` — the measured `uax29` analysis the published FiQA
+  figure was produced with — and takes any `TokenizerOptions`. `QueryDictionaries` keeps the server's
+  dictionaries available as query-time expanders through `ts_lexize` in either mode, refused under
+  `MatchMode.AllTerms` where an OR would relax the rule. On FiQA the gated row moves 0.2291 → 0.2201
+  and the exact row (gate off, pool unbounded) 0.2430 → 0.2371; the in-memory `uax29` row reads
+  0.2378 exact and 0.2291 is a gated measurement, so the FiQA gap was the candidate gate rather than
+  the analysis. On NFCorpus and SciFact the exact rows are identical to the in-memory `uax29` rows to
+  the query. Two `tsvector` limits are documented: a document stops at 16,383 positions, and a single
+  lexeme at 256 positions per document.
+
+- **`CalibrationOptions` and `AbstainThresholdCriterion`** (`LexiSharp.Ranking`): the abstention
+  threshold of `CalibratedScoreConfidence` no longer has to be Youden's J. `ForCosts(10, 1)` places
+  it at the lowest expected cost, pricing a wrong result kept against a correct result abstained
+  on — two mistakes Youden's J charges the same because it compares rates, not counts. On a
+  ten-pair fixture where J peaks at 5, the cost-weighted threshold is 8 and the reverse weighting
+  puts it at 3; a differential test checks the walk against an exhaustive search on tied scores,
+  and the fit stays one pass over the labelled set. `Fit(examples)` and `Fit(examples, method)`
+  keep Youden and stay source-compatible.
+
 - **`PostgresBm25SearchEngine`** (`LexiSharp.Postgres`): Okapi BM25 over **stock PostgreSQL**. The
   `tsvector` column and its GIN index do the matching and `Bm25Scorer` does the ranking over the
   term frequencies the vector already stores, so the only server-side requirement is
@@ -85,6 +110,13 @@
   and from 63.7 ms to 37.3 ms at the mean.
 
 ### Fixed
+
+- **The public API baseline check ran in the wrong direction.** `PublicApiBaselineTests` reported
+  the members present in the assemblies and absent from the baseline — additions, which its own
+  documentation says are allowed — as "lost", and could not report the removal or signature change
+  it exists to catch, since those lines only ever sit on the baseline side. The comparison now runs
+  from the baseline to the assemblies: a member the assemblies no longer produce — a removal, or a
+  signature change — fails, and an addition passes without re-recording anything.
 
 - **The evaluation harness measured a rounded run in the engine's tie-break, not in the run reader's.**
   The four-decimal rounding reproduces what the reference writes down, and a written run is read back

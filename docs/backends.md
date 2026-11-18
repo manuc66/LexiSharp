@@ -345,12 +345,58 @@ and Azure Database for PostgreSQL the only server-side step is allowing that one
 
 **Where the numbers come from.** `N`, the average document length and every query term's document
 frequency are read once through `ts_stat` and cached; the term frequencies and the length come from
-the candidate row's own `tsvector`. The query passes through the same text search configuration as
-the column, so the scorer sums over the terms the index matched. Any write through the engine
+the candidate row's own vector. Whose vector that is depends on the analysis below — PostgreSQL's
+`tsv` by default, or the `tsv_bm25` this library wrote — and the query is analysed by the same side
+as the column, so the scorer sums over the terms the index matched. Any write through the engine
 invalidates the snapshot and the next search rebuilds it; a write by another engine on the shared
 table (or a bulk load) does not, and `RefreshStatistics()` is how that caller says so. Scores are
 on `Bm25Scorer`'s scale, unlike `ts_rank_cd`'s and `pdb.score`'s, so they are comparable with the
 in-memory BM25 row.
+
+**Analysis: `Database` or `LexiSharp`.** `PostgresBm25Options.Analysis` chooses who analyses the
+text. `Database` (the default) hands it to PostgreSQL through `TextSearchConfig`, which is the
+behaviour this engine has always had and keeps every server dictionary and configuration — a
+thesaurus, ispell, a Snowball stemmer for another language — working unchanged.
+
+`LexiSharp` takes the analysis out of PostgreSQL's hands: the engine tokenizes each document and
+each query with `LexiSharp.Linguistics.Tokenizer` and writes the lexemes and positions into a
+separate `tsv_bm25` column with its own GIN index. `AnalysisOptions` defaults to
+`PostgresBm25Options.ReferenceAnalysisOptions` — the measured `uax29` word boundaries, Porter
+stemming and the 33-word English function-word list, the analysis the published FiQA figure was
+produced with — and can be replaced with any `TokenizerOptions`. The server `tsv` column is still
+written, so the lexical engine's readers keep working on the same rows.
+
+```csharp
+var engine = new PostgresBm25SearchEngine(connectionString, new PostgresBm25Options
+{
+    Analysis = PostgresAnalysis.LexiSharp,          // default: PostgresAnalysis.Database
+    K1 = 0.9, B = 0.4,
+});
+```
+
+That is what closes the FiQA-2018 gap. Under the reference's conventions, FiQA reads **0.2361** in
+memory with `--analyzer uax29` and **0.2291** through this engine's closest PostgreSQL
+configuration (`english`, k1=0.9/b=0.4); with `Analysis = LexiSharp` and the same parameters the SQL
+row reads the in-memory row's number (see [the evaluation page](evaluation.md#the-sql-backends-on-the-same-corpora)).
+What it costs: PostgreSQL's dictionaries no longer analyse the documents (only the queries, through
+`QueryDictionaries`), the language is whatever `AnalysisOptions` says rather than whatever
+`TextSearchConfig` says, the table carries a second vector column and a second GIN index, and a row
+written by another engine has no `tsv_bm25` until this engine rewrites it — the mode assumes this
+engine is the writer of the table. `RefreshStatistics()` reports a write made elsewhere.
+
+**PostgreSQL dictionaries as query expanders.** `QueryDictionaries = ["english_stem"]` runs each free
+query term through `ts_lexize(dict, term)` and ORs the lexemes that come back beside it, in either
+analysis mode. That keeps a thesaurus or an ispell dictionary useful when the index is analysed in
+the client: documents indexed by `AnalysisOptions`, queries broadened by whatever the server knows.
+Quoted phrases are not expanded — a phrase is the query's contract, term by term — and the option
+is refused under `MatchMode.AllTerms`, where every term already has to appear and an OR would
+silently relax that rule.
+
+Two differences a phrase can show. Positions in `tsv_bm25` are the kept terms, one per occurrence,
+so a stop word leaves no hole: `"quick the brown"` requires `quick` and `brown` adjacent in the
+analysed stream. And a document with more than 16,383 indexed tokens is capped there, because a
+`tsvector` position is 16 bits — the length and any term frequency past that point are truncated.
+No corpus measured here comes near either bound.
 
 **The candidate gate.** A GIN index cannot return rows in score order, so without a gate the only
 option is to score every match before the pool cut — and a query whose common terms match most of

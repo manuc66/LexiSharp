@@ -413,6 +413,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
+| `AbstainThresholdCriterion` | enum | — | The rule CalibratedScoreConfidence uses to place its abstention threshold. |
 | `Bm25Arithmetic` | enum | — | The precision BM25's arithmetic is carried out in. |
 | `Bm25FGridPoint` | record | — | One evaluated BM25F configuration and the quality it achieved. |
 | `Bm25FParameterTuner` | class | — | Finds the BM25F parameters (k1, b, and a weight per named field) that best satisfy a set of labeled validation queries, by brute-force grid search in two… |
@@ -439,8 +440,9 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `Bm25ValidationQuery` | record | — | One labeled validation query of a Bm25ParameterTuner: a raw query together with the ids of the documents a good ranking should surface. |
 | `BooleanMatch` | enum | — | How the modifiers of a BooleanScorer are combined. |
 | `BooleanScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | Pure boolean filter. A matching document gets a score of 1, a non-matching one 0. Because the RankedTextSearchEngine discards scores below MinimumScore, this… |
-| `CalibratedScoreConfidence` | class | — | A learned confidence calibrator that maps raw scores to calibrated probabilities using isotonic regression or Platt scaling, with an optional Youden-derived… |
+| `CalibratedScoreConfidence` | class | — | A learned confidence calibrator that maps raw scores to calibrated probabilities using isotonic regression or Platt scaling, with an abstention threshold chosen… |
 | `CalibrationMethod` | enum | — | The calibration method used by CalibratedScoreConfidence. |
+| `CalibrationOptions` | record | — | Tunable knobs for a CalibratedScoreConfidence fit: the shape of the mapping and the rule that places the abstention threshold. |
 | `DocumentLengthRatioScorer` | class | `ITextScorer` | A document's length relative to the corpus average: \|D\| / avgdl, where both figures come from the index. One for an average document, above one for a long… |
 | `FeedbackAwareTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that augments a primary search engine with a learned query → document feedback channel — one history for every search. |
 | `FeedbackAwareTextSearchEngine<TPayload>` | class | `IContextualSearchEngine`, `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that augments a primary search engine with a learned query → document feedback channel, choosing the history per search from the caller's… |
@@ -503,6 +505,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
+| `PostgresAnalysis` | enum | — | Who analyses the text a PostgresBm25SearchEngine indexes and searches: PostgreSQL, or this library's own tokenizer. |
 | `PostgresBm25Options` | record | — | Naming, analysis and ranking options for the stock-PostgreSQL BM25 engine. |
 | `PostgresBm25SearchEngine` | class | `IDisposable`, `IQuerySyntaxSupport`, `ITextSearchEngine` | Okapi BM25 on stock PostgreSQL: the tsvector column and GIN index do the matching, and Bm25Scorer does the ranking over the term frequencies the vector already… |
 | `PostgresFieldWeight` | enum | — | The four weight classes a tsvector lexeme can carry, which setweight writes and ts_rank_cd reads back through its weights array. |
