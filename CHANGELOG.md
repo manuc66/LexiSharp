@@ -86,6 +86,13 @@
 
 ### Fixed
 
+- **The FiQA page attributed the stock-PostgreSQL BM25 row's 0.2291 to its analysis.** It is the
+  rare-term gate: ungated, the same `english` configuration reads **0.2430** at k1=0.9/b=0.4 with
+  linear gains and depth 1,000, above the reference analysis's 0.2378 in memory and above the
+  published 0.2361. The gate's budget is the lever on short-query corpora: 1,000 → 0.2291,
+  2,000 → 0.2363, 5,000 → 0.2417, exact → 0.2430. The default stays 1,000, which is free on
+  NFCorpus and SciFact; the trade is now stated.
+
 - **The evaluation harness measured a rounded run in the engine's tie-break, not in the run reader's.**
   The four-decimal rounding reproduces what the reference writes down, and a written run is read back
   by `trec_eval`, which ignores the rank column and breaks an exact score tie by document number
