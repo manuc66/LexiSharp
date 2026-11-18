@@ -433,6 +433,14 @@ and jsonb rows through the sort. The per-candidate reader keeps the query's term
 without allocating their strings. On NFCorpus those two changes took the ungated pool-1,000 row from
 27 ms to 16 ms at the median and from 64 ms to 37 ms at the mean.
 
+**Two `tsvector` limits apply to the stored term frequencies.** A position is 16 bits, so a
+document past 16,383 indexed tokens has its later positions clamped; and a single lexeme stores at
+most 255 positions per document, so a term repeated more often has its frequency capped at 255. No
+corpus measured here approaches the position bound, but FiQA has a document where `over` occurs
+more than 255 times and its `tf` is capped there: document frequencies and the vocabulary are
+unaffected, and BM25's saturation makes the score effect small, but a `tf` past 255 is invisible to
+this engine where the in-memory scorer sees it.
+
 **What it is not.** The analysis is PostgreSQL's, not this library's tokenizer, so it matches the
 in-memory rows at most and no published figure. Weights (`FieldWeights`) are a `ts_rank_cd`
 concept and do not reach this ranking.
