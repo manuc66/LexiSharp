@@ -119,8 +119,8 @@ twice. Every figure below is reproducible with a command on the
   term, and OR-ing them (`--backend-match any`) recovers **0.0988** on SciFact but only **0.1881**
   on NFCorpus, so the rest of that gap is the ranker. The stock-PostgreSQL BM25 engine closes it
   with no extension: **0.3072** and **0.6665** at its default candidate gate, **0.2999** and
-  **0.5636** with the gate off; on FiQA, the corpus of another nature, **0.2061** against
-  **0.1077**. pgvector at `ef_search` 10/40/160 reads **0.2882 / 0.2960 / 0.3013** on
+  **0.5636** with the gate off; on FiQA, the corpus of another nature, **0.2291** at the default
+  gate against **0.2430** ungated at k1=0.9/b=0.4 — the gate is the lever there. pgvector at `ef_search` 10/40/160 reads **0.2882 / 0.2960 / 0.3013** on
   NFCorpus against the exact in-memory dense row's **0.304**, and **0.5998 / 0.6528 / 0.6550** on
   SciFact against **0.655**: that gap is the index's cost in nDCG. ArguAna produces no row from any
   of the three: the text engines reject 2 of its 1,406 test queries, and the vector engine rejects
