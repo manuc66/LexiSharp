@@ -425,13 +425,39 @@ if (calibrated.ShouldAbstain(results[0].Score))
 | `IsotonicRegression` (default) | non-decreasing step function, interpolated between fitted points | PAVA over the pairs |
 | `PlattScaling` | smooth sigmoid | logistic regression on the scores |
 
-The threshold is the score maximizing Youden's J (`TPR - FPR`) over the labelled pairs,
-converted into the probability space the calibrator reports, so `ShouldAbstain` compares a
-probability against a probability. Reading it any other way would make the abstain rate a
-function of the corpus's score scale rather than of the data.
+The threshold is the score maximizing Youden's J (`TPR - FPR`) over the labelled pairs, and
+`ShouldAbstain` compares a raw score against it. Converting into the probability space first
+would move the boundary: the fit is flat inside a PAVA block, so every score on the plateau maps
+to one probability and the comparison would land at the plateau's edge. `AbstainThreshold` is the
+same boundary expressed as a probability, for reading rather than for comparing.
 
 Fitted on a set of pairs that all come from one corpus at one time, this is a statement about
 that corpus. Re-fit when the corpus changes materially.
+
+### Pricing the two mistakes
+
+Youden's J compares rates, which is the same as declaring the two mistakes equally costly. They
+often are not: keeping a wrong result may be worse than sending a good one to a fallback, and a
+fallback that costs money turns the trade-off around. `CalibrationOptions.ForCosts` states it in
+the units the decision is made in — a **false positive** is a wrong result kept, a **false
+negative** a correct result abstained on:
+
+```csharp
+using LexiSharp.Ranking;
+
+// Keeping a wrong answer costs ten times asking the user again: abstain sooner.
+var calibrated = CalibratedScoreConfidence.Fit(pairs, CalibrationOptions.ForCosts(10, 1));
+```
+
+The threshold is then the score with the lowest `falsePositives * 10 + falseNegatives * 1` over
+the labelled pairs, found by the same linear walk as Youden's. On a ten-pair fixture where J peaks
+at 5, weighting a kept wrong result above an unnecessary abstention moves the threshold to 8, and
+the reverse weighting moves it to 3 — `CalibratedScoreConfidenceTests` pins both.
+
+The weights belong to the caller's application, not to the corpus: a gate in front of an
+expensive call and a gate in front of an answer shown to a user want different numbers. Both
+change with the model and with the labelling as well, which is why the walk is re-run by `Fit`
+rather than carried as a constant.
 
 ### Driving a conditional boost from it
 
