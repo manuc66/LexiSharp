@@ -2,6 +2,15 @@
 
 ### Added
 
+- **`CalibrationOptions` and `AbstainThresholdCriterion`** (`LexiSharp.Ranking`): the abstention
+  threshold of `CalibratedScoreConfidence` no longer has to be Youden's J. `ForCosts(10, 1)` places
+  it at the lowest expected cost, pricing a wrong result kept against a correct result abstained
+  on — two mistakes Youden's J charges the same because it compares rates, not counts. On a
+  ten-pair fixture where J peaks at 5, the cost-weighted threshold is 8 and the reverse weighting
+  puts it at 3; a differential test checks the walk against an exhaustive search on tied scores,
+  and the fit stays one pass over the labelled set. `Fit(examples)` and `Fit(examples, method)`
+  keep Youden and stay source-compatible.
+
 - **`PostgresBm25SearchEngine`** (`LexiSharp.Postgres`): Okapi BM25 over **stock PostgreSQL**. The
   `tsvector` column and its GIN index do the matching and `Bm25Scorer` does the ranking over the
   term frequencies the vector already stores, so the only server-side requirement is
@@ -85,6 +94,13 @@
   and from 63.7 ms to 37.3 ms at the mean.
 
 ### Fixed
+
+- **The public API baseline check ran in the wrong direction.** `PublicApiBaselineTests` reported
+  the members present in the assemblies and absent from the baseline — additions, which its own
+  documentation says are allowed — as "lost", and could not report the removal or signature change
+  it exists to catch, since those lines only ever sit on the baseline side. The comparison now runs
+  from the baseline to the assemblies: a member the assemblies no longer produce — a removal, or a
+  signature change — fails, and an addition passes without re-recording anything.
 
 - **The FiQA page attributed the stock-PostgreSQL BM25 row's 0.2291 to its analysis.** It is the
   rare-term gate: ungated, the same `english` configuration reads **0.2430** at k1=0.9/b=0.4 with

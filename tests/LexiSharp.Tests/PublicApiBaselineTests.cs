@@ -57,8 +57,10 @@ public class PublicApiBaselineTests
             .Where(line => !line.StartsWith('#'))
             .ToHashSet(StringComparer.Ordinal);
 
-        var missing = current
-            .Where(line => !baseline.Contains(line))
+        var currentSet = current.ToHashSet(StringComparer.Ordinal);
+
+        var missing = baseline
+            .Where(line => !currentSet.Contains(line))
             .Order(StringComparer.Ordinal)
             .ToList();
 

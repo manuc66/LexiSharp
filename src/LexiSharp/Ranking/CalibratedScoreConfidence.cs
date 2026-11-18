@@ -4,14 +4,20 @@ namespace LexiSharp.Ranking;
 
 /// <summary>
 /// A learned confidence calibrator that maps raw scores to calibrated probabilities
-/// using isotonic regression or Platt scaling, with an optional Youden-derived
-/// abstention threshold.
+/// using isotonic regression or Platt scaling, with an abstention threshold chosen by
+/// Youden's J or by the expected cost of the two mistakes.
 /// </summary>
 /// <remarks>
 /// Unlike <see cref="ScoreConfidence"/> (which is a heuristic based on relative gaps),
 /// this class is <b>trained</b> on labelled data: pairs of (score, isCorrect) examples.
 /// The resulting model produces a probability that the top result is correct, and
 /// a threshold below which the system should abstain (return no result / fallback).
+/// <para>
+/// The threshold is a policy, not a property of the fit. Youden's J trades sensitivity against
+/// specificity, which prices the two mistakes the same; a caller who would rather send a doubtful
+/// result to a fallback than keep a wrong one says so with
+/// <see cref="CalibrationOptions.ForCosts"/>, and the threshold moves with the weights.
+/// </para>
 /// </remarks>
 public sealed class CalibratedScoreConfidence
 {
@@ -30,7 +36,7 @@ public sealed class CalibratedScoreConfidence
 
     /// <summary>
     /// Creates an untrained calibrator. <see cref="PredictProba"/> returns 0.5 and
-    /// <see cref="ShouldAbstain"/> returns false until <see cref="Fit"/> is called.
+    /// <see cref="ShouldAbstain"/> returns false until <c>Fit</c> is called.
     /// </summary>
     public CalibratedScoreConfidence()
     {
@@ -61,18 +67,19 @@ public sealed class CalibratedScoreConfidence
     public bool IsTrained => _isTrained;
 
     /// <summary>
-    /// The raw score Youden's J maximizes at: below it <see cref="ShouldAbstain"/> declines.
+    /// The raw score the chosen rule picked: the score Youden's J maximizes at, or the score with
+    /// the lowest expected cost. Below it, <see cref="ShouldAbstain"/> declines.
     /// </summary>
     /// <remarks>
     /// <b>This</b> is the decision boundary, and <see cref="ShouldAbstain"/> compares a score
-    /// against it. Youden is defined over the labelled pairs' own scores, so the threshold that
-    /// maximizes it is a score — converting to the calibrated probability first and comparing
-    /// there would move it, because <see cref="PredictProba"/> is not injective: wherever the fit
-    /// is flat, every score on that plateau maps to one probability and the boundary slides to the
-    /// plateau's edge. Measured against an O(n²) reference that plainly does not move: with a
-    /// tied-score fixture, the probability-space threshold reached J = 0.1552 where 0.1591 was
-    /// available. <see cref="AbstainThreshold"/> is the same boundary expressed as a probability,
-    /// for reading rather than for comparing.
+    /// against it. Every rule is defined over the labelled pairs' own scores, so the threshold it
+    /// maximizes or minimizes at is a score — converting to the calibrated probability first and
+    /// comparing there would move it, because <see cref="PredictProba"/> is not injective:
+    /// wherever the fit is flat, every score on that plateau maps to one probability and the
+    /// boundary slides to the plateau's edge. Measured against an O(n²) reference that plainly
+    /// does not move: with a tied-score fixture, the probability-space threshold reached
+    /// J = 0.1552 where 0.1591 was available. <see cref="AbstainThreshold"/> is the same boundary
+    /// expressed as a probability, for reading rather than for comparing.
     /// </remarks>
     public double AbstainScore => _abstainScore;
 
@@ -89,7 +96,21 @@ public sealed class CalibratedScoreConfidence
     public double AbstainThreshold => _abstainThreshold;
 
     /// <summary>
-    /// Fits the calibrator on labelled (score, isCorrect) pairs.
+    /// Fits the calibrator on labelled (score, isCorrect) pairs, choosing the abstention threshold
+    /// with Youden's J.
+    /// </summary>
+    /// <param name="examples">
+    /// Training examples: raw scores paired with whether the top result was correct.
+    /// Must contain at least one positive and one negative example.
+    /// </param>
+    /// <returns>A trained calibrator.</returns>
+    public static CalibratedScoreConfidence Fit(
+        IReadOnlyList<(double Score, bool IsCorrect)> examples)
+        => Fit(examples, CalibrationOptions.Default);
+
+    /// <summary>
+    /// Fits the calibrator with the given calibration method, choosing the abstention threshold
+    /// with Youden's J.
     /// </summary>
     /// <param name="examples">
     /// Training examples: raw scores paired with whether the top result was correct.
@@ -100,8 +121,27 @@ public sealed class CalibratedScoreConfidence
     public static CalibratedScoreConfidence Fit(
         IReadOnlyList<(double Score, bool IsCorrect)> examples,
         CalibrationMethod method = CalibrationMethod.IsotonicRegression)
+        => Fit(examples, new CalibrationOptions { Method = method });
+
+    /// <summary>
+    /// Fits the calibrator and chooses the abstention threshold from <paramref name="options"/>.
+    /// </summary>
+    /// <param name="examples">
+    /// Training examples: raw scores paired with whether the top result was correct.
+    /// Must contain at least one positive and one negative example.
+    /// </param>
+    /// <param name="options">
+    /// The calibration method and the rule that picks the abstention threshold. Both halves are
+    /// policy: the method chooses the shape of the mapping, the criterion chooses where the
+    /// mapping stops being trusted.
+    /// </param>
+    /// <returns>A trained calibrator.</returns>
+    public static CalibratedScoreConfidence Fit(
+        IReadOnlyList<(double Score, bool IsCorrect)> examples,
+        CalibrationOptions options)
     {
         ArgumentNullException.ThrowIfNull(examples);
+        ArgumentNullException.ThrowIfNull(options);
 
         if (examples.Count < 2)
             throw new ArgumentException("At least two examples are required for calibration.", nameof(examples));
@@ -121,11 +161,60 @@ public sealed class CalibratedScoreConfidence
             throw new ArgumentException(
                 "Calibration requires at least one positive and one negative example.", nameof(examples));
 
-        return method switch
+        // One sort, shared by the mapping and the threshold: both rules walk the same labelled set,
+        // and fitting a 100 000-pair set is the case the linear walks were rewritten for.
+        var sortedExamples = examples
+            .Select(example => (Score: example.Score, Label: example.IsCorrect ? 1.0 : 0.0))
+            .OrderBy(example => example.Score)
+            .ToArray();
+
+        (double[] thresholds, double[] probabilities, bool interpolate) = options.Method switch
         {
-            CalibrationMethod.PlattScaling => FitPlatt(examples),
-            _ => FitIsotonic(examples),
+            CalibrationMethod.IsotonicRegression => FitIsotonic(sortedExamples),
+            CalibrationMethod.PlattScaling => FitPlatt(sortedExamples),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(options), options.Method, "Unknown calibration method."),
         };
+
+        double abstainScore = options.Criterion switch
+        {
+            AbstainThresholdCriterion.Youden => ComputeYoudenThreshold(sortedExamples),
+            AbstainThresholdCriterion.ExpectedCost => ComputeExpectedCostThreshold(
+                sortedExamples,
+                ValidateCost(options.FalsePositiveCost, nameof(CalibrationOptions.FalsePositiveCost)),
+                ValidateCost(options.FalseNegativeCost, nameof(CalibrationOptions.FalseNegativeCost))),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(options), options.Criterion, "Unknown abstention criterion."),
+        };
+
+        double abstainThreshold = interpolate
+            ? LookupProbability(thresholds, probabilities, abstainScore)
+            : LookupStepProbability(thresholds, probabilities, abstainScore);
+
+        return new CalibratedScoreConfidence(
+            thresholds,
+            probabilities,
+            abstainScore,
+            abstainThreshold,
+            interpolate);
+    }
+
+    /// <summary>
+    /// Reads one side of the cost trade-off, refusing the weights no expected cost could rank.
+    /// </summary>
+    /// <remarks>
+    /// A negative weight would make a mistake a reward, and NaN or an infinity would poison every
+    /// comparison in the walk — <c>cost &lt;= bestCost</c> is false against NaN, so the search
+    /// would silently return a threshold it never evaluated. Zero is allowed and meaningful: it
+    /// says one of the two mistakes is free.
+    /// </remarks>
+    private static double ValidateCost(double cost, string name)
+    {
+        if (!double.IsFinite(cost) || cost < 0)
+            throw new ArgumentOutOfRangeException(
+                name, cost, $"{name} must be finite and non-negative.");
+
+        return cost;
     }
 
     /// <summary>
@@ -144,7 +233,7 @@ public sealed class CalibratedScoreConfidence
 
     /// <summary>
     /// Binary search over a fitted table, linearly interpolating between adjacent points.
-    /// Static so a <see cref="Fit"/> can read the boundary it has just built without an instance
+    /// Static so a <c>Fit</c> can read the boundary it has just built without an instance
     /// that would need the boundary to exist first.
     /// </summary>
     private static double LookupProbability(double[] thresholds, double[] probabilities, double score)
@@ -222,20 +311,14 @@ public sealed class CalibratedScoreConfidence
     /// Fits using isotonic regression (PAVA — Pool Adjacent Violators Algorithm).
     /// Produces a non-decreasing mapping from score to probability.
     /// </summary>
-    private static CalibratedScoreConfidence FitIsotonic(
-        IReadOnlyList<(double Score, bool IsCorrect)> examples)
+    private static (double[] Thresholds, double[] Probabilities, bool Interpolate) FitIsotonic(
+        (double Score, double Label)[] sortedExamples)
     {
-        // Sort by score ascending
-        var sorted = examples
-            .Select(e => (e.Score, e.IsCorrect ? 1.0 : 0.0))
-            .OrderBy(e => e.Score)
-            .ToArray();
-
         // Aggregate tied scores before PAVA. Processing equal scores in arrival order can split
         // one tied group across two blocks, and then the step lookup returns one part's mean at
         // the score every part shares. scikit-learn's IsotonicRegression pools each distinct X
         // first; doing the same is what makes the differential test agree.
-        var groups = sorted
+        var groups = sortedExamples
             .GroupBy(example => example.Score)
             .OrderBy(group => group.Key)
             .ToArray();
@@ -246,7 +329,7 @@ public sealed class CalibratedScoreConfidence
 
         foreach (var group in groups)
         {
-            double sum = group.Sum(example => example.Item2);
+            double sum = group.Sum(example => example.Label);
             int count = group.Count();
             blocks.Add((sum, count, sum / count, group.Key));
 
@@ -282,26 +365,17 @@ public sealed class CalibratedScoreConfidence
             probabilities.Add(Math.Clamp(block.Mean, 0.0, 1.0));
         }
 
-        double youdenScoreThreshold = ComputeYoudenThreshold(sorted);
-        double[] thresholdArray = thresholds.ToArray();
-        double[] probabilityArray = probabilities.ToArray();
-
-        // The Youden threshold is a score, and stays a score: See AbstainScore for why the
-        // probability form cannot carry the decision. It is computed here only to publish it.
-        return new CalibratedScoreConfidence(
-            thresholdArray,
-            probabilityArray,
-            youdenScoreThreshold,
-            LookupStepProbability(thresholdArray, probabilityArray, youdenScoreThreshold),
-            interpolate: false);
+        // The threshold rule runs on the labelled scores, not on the pooled blocks: PAVA's blocks
+        // are the mapping, while Youden's J and the expected cost are counted over the examples.
+        return (thresholds.ToArray(), probabilities.ToArray(), false);
     }
 
     /// <summary>
     /// Fits using Platt scaling: logistic regression on the raw scores.
     /// Produces a smooth sigmoid mapping.
     /// </summary>
-    private static CalibratedScoreConfidence FitPlatt(
-        IReadOnlyList<(double Score, bool IsCorrect)> examples)
+    private static (double[] Thresholds, double[] Probabilities, bool Interpolate) FitPlatt(
+        (double Score, double Label)[] sortedExamples)
     {
         // Platt scaling: fit P(correct | score) = 1 / (1 + exp(A * score + B)) by Newton's
         // method on the two-parameter log-likelihood. The previous fixed-step gradient descent
@@ -321,10 +395,10 @@ public sealed class CalibratedScoreConfidence
             double hessianAB = 0.0;
             double hessianBB = Ridge;
 
-            for (int i = 0; i < examples.Count; i++)
+            for (int i = 0; i < sortedExamples.Length; i++)
             {
-                double score = examples[i].Score;
-                double target = examples[i].IsCorrect ? 1.0 : 0.0;
+                double score = sortedExamples[i].Score;
+                double target = sortedExamples[i].Label;
                 double pred = Sigmoid((a * score) + b);
                 double weight = pred * (1.0 - pred);
 
@@ -352,8 +426,8 @@ public sealed class CalibratedScoreConfidence
 
         // Build a lookup table from the sigmoid
         // Use the range of training scores extended slightly
-        double minScore = examples.Min(e => e.Score);
-        double maxScore = examples.Max(e => e.Score);
+        double minScore = sortedExamples[0].Score;
+        double maxScore = sortedExamples[^1].Score;
         double range = maxScore - minScore;
 
         if (range < double.Epsilon)
@@ -376,19 +450,7 @@ public sealed class CalibratedScoreConfidence
         // Sort ascending for binary search
         Array.Sort(thresholds, probabilities);
 
-        var sortedExamples = examples
-            .Select(e => (e.Score, e.IsCorrect ? 1.0 : 0.0))
-            .OrderBy(e => e.Score)
-            .ToArray();
-
-        double youdenScoreThreshold = ComputeYoudenThreshold(sortedExamples);
-
-        return new CalibratedScoreConfidence(
-            thresholds,
-            probabilities,
-            youdenScoreThreshold,
-            LookupProbability(thresholds, probabilities, youdenScoreThreshold),
-            interpolate: true);
+        return (thresholds, probabilities, true);
     }
 
     /// <summary>
@@ -475,7 +537,7 @@ public sealed class CalibratedScoreConfidence
             // as predicted negative for one threshold, which no threshold can actually do, and
             // would report a J no real classifier attains. The run's first index is where the
             // suffix and the predicate agree.
-            if (i > 0 && Math.Abs(sortedExamples[i].Score - sortedExamples[i - 1].Score) < double.Epsilon)
+            if (!StartsRun(sortedExamples, i))
                 continue;
 
             int predictedPositives = n - i;
@@ -488,6 +550,106 @@ public sealed class CalibratedScoreConfidence
             if (j >= bestJ)
             {
                 bestJ = j;
+                bestThreshold = sortedExamples[i].Score;
+            }
+        }
+
+        return bestThreshold;
+    }
+
+    /// <summary>
+    /// Whether the example at <paramref name="i"/> opens a run of equal scores, i.e. is a point
+    /// where a threshold can actually sit.
+    /// </summary>
+    /// <remarks>
+    /// Written as the negation of the equality test rather than as a strict inequality so a NaN
+    /// score, which compares false both ways, keeps the behaviour the walks were measured with:
+    /// it opens a run instead of being skipped.
+    /// </remarks>
+    private static bool StartsRun((double Score, double Label)[] sortedExamples, int i)
+        => i == 0 || !(Math.Abs(sortedExamples[i].Score - sortedExamples[i - 1].Score) < double.Epsilon);
+
+    /// <summary>
+    /// The score with the lowest expected cost over the labelled pairs, where a kept wrong result
+    /// costs <paramref name="falsePositiveCost"/> and an abstention on a correct one costs
+    /// <paramref name="falseNegativeCost"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Youden's J maximizes <c>TPR - FPR</c>, which compares <b>rates</b> and therefore prices the
+    /// two mistakes the same. Expected cost compares counts: a threshold that keeps every result
+    /// pays for every wrong one, a threshold that keeps none pays for every correct one, and the
+    /// weights say which bill is larger. On a fixture of ten pairs the two rules part ways —
+    /// J peaks at 5, a wrong result kept at ten times an unnecessary abstention moves the
+    /// threshold to 8, and the opposite weighting moves it to 3.
+    /// </para>
+    /// <para>
+    /// The walk is the same downward suffix pass as <c>ComputeYoudenThreshold</c>: entering
+    /// iteration <c>i</c>, <c>truePositives</c> already holds the labels from <c>i</c> to
+    /// <c>n-1</c>, so moving <c>i</c> down by one moves exactly one example into the kept set and
+    /// updates both counters from it. That keeps the fit linear in the number of pairs.
+    /// </para>
+    /// <para>
+    /// Ties are broken toward the <b>lowest</b> score of a run, like Youden's: the comparison is
+    /// <c>&lt;=</c> while walking downward, so an equally cheap smaller threshold replaces the one
+    /// held. With both costs zero every threshold ties, and the result is the lowest score in the
+    /// set — the policy "never abstain", expressed rather than special-cased.
+    /// </para>
+    /// </remarks>
+    internal static double ComputeExpectedCostThreshold(
+        (double Score, double Label)[] sortedExamples,
+        double falsePositiveCost,
+        double falseNegativeCost)
+        => ComputeExpectedCostThreshold(sortedExamples, falsePositiveCost, falseNegativeCost, out _);
+
+    /// <summary>
+    /// The same walk, with the number of examples it looked at.
+    /// </summary>
+    /// <remarks>
+    /// Counted for the reason given on
+    /// <c>ComputeYoudenThreshold((double Score, double Label)[], out int)</c>: one pass in
+    /// each direction is a property of the code, and a timing on a shared runner cannot hold it.
+    /// </remarks>
+    internal static double ComputeExpectedCostThreshold(
+        (double Score, double Label)[] sortedExamples,
+        double falsePositiveCost,
+        double falseNegativeCost,
+        out int examplesExamined)
+    {
+        int n = sortedExamples.Length;
+        int totalPositives = 0;
+        examplesExamined = 0;
+
+        for (int i = 0; i < n; i++)
+        {
+            examplesExamined++;
+            totalPositives += (int)sortedExamples[i].Label;
+        }
+
+        double bestCost = double.PositiveInfinity;
+        double bestThreshold = sortedExamples[0].Score;
+        int truePositives = 0;
+
+        // Downward: entering iteration i, truePositives already holds the labels from i to n-1.
+        for (int i = n - 1; i >= 0; i--)
+        {
+            examplesExamined++;
+            truePositives += (int)sortedExamples[i].Label;
+
+            // Keep the walk and the tie rule in step with Youden's. See StartsRun for why a
+            // mid-run index carries no threshold.
+            if (!StartsRun(sortedExamples, i))
+                continue;
+
+            int predictedPositives = n - i;
+            int falsePositives = predictedPositives - truePositives;
+            int falseNegatives = totalPositives - truePositives;
+
+            double cost = (falsePositives * falsePositiveCost) + (falseNegatives * falseNegativeCost);
+
+            if (cost <= bestCost)
+            {
+                bestCost = cost;
                 bestThreshold = sortedExamples[i].Score;
             }
         }
@@ -526,4 +688,92 @@ public enum CalibrationMethod
     /// Preferred when a smooth probability estimate is desired.
     /// </summary>
     PlattScaling,
+}
+
+/// <summary>
+/// The rule <see cref="CalibratedScoreConfidence"/> uses to place its abstention threshold.
+/// </summary>
+public enum AbstainThresholdCriterion
+{
+    /// <summary>
+    /// Maximize Youden's J (<c>TPR - FPR</c>) over the labelled pairs. Compares rates, so it prices
+    /// the two mistakes the same. The default.
+    /// </summary>
+    Youden,
+
+    /// <summary>
+    /// Minimize <c>falsePositives * FalsePositiveCost + falseNegatives * FalseNegativeCost</c>
+    /// over the labelled pairs, where a false positive is a wrong result kept and a false negative
+    /// is a correct result abstained on. Pick this when the two mistakes do not cost the same.
+    /// </summary>
+    ExpectedCost,
+}
+
+/// <summary>
+/// Tunable knobs for a <see cref="CalibratedScoreConfidence"/> fit: the shape of the mapping and
+/// the rule that places the abstention threshold.
+/// </summary>
+/// <remarks>
+/// The six parameters a threshold depends on — the corpus, the engine's score scale, the labelling,
+/// the method, the rule and the costs — are why a threshold is not a portable constant. A
+/// probability of <c>0.8</c> that means "right 80% of the time" still leaves about 200 wrong
+/// answers in a thousand, and whether that is acceptable is a fact about the mistake, not about
+/// the model. Re-fit, and re-state the costs, when any of them changes.
+/// </remarks>
+public sealed record CalibrationOptions
+{
+    /// <summary>Default options: isotonic regression, Youden's J, unit costs.</summary>
+    public static readonly CalibrationOptions Default = new();
+
+    /// <summary>Shape of the score-to-probability mapping. Default: <see cref="CalibrationMethod.IsotonicRegression"/>.</summary>
+    public CalibrationMethod Method { get; init; } = CalibrationMethod.IsotonicRegression;
+
+    /// <summary>Rule that places the abstention threshold. Default: <see cref="AbstainThresholdCriterion.Youden"/>.</summary>
+    public AbstainThresholdCriterion Criterion { get; init; } = AbstainThresholdCriterion.Youden;
+
+    /// <summary>
+    /// What it costs to keep a result that is wrong, relative to <see cref="FalseNegativeCost"/>.
+    /// Read only when <see cref="Criterion"/> is <see cref="AbstainThresholdCriterion.ExpectedCost"/>;
+    /// must then be finite and non-negative. Default: <c>1</c>.
+    /// </summary>
+    public double FalsePositiveCost { get; init; } = 1.0;
+
+    /// <summary>
+    /// What it costs to decline a result that was right — a fallback call, an extra question to the
+    /// user, a missed answer. Read only when <see cref="Criterion"/> is
+    /// <see cref="AbstainThresholdCriterion.ExpectedCost"/>; must then be finite and non-negative.
+    /// Default: <c>1</c>.
+    /// </summary>
+    public double FalseNegativeCost { get; init; } = 1.0;
+
+    /// <summary>
+    /// Options that place the threshold at the lowest expected cost of the two mistakes.
+    /// </summary>
+    /// <param name="falsePositiveCost">
+    /// Cost of keeping a wrong result. Setting it above <paramref name="falseNegativeCost"/> raises
+    /// the threshold: the calibrator abstains sooner rather than answer wrongly.
+    /// </param>
+    /// <param name="falseNegativeCost">
+    /// Cost of abstaining on a correct result. Setting it above <paramref name="falsePositiveCost"/>
+    /// lowers the threshold: the calibrator would rather answer than send the caller to a fallback.
+    /// </param>
+    /// <param name="method">Shape of the mapping. Default: <see cref="CalibrationMethod.IsotonicRegression"/>.</param>
+    /// <returns>Options for a cost-weighted threshold.</returns>
+    /// <example>
+    /// <code>
+    /// // Keeping a wrong answer costs ten times asking again: fetch the original instead.
+    /// var calibrated = CalibratedScoreConfidence.Fit(pairs, CalibrationOptions.ForCosts(10, 1));
+    /// </code>
+    /// </example>
+    public static CalibrationOptions ForCosts(
+        double falsePositiveCost,
+        double falseNegativeCost,
+        CalibrationMethod method = CalibrationMethod.IsotonicRegression)
+        => new()
+        {
+            Method = method,
+            Criterion = AbstainThresholdCriterion.ExpectedCost,
+            FalsePositiveCost = falsePositiveCost,
+            FalseNegativeCost = falseNegativeCost,
+        };
 }

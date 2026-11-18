@@ -207,6 +207,180 @@ public class CalibratedScoreConfidenceTests
         }
     }
 
+    /// <summary>
+    /// Ten examples whose score/label interleaving makes the two rules disagree: Youden's J peaks
+    /// at 5, while a kept wrong result costing ten times an unnecessary abstention pushes the
+    /// threshold up to 8, and the reverse weighting pushes it down to 3.
+    /// </summary>
+    private static readonly (double Score, bool IsCorrect)[] CostFixture =
+    [
+        (1.0, false),
+        (2.0, false),
+        (3.0, true),
+        (4.0, false),
+        (5.0, true),
+        (6.0, true),
+        (7.0, false),
+        (8.0, true),
+        (9.0, true),
+        (10.0, true),
+    ];
+
+    [Fact]
+    public void ExpectedCost_movesTheThresholdWithTheCostOfEachMistake()
+    {
+        // Youden's J weighs the two mistakes by TPR and FPR, which assumes they cost the same.
+        // The expected-cost criterion states the trade-off instead: a false positive is a wrong
+        // result kept, a false negative is a correct result sent to the fallback.
+        Assert.Equal(5.0, CalibratedScoreConfidence.Fit(CostFixture).AbstainScore);
+
+        var wrongKeptIsCostly = CalibratedScoreConfidence.Fit(
+            CostFixture,
+            CalibrationOptions.ForCosts(falsePositiveCost: 10, falseNegativeCost: 1));
+
+        var abstainingIsCostly = CalibratedScoreConfidence.Fit(
+            CostFixture,
+            CalibrationOptions.ForCosts(falsePositiveCost: 1, falseNegativeCost: 10));
+
+        Assert.Equal(8.0, wrongKeptIsCostly.AbstainScore);
+        Assert.Equal(3.0, abstainingIsCostly.AbstainScore);
+    }
+
+    [Fact]
+    public void ExpectedCost_keepsThePublishedBoundaryConsistentWithTheDecision()
+    {
+        var calibrator = CalibratedScoreConfidence.Fit(
+            CostFixture,
+            CalibrationOptions.ForCosts(falsePositiveCost: 10, falseNegativeCost: 1));
+
+        // AbstainThreshold is the probability on the boundary, for reading; ShouldAbstain decides
+        // on the score. A cost-fitted calibrator has to publish both from the same boundary.
+        Assert.Equal(calibrator.PredictProba(calibrator.AbstainScore), calibrator.AbstainThreshold);
+        Assert.False(calibrator.ShouldAbstain(calibrator.AbstainScore));
+        Assert.True(calibrator.ShouldAbstain(calibrator.AbstainScore - 0.5));
+    }
+
+    [Fact]
+    public void CostsAreIgnoredWhenTheCriterionStaysYouden()
+    {
+        // The default criterion is Youden, so setting costs without asking for the expected-cost
+        // rule must not move the threshold — the same shape of mistake as passing a parameter and
+        // getting silently different behaviour.
+        double youden = CalibratedScoreConfidence.Fit(CostFixture).AbstainScore;
+
+        double ignored = CalibratedScoreConfidence.Fit(
+            CostFixture,
+            new CalibrationOptions { FalsePositiveCost = 10, FalseNegativeCost = 1 }).AbstainScore;
+
+        Assert.Equal(5.0, youden);
+        Assert.Equal(youden, ignored);
+    }
+
+    [Fact]
+    public void ExpectedCost_withNoCostAtAllAbstainsAsLittleAsPossible()
+    {
+        // With both costs zero every threshold is equally cheap, so the tie-break decides: like
+        // Youden's walk, it lands on the lowest score of the tied run — here, the whole fixture.
+        var calibrator = CalibratedScoreConfidence.Fit(
+            CostFixture,
+            CalibrationOptions.ForCosts(falsePositiveCost: 0, falseNegativeCost: 0));
+
+        Assert.Equal(1.0, calibrator.AbstainScore);
+        Assert.False(calibrator.ShouldAbstain(1.0));
+    }
+
+    [Fact]
+    public void Fit_rejectsNegativeOrNonFiniteCosts()
+    {
+        var examples = new[] { (1.0, false), (2.0, true) };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            CalibratedScoreConfidence.Fit(examples, CalibrationOptions.ForCosts(-1, 1)));
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            CalibratedScoreConfidence.Fit(examples, CalibrationOptions.ForCosts(1, double.NaN)));
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            CalibratedScoreConfidence.Fit(examples, CalibrationOptions.ForCosts(double.PositiveInfinity, 1)));
+    }
+
+    [Theory]
+    [InlineData(11, 1.0, 10.0)]
+    [InlineData(7, 10.0, 1.0)]
+    [InlineData(31, 3.0, 2.0)]
+    public void ExpectedCostThreshold_achievesTheMinimumCostOfAnyThreshold(
+        int seed, double falsePositiveCost, double falseNegativeCost)
+    {
+        // Same shape as the Youden test: a fixture with tied scores, checked against an O(n^2)
+        // reference over every candidate threshold, so a regression to "some threshold" fails
+        // here instead of silently mispricing the two mistakes.
+        var random = new Random(seed);
+        var pairs = new List<(double Score, bool IsCorrect)>();
+
+        for (int i = 0; i < 400; i++)
+        {
+            double score = (i / 3) * 0.5;
+            pairs.Add((score, random.NextDouble() < 0.55));
+        }
+
+        var calibrator = CalibratedScoreConfidence.Fit(
+            pairs, CalibrationOptions.ForCosts(falsePositiveCost, falseNegativeCost));
+
+        bool Predicted(double score) => !calibrator.ShouldAbstain(score);
+
+        double achieved = Cost(pairs, Predicted);
+
+        double best = double.PositiveInfinity;
+        foreach (double candidate in pairs.Select(p => p.Score).Distinct())
+        {
+            bool Predict(double s) => s >= candidate;
+            best = Math.Min(best, Cost(pairs, Predict));
+        }
+
+        Assert.Equal(best, achieved, 9);
+
+        double Cost(List<(double Score, bool IsCorrect)> set, Func<double, bool> predicted)
+        {
+            int falsePositives = 0;
+            int falseNegatives = 0;
+
+            foreach (var (score, correct) in set)
+            {
+                if (!predicted(score))
+                {
+                    if (correct) falseNegatives++;
+                }
+                else if (!correct)
+                {
+                    falsePositives++;
+                }
+            }
+
+            return (falsePositives * falsePositiveCost) + (falseNegatives * falseNegativeCost);
+        }
+    }
+
+    [Fact]
+    public void ExpectedCostThreshold_walksTheLabelledSetOncePerPass()
+    {
+        static (double Score, double Label)[] Sorted(int count)
+        {
+            var pairs = new List<(double Score, double Label)>(count);
+            var random = new Random(0);
+            for (int i = 0; i < count; i++)
+                pairs.Add(((double)i, random.NextDouble() < 0.5 ? 1d : 0d));
+
+            return [.. pairs.OrderBy(p => p.Score)];
+        }
+
+        _ = CalibratedScoreConfidence.ComputeExpectedCostThreshold(Sorted(2_000), 10, 1, out int small);
+        _ = CalibratedScoreConfidence.ComputeExpectedCostThreshold(Sorted(20_000), 10, 1, out int large);
+
+        Assert.Equal(2 * 2_000, small);
+        Assert.Equal(2 * 20_000, large);
+        Assert.Equal(10 * small, large);
+    }
+
     [Fact]
     public void YoudenThreshold_walksTheLabelledSetOncePerPass()
     {
