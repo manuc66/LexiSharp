@@ -31,6 +31,15 @@ public static class PostgresSchema
     /// </remarks>
     internal const string OrdinalIdTieBreak = "id COLLATE \"C\" ASC";
 
+    /// <summary>The server-analysis column: the <c>tsvector</c> every engine has always written.</summary>
+    internal const string TsvColumn = "tsv";
+
+    /// <summary>
+    /// The client-analysis column <see cref="PostgresAnalysis.LexiSharp"/> writes and reads. Separate
+    /// from <see cref="TsvColumn"/> so the lexical engine's readers keep their index in place.
+    /// </summary>
+    internal const string Bm25Column = "tsv_bm25";
+
     /// <summary>
     /// Idempotently installs <c>unaccent</c> and the documents table with its <c>tsv</c> column
     /// and GIN index.
@@ -65,6 +74,53 @@ public static class PostgresSchema
         command.CommandText = CreateDocumentTableSql(options); // NOSONAR:S2077
         command.ExecuteNonQuery();
     }
+
+    /// <summary>
+    /// Idempotently adds the client-analysis column and its GIN index that
+    /// <see cref="PostgresAnalysis.LexiSharp"/> reads and writes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Run after <see cref="CreateDocumentTable(NpgsqlConnection, PostgresIndexOptions)"/>, which
+    /// creates the table: the shared DDL is unchanged, so a caller in
+    /// <see cref="PostgresAnalysis.Database"/> mode never issues this, and an existing table needs no
+    /// migration to keep serving the lexical engine.
+    /// </para>
+    /// <para>
+    /// <c>ALTER TABLE ... ADD COLUMN IF NOT EXISTS</c> and <c>CREATE INDEX IF NOT EXISTS</c> are both
+    /// idempotent, so the constructor, a restart and a second process can all call it. The column is
+    /// nullable on purpose: rows written by another engine have no client vector, and a <c>NULL</c>
+    /// there means "absent from the BM25 index", which is what the mode's contract says.
+    /// </para>
+    /// </remarks>
+    internal static void CreateBm25Column(NpgsqlConnection connection, PostgresIndexOptions options)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = CreateBm25ColumnSql(options); // NOSONAR:S2077 (identifiers validated and quoted)
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>Async variant of <see cref="CreateBm25Column"/>.</summary>
+    internal static async Task CreateBm25ColumnAsync(
+        NpgsqlConnection connection,
+        PostgresIndexOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = CreateBm25ColumnSql(options); // NOSONAR:S2077 (identifiers validated and quoted)
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string CreateBm25ColumnSql(PostgresIndexOptions options)
+    {
+        string indexName = SafeIdentifier.QuoteIdentifier($"{options.Table}_tsv_bm25_gin");
+
+        return $"""
+            ALTER TABLE {options.QualifiedTableName} ADD COLUMN IF NOT EXISTS {Bm25Column} tsvector;
+            CREATE INDEX IF NOT EXISTS {indexName} ON {options.QualifiedTableName} USING GIN ({Bm25Column});
+            """;
+    }
+
 
     private static string CreateDocumentTableSql(PostgresIndexOptions options)
     {

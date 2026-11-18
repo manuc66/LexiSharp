@@ -1,3 +1,5 @@
+using LexiSharp.Linguistics;
+
 namespace LexiSharp.Postgres;
 
 /// <summary>
@@ -32,13 +34,105 @@ public sealed record PostgresBm25Options
     /// (default: <c>simple</c>). The <c>tsv</c> column, the query lexemes and the term frequencies
     /// come from this one setting, which is why the three cannot disagree.
     /// </summary>
+    /// <remarks>
+    /// Not read when <see cref="Analysis"/> is <see cref="PostgresAnalysis.LexiSharp"/>: there the
+    /// engine's tokenizer analyses documents and queries, and this setting only styles the server
+    /// <c>tsv</c> column that is still written for the lexical engine's readers. The BM25 column is
+    /// <c>tsv_bm25</c> in that mode, so changing this value cannot move a score.
+    /// </remarks>
     public string TextSearchConfig { get; init; } = "simple";
 
     /// <summary>
     /// When true (default), the constructor installs <c>unaccent</c>, the documents table and its
-    /// GIN index — the lexical engine's schema, unchanged.
+    /// GIN index — the lexical engine's schema, unchanged — plus the <c>tsv_bm25</c> column when
+    /// <see cref="Analysis"/> is <see cref="PostgresAnalysis.LexiSharp"/>.
     /// </summary>
     public bool AutoCreateSchema { get; init; } = true;
+
+    /// <summary>
+    /// Who analyses the text: PostgreSQL (<see cref="PostgresAnalysis.Database"/>, the default) or
+    /// this library's tokenizer into a separate <c>tsv_bm25</c> column
+    /// (<see cref="PostgresAnalysis.LexiSharp"/>).
+    /// </summary>
+    /// <remarks>
+    /// The default is the behaviour this engine has always had and reads only
+    /// <see cref="TextSearchConfig"/>: every PostgreSQL dictionary and configuration keeps working,
+    /// and no schema change is made. <see cref="PostgresAnalysis.LexiSharp"/> adds the
+    /// <c>tsv_bm25</c> column and its GIN index to the shared table, writes both vectors, and
+    /// analyses queries with the same tokenizer — see <see cref="AnalysisOptions"/>.
+    /// </remarks>
+    public PostgresAnalysis Analysis { get; init; } = PostgresAnalysis.Database;
+
+    /// <summary>
+    /// The tokenizer <see cref="PostgresAnalysis.LexiSharp"/> runs with, or <c>null</c> for
+    /// <see cref="ReferenceAnalysisOptions"/>.
+    /// </summary>
+    /// <remarks>
+    /// Read only in <see cref="PostgresAnalysis.LexiSharp"/> mode; <see cref="PostgresAnalysis.Database"/>
+    /// ignores it and keeps <see cref="TextSearchConfig"/>. The default is the published reference
+    /// analysis — the measured <c>uax29</c> word boundaries, Porter stemming, the 33-word English
+    /// function-word list, single-character terms kept and possessives stripped — because that is the
+    /// analysis whose FiQA figure this mode exists to reproduce. Supply your own to analyse another
+    /// language or to measure a different pipeline.
+    /// </remarks>
+    public TokenizerOptions? AnalysisOptions { get; init; }
+
+    /// <summary>
+    /// PostgreSQL dictionaries used as query-time expanders, whatever <see cref="Analysis"/> says
+    /// (default: <c>null</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Each free query term is passed through <c>ts_lexize(dict, term)</c> for every dictionary here,
+    /// and the lexemes the server returns are OR-ed into the query as alternative terms. That is the
+    /// door a thesaurus, ispell or a Snowball stemmer stays useful through when the index itself is
+    /// analysed by this library: the documents are indexed by <see cref="AnalysisOptions"/>, and the
+    /// query can still be broadened by whatever the server knows.
+    /// </para>
+    /// <para>
+    /// An expansion is a synonym group — an OR — so it only makes sense under
+    /// <see cref="PostgresMatchMode.AnyTerm"/>. Under <see cref="PostgresMatchMode.AllTerms"/> every
+    /// term already has to appear, and substituting "any of the synonyms" for one of them would
+    /// silently relax that rule; that combination is refused rather than reinterpreted.
+    /// </para>
+    /// <para>
+    /// Quoted phrases are not expanded: a phrase is the query's contract, term by term. Names are
+    /// validated as <c>[A-Za-z0-9_]</c>, the same shape every other identifier in this package takes.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<string>? QueryDictionaries { get; init; }
+
+    /// <summary>
+    /// The analysis <see cref="PostgresAnalysis.LexiSharp"/> runs with when
+    /// <see cref="AnalysisOptions"/> is <c>null</c>: the measured reference analysis.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The <c>uax29</c> word segmentation — Unicode word boundaries with the separators measured
+    /// against the reference's own scanner, which join across a comma between digits, a colon
+    /// between letters, a full stop or an apostrophe within one class, and an underscore anywhere —
+    /// lowercase without diacritic folding, <see cref="PorterStemmer"/>, the
+    /// <see cref="StopWords.EnglishFunction"/> list, single-character terms kept, possessives
+    /// stripped before the stop list, the four symbol terms Lucene 10 emits, and the simple mapping
+    /// for U+0130.
+    /// </para>
+    /// <para>
+    /// This is a static instance shared by every caller, and <see cref="TokenizerOptions"/> is an
+    /// immutable record: take it and use <c>with</c> to change one knob.
+    /// </para>
+    /// </remarks>
+    public static TokenizerOptions ReferenceAnalysisOptions { get; } = new()
+    {
+        Stemmer = new PorterStemmer(),
+        RemoveStopWords = true,
+        StopWords = StopWords.EnglishFunction,
+        KeepSingleCharTerms = true,
+        FoldDiacritics = false,
+        WordSegmentation = WordSegmentation.UnicodeWordBoundaries,
+        StripPossessives = true,
+        SymbolTerms = "©®™↔",
+        FoldTurkishDottedI = true,
+    };
 
     /// <summary>
     /// Weight class per <see cref="Core.SearchDocument.TextFields"/> entry, applied when the
@@ -158,7 +252,9 @@ public sealed record PostgresBm25Options
         && !double.IsNaN(K1) && !double.IsInfinity(K1) && K1 >= 0
         && !double.IsNaN(B) && !double.IsInfinity(B) && B is >= 0 and <= 1
         && CandidatePool >= 0
-        && RareTermGateBudget >= 1;
+        && RareTermGateBudget >= 1
+        && Enum.IsDefined(Analysis)
+        && (QueryDictionaries is null || QueryDictionaries.All(SafeIdentifier.IsValid));
 
     /// <summary>Fully qualified table name, e.g. <c>public.lexisharp_documents</c>.</summary>
     public string QualifiedTableName => AsIndexOptions().QualifiedTableName;

@@ -22,12 +22,26 @@ namespace LexiSharp.Postgres;
 /// </remarks>
 internal static class PostgresDocumentWriter
 {
-    /// <summary>Upserts one document, deriving <c>tsv</c> from its text and text fields.</summary>
+    /// <summary>
+    /// Upserts one document, deriving <c>tsv</c> from its text and text fields, and writing
+    /// <paramref name="tsvBm25"/> into the client-analysis column when one is given.
+    /// </summary>
+    /// <param name="connection">An open connection.</param>
+    /// <param name="transaction">The transaction the write belongs to, or <c>null</c>.</param>
+    /// <param name="options">Naming and vector-expression options.</param>
+    /// <param name="document">The document to upsert.</param>
+    /// <param name="tsvBm25">
+    /// The <c>tsv_bm25</c> literal <see cref="PostgresAnalysis.LexiSharp"/> built with
+    /// <see cref="PostgresTsvLiteral"/>, or <c>null</c> to leave the column alone — which is what
+    /// <see cref="PostgresAnalysis.Database"/> and every other engine on the shared table do. The
+    /// server vector is written either way: the lexical engine reads the same rows.
+    /// </param>
     public static void Insert(
         NpgsqlConnection connection,
         NpgsqlTransaction? transaction,
         PostgresIndexOptions options,
-        SearchDocument document)
+        SearchDocument document,
+        string? tsvBm25 = null)
     {
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(options);
@@ -38,15 +52,24 @@ internal static class PostgresDocumentWriter
         string tsvExpr = PostgresSchema.TsvExpression(options, "@content", "@text_fields");
         string tsvExprUpsert = PostgresSchema.TsvExpression(options, "EXCLUDED.content", "EXCLUDED.text_fields");
 
+        // The client vector is a parameter cast in SQL rather than a literal interpolated into the
+        // statement: the terms are a document's data, and the cast is what makes the server parse
+        // them with the tsvector input function instead of trusting the caller's string.
+        string bm25Column = tsvBm25 is null ? string.Empty : $", {PostgresSchema.Bm25Column}";
+        string bm25Value = tsvBm25 is null ? string.Empty : $", @tsv_bm25::tsvector";
+        string bm25Upsert = tsvBm25 is null
+            ? string.Empty
+            : $",\n                    {PostgresSchema.Bm25Column} = @tsv_bm25::tsvector";
+
         string insertSql = $"""
-            INSERT INTO {options.QualifiedTableName} (id, content, category, fields, text_fields, tsv)
-            VALUES (@id, @content, @category, @fields, @text_fields, {tsvExpr})
+            INSERT INTO {options.QualifiedTableName} (id, content, category, fields, text_fields, tsv{bm25Column})
+            VALUES (@id, @content, @category, @fields, @text_fields, {tsvExpr}{bm25Value})
             ON CONFLICT (id) DO UPDATE
                 SET content = EXCLUDED.content,
                     category = EXCLUDED.category,
                     fields = EXCLUDED.fields,
                     text_fields = EXCLUDED.text_fields,
-                    tsv = {tsvExprUpsert};
+                    tsv = {tsvExprUpsert}{bm25Upsert};
             """;
 
         command.CommandText = insertSql; // NOSONAR:S2077
@@ -57,6 +80,9 @@ internal static class PostgresDocumentWriter
         command.Parameters.AddWithValue("id", document.Id);
         command.Parameters.AddWithValue("content", document.Text);
         command.Parameters.AddWithValue("category", (object?)document.Category ?? DBNull.Value);
+
+        if (tsvBm25 is not null)
+            command.Parameters.AddWithValue("tsv_bm25", tsvBm25);
 
         var fieldsParameter = command.Parameters.AddWithValue(
             "fields",
