@@ -521,26 +521,19 @@ same qrels (harness defaults, exponential gains, 10 retrieved at 10):
   than by idf — on SciFact that truncation is the whole 0.10 difference. The numbers behind the
   choice, and what it costs in milliseconds, are on the [backend guide](backends.md#bm25-over-stock-postgresql-postgresbm25searchengine).
 - **The gate on a corpus of another nature.** FiQA-2018 is a selectable dataset (`--dataset fiqa`)
-  but not part of `--dataset all` or the pinned comparison. Under the library's default analysis —
-  no stemming, no stop list — the stock-PostgreSQL BM25 row reads **0.2061** nDCG@10 with the gate
-  and **0.1077** without it at pool 1,000. Those are **not** comparable with Anserini's published
-  0.2361: that figure is Lucene's English analysis at k1=0.9/b=0.4, and this row is PostgreSQL's
-  `simple` configuration at 1.5/0.75. Under the reference's own conventions — `--analyzer uax29`, linear
-  gains, k1=0.9/b=0.4, query-term frequency, reference index statistics, score rounding, omitted
-  saturation constant, single precision, depth 1,000 — the in-memory BM25 reads **0.236** against
-  the published **0.2361** (the paper's 0.236): the figure is reproduced at the precision it was
-  published at. The index is the reference's, not merely a close one: `--fingerprint` reports
-  5,288,635 terms, and the per-document term stream is byte-identical to Lucene 10.5.2's
-  `EnglishAnalyzer` over the corpus (Extended_Pictographic symbols, one term per Han ideograph,
-  combining marks, format characters, the 255-unit token chop, U+202F). Multi-code-point emoji
-  sequences are the one knowingly unimplemented rule — FiQA contains none, and a test pins the
-  divergence. The PostgreSQL row cannot use `uax29`; with its closest configuration (`english`,
-  k1=0.9/b=0.4) it reads **0.2291**, the same ~0.007 analysis gap the other corpora show, not a gate
-  cost. Where the gap sits was measured rather than assumed: a PostgreSQL configuration carrying the
-  reference's 33-word stop list and its Snowball stemmer reads **0.2196**, so the stop list is not
-  the cause — the longer stock list helps here — and what remains is the stemmer and the parser,
-  which stock PostgreSQL cannot replace without an extension. The gate's direction is SciFact's:
-  the ungated candidates are chosen by coverage and truncated, the gated ones by idf.
+  but not part of `--dataset all` or the pinned comparison. At k1=0.9/b=0.4, linear gains, depth
+  1,000 and the library's default arithmetic, the stock-PostgreSQL BM25 row with `english` reads
+  **0.2291** at the default gate (1,000 rows) and **0.2430** ungated. The 0.2291 this page used to
+  attribute to a ~0.007 analysis gap is the gate's recall bound, not the analyzer: ungated,
+  PostgreSQL's analysis is above the reference analysis (0.2378 in memory) and above the published
+  0.2361, which is a different analysis under the reference conventions. The budget is the lever:
+  500 → 0.2297, 1,000 → 0.2291, 2,000 → 0.2363, 5,000 → 0.2417, exact → 0.2430. The default is
+  tuned for NFCorpus and SciFact, where it is free; short-query corpora pay for it, and
+  `--backend-gate-budget` is the knob. The stop list is not behind the difference either: at the
+  same gate budget, a PostgreSQL configuration with the reference's 33-word list reads 0.2196, so
+  the longer stock list helps. The published 0.2361 remains reproduced by the in-memory `uax29` row
+  under the reference's conventions, with an index byte-identical to Lucene 10.5.2's; multi-code-point
+  emoji sequences are the one knowingly unimplemented rule.
 - **`ts_rank_cd`'s and ParadeDB's scores are PostgreSQL-native and not numerically comparable**
   with `Bm25Scorer`; the stock-PostgreSQL BM25 row's are `Bm25Scorer`'s and are. The metric
   columns compare either way. The analysis is PostgreSQL's own, not this library's tokenizer, which
