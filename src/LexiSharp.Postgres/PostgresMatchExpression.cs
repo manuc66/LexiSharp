@@ -22,12 +22,12 @@ namespace LexiSharp.Postgres;
 /// another at the rank.
 /// </para>
 /// </remarks>
-internal sealed class PostgresMatchExpression
+internal sealed class PostgresMatchExpression : IPostgresMatch
 {
-    private readonly IReadOnlyList<KeyValuePair<string, string>> _parameters;
+    private readonly IReadOnlyList<(string Name, object Value)> _parameters;
 
     private PostgresMatchExpression(
-        string gate, string rank, IReadOnlyList<KeyValuePair<string, string>> parameters, bool hasPhrases)
+        string gate, string rank, IReadOnlyList<(string Name, object Value)> parameters, bool hasPhrases)
     {
         Gate = gate;
         Rank = rank;
@@ -51,13 +51,27 @@ internal sealed class PostgresMatchExpression
     /// <summary>Builds the expression for one query.</summary>
     /// <param name="options">Naming, analysis and match-mode options.</param>
     /// <param name="query">The raw query text.</param>
-    public static PostgresMatchExpression Build(PostgresIndexOptions options, string query)
+    /// <param name="expansions">
+    /// Extra lexemes the server's query-time dictionaries produced for the query's free terms, OR-ed
+    /// into the free group (and into the gate when that group is the gate). <c>null</c> or empty when
+    /// no dictionary was asked for — the expression is then the one the engine has always issued.
+    /// </param>
+    public static PostgresMatchExpression Build(
+        PostgresIndexOptions options, string query, IReadOnlyList<string>? expansions = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(query);
 
         var segments = QueryParser.SplitRaw(query);
-        var parameters = new List<KeyValuePair<string, string>>(segments.Phrases.Count + 2);
+        var parameters = new List<(string Name, object Value)>(segments.Phrases.Count + 2);
+
+        // An expansion is a synonym group: the lexemes the dictionaries reduced a term to, OR-ed
+        // beside the term itself. It joins the free group and — when that group is the gate — the
+        // gate; a quoted phrase is never expanded, being the query's contract term by term.
+        string? expanded = expansions is { Count: > 0 } ? ExpansionsQuery : null;
+
+        if (expanded is not null)
+            parameters.Add(("expansions", expansions!.ToArray()));
 
         string gate;
         string rank;
@@ -66,26 +80,32 @@ internal sealed class PostgresMatchExpression
         {
             string match = PostgresTsQueryText.For(options.MatchMode, options.TextSearchConfig, "@query");
 
+            if (expanded is not null)
+                match = $"({match} || {expanded})";
+
             gate = $"tsv @@ {match}";
             rank = match;
-            parameters.Add(new("query", query));
+            parameters.Add(("query", query));
         }
         else
         {
             var gates = new List<string>(segments.Phrases.Count);
-            var ranks = new List<string>(segments.Phrases.Count + 1);
+            var ranks = new List<string>(segments.Phrases.Count + 2);
 
             if (!string.IsNullOrWhiteSpace(segments.FreeText))
             {
                 ranks.Add(PostgresTsQueryText.For(options.MatchMode, options.TextSearchConfig, "@freeText"));
-                parameters.Add(new("freeText", segments.FreeText));
+                parameters.Add(("freeText", segments.FreeText));
             }
+
+            if (expanded is not null)
+                ranks.Add(expanded);
 
             for (int i = 0; i < segments.Phrases.Count; i++)
             {
                 gates.Add($"tsv @@ phraseto_tsquery('{options.TextSearchConfig}', unaccent(@phrase{i}))");
                 ranks.Add($"phraseto_tsquery('{options.TextSearchConfig}', unaccent(@phrase{i}))");
-                parameters.Add(new($"phrase{i}", segments.Phrases[i]));
+                parameters.Add(($"phrase{i}", segments.Phrases[i]));
             }
 
             gate = string.Join(" AND ", gates);
@@ -105,12 +125,19 @@ internal sealed class PostgresMatchExpression
         return new PostgresMatchExpression(gate, rankSql, parameters, segments.Phrases.Count > 0);
     }
 
+    /// <summary>
+    /// The query-time dictionaries' lexemes as a <c>tsquery</c>: one <c>quote_literal</c> per lexeme,
+    /// OR-ed. Built in SQL from the parameter so a lexeme never reaches a statement as text.
+    /// </summary>
+    private const string ExpansionsQuery =
+        "(SELECT string_agg(quote_literal(lexeme), ' | ') FROM unnest(@expansions::text[]) AS lexeme)::tsquery";
+
     /// <summary>Adds the query's parameters to a command, under the names the expressions use.</summary>
     public void Bind(NpgsqlCommand command)
     {
         ArgumentNullException.ThrowIfNull(command);
 
         foreach (var parameter in _parameters)
-            command.Parameters.AddWithValue(parameter.Key, parameter.Value);
+            command.Parameters.AddWithValue(parameter.Name, parameter.Value);
     }
 }

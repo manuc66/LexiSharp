@@ -1,6 +1,7 @@
 using System.Globalization;
 
 using LexiSharp.Core;
+using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
 using Npgsql;
 
@@ -18,9 +19,22 @@ namespace LexiSharp.Postgres;
 /// <b>Where each number comes from.</b> The document count, the average length and every term's
 /// document frequency are read once by <see cref="PostgresBm25Statistics"/> through
 /// <c>ts_stat</c> and cached until a write invalidates them; the per-document term frequencies and
-/// length come from the candidate row's own <c>tsvector</c>. The query passes through the same
-/// text search configuration as the column, so the terms the scorer sums over are the terms the
-/// index matched — not a second tokenizer's opinion of them.
+/// length come from the candidate row's own vector. Whose vector that is depends on
+/// <see cref="PostgresBm25Options.Analysis"/>: PostgreSQL's <c>tsv</c> by default, or the
+/// <c>tsv_bm25</c> this library wrote when the analysis is
+/// <see cref="PostgresAnalysis.LexiSharp"/>. Either way the query is analysed by the same side as
+/// the column, so the terms the scorer sums over are the terms the index matched — not a second
+/// tokenizer's opinion of them.
+/// </para>
+/// <para>
+/// <b>Analysis.</b> <see cref="PostgresAnalysis.Database"/> is the default and hands the text to
+/// PostgreSQL, so every dictionary and configuration the server has — a thesaurus, ispell, a
+/// Snowball stemmer for another language — keeps working. <see cref="PostgresAnalysis.LexiSharp"/>
+/// tokenizes in this process with the library's own analyser and writes the lexemes and positions
+/// into a separate <c>tsv_bm25</c> column, which is what closes the measured gap between a stock
+/// configuration and the reference analysis (FiQA-2018: about 0.229 against 0.236 nDCG@10). The
+/// server <c>tsv</c> column is still written in that mode, so the lexical engine's readers keep
+/// working on the same rows.
 /// </para>
 /// <para>
 /// <b>The candidate gate.</b> A GIN index returns posting lists, not rows in score order, so the
@@ -43,14 +57,19 @@ namespace LexiSharp.Postgres;
 /// <b>Scores.</b> Unlike the <c>ts_rank_cd</c> engine, these are <see cref="Bm25Scorer"/> scores on
 /// the in-memory scorer's scale, with the same conventions — so a document's score is comparable
 /// with the in-memory BM25 row, and <see cref="Bm25Scorer.Explain"/>'s decomposition applies to the
-/// same formula. What is <i>not</i> identical is the analysis: PostgreSQL's configuration, not this
-/// library's tokenizer, produced the terms on both sides.
+/// same formula. Under <see cref="PostgresAnalysis.Database"/> the analysis is PostgreSQL's, so the
+/// row is comparable in <i>formula</i> with the in-memory rows but not in <i>terms</i>; under
+/// <see cref="PostgresAnalysis.LexiSharp"/> with the default options it is the same analysis the
+/// in-memory <c>uax29</c> row uses, so the two differ by the candidate gate and the position
+/// encoding rather than by a tokenizer.
 /// </para>
 /// <para>
 /// <b>Statistics lag.</b> The cached snapshot is invalidated by <see cref="Add"/>,
 /// <see cref="Remove"/>, <see cref="Clear"/> and <see cref="Index"/>, so the first search after a
 /// write pays one <c>ts_stat</c> walk of the table. An application that writes and searches in a
-/// tight loop should batch its writes through <see cref="Index"/>, or accept that cost.
+/// tight loop should batch its writes through <see cref="Index"/>, or accept that cost. A row
+/// another engine writes has no <c>tsv_bm25</c> and is outside the LexiSharp-mode index until this
+/// engine rewrites it; <see cref="RefreshStatistics"/> is how a caller reports such a write.
 /// </para>
 /// </remarks>
 public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, IQuerySyntaxSupport
@@ -62,6 +81,16 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
     private readonly PostgresBm25Options _options;
     private readonly PostgresIndexOptions _indexOptions;
     private readonly Bm25Scorer _scorer;
+
+    /// <summary>
+    /// The tokenizer <see cref="PostgresAnalysis.LexiSharp"/> analyses documents and queries with,
+    /// or <c>null</c> in <see cref="PostgresAnalysis.Database"/> mode, where PostgreSQL does it.
+    /// </summary>
+    private readonly Tokenizer? _analysis;
+
+    /// <summary>The vector column this engine matches, reads and counts: <c>tsv</c> or <c>tsv_bm25</c>.</summary>
+    private readonly string _matchColumn;
+
     private PostgresBm25Statistics? _statistics;
     private bool _schemaReady;
 
@@ -86,8 +115,22 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
                 + "finite number in [0, 1], and CandidatePool a non-negative count.",
                 nameof(options));
 
+        if (_options.QueryDictionaries is { Count: > 0 } && _options.MatchMode != PostgresMatchMode.AnyTerm)
+            throw new ArgumentException(
+                "QueryDictionaries expands each free term into a group of synonyms, which is an OR. "
+                + "Under PostgresMatchMode.AllTerms every term already has to appear, so an expansion "
+                + "would silently relax that rule to 'any of the synonyms'. Use AnyTerm, or drop "
+                + "QueryDictionaries.",
+                nameof(options));
+
         if (autoCreateSchema is not null)
             _options = _options with { AutoCreateSchema = autoCreateSchema.Value };
+
+        _analysis = _options.Analysis == PostgresAnalysis.LexiSharp
+            ? new Tokenizer(_options.AnalysisOptions ?? PostgresBm25Options.ReferenceAnalysisOptions)
+            : null;
+
+        _matchColumn = _analysis is null ? PostgresSchema.TsvColumn : PostgresSchema.Bm25Column;
 
         _indexOptions = _options.AsIndexOptions();
         _scorer = new Bm25Scorer(_options.K1, _options.B);
@@ -99,8 +142,9 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
     }
 
     /// <summary>
-    /// Installs the <c>unaccent</c> extension, the shared documents table and its GIN index.
-    /// Idempotent, and the same schema the lexical engine creates.
+    /// Installs the <c>unaccent</c> extension, the shared documents table and its GIN index — and, in
+    /// <see cref="PostgresAnalysis.LexiSharp"/> mode, the <c>tsv_bm25</c> column and its GIN index.
+    /// Idempotent, and the same shared schema the lexical engine creates.
     /// </summary>
     public void EnsureSchema()
     {
@@ -109,6 +153,10 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
 
         using var connection = _dataSource.OpenConnection();
         PostgresSchema.CreateDocumentTable(connection, _indexOptions);
+
+        if (_analysis is not null)
+            PostgresSchema.CreateBm25Column(connection, _indexOptions);
+
         _schemaReady = true;
     }
 
@@ -120,6 +168,10 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
 
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         await PostgresSchema.CreateDocumentTableAsync(connection, _indexOptions, cancellationToken).ConfigureAwait(false);
+
+        if (_analysis is not null)
+            await PostgresSchema.CreateBm25ColumnAsync(connection, _indexOptions, cancellationToken).ConfigureAwait(false);
+
         _schemaReady = true;
     }
 
@@ -148,7 +200,7 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
     public int RefreshStatistics()
     {
         using var connection = _dataSource.OpenConnection();
-        _statistics = PostgresBm25Statistics.Load(connection, _indexOptions);
+        _statistics = PostgresBm25Statistics.Load(connection, _indexOptions, _matchColumn);
         return _statistics.VocabularySize;
     }
 
@@ -167,7 +219,7 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
             command.ExecuteNonQuery();
 
             foreach (var document in documents)
-                PostgresDocumentWriter.Insert(connection, transaction, _indexOptions, document);
+                PostgresDocumentWriter.Insert(connection, transaction, _indexOptions, document, AnalysisLiteral(document));
 
             transaction.Commit();
         }
@@ -181,7 +233,7 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
         ArgumentNullException.ThrowIfNull(document);
 
         using var connection = _dataSource.OpenConnection();
-        PostgresDocumentWriter.Insert(connection, null, _indexOptions, document);
+        PostgresDocumentWriter.Insert(connection, null, _indexOptions, document, AnalysisLiteral(document));
 
         _statistics = null;
     }
@@ -235,8 +287,45 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
 
         using var connection = _dataSource.OpenConnection();
 
-        // The same analysis on both sides: PostgreSQL's, via the column's configuration.
-        string[] queryTerms = ReadQueryLexemes(connection, query);
+        // Both modes arrive at the same two things — the query's analysed terms and the expressions
+        // they are matched with — but the analysis happens on opposite sides of the wire. In
+        // Database mode PostgreSQL analyses the raw query; in LexiSharp mode the tokenizer that
+        // wrote the column analyses it, so the two sides cannot disagree about what a term is.
+        string[] queryTerms;
+        PostgresMatchExpression? databaseMatch = null;
+        PostgresLexiSharpMatch? lexiSharpMatch = null;
+
+        if (_analysis is null)
+        {
+            RawQuerySegments segments = QueryParser.SplitRaw(query);
+
+            queryTerms = ReadQueryLexemes(connection, query);
+
+            // Only the free text is expanded: a quoted phrase is the query's contract, term by term.
+            string[] expansionSource = segments.FreeText == query
+                ? queryTerms
+                : ReadQueryLexemes(connection, segments.FreeText);
+
+            string[] expansions = ExpandQueryTerms(connection, expansionSource);
+
+            queryTerms = PostgresLexize.Merge(queryTerms, expansions);
+            databaseMatch = PostgresMatchExpression.Build(_indexOptions, query, expansions);
+        }
+        else
+        {
+            RawQuerySegments segments = QueryParser.SplitRaw(query);
+            string[] freeTerms = [.. _analysis.Tokenize(segments.FreeText)];
+            string[] expansions = ExpandQueryTerms(connection, freeTerms);
+
+            lexiSharpMatch = PostgresLexiSharpMatch.Build(
+                _analysis,
+                _indexOptions,
+                _matchColumn,
+                segments,
+                PostgresLexize.Merge(freeTerms, expansions));
+
+            queryTerms = lexiSharpMatch.Terms;
+        }
 
         if (queryTerms.Length == 0)
             return Array.Empty<SearchResult>();
@@ -247,8 +336,9 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
 
         // Benign race: two concurrent searches may build the snapshot twice and both publish a
         // complete one. A reference assignment is atomic, so no reader can see a half-built object.
-        var statistics = _statistics ??= PostgresBm25Statistics.Load(connection, _indexOptions);
-        var match = PostgresMatchExpression.Build(_indexOptions, query);
+        var statistics = _statistics ??= PostgresBm25Statistics.Load(connection, _indexOptions, _matchColumn);
+
+        IPostgresMatch match = (IPostgresMatch?)databaseMatch ?? lexiSharpMatch!;
 
         string[] gateTerms = GateTermsFor(match, statistics, queryTerms);
 
@@ -307,7 +397,7 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
     /// </remarks>
     private NpgsqlCommand CreateCandidatesCommand(
         NpgsqlConnection connection,
-        PostgresMatchExpression match,
+        IPostgresMatch match,
         string[] gateTerms,
         SearchOptions options)
     {
@@ -324,12 +414,12 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
 
         if (gateTerms.Length > 0)
         {
-            gate = "tsv @@ (SELECT string_agg(quote_literal(term), ' | ') FROM unnest(@gateTerms::text[]) AS term)::tsquery";
+            gate = $"{_matchColumn} @@ (SELECT string_agg(quote_literal(term), ' | ') FROM unnest(@gateTerms::text[]) AS term)::tsquery";
             command.Parameters.AddWithValue("gateTerms", gateTerms);
         }
 
         command.CommandText = $"""
-            SELECT t.id, t.tsv::text
+            SELECT t.id, t.{_matchColumn}::text
             FROM {_options.QualifiedTableName} t
             JOIN (
                 SELECT id, {match.Rank} AS score
@@ -501,13 +591,13 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
     /// phrases would let a document without the phrase in.
     /// </remarks>
     private string[] GateTermsFor(
-        PostgresMatchExpression match, PostgresBm25Statistics statistics, string[] queryTerms) =>
+        IPostgresMatch match, PostgresBm25Statistics statistics, string[] queryTerms) =>
         _options.RareTermGate && !match.HasPhrases
             ? GateTerms(queryTerms, statistics.DocumentFrequency, _options.RareTermGateBudget)
             : [];
 
     /// <summary>The gate's rule in words, for the trace.</summary>
-    private string GateDescription(PostgresMatchExpression match, string[] gateTerms)
+    private string GateDescription(IPostgresMatch match, string[] gateTerms)
     {
         if (gateTerms.Length > 0)
         {
@@ -594,4 +684,45 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
 
         return command.ExecuteScalar() as string[] ?? Array.Empty<string>();
     }
+
+    /// <summary>
+    /// The client-side <c>tsv_bm25</c> literal for a document, or <c>null</c> in
+    /// <see cref="PostgresAnalysis.Database"/> mode, where the column is not written.
+    /// </summary>
+    private string? AnalysisLiteral(SearchDocument document) =>
+        _analysis is null ? null : PostgresTsvLiteral.Build(AnalysedTerms(document));
+
+    /// <summary>
+    /// A document's term stream, in the order the analysis emits it: the body first, then each
+    /// <see cref="SearchDocument.TextFields"/> entry, ordinally by field name.
+    /// </summary>
+    /// <remarks>
+    /// Fields are concatenated into one vector, as the server expression concatenates them, and the
+    /// ordinal order is what makes the result independent of the dictionary's own enumeration order.
+    /// BM25 reads frequencies and lengths, not field identity, so the order only decides positions —
+    /// and the server <c>tsv</c> column's own field layout is not reproduced here.
+    /// </remarks>
+    private List<string> AnalysedTerms(SearchDocument document)
+    {
+        var terms = new List<string>(64);
+
+        _analysis!.TokenizeInto(document.Text, terms);
+
+        if (document.TextFields is { Count: > 0 } fields)
+        {
+            foreach (var entry in fields.OrderBy(static entry => entry.Key, StringComparer.Ordinal))
+                _analysis.TokenizeInto(entry.Value ?? string.Empty, terms);
+        }
+
+        return terms;
+    }
+
+    /// <summary>
+    /// The lexemes the configured query dictionaries produce for <paramref name="terms"/>, or an
+    /// empty array when none is configured.
+    /// </summary>
+    private string[] ExpandQueryTerms(NpgsqlConnection connection, IReadOnlyList<string> terms) =>
+        _options.QueryDictionaries is { Count: > 0 } dictionaries
+            ? PostgresLexize.Expand(connection, dictionaries, terms)
+            : [];
 }

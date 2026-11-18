@@ -60,21 +60,28 @@ internal sealed class PostgresBm25Statistics
     /// <remarks>
     /// Two statements: <c>ts_stat</c> answers per term, and the count of non-empty vectors answers
     /// <c>N</c> (a scalar subquery would put both in one round trip, but <c>ts_stat</c> cannot be
-    /// correlated, so the two are separate reads of the same connection).
+    /// correlated, so the two are separate reads of the same connection). <paramref name="column"/>
+    /// is the vector the engine matches on — <c>tsv</c> or <c>tsv_bm25</c> — so a LexiSharp-mode
+    /// snapshot describes the index it actually scores rather than the server one beside it.
     /// </remarks>
-    public static PostgresBm25Statistics Load(NpgsqlConnection connection, PostgresIndexOptions options)
+    public static PostgresBm25Statistics Load(
+        NpgsqlConnection connection,
+        PostgresIndexOptions options,
+        string column = PostgresSchema.TsvColumn)
     {
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentException.ThrowIfNullOrEmpty(column);
 
         int documentCount;
         long corpusTokenCount = 0;
 
         using (var count = connection.CreateCommand())
         {
-            // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted).
+            // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); `column` is
+            // one of this package's two constants.
             count.CommandText =
-                $"SELECT count(*) FROM {options.QualifiedTableName} WHERE tsv IS NOT NULL AND tsv::text <> ''"; // NOSONAR:S2077
+                $"SELECT count(*) FROM {options.QualifiedTableName} WHERE {column} IS NOT NULL AND {column}::text <> ''"; // NOSONAR:S2077
 
             documentCount = Convert.ToInt32(count.ExecuteScalar());
         }
@@ -86,7 +93,7 @@ internal sealed class PostgresBm25Statistics
             // The inner query is a literal ts_stat evaluates; the table name is a validated,
             // quoted identifier and carries no quote character of its own.
             command.CommandText =
-                $"SELECT word, ndoc, nentry FROM ts_stat('SELECT tsv FROM {options.QualifiedTableName}')"; // NOSONAR:S2077
+                $"SELECT word, ndoc, nentry FROM ts_stat('SELECT {column} FROM {options.QualifiedTableName}')"; // NOSONAR:S2077
 
             using var reader = command.ExecuteReader();
 
