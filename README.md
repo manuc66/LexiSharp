@@ -124,8 +124,9 @@ linear classifier): [text analysis →](docs/text-analysis.md).
   removes the bound. The rare-term gate is on by default and is what makes the path usable: it
   reads ~59 ms p50 on a 5,000-document corpus with 13-term queries, against ~265 ms with the gate
   off. It is a recall bound — a document holding none of the query's rare terms cannot be returned
-  — measured on two scientific corpora. The ParadeDB engine needs `pg_search`, which no major
-  managed service lets you install; the `tsvector`, BM25 and `pg_trgm` engines do not.
+  — measured on two scientific corpora and FiQA, where the default budget costs ~0.014 nDCG@10;
+  `--backend-gate-budget` is the lever there. The ParadeDB engine needs `pg_search`, which no
+  major managed service lets you install; the `tsvector`, BM25 and `pg_trgm` engines do not.
 - SQL backends are measured on ranking for the engines that rank on their own; sparse and fuzzy
   engines are covered by integration tests only.
 

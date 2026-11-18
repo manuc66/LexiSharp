@@ -382,21 +382,21 @@ by; on SciFact that truncation is the whole 0.10 gap. The gate chooses by idf in
 candidate set is small enough not to truncate. Lowering the budget trades a little quality on
 NFCorpus for speed; raising it changes nothing here.
 
+FiQA-2018 shows the other side of that trade. At k1=0.9/b=0.4 with `english`, the gate reads 0.2291
+at the default 1,000, 0.2363 at 2,000 and 0.2417 at 5,000, against 0.2430 ungated: the default is
+tuned for the two corpora above, where it is free, and a short-query corpus pays for it. The budget
+is a cost bound, and this is what it costs.
+
 **A corpus of another nature.** FiQA-2018 (`--dataset fiqa`; 57,638 documents, 648 test queries,
-financial Q&A with short queries) is not part of the pinned three. Under this table's analysis —
-`simple` + `unaccent`, k1=1.5/b=0.75 — the gate reads **0.2061** nDCG@10 and the ungated pool
-**0.1077**. That is not comparable with Anserini's published **0.2361**, which is Lucene's English
-analysis at k1=0.9/b=0.4. Under the reference's own conventions — `--analyzer uax29`, linear gains,
-k1=0.9/b=0.4, query-term frequency, reference index statistics, score rounding, omitted saturation
-constant, single precision, depth 1,000 — the in-memory row reads **0.236** against 0.2361 and the
-paper's 0.236: the figure is reproduced, and the index is the reference's: 5,288,635 terms, with a
-per-document term stream byte-identical to Lucene 10.5.2's `EnglishAnalyzer`. This engine cannot use `uax29`; with its closest
-configuration (`english`, k1=0.9/b=0.4) it reads **0.2291**. The gap was decomposed: a PostgreSQL
-configuration with the reference's 33-word stop list and Snowball reads 0.2196, so the stop list is
-not the cause (the longer stock list helps) and the remainder is the stemmer and the parser — not
-replaceable on stock PostgreSQL. The pattern is SciFact's rather than a scientific-corpus accident:
-the ungated pool truncates a coverage-ranked candidate set, and the gate's idf-selected one does
-not.
+financial Q&A with short queries) is not part of the pinned three. At k1=0.9/b=0.4, linear gains,
+depth 1,000 and the library's default arithmetic, the `english` row reads **0.2291** at the default
+gate and **0.2430** ungated: the difference is the gate's recall bound, not the analyzer — ungated,
+PostgreSQL's analysis is above the reference analysis (0.2378 in memory) and above the published
+0.2361, a different analysis under the reference conventions. The budget is the lever:
+1,000 → 0.2291, 2,000 → 0.2363, 5,000 → 0.2417, exact → 0.2430; the default is tuned for the two
+scientific corpora. The published 0.2361 remains reproduced by the in-memory `uax29` row under the
+reference's conventions, with an index byte-identical to Lucene 10.5.2's `EnglishAnalyzer`
+(5,288,635 terms), and multi-code-point emoji sequences are the one knowingly unimplemented rule.
 
 **What it costs, in time.** The evaluation harness reports quality and not time on purpose; the
 [PostgreSQL lane](benchmarks.md#postgresql-lane-postgres-what-a-search-costs-on-stock-postgresql)
