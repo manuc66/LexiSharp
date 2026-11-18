@@ -78,6 +78,12 @@ internal enum BackendKind
 /// either clears it and is ranked by <c>similarity</c>, or it is absent. Empty for the other
 /// engines, and refused there rather than ignored.
 /// </param>
+/// <param name="Analysis">
+/// Who analyses the BM25 row's text: PostgreSQL's text search configuration (the default) or this
+/// library's tokenizer into the separate <c>tsv_bm25</c> column. <c>null</c> means the engine's own
+/// default, which is <see cref="PostgresAnalysis.Database"/>. It is the analysis of the row, so it
+/// is in the row's name: the same k1/b under two analyses is two different nDCGs.
+/// </param>
 /// <param name="SparseVectorsDirectory">
 /// The directory of precomputed sparse vectors a sparse row indexes, in the producer's format
 /// (<c>&lt;dataset&gt;.docs.tsv</c>, <c>.queries.tsv</c>, <c>.meta.json</c>). Required by
@@ -97,7 +103,8 @@ internal sealed record BackendLane(
     PostgresMatchMode? MatchMode = null,
     int? CandidatePool = null,
     bool? RareTermGate = null,
-    int? RareTermGateBudget = null)
+    int? RareTermGateBudget = null,
+    PostgresAnalysis? Analysis = null)
 {
     /// <summary>The <c>ef_search</c> values in force; pgvector's own default when none was given.</summary>
     public IReadOnlyList<int> EfValues => EfSearchValues is { Count: > 0 } values ? values : [40];
@@ -119,11 +126,14 @@ internal sealed record BackendLane(
         PostgresMatchMode? matchMode = null,
         int? candidatePool = null,
         bool? rareTermGate = null,
-        int? rareTermGateBudget = null)
+        int? rareTermGateBudget = null,
+        PostgresAnalysis? analysis = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
         BackendKind parsed = ParseKind(kind);
+
+        RefuseAnalysis(parsed, analysis);
 
         RefuseSparseOptions(parsed, sparseVectorsDirectory, bm25, textSearchConfig, efSearchValues);
         RefuseLexicalOptions(parsed, bm25);
@@ -143,7 +153,8 @@ internal sealed record BackendLane(
             matchMode,
             candidatePool,
             rareTermGate,
-            rareTermGateBudget);
+            rareTermGateBudget,
+            analysis);
     }
 
     private static BackendKind ParseKind(string kind) => kind switch
@@ -272,6 +283,21 @@ internal sealed record BackendLane(
         }
     }
 
+    /// <summary>The analysis choice is the BM25 engine's alone.</summary>
+    private static void RefuseAnalysis(BackendKind parsed, PostgresAnalysis? analysis)
+    {
+        if (parsed != BackendKind.Bm25 && analysis is not null)
+        {
+            throw new ArgumentException(
+                "--backend-analysis selects who analyses the bm25 row's text: 'database' lets "
+                + "PostgreSQL's --backend-config do it, 'lexisharp' has this library tokenize the "
+                + "documents and queries into a separate tsv_bm25 column. The lexical, ParadeDB, "
+                + "vector, sparse and fuzzy rows have no such switch — ParadeDB's analysis is the "
+                + "pdb.simple tokenizer it is indexed with, and the others rank by coverage, an "
+                + "embedding or trigrams. Drop the flag, or use --backend bm25.");
+        }
+    }
+
     /// <summary>The pool and the gate exist only on the stock-PostgreSQL BM25 engine.</summary>
     private static void RefuseBm25OnlyOptions(
         BackendKind parsed,
@@ -370,8 +396,8 @@ internal sealed record BackendLane(
     public string Description => Kind switch
     {
         BackendKind.Bm25 =>
-            $"PostgreSQL BM25 (Bm25Scorer over tsvector term frequencies, text search config "
-            + $"'{TextSearchConfig}' + unaccent, {MatchText}, {Bm25OperatingPoint}, candidate pool "
+            $"PostgreSQL BM25 (Bm25Scorer over tsvector term frequencies, {AnalysisText}, "
+            + $"{MatchText}, {Bm25OperatingPoint}, candidate pool "
             + $"{EffectivePool:N0}, {GateText}" + FieldWeightsText + ")",
         BackendKind.ParadeDb =>
             "ParadeDB BM25 (pdb.score, Tantivy)" + Bm25Text
@@ -400,6 +426,15 @@ internal sealed record BackendLane(
     /// </summary>
     public PostgresMatchMode ResolvedMatchMode =>
         MatchMode ?? (Kind == BackendKind.Bm25 ? PostgresMatchMode.AnyTerm : PostgresMatchMode.AllTerms);
+
+    /// <summary>
+    /// The analysis the row ran with, in words: PostgreSQL's configuration, or the library's
+    /// tokenizer and the column it wrote. A reader has to be able to tell the two rows apart, and
+    /// the analysis moves the number more than k1 or b does.
+    /// </summary>
+    private string AnalysisText => Analysis == PostgresAnalysis.LexiSharp
+        ? "LexiSharp analysis (uax29 boundaries, Porter, 33-word function-word list) in tsv_bm25"
+        : $"text search config '{TextSearchConfig}' + unaccent";
 
     /// <summary>The match rule in words, because two nDCGs under one name are two different rows.</summary>
     private string MatchText => ResolvedMatchMode == PostgresMatchMode.AnyTerm
@@ -548,8 +583,12 @@ internal sealed record BackendLane(
         ],
     };
 
-    private const string AnalysisCaveat =
-        "The analysis is PostgreSQL's, not the harness tokenizer's: no Porter, no stop list, no "
+    private string AnalysisCaveat => Analysis == PostgresAnalysis.LexiSharp
+        ? "The analysis is the harness's uax29 one, applied in the client: uax29 word boundaries, "
+        + "Porter, the 33-word function-word list, single-character terms kept and possessives "
+        + "stripped. The terms are the in-memory row's terms; what remains between the two rows is "
+        + "the candidate gate and the position encoding, not a tokenizer."
+        : "The analysis is PostgreSQL's, not the harness tokenizer's: no Porter, no stop list, no "
         + "possessive rule. This row is comparable with the in-memory 'defaults' rows at most, and "
         + "not with an aligned (--analyzer english) row or a published figure.";
 }
@@ -649,6 +688,7 @@ internal static class PostgresBackendBenchmark
                     CandidatePool = lane.EffectivePool,
                     RareTermGate = lane.ResolvedRareTermGate,
                     RareTermGateBudget = lane.ResolvedGateBudget,
+                    Analysis = lane.Analysis ?? PostgresAnalysis.Database,
                 });
 
             return Run(bm25, bm25.DropSchema);

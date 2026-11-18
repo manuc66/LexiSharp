@@ -137,6 +137,10 @@ public static class Program
         // below, so a malformed spec fails on a message rather than an unhandled exception.
         string? backendFieldWeights = null;
 
+        // Who analyses the BM25 row's text: "database" (the row this engine has always measured) or
+        // "lexisharp" (this library's tokenizer into its own tsv_bm25 column). Parsed with the lane.
+        string? backendAnalysis = null;
+
         // Where the rerank cache lives. Defaulted inside the dataset loop (one file per corpus), and a
         // directory rather than a file because --dataset all would otherwise share one file between
         // corpora whose document ids collide.
@@ -358,6 +362,9 @@ public static class Program
                     break;
                 case "--backend-match" when i + 1 < args.Length:
                     backendMatch = args[++i];
+                    break;
+                case "--backend-analysis" when i + 1 < args.Length:
+                    backendAnalysis = args[++i];
                     break;
                 case "--backend-pool" when i + 1 < args.Length:
                     backendPool = args[++i];
@@ -585,6 +592,14 @@ public static class Program
             return 2;
         }
 
+        if (backendAnalysis is not null && backendKind is null)
+        {
+            Console.Error.WriteLine(
+                "--backend-analysis chooses who analyses the BM25 row's text, so it needs --backend bm25 " +
+                "with --backend-connection.");
+            return 2;
+        }
+
         BackendLane? backendLane = null;
 
         if (backendKind is not null && backendConnection is not null)
@@ -603,7 +618,8 @@ public static class Program
                     backendMatch is null ? null : ParseMatchMode(backendMatch),
                     backendPool is null ? null : ParseNonNegative(backendPool, "--backend-pool"),
                     backendGate is null ? null : ParseGate(backendGate),
-                    backendGateBudget is null ? null : ParsePositive(backendGateBudget, "--backend-gate-budget"));
+                    backendGateBudget is null ? null : ParsePositive(backendGateBudget, "--backend-gate-budget"),
+                    backendAnalysis is null ? null : ParseAnalysis(backendAnalysis));
             }
             catch (ArgumentException error)
             {
@@ -1884,6 +1900,21 @@ public static class Program
             _ => throw new ArgumentException($"--backend-gate expects 'rare' or 'off', got '{value}'."),
         };
 
+    /// <summary>
+    /// <c>--backend-analysis</c>: who analyses the BM25 row's text. Spelled by the side that does
+    /// the work — <c>database</c> is PostgreSQL's configuration, <c>lexisharp</c> is this library's
+    /// tokenizer — because a name like "porter" would describe one knob of an analysis and not the
+    /// row.
+    /// </summary>
+    private static PostgresAnalysis ParseAnalysis(string value) =>
+        value.ToLowerInvariant() switch
+        {
+            "database" => PostgresAnalysis.Database,
+            "lexisharp" => PostgresAnalysis.LexiSharp,
+            _ => throw new ArgumentException(
+                $"--backend-analysis expects 'database' or 'lexisharp', got '{value}'."),
+        };
+
     private static PostgresMatchMode ParseMatchMode(string value) =>
         value.ToLowerInvariant() switch
         {
@@ -2001,7 +2032,7 @@ public static class Program
                      [--diagnose-doc <id>] [--diagnose-query <id>] [--diagnose-depth <n>]
                      [--analysis-diff <analyzer>]
                      [--backend <lexical|bm25|paradedb|vector|fuzzy|sparse> --backend-connection <s>]
-                     [--backend-bm25 <k1,b>] [--backend-match <all|any>] [--backend-ef <list>]
+                     [--backend-bm25 <k1,b>] [--backend-match <all|any>] [--backend-analysis <database|lexisharp>] [--backend-ef <list>]
                      [--backend-threshold <list>] [--backend-config <name>]
                      [--sparse <vectors-dir>]
 
@@ -2210,6 +2241,17 @@ public static class Program
                                 PostgreSQL's own Snowball stemmer and stop list, which is close to —
                                 and not identical with — the harness's --analyzer english. Not read by
                                 ParadeDB, the vector, sparse or fuzzy engines.
+              --backend-analysis <database|lexisharp>
+                                Who analyses the bm25 row's text. 'database' (default) is
+                                PostgreSQL's --backend-config, the analysis this engine has always
+                                measured. 'lexisharp' has this library tokenize the documents and
+                                the queries into a separate tsv_bm25 column: uax29 word boundaries,
+                                Porter and the 33-word function-word list, the analysis the in-memory
+                                --analyzer uax29 row uses. That is what closes the measured FiQA
+                                gap (0.229 against 0.236 nDCG@10); the dictionaries of the text
+                                search configuration stop applying at index time, and the cost is a
+                                second vector column and a GIN index. Refused with the other
+                                backends, which have no such choice.
               --backend-bm25 <k1,b>
                                 k1 and b the ParadeDB backend is indexed with, e.g. 0.9,0.4 — the
                                 parameters the published baselines were produced at. pg_search takes

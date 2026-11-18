@@ -231,6 +231,13 @@ defaults, exponential gains):
 The matching rule is the SciFact story (5.3×) and almost nothing on NFCorpus, whose queries average
 3.4 terms; the ranker is the rest.
 
+`--backend-analysis database|lexisharp` chooses who analyses the BM25 row's text. `database`
+(default) is PostgreSQL's `--backend-config`, the analysis this engine has always been measured
+with; `lexisharp` has the harness's own tokenizer analyse the documents and the queries and write
+them into a separate `tsv_bm25` column, so the row reads the same terms as the in-memory `uax29`
+row. It is refused without `--backend bm25`: the lexical row has no such switch, and ParadeDB's
+analysis is the `pdb.simple` tokenizer its index is built with.
+
 `--dataset fiqa` adds a corpus of another nature (57,638 documents, 648 test queries, financial Q&A
 with short queries) without joining `--dataset all` or the pinned table. On it the gate reads
 **0.2061** nDCG@10 against **0.1077** with the gate off at pool 1,000; Anserini's published BM25 is
