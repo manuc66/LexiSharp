@@ -19,6 +19,7 @@
     <!-- Measured: a Native AOT console referencing this package published and ran. The
          repository's own AOT smoke test does not include it yet; see the package README. -->
     <IsAotCompatible>true</IsAotCompatible>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
   <ItemGroup>
