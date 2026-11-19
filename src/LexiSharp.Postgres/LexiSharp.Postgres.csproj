@@ -22,6 +22,7 @@
       PostgresJsonContext instead of the reflection serializer.
     -->
     <IsAotCompatible>true</IsAotCompatible>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
   <ItemGroup>
