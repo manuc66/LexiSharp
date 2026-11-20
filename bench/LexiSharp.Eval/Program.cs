@@ -683,8 +683,22 @@ public static class Program
                 ? LocatePinnedFile(dataBaseDir)
                 : Path.GetFullPath(verifyAgainst);
 
-            return await ReferenceVerifier.RunAsync(
-                PinnedReference.Load(pinnedPath), dataBaseDir, writePins, CancellationToken.None);
+            try
+            {
+                return await ReferenceVerifier.RunAsync(
+                    PinnedReference.Load(pinnedPath), dataBaseDir, writePins, CancellationToken.None);
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+            {
+                // The corpora are downloaded at run time. A dead mirror is not a drift, and the
+                // unhandled exception it used to produce aborted the process with no explanation a
+                // reader could act on.
+                Console.Error.WriteLine(
+                    "--verify-reference could not download the corpora: " + exception.Message);
+                Console.Error.WriteLine(
+                    "The pinned numbers were not re-checked. This is a network failure, not a drift.");
+                return 1;
+            }
         }
 
         // The one tokenizer every config shares, so the table is comparable within a run.
