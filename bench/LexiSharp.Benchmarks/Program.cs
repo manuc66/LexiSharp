@@ -28,6 +28,14 @@ public static class Program
             return;
         }
 
+        // The same question for learned-sparse vectors, whose posting lists are denser than text's.
+        // See SparseWandLane.
+        if (args.Length > 0 && args[0] == "sparse-wand")
+        {
+            SparseWandLane.Run(args[1..]);
+            return;
+        }
+
         // Tail-query p50/p99 and allocation per corpus size, for the cursor pass's A/B. See CursorLane.
         if (args.Length > 0 && args[0] == "cursor")
         {
