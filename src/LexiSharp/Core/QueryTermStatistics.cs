@@ -18,7 +18,8 @@ namespace LexiSharp.Core;
 /// makes the query restrictive whatever it scored, and a term present in half the corpus cannot
 /// discriminate at all; without the figures the caller can only infer both from a hit count that
 /// is capped by the page size. None of these numbers require a search to produce — they are read
-/// off the index — so exposing them costs one vocabulary walk per query term and no ranking work.
+/// off the index — so producing them costs a parse of the query and one vocabulary walk per
+/// distinct term, and no scoring work at all.
 /// </para>
 /// </remarks>
 /// <param name="Term">The normalized term, as the index stores it.</param>

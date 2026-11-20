@@ -143,6 +143,17 @@ public class AspNetCoreSearchInsightTests
     }
 
     [Fact]
+    public void Handle_AnswersAnEmptyFacetListWhenTheParameterNamesNoField()
+    {
+        // Present but unusable is still a request: the property is there, holding nothing, so a
+        // client can tell "nobody matched a value" from "I never asked".
+        var response = Search(new LexiSharpSearchParameters { Query = "distributed", Facets = " , " });
+
+        Assert.NotNull(response.Facets);
+        Assert.Empty(response.Facets!);
+    }
+
+    [Fact]
     public void Handle_ReturnsNoBucketForAFieldNoDocumentCarries()
     {
         var response = Search(new LexiSharpSearchParameters { Query = "distributed", Facets = "nope" });
@@ -165,6 +176,9 @@ public class AspNetCoreSearchInsightTests
 
         Assert.Equal("facets", badRequest.Value!.Field);
         Assert.Contains(LexiSharpSearchEndpoint.MaxFacetFields.ToString(), badRequest.Value.Message);
+
+        // The message must not claim a count it did not compute: the parser stops one past the bound.
+        Assert.DoesNotContain("9 were requested", badRequest.Value.Message, StringComparison.Ordinal);
     }
 
     [Fact]

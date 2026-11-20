@@ -475,8 +475,8 @@ foreach (var term in terms)
         $"share={term.DocumentShare:P1} idf={term.InverseDocumentFrequency:0.###}");
 ```
 
-Nothing is scored: each term costs one vocabulary walk, so this is the cheap question to ask
-before spending a query on an agent's guess. The figures are:
+Nothing is scored: one parse of the query and one vocabulary walk per distinct term, so this is
+the cheap question to ask before spending a query on an agent's guess. The figures are:
 
 | Member | Meaning |
 | --- | --- |

@@ -22,6 +22,14 @@ namespace LexiSharp.Hybrid;
 /// <see cref="WeightedScoreResultMerger"/> computed before this type existed: keeping it here rather
 /// than "fixing" it silently is what makes the default a no-op rather than a ranking change.
 /// </para>
+/// <para>
+/// <b>One case does change, and it is out of contract.</b> A list whose every score is negative has
+/// no positive divisor; before the seam, the merge divided by its negative maximum and turned those
+/// scores into positive contributions. The mapping here refuses a non-positive scale, so such a list
+/// contributes nothing. Engines in this library do not return negative scores — <c>0</c> is the
+/// "not a match" convention and higher is better — so the change is a defect being removed from a
+/// path no built-in pipeline reaches, not a ranking change.
+/// </para>
 /// </remarks>
 public sealed class MaxScoreNormalizer : IScoreNormalizer
 {

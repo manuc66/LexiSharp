@@ -36,8 +36,14 @@ public sealed record LexiSharpSearchParameters
     /// capped by <see cref="Limit"/>.
     /// </para>
     /// <para>
-    /// It costs one vocabulary walk per distinct query term and no scoring work. It does not change
-    /// the ranking or the page.
+    /// It costs a second parse of the query and one vocabulary walk per distinct term, and no
+    /// scoring work. It does not change the ranking or the page.
+    /// </para>
+    /// <para>
+    /// The query is described as written: an index built with
+    /// <see cref="LexiSharpIndexOptions{TDocument}.EnableFuzzy"/> rewrites a search's terms into fuzzy
+    /// atoms, and the statistics are of the words the caller typed rather than of the vocabulary
+    /// neighbourhood they reach.
     /// </para>
     /// </remarks>
     public bool Stats { get; init; }
