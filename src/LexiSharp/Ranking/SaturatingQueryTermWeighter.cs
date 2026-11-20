@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using LexiSharp.Core;
 
 namespace LexiSharp.Ranking;
@@ -67,6 +68,14 @@ public sealed class SaturatingQueryTermWeighter : IQueryTermWeighter
     /// </remarks>
     public const double DefaultSaturation = 8.0;
 
+    /// <summary>
+    /// The answer for the case that must cost nothing: one shared, never-mutated map that says
+    /// "every weight is 1" by the interface's contract. A fresh empty dictionary per query would be
+    /// an allocation in the hot path of the queries that do not need the weighter at all.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, double> NoWeights =
+        new ReadOnlyDictionary<string, double>(new Dictionary<string, double>(0, StringComparer.Ordinal));
+
     private readonly double _k3;
 
     /// <summary>Creates a weighter with the given query-side saturation constant.</summary>
@@ -104,7 +113,7 @@ public sealed class SaturatingQueryTermWeighter : IQueryTermWeighter
         {
             // No term at all, or saturation switched off: the map that says "every weight is 1" is the
             // empty one, which lets the decorator keep ranking with the prototype.
-            return new Dictionary<string, double>(0, StringComparer.Ordinal);
+            return NoWeights;
         }
 
         var counts = new Dictionary<string, int>(terms.Count, StringComparer.Ordinal);
@@ -126,8 +135,8 @@ public sealed class SaturatingQueryTermWeighter : IQueryTermWeighter
             // Every term occurs once, so every weight is 1 and the map can say nothing: an empty map
             // means "all 1" by the interface's contract, and the decorator then scores with the
             // prototype instead of copying it per query. Most queries are this case, and it is the
-            // one where the weighter must cost nothing at all.
-            return weights;
+            // one where the weighter must not cost an allocation it does not need.
+            return NoWeights;
         }
 
         double heaviestWeight = Saturate(heaviest);

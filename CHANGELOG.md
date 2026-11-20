@@ -22,7 +22,9 @@
   comparable scale is now a seam instead of a hard-coded division: `max` divides by the list's best
   score, `minmax` stretches the list across `[0, 1]`, `sum` gives each engine one unit of mass. All
   three are stateless and read the candidate list they are handed, so none needs a calibration set.
-  The default is `max`, so an existing pipeline's scores do not move. `MergeExplanation` gained
+  The default is `max`, so an existing pipeline's scores do not move — the one exception is a
+  list whose scores are all negative, which is outside the library's scoring contract and now
+  contributes nothing instead of dividing by a negative maximum. `MergeExplanation` gained
   `Offsets` (the shift a min-max mapping applies), `IMergeExplainer` gained `NormalizationName`, and
   the merge trace prints both, so a contribution can still be reproduced by hand. Measured
   nDCG@10 on `Hybrid BM25+QL` (weights 1/1, `--no-tuned`): ArguAna 0.320 / 0.320 / 0.320,

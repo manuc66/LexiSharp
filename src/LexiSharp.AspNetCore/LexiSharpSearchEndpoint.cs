@@ -231,7 +231,7 @@ public static class LexiSharpSearchEndpoint
         {
             return Results.BadRequest(new LexiSharpSearchError(
                 "facets",
-                $"The 'facets' parameter names at most {MaxFacetFields} fields; {facetFields.Count} were requested."));
+                $"The 'facets' parameter names more than {MaxFacetFields} fields."));
         }
 
         var queryOptions = new LexiSharpQueryOptions(
@@ -246,6 +246,12 @@ public static class LexiSharpSearchEndpoint
         IReadOnlyList<LexiSharpHit<TDocument>> hits;
         IReadOnlyList<FacetBucket>? facets = null;
         IReadOnlyList<QueryTermStatistic>? terms = null;
+
+        // `facets=` with nothing usable in it is still a request for facets: the answer is an empty
+        // list, not an omitted property, because an agent that reads `facets` absent concludes it
+        // never asked and will ask again.
+        if (parameters.Facets is not null && facetFields.Count == 0)
+            facets = Array.Empty<FacetBucket>();
 
         try
         {

@@ -224,7 +224,7 @@ public class ScoreNormalizerTests
         var explanation = new WeightedScoreResultMerger().Explain([List(("x", 10), ("y", 5))]);
 
         Assert.Equal([10.0], explanation.Normalization);
-        Assert.All(explanation.Offsets, offset => Assert.Equal(0, offset));
+        Assert.Empty(explanation.Offsets);
     }
 
     [Fact]

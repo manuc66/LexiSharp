@@ -107,15 +107,21 @@ public sealed class WeightedScoreResultMerger : IResultMerger, IMergeExplainer
 
         var scales = new double[engineCount];
         var offsets = new double[engineCount];
+        bool shifted = false;
 
         for (int i = 0; i < engineCount; i++)
         {
             ScoreNormalization normalization = _normalizer.Measure(perEngineResults[i]);
             scales[i] = normalization.Scale;
             offsets[i] = normalization.Offset;
+            shifted |= normalization.Offset != 0;
         }
 
-        return new MergeExplanation(ResolveWeights(engineCount), scales) { Offsets = offsets };
+        var explanation = new MergeExplanation(ResolveWeights(engineCount), scales);
+
+        // Left empty when nothing shifts, which is the documented reading of "empty means offset 0"
+        // and keeps the historical report of a max-normalized merge byte for byte what it was.
+        return shifted ? explanation with { Offsets = offsets } : explanation;
     }
 
     private double[] ResolveWeights(int engineCount)
