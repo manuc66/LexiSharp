@@ -106,7 +106,8 @@ public sealed class RetrievalEvaluator
     {
         ArgumentNullException.ThrowIfNull(engine);
 
-        var searchOptions = (options ?? SearchOptions.Default) with { Limit = TopK };
+        // One result past the page, so a tie that reaches the cut is detected rather than hidden.
+        var searchOptions = (options ?? SearchOptions.Default) with { Limit = TopK + 1 };
 
         double ndcg = 0, map = 0, mrr = 0, recall = 0, precision = 0, f1 = 0;
         long elapsedTicks = 0;
@@ -129,10 +130,14 @@ public sealed class RetrievalEvaluator
             stopwatch.Stop();
             elapsedTicks += stopwatch.ElapsedTicks;
 
-            var retrievedIds = new List<string>(retrieved.Count);
-            var retrievedScores = new List<double>(retrieved.Count);
+            // The page is what the metrics report; `retrieved` may hold one extra result, which is
+            // what makes the cut's tie structure observable.
+            IReadOnlyList<SearchResult> page = retrieved.Count > TopK ? retrieved.Take(TopK).ToList() : retrieved;
 
-            foreach (var result in retrieved)
+            var retrievedIds = new List<string>(page.Count);
+            var retrievedScores = new List<double>(page.Count);
+
+            foreach (var result in page)
             {
                 retrievedIds.Add(result.DocumentId);
                 retrievedScores.Add(result.Score);
@@ -156,13 +161,21 @@ public sealed class RetrievalEvaluator
             judged++;
             graded |= query.IsGraded;
 
+            var discrimination = QueryDiscrimination.Measure(query.Id, retrieved, TopK, complete: retrieved.Count <= TopK);
+
             byQuery.Add(new BenchmarkQueryResult(
                 query.Id,
                 query.Text,
                 new BenchmarkMetrics(queryNdcg, queryMap, queryMrr, queryRecall, queryPrecision, queryF1),
                 retrievedIds,
                 FirstRelevantRank(retrievedIds, query.RelevantDocumentIds),
-                retrievedScores));
+                retrievedScores)
+            {
+                Discrimination = discrimination,
+                TieAwareNdcg = discrimination.CutStraddled
+                    ? null
+                    : RetrievalMetrics.TieAwareNdcgAtK(retrieved, query.GradedRelevance, TopK),
+            });
         }
 
         double totalMilliseconds = elapsedTicks / (double)TimeSpan.TicksPerMillisecond;

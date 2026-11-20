@@ -966,6 +966,50 @@ figures, set the gain to the relevance level itself. They agree on binary releva
 disagree on a graded corpus: NFCorpus scores 0.3080 exponential against 0.3071 linear for the same
 run. Pass `--ndcg-gain linear` before quoting a number next to a published one.
 
+### Ties: what a metric is worth when two scores are equal
+
+Two documents with the same score have no order between them. The library still returns one —
+`SearchOptions.TieBreak` decides — but that order is a choice, not a measurement. On a run whose
+scores tie, a single nDCG is a point inside an interval that the tie-break picked.
+
+`RetrievalMetrics.TieAwareNdcgAtK` reports the interval **exactly**: the expectation under uniform
+random tie-breaking, and the best and worst admissible ordering. No sampling and no seed, so two
+machines agree to the last bit.
+
+```csharp
+var ranked = engine.Search(query, new SearchOptions(depth));
+TieAwareMetric ndcg = RetrievalMetrics.TieAwareNdcgAtK(ranked, gradedRelevance, k: 10);
+// ndcg.Expected  ndcg.Minimum  ndcg.Maximum  ndcg.Width  ndcg.IsDetermined
+```
+
+The expectation is closed-form: every document of a score class is equally likely at every position
+the class occupies, so each position inside the page receives the class's mean gain. The bounds are
+the rearrangement inequality — largest gain on the largest discount. Both reduce to the plain metric
+when no scores tie, which is the test that keeps the two implementations honest.
+
+**Pass the whole ranking, or one result past the page.** A class that reaches past the cut is
+incomplete in a page-limited list, and an expectation computed over the visible part would be
+confidently wrong. `QueryDiscrimination.Measure` reports that case as `TiedAtCut`, and the benchmark
+asks the engine for one extra result so it is detected rather than hidden. Where a class still
+cannot be completed, `BenchmarkQueryResult.TieAwareNdcg` is `null` — not zero.
+
+`QueryDiscrimination` answers the other half, and needs no qrels: do the scores separate the
+documents at all? It reports `NoDiscrimination` (every document at one score — the order is entirely
+the tie-break's), `TiedAtCut` (membership arbitrary), `TiedWithinPage` (order arbitrary),
+`CutUnobserved` (the list ended at the cut) and `Determined`. The prohibited-only query path reaches
+`NoDiscrimination` by construction, which is why the verdict exists.
+
+The protocol is not this project's invention. Ma and Cheng (RecSys 2026) compute the exact expectation
+under uniform random tie-breaking and show a compressed score turning the tie-break into the ranker;
+Guo et al. (FRAME 2026) show the same run scoring 0.85 or 0.17 depending on it. What this library adds
+is shipping the measurement in the metric API and in the benchmark table, so the interval is visible
+next to the point.
+
+On the reference corpus at k=10 every interval has width zero — no tie crosses a relevance grade
+there. At k=5 one query (`ordinary-05`) has a tie that reaches the cut, so its tie-aware value is
+reported as not computable from a page-limited retrieval rather than as a number. That is the
+diagnostic working, not a gap.
+
 ## Tuning BM25, BM25F, BM25+ and BM25L
 
 Let the corpus pick its own parameters. `Bm25ParameterTuner` grid-searches `k1` and `b`

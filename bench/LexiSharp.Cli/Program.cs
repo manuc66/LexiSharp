@@ -803,6 +803,39 @@ public static class Program
         }
 
         static string Format(double value) => value.ToString("0.0000", CultureInfo.InvariantCulture);
+
+        // Below the table rather than in it: the nDCG above is one point on an interval, and the
+        // width is what says whether that point was a measurement or a choice.
+        if (results.Any(result => result.TieAware is not null))
+        {
+            Console.WriteLine();
+            Console.WriteLine($"Tie-aware nDCG@{topK} — uniform tie-breaking (Ma & Cheng, RecSys 2026)");
+            Console.WriteLine($"{"Config",-22} {"point",10} {"expected",10} {"width",8} {"worst",8} {"measured",10}  verdicts");
+
+            foreach (var result in results)
+            {
+                if (result.TieAware is not { } tie)
+                {
+                    Console.WriteLine($"{result.Name,-22} {"—",10}");
+                    continue;
+                }
+
+                string verdicts =
+                    $"determined {tie.Determined}" +
+                    $" · tied-in-page {tie.TiedWithinPage}" +
+                    $" · tied-at-cut {tie.TiedAtCut}" +
+                    $" · cut-unknown {tie.CutUnobserved}" +
+                    $" · no-discrimination {tie.NoDiscrimination}";
+
+                Console.WriteLine(
+                    $"{result.Name,-22} " +
+                    $"{Format(tie.MeanNdcgOverMeasured),-10} " +
+                    $"{Format(tie.MeanExpectedNdcg),-10} " +
+                    $"{Format(tie.MeanWidth),-8} " +
+                    $"{Format(tie.MaxWidth),-8} " +
+                    $"{tie.Measured + "/" + tie.Queries,-10}  {verdicts}");
+            }
+        }
     }
 
     private static void WriteJson(
@@ -832,6 +865,7 @@ public static class Program
                 result.TotalMilliseconds,
                 result.MillisecondsPerQuery,
                 result.JudgedQueries,
+                tieAware = result.TieAware,
             }),
         };
 
