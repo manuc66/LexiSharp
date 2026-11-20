@@ -2,6 +2,20 @@
 
 ### Added
 
+- **`sparse-wand` lane in `bench/LexiSharp.Benchmarks`**: the pruning ceiling for learned-sparse
+  vectors, measured on the shape a SPLADE model produces (50,000 documents, 173 postings each,
+  queries drawn by document frequency) in the layout a sparse index would store — contiguous
+  `(ordinal, weight)` arrays per term. The ceiling is the share of entries sitting in a window whose
+  maximum possible score is below the query's final top-10 threshold: a low ceiling is conclusive,
+  a high one only opens the next question. With the **128-ordinal** windows `PostingBlocks` writes,
+  an expanded query's ceiling is **0.0 %** — the bound sums a near-global maximum per term, and a
+  head term's maximum is reached in almost every window, so the bound sits an order of magnitude
+  above the threshold everywhere. It recovers only as the window shrinks (12.2 % at eight ordinals
+  for an expanded query, 84.4 % for a keyword one). The exhaustive pass on that layout costs
+  0.6–1.4 ms per query (2–4 ns per entry), so a traversal's bookkeeping would have to be nearly free
+  to pay for a 12 % saving. Recorded in `docs/benchmarks.md`; the lane does not measure a
+  smaller-block format, impact ordering or quantized weights.
+
 - **`IScoreNormalizer`** (`LexiSharp.Hybrid`), with `MaxScoreNormalizer` (the default),
   `MinMaxScoreNormalizer` and `SumScoreNormalizer`, wired into `WeightedScoreResultMerger`,
   `CombSumResultMerger` and `CombMNZResultMerger`. The mapping from one engine's scores to a

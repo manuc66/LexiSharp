@@ -976,7 +976,56 @@ for another corpus. The one-term tail's 0.0 % holds for the queries this lane ru
 occurs at most once per document; a tail term with repeated occurrences in some documents does have a
 threshold above its common contribution and can be pruned.
 
-## Cursor lane (`cursor`): a tail query's p50, p99 and allocation
+## Sparse lane (`sparse-wand`): the pruning ceiling for learned-sparse vectors
+
+The question this lane answers is whether a block-max traversal over sparse vectors has anything to
+skip. It builds the layout a sparse index would store — one `(ordinal, weight)` array per term,
+postings in document order — and, for each query, computes the **ceiling**: for each window of `n`
+ordinals, the largest score any document in it could reach from the query's terms,
+`Σ_t w_q(t) · max_{d ∈ window} w_d(t)`. An entry in a window whose bound is below the query's final
+top-10 threshold is skippable by *some* traversal; a real WAND starts from a threshold of zero and
+therefore realizes less. A low ceiling is conclusive, a high one only opens the next question.
+
+```bash
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- sparse-wand 50000 4 128
+```
+
+**The corpus is synthetic, and the shape is the point.** A SPLADE encoding needs a model this
+repository does not ship, so the lane generates the shape a SPLADE model produces: 50,000 documents,
+a 30,000-term vocabulary, each document drawing 200–300 terms from a Zipf popularity and keeping the
+distinct ones (**173 postings per document**, the 100–200 positive terms of a real vector), weights
+skewed to the low end. Queries draw their terms **by document frequency** — the regime an LLM's
+expansion lands in — and the keyword shape is the control.
+
+**The ceiling, by window size** (50,000 documents, 3 queries per shape, mean of the three):
+
+| Window | Expanded query (40 terms, weights 0.5–3) | Keyword query (10 terms, unit weights) |
+|---|---:|---:|
+| 128 ordinals — what `PostingBlocks` writes | **0.0 %** | **0.0 %** |
+| 32 | 0.0 % | 12.2 % (26.7 / 4.1 / 5.8) |
+| 8 | 12.2 % (7.9 / 16.8 / 12.3) | 84.4 % (93.1 / 77.3 / 82.8) |
+
+**Why 128 gives nothing, structurally.** The bound is `(number of query terms present in the
+window) × (the window's maximum weight for each)`. A head term has entries in *every* window, and the
+maximum of ~50 draws from its weight distribution is close to the term's global maximum in every
+one of them — so the sum over forty such terms sits roughly an order of magnitude above the top-10
+threshold, in every window, for every query. Shrinking the window shrinks each maximum, which is why
+the ceiling recovers as the window does: at eight ordinals the "block" bound is effectively a
+per-document bound.
+
+**What this rules out, and what it does not.** It rules out the cheapest version of the idea — keep
+the 128-ordinal format and add a block-max traversal — for the expanded-query regime: the ceiling is
+zero, so no traversal can beat the exhaustive pass there, and the exhaustive pass itself costs
+0.6–1.4 ms per query on these postings (2–4 ns per entry). It does **not** measure a format with
+eight-document blocks, nor impact-ordered lists, nor the gains that come from removing the
+dictionary-of-dictionaries the current `SparseTextSearchEngine` searches: that layout change is
+where the order-of-magnitude is, and this lane shows the postings arithmetic is already cheap enough
+that a traversal's bookkeeping would have to be nearly free to pay for itself on forty-term queries.
+
+**What the lane does not measure.** The traversal's own cost (cursors, pivots, heap, block headers),
+the cost of building the bounds, quantized weights, and any real corpus. The ceilings are on entries,
+not on time.
+
 
 The accumulating pass walks the posting lists term at a time and folds them into a buffer as long as
 the ordinal space. That buffer is rented from `ArrayPool` and its recorded-flags array is cleared
