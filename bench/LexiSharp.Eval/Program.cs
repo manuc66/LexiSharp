@@ -1,6 +1,7 @@
 using System.Globalization;
 using LexiSharp.Core;
 using LexiSharp.Expansion;
+using LexiSharp.Hybrid;
 using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
 using LexiSharp.Postgres;
@@ -94,6 +95,10 @@ public static class Program
         // Query-side saturation (k3). Empty means off, and it costs nothing to leave off: the
         // weighter is one object per row and the rows only exist when asked for.
         var querySaturations = new List<double>();
+
+        // Hybrid score normalizers. Empty means off: the default hybrid rows keep the max
+        // normalizer they always had, and one row per requested normalizer is added beside them.
+        var hybridNormalizers = new List<IScoreNormalizer>();
 
         // Spread-tf sweep. Empty means off: the scorer declines the fast paths, so a default run
         // pays neither the positions reads nor the slower per-document loop.
@@ -416,6 +421,9 @@ public static class Program
                     break;
                 case "--query-saturation" when i + 1 < args.Length:
                     querySaturations.AddRange(ParseStrengths(args[++i]));
+                    break;
+                case "--hybrid-normalizer" when i + 1 < args.Length:
+                    hybridNormalizers.AddRange(ParseNormalizers(args[++i]));
                     break;
                 case "--spread" when i + 1 < args.Length:
                     spreadAlphas.AddRange(ParseAlphas(args[++i]));
@@ -810,7 +818,7 @@ public static class Program
                 querySyntaxReference, segment, tuneBm25F, tuneSearchOptions, bm25Va, tuneBm25Va,
                 analyzePath, analyzeBaseline, analyzeCandidate,
                 disagreementLeft, disagreementRight,
-                expandDensities, expandRankings, reweightStrengths, reweightMode, reweightMinTerms, querySaturations, spreadAlphas, spreadWindow, annEfValues, annConnection, backendLane, rerankCacheDir,
+                expandDensities, expandRankings, reweightStrengths, reweightMode, reweightMinTerms, querySaturations, hybridNormalizers, spreadAlphas, spreadWindow, annEfValues, annConnection, backendLane, rerankCacheDir,
                 heldOutFraction, sparseLane, bootstrap, bootstrapResamples, bootstrapBaseline,
                 bootstrapCorrection, diagnoseDocument, diagnoseQuery, diagnoseDepth,
                 analysisDiff, stem);
@@ -951,7 +959,7 @@ public static class Program
         string? disagreementLeft, string? disagreementRight,
         IReadOnlyList<double> expandDensities, IReadOnlyList<ExpansionRanking> expandRankings,
         IReadOnlyList<double> reweightStrengths, QueryTermWeightingMode reweightMode, int reweightMinTerms,
-        IReadOnlyList<double> querySaturations,
+        IReadOnlyList<double> querySaturations, IReadOnlyList<IScoreNormalizer> hybridNormalizers,
         IReadOnlyList<double> spreadAlphas, int spreadWindow,
         IReadOnlyList<int> annEfValues, string? annConnection, BackendLane? backendLane,
         string? rerankCacheDir, double? heldOutFraction, SparseLane? sparseLane,
@@ -1171,8 +1179,8 @@ public static class Program
 
             ConfigurationSet configurations = Evaluation.BuildConfigurations(
                 corpus, runIndex, tokenizer, weighting, referenceBm25, saturationConstant,
-                singlePrecision, bm25Va, queryExpansions, queryReweights, spreadAlphas, spreadWindow,
-                denseVectors, reranker, rerankCandidates);
+                singlePrecision, bm25Va, queryExpansions, queryReweights, hybridNormalizers,
+                spreadAlphas, spreadWindow, denseVectors, reranker, rerankCandidates);
 
             Console.WriteLine(
                 "Diagnosis mode: the metrics table is not run — the fixed configurations are probed "
@@ -1197,6 +1205,7 @@ public static class Program
             bm25Va: bm25Va,
             tuneBm25Va: tuneBm25Va,
             queryReweights: queryReweights,
+            hybridNormalizers: hybridNormalizers,
             spreadAlphas: spreadAlphas,
             spreadWindow: spreadWindow,
             tuningSearchOptions: tuneSearchOptions
@@ -1644,6 +1653,20 @@ public static class Program
             $"--reweight-mode expects 'redundancy' or 'centrality', got '{value}'."),
     };
 
+    private static IEnumerable<IScoreNormalizer> ParseNormalizers(string value)
+    {
+        foreach (string part in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            yield return part.ToLowerInvariant() switch
+            {
+                "max" => new MaxScoreNormalizer(),
+                "minmax" => new MinMaxScoreNormalizer(),
+                "sum" => new SumScoreNormalizer(),
+                _ => throw new ArgumentException(
+                    $"--hybrid-normalizer expects 'max', 'minmax' or 'sum', got '{part}'."),
+            };
+        }
+    }
 
     private static IEnumerable<double> ParseStrengths(string value)
     {
@@ -2089,6 +2112,12 @@ public static class Program
                                 the default constant. This is the saturating alternative to
                                 QueryTermWeighting.QueryFrequency, not an addition to it. Uses
                                 --reference-bm25 as its BM25 operating point when that flag is given.
+              --hybrid-normalizer <list>
+                                Add one 'Hybrid BM25+QL weighted' row per score normalizer in a
+                                comma-separated list: 'max' (the default the existing row uses),
+                                'minmax' or 'sum'. The rows differ only in how each engine's scores
+                                become comparable before they are averaged, which is the one choice
+                                a score-blending hybrid makes without seeing relevance.
               --spread <list>    Add a spread-tf matrix: one BM25 spread row per alpha in the
                                 comma-separated list (values in [0, 1]) crossed with b = 0, 0.5
                                 and 1. alpha = 0 is the raw-count control and must reproduce BM25

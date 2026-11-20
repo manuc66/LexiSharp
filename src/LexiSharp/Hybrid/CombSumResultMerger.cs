@@ -7,16 +7,33 @@ namespace LexiSharp.Hybrid;
 /// classic <i>CombSUM</i> of score-based fusion.
 /// </summary>
 /// <remarks>
-/// Each engine's scores are normalized to <c>[0, 1]</c> by dividing them by that engine's
-/// maximum positive score (the same normalization as <see cref="WeightedScoreResultMerger"/>,
-/// weights aside), so engines on unrelated scales (BM25 vs cosine) contribute comparably.
-/// A document returned by several engines accumulates one normalized contribution per engine;
-/// non-positive and non-finite scores are ignored. Unlike rank-based fusion
+/// Each engine's scores are put on a comparable scale by an <see cref="IScoreNormalizer"/> — by
+/// default divided by that engine's maximum positive score, the same normalization as
+/// <see cref="WeightedScoreResultMerger"/> — so engines on unrelated scales (BM25 vs cosine)
+/// contribute comparably. A document returned by several engines accumulates one normalized
+/// contribution per engine; non-positive and non-finite scores are ignored. Unlike rank-based fusion
 /// (<see cref="ReciprocalRankFusionMerger"/>), a low rank with a dominant score still counts
 /// fully — use CombSUM when the scores, not just the order, are meaningful.
 /// </remarks>
 public sealed class CombSumResultMerger : IResultMerger
 {
+    private readonly IScoreNormalizer _normalizer;
+
+    /// <summary>Creates a CombSUM merger with the default normalizer.</summary>
+    public CombSumResultMerger()
+        : this(new MaxScoreNormalizer())
+    {
+    }
+
+    /// <summary>Creates a CombSUM merger whose per-engine scores go through <paramref name="normalizer"/>.</summary>
+    /// <param name="normalizer">How each engine's scores become comparable.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="normalizer"/> is null.</exception>
+    public CombSumResultMerger(IScoreNormalizer normalizer)
+    {
+        ArgumentNullException.ThrowIfNull(normalizer);
+        _normalizer = normalizer;
+    }
+
     /// <inheritdoc />
     public string Name => "CombSum";
 
@@ -38,15 +55,14 @@ public sealed class CombSumResultMerger : IResultMerger
         for (int i = 0; i < engineCount; i++)
         {
             var results = perEngineResults[i];
-            double divisor = MaxPositiveScore(results);
+            ScoreNormalization normalization = _normalizer.Measure(results);
 
             foreach (var result in results)
             {
                 if (!double.IsFinite(result.Score) || result.Score <= 0)
                     continue;
 
-                // divisor > 0 is guaranteed: a positive score implies a positive maximum.
-                double normalized = result.Score / divisor;
+                double normalized = normalization.Apply(result.Score);
 
                 if (merged.TryGetValue(result.DocumentId, out var existing))
                     merged[result.DocumentId] = (existing.Document, existing.Score + normalized);
@@ -60,20 +76,5 @@ public sealed class CombSumResultMerger : IResultMerger
             .Select(x => new SearchResult(x.Key, x.Value.Score, x.Value.Document))
             .OrderByDescending(x => x.Score)
             .ToList();
-    }
-
-    private static double MaxPositiveScore(IReadOnlyList<SearchResult> results)
-    {
-        double max = 0;
-
-        for (int i = 0; i < results.Count; i++)
-        {
-            double score = results[i].Score;
-
-            if (double.IsFinite(score) && score > max)
-                max = score;
-        }
-
-        return max;
     }
 }

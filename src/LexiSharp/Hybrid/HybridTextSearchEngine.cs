@@ -285,18 +285,27 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
             string.Empty,
             double.NaN,
             double.NaN,
-            FormatMergeExplanation(explainer.Explain(perEngine), perEngine)));
+            FormatMergeExplanation(explainer.Explain(perEngine), explainer.NormalizationName, perEngine)));
     }
 
     /// <summary>
-    /// Renders the merge's weights, divisors and pool sizes as one invariant, label-sorted string.
+    /// Renders the merge's weights, normalisation and pool sizes as one invariant, label-sorted
+    /// string.
     /// </summary>
     /// <remarks>
     /// Labelled rather than positional, and sorted by label like the per-document detail, so the two
     /// readings join on the source name instead of on an order the reader has to reconstruct.
+    /// <para>
+    /// The middle segment names the normalizer the merger uses and prints its scale per engine;
+    /// a normalizer that subtracts an offset before dividing prints it as <c>scale@offset</c>, so the
+    /// two numbers a reader needs to reproduce a contribution are in the trace rather than in a type
+    /// they would have to go and look up.
+    /// </para>
     /// </remarks>
     private string FormatMergeExplanation(
-        MergeExplanation explanation, IReadOnlyList<IReadOnlyList<SearchResult>> perEngine)
+        MergeExplanation explanation,
+        string normalizationName,
+        IReadOnlyList<IReadOnlyList<SearchResult>> perEngine)
     {
         int[] order = Enumerable.Range(0, _sourceNames.Count).ToArray();
         Array.Sort(order, (left, right) => string.CompareOrdinal(_sourceNames[left], _sourceNames[right]));
@@ -314,15 +323,23 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
                 .Append(explanation.Weights[engine].ToString("0.####", CultureInfo.InvariantCulture));
         }
 
-        builder.Append(" | max");
+        builder.Append(" | ").Append(normalizationName);
 
         for (int position = 0; position < order.Length; position++)
         {
             int engine = order[position];
+            double offset = engine < explanation.Offsets.Count ? explanation.Offsets[engine] : 0;
+
             builder.Append(' ')
                 .Append(_sourceNames[engine])
                 .Append('=')
                 .Append(explanation.Normalization[engine].ToString("0.####", CultureInfo.InvariantCulture));
+
+            if (offset != 0)
+            {
+                builder.Append('@')
+                    .Append(offset.ToString("0.####", CultureInfo.InvariantCulture));
+            }
         }
 
         builder.Append(" | pools");

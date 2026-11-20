@@ -1,13 +1,13 @@
 namespace LexiSharp.Hybrid;
 
 /// <summary>
-/// The arithmetic a weighted merge applied: one weight and one divisor per source engine.
+/// The arithmetic a weighted merge applied: one weight and one normalisation per source engine.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <see cref="Core.DetailedSearchResult.Contributions"/> gives the raw score each engine assigned a
-/// document, and this record gives the two numbers needed to turn those raw scores into the merged
-/// one — <c>score = Σ wᵢ·sᵢ/divisorᵢ</c>. Without the divisors the contributions are readable but
+/// document, and this record gives the numbers needed to turn those raw scores into the merged one —
+/// <c>score = Σ wᵢ·(sᵢ − offsetᵢ)/divisorᵢ</c>. Without them the contributions are readable but
 /// not checkable: two engines on different scales produce a number no reader can reproduce.
 /// </para>
 /// <para>
@@ -20,12 +20,25 @@ namespace LexiSharp.Hybrid;
 /// contribution as <c>0</c> rather than dividing — the same value, so a reader recomputing by hand
 /// gets the same answer instead of an infinity.
 /// </para>
+/// <para>
+/// <see cref="Offsets"/> exists for the normalizers that shift before dividing. It is empty for a
+/// pure divisor — the default, and the only case before the seam existed — so a reader that finds it
+/// empty reads <c>offset = 0</c> and the formula above collapses to the historical one.
+/// </para>
 /// </remarks>
 /// <param name="Weights">Weight applied to each engine's normalised score, in engine order.</param>
 /// <param name="Normalization">
 /// Divisor applied to each engine's raw scores before weighting, in engine order: that engine's
-/// largest finite score in this search.
+/// largest finite score under <see cref="MaxScoreNormalizer"/>, its score spread under
+/// <see cref="MinMaxScoreNormalizer"/>, its score total under <see cref="SumScoreNormalizer"/>.
 /// </param>
 public sealed record MergeExplanation(
     IReadOnlyList<double> Weights,
-    IReadOnlyList<double> Normalization);
+    IReadOnlyList<double> Normalization)
+{
+    /// <summary>
+    /// Value subtracted from each engine's scores before dividing, in engine order; empty when every
+    /// offset is <c>0</c>.
+    /// </summary>
+    public IReadOnlyList<double> Offsets { get; init; } = Array.Empty<double>();
+}
