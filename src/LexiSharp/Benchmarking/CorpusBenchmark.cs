@@ -83,7 +83,11 @@ public static class CorpusBenchmark
         CancellationToken cancellationToken)
     {
         var engine = config.Build(index, tokenizer, queries, topK);
-        var searchOptions = new SearchOptions(topK);
+
+        // One result past the page, so a tie that reaches the cut is detected rather than hidden.
+        // The reported page stays at topK: metrics, the golden master and callers all see the same
+        // result list as before.
+        var searchOptions = new SearchOptions(topK + 1);
 
         double ndcg = 0, map = 0, mrr = 0, recall = 0, precision = 0, f1 = 0;
         long elapsedTicks = 0;
@@ -104,10 +108,14 @@ public static class CorpusBenchmark
             stopwatch.Stop();
             elapsedTicks += stopwatch.ElapsedTicks;
 
-            var retrievedIds = new List<string>(retrieved.Count);
-            var retrievedScores = new List<double>(retrieved.Count);
+            // The page is what the metrics and the golden master see; `retrieved` may hold one extra
+            // result, which is what makes the cut's tie structure observable.
+            IReadOnlyList<SearchResult> page = retrieved.Count > topK ? retrieved.Take(topK).ToList() : retrieved;
 
-            foreach (var result in retrieved)
+            var retrievedIds = new List<string>(page.Count);
+            var retrievedScores = new List<double>(page.Count);
+
+            foreach (var result in page)
             {
                 retrievedIds.Add(result.DocumentId);
                 retrievedScores.Add(result.Score);
@@ -128,13 +136,25 @@ public static class CorpusBenchmark
             f1 += queryF1;
             judged++;
 
+            var discrimination = QueryDiscrimination.Measure(query.Id, retrieved, topK, complete: retrieved.Count <= topK);
+
+            // A class that reaches past the cut is incomplete here, so the expectation cannot be
+            // computed exactly; null says "not computable", which the report keeps distinct from zero.
+            TieAwareMetric? tieAware = discrimination.CutStraddled
+                ? null
+                : RetrievalMetrics.TieAwareNdcgAtK(retrieved, query.GradedRelevance, topK);
+
             perQuery.Add(new BenchmarkQueryResult(
                 query.Id,
                 query.Text,
                 new BenchmarkMetrics(queryNdcg, queryMap, queryMrr, queryRecall, queryPrecision, queryF1),
                 retrievedIds,
                 FirstRelevantRank(retrievedIds, query.RelevantDocumentIds),
-                retrievedScores));
+                retrievedScores)
+            {
+                Discrimination = discrimination,
+                TieAwareNdcg = tieAware,
+            });
         }
 
         double totalMilliseconds = elapsedTicks / (double)TimeSpan.TicksPerMillisecond;
@@ -151,7 +171,7 @@ public static class CorpusBenchmark
             totalMilliseconds,
             judged == 0 ? 0 : totalMilliseconds / judged,
             judged)
-        { PerQuery = perQuery };
+        { PerQuery = perQuery, TieAware = TieAwareSummary.Of(perQuery) };
     }
 
     /// <summary>

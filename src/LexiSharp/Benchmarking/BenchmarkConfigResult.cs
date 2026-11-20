@@ -24,4 +24,10 @@ public sealed record BenchmarkConfigResult(
     /// result was not produced by <see cref="CorpusBenchmark"/>.
     /// </summary>
     public IReadOnlyList<BenchmarkQueryResult> PerQuery { get; init; } = [];
+
+    /// <summary>
+    /// How much of this configuration's ordering was decided by the scores rather than by the
+    /// tie-break, or <c>null</c> when the result was not produced by a harness that measures it.
+    /// </summary>
+    public TieAwareSummary? TieAware { get; init; }
 }

@@ -1,3 +1,5 @@
+using LexiSharp.Ranking;
+
 namespace LexiSharp.Benchmarking;
 
 /// <summary>
@@ -28,6 +30,40 @@ public sealed record BenchmarkQueryResult(
     int? FirstRelevantRank,
     IReadOnlyList<double>? RetrievedScores = null)
 {
+    /// <summary>
+    /// This query's nDCG over every ordering the scores leave admissible, or <c>null</c> when the
+    /// exact value cannot be recovered from the results the run kept.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A single nDCG is well defined only when the scores are distinct. When two documents share a
+    /// score the engine has no order to report, and the metric becomes a property of the tie-break:
+    /// Ma and Cheng (RecSys 2026) show a compressed score turning the tie-break into the ranker, and
+    /// Guo et al. (FRAME 2026) show the same run scoring <c>0.85</c> or <c>0.17</c> depending on it.
+    /// This property carries the exact expectation under uniform random tie-breaking and the exact
+    /// best and worst case, so a report can say how much of the number the tie-break owns.
+    /// </para>
+    /// <para>
+    /// <b>Null means not computable, never zero.</b> A class that extends past the page cut cannot be
+    /// completed from a page-limited retrieval: its size and the gains of its documents past the cut
+    /// are missing, and an expectation computed over the visible part would be a confident wrong
+    /// answer. <see cref="Discrimination"/> says that this happened
+    /// (<see cref="DiscriminationVerdict.TiedAtCut"/>); the benchmark asks the engine for one result
+    /// past the page so that the case is detected rather than hidden.
+    /// </para>
+    /// </remarks>
+    public TieAwareMetric? TieAwareNdcg { get; init; }
+
+    /// <summary>
+    /// Whether the query's scores separate the documents it returned, or <c>null</c> when the result
+    /// was not produced by a harness that measures it.
+    /// </summary>
+    /// <remarks>
+    /// Needs no relevance judgement, so it is the half of the tie story that can be measured on live
+    /// traffic. <see cref="TieAwareNdcg"/> is the half that needs qrels.
+    /// </remarks>
+    public DiscriminationProfile? Discrimination { get; init; }
+
     /// <summary>True when at least one judged document made the retrieved page.</summary>
     public bool RetrievedRelevant => FirstRelevantRank.HasValue;
 

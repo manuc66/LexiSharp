@@ -1,3 +1,5 @@
+using LexiSharp.Core;
+
 namespace LexiSharp.Ranking;
 
 /// <summary>
@@ -228,6 +230,151 @@ public static class RetrievalMetrics
         return precisionSum / relevantIds.Count;
     }
 
+    /// <summary>
+    /// nDCG@k under score ties: the exact expectation over uniform random tie-breaking, and the exact
+    /// best and worst case over every admissible ordering.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The plain <see cref="NdcgAtK(IReadOnlyCollection{string}, IReadOnlyDictionary{string, double}, int, NdcgGain)"/>
+    /// answers "what did the ordering the engine happened to produce score", which is well defined only
+    /// when the scores are distinct. When two documents share a score the engine has no order to report,
+    /// and the metric is a property of the tie-break instead: Ma and Cheng (RecSys 2026) show a
+    /// compressed score turning a tie-break into the ranker, and Guo et al. (FRAME 2026) show the same
+    /// run scoring 0.85 or 0.17 depending on it.
+    /// </para>
+    /// <para>
+    /// <b>The expectation is exact, not sampled.</b> Every document of a score class is equally likely
+    /// to occupy any of that class's positions, so each position inside the page receives the class's
+    /// mean gain and the expected discounted gain is closed-form — the same sum the reference
+    /// implementation computes for one positive item, generalised to graded relevance. The bounds come
+    /// from the rearrangement inequality: the best ordering pairs the largest gains with the largest
+    /// discounts. No enumeration and no seed, so the figures are reproducible across machines.
+    /// </para>
+    /// <para>
+    /// <b>Pass the full ranking, not the page.</b> A class that extends past the cut contributes fewer
+    /// positions inside the page than it has documents, and only the documents past the cut reveal that.
+    /// A list truncated at <c>k</c> makes every class look smaller than it is and silently narrows every
+    /// interval to a point.
+    /// </para>
+    /// <para>
+    /// Documents missing from <paramref name="gradedRelevance"/>, and ids repeated after their first
+    /// occurrence, count as relevance 0 — the same conventions as the plain metric, so the two agree
+    /// exactly when no scores tie.
+    /// </para>
+    /// </remarks>
+    /// <param name="ranked">The ranked results, scores included, best first.</param>
+    /// <param name="gradedRelevance">Relevance level per document id; missing ids are relevance 0.</param>
+    /// <param name="k">Cutoff: only the first <paramref name="k"/> positions are scored.</param>
+    public static TieAwareMetric TieAwareNdcgAtK(
+        IReadOnlyList<SearchResult> ranked,
+        IReadOnlyDictionary<string, double> gradedRelevance,
+        int k) =>
+        TieAwareNdcgAtK(ranked, gradedRelevance, k, NdcgGain.Exponential);
+
+    /// <summary>
+    /// nDCG@k under score ties, with an explicit <see cref="NdcgGain"/> convention.
+    /// </summary>
+    /// <inheritdoc cref="TieAwareNdcgAtK(IReadOnlyList{SearchResult}, IReadOnlyDictionary{string, double}, int)"/>
+    public static TieAwareMetric TieAwareNdcgAtK(
+        IReadOnlyList<SearchResult> ranked,
+        IReadOnlyDictionary<string, double> gradedRelevance,
+        int k,
+        NdcgGain gain)
+    {
+        ArgumentNullException.ThrowIfNull(ranked);
+        ArgumentNullException.ThrowIfNull(gradedRelevance);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(k);
+
+        if (gradedRelevance.Count == 0)
+            return new TieAwareMetric(0, 0, 0);
+
+        if (gradedRelevance.Values.Any(level => double.IsNaN(level) || double.IsInfinity(level) || level < 0))
+            throw new ArgumentOutOfRangeException(nameof(gradedRelevance), "Relevance gains must be non-negative and finite.");
+
+        // Deduplicate exactly as the plain metric does. A repeated id contributes at its first rank,
+        // and its later score must not be allowed to open a second class.
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var ids = new List<string>(ranked.Count);
+        var scores = new List<double>(ranked.Count);
+
+        foreach (var result in ranked)
+        {
+            if (seen.Add(result.DocumentId))
+            {
+                ids.Add(result.DocumentId);
+                scores.Add(result.Score);
+            }
+        }
+
+        if (ids.Count == 0)
+            return new TieAwareMetric(0, 0, 0);
+
+        // A class is the set of documents the score cannot tell apart, with the positions they occupy.
+        // A class may straddle the cut, which is what makes the page's membership uncertain.
+        var positionsByScore = new Dictionary<double, List<int>>(ids.Count);
+        var classOrder = new List<double>();
+
+        for (int i = 0; i < scores.Count; i++)
+        {
+            if (!positionsByScore.TryGetValue(scores[i], out var positions))
+            {
+                positionsByScore[scores[i]] = positions = new List<int>();
+                classOrder.Add(scores[i]);
+            }
+
+            positions.Add(i);
+        }
+
+        double expected = 0, minimum = 0, maximum = 0;
+
+        foreach (double score in classOrder)
+        {
+            List<int> positions = positionsByScore[score];
+            var weights = new List<double>(positions.Count);
+            var gains = new List<double>(positions.Count);
+
+            foreach (int position in positions)
+            {
+                gains.Add(GainOf(gradedRelevance.GetValueOrDefault(ids[position], 0), gain));
+
+                if (position < k)
+                    weights.Add(1.0 / Math.Log2(position + 2));
+            }
+
+            if (weights.Count == 0)
+                continue;
+
+            weights.Sort();
+            weights.Reverse();
+            gains.Sort();
+
+            double gainSum = 0;
+            foreach (double g in gains)
+                gainSum += g;
+
+            double weightSum = 0;
+            foreach (double w in weights)
+                weightSum += w;
+
+            // Every document of the class is equally likely at every one of its positions, so an
+            // inside position receives the class's mean gain in expectation.
+            expected += weightSum * (gainSum / gains.Count);
+
+            // Rearrangement inequality: largest gain to largest discount is the best case, smallest
+            // to largest the worst.
+            for (int i = 0; i < weights.Count; i++)
+            {
+                maximum += weights[i] * gains[gains.Count - 1 - i];
+                minimum += weights[i] * gains[i];
+            }
+        }
+
+        double idcg = IdealDcg(gradedRelevance.Values.OrderByDescending(level => level), k, gain);
+
+        return idcg == 0 ? new TieAwareMetric(0, 0, 0) : new TieAwareMetric(expected / idcg, minimum / idcg, maximum / idcg);
+    }
+
     private static int CountMatches(IReadOnlyCollection<string> retrievedIds, IReadOnlyCollection<string> relevantIds, int k)
     {
         var relevant = new HashSet<string>(relevantIds, StringComparer.Ordinal);
@@ -293,4 +440,26 @@ public static class RetrievalMetrics
 
         return idcg;
     }
+}
+
+/// <summary>
+/// A metric's value over every ordering the scores leave admissible: the expectation under uniform
+/// random tie-breaking, and the exact best and worst case.
+/// </summary>
+/// <param name="Expected">Mean value over the admissible orderings.</param>
+/// <param name="Minimum">Value of the least favourable admissible ordering.</param>
+/// <param name="Maximum">Value of the most favourable admissible ordering.</param>
+/// <remarks>
+/// <see cref="Minimum"/> and <see cref="Maximum"/> are the interval a single reported number hides,
+/// and <see cref="IsDetermined"/> says whether there is anything to hide. A caller that reports
+/// <see cref="Expected"/> without the width is reporting a mean over an arbitrary choice it did not
+/// make — the practice the tie-aware protocol exists to end.
+/// </remarks>
+public readonly record struct TieAwareMetric(double Expected, double Minimum, double Maximum)
+{
+    /// <summary>How far the metric can move under tie-breaking alone.</summary>
+    public double Width => Maximum - Minimum;
+
+    /// <summary>Every admissible ordering agrees: no tie reached a position that is scored.</summary>
+    public bool IsDetermined => Maximum == Minimum;
 }

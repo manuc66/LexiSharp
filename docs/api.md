@@ -141,6 +141,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `CorpusBenchmark` | class | — | Runs a retrieval benchmark: builds one shared in-memory index over a corpus, evaluates every requested BenchmarkConfig against the same query set, and reports… |
 | `PanelEvaluationResult` | record | — | The outcome of evaluating a live engine against a RetrievalEvaluator's panel: the retrieval metrics averaged over the judged queries, plus the wall-clock time… |
 | `RetrievalEvaluator` | class | — | Evaluates a liveITextSearchEngine against a fixed panel of labeled queries, on demand — the runtime complement to CorpusBenchmark, which builds a fresh index… |
+| `TieAwareSummary` | record | — | What a configuration's per-query tie measurements add up to: how often the score failed to separate the documents, and how much of the reported nDCG the… |
 
 #### `LexiSharp.Classification`
 
@@ -441,6 +442,8 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `BooleanScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | Pure boolean filter. A matching document gets a score of 1, a non-matching one 0. Because the RankedTextSearchEngine discards scores below MinimumScore, this… |
 | `CalibratedScoreConfidence` | class | — | A learned confidence calibrator that maps raw scores to calibrated probabilities using isotonic regression or Platt scaling, with an optional Youden-derived… |
 | `CalibrationMethod` | enum | — | The calibration method used by CalibratedScoreConfidence. |
+| `DiscriminationProfile` | record | — | One query's score structure, measured once and read by every consumer. |
+| `DiscriminationVerdict` | enum | — | Whether a query's scores separate the documents it returned, decided from the scores alone and with no relevance judgement. |
 | `DocumentLengthRatioScorer` | class | `ITextScorer` | A document's length relative to the corpus average: \|D\| / avgdl, where both figures come from the index. One for an average document, above one for a long… |
 | `FeedbackAwareTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that augments a primary search engine with a learned query → document feedback channel — one history for every search. |
 | `FeedbackAwareTextSearchEngine<TPayload>` | class | `IContextualSearchEngine`, `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that augments a primary search engine with a learned query → document feedback channel, choosing the history per search from the caller's… |
@@ -448,6 +451,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `NdcgGain` | enum | — | How a relevance level is turned into a gain in NdcgAtK. |
 | `ProximityMode` | enum | — | How ProximityReranker turns a term window into a score change. |
 | `ProximityReranker` | class | `IReranker` | Re-ranks a candidate list by how close together the query terms actually occur in each document, refining the order a term-frequency scorer produced without… |
+| `QueryDiscrimination` | class | — | Measures whether a result list discriminates, from the scores alone. |
 | `QueryFeedbackHistory` | class | — | A learned relevance feedback channel: it records which document a user chose for past queries, and uses those associations to boost matching documents in future… |
 | `QueryLikelihoodScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | Query likelihood retrieval model with Jelinek-Mercer smoothing, a probabilistic language-model alternative to BM25. |
 | `QueryTermWeighting` | enum | — | How a scorer treats a term that occurs more than once in a query. |
@@ -457,6 +461,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `ScoreConfidenceMethod` | enum | — | How an ordered result set's raw scores are mapped into a calibrated per-result confidence in [0,1]. |
 | `SpreadBm25Scorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | BM25 whose term frequency is a spatial spread rather than a count: how many distinct windows of the document contain the term, instead of how many times it… |
 | `TfIdfScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | Classic TF-IDF relevance. A document matches when it contains at least one query term; rare terms are weighted more than common ones. |
+| `TieAwareMetric` | record struct | — | A metric's value over every ordering the scores leave admissible: the expectation under uniform random tie-breaking, and the exact best and worst case. |
 | `TieBreak` | enum | — | How the engines order candidates whose scores are exactly equal. |
 | `TuningMetric` | enum | — | The quality metric a Bm25ParameterTuner maximizes over its validation set. |
 | `WeightedCompositeScorer` | class | `ITextScorer` | A scorer built from other scorers: the weighted sum of their scores, Σ wᵢ · componentᵢ, computed in one pass over one candidate set. |
