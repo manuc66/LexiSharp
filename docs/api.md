@@ -459,6 +459,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `QueryTermWeighting` | enum | — | How a scorer treats a term that occurs more than once in a query. |
 | `RankedTextSearchEngine` | class | `IExplainableSearchEngine`, `IFacetedSearchEngine`, `IQueryCostProbe`, `IQuerySyntaxSupport`, `ITextSearchEngine` | The stock search engine: delegates the corpus storage to an IReadOnlyTextIndex, delegates the relevance math to an ITextScorer, and takes care of query… |
 | `RetrievalMetrics` | class | — | Standard top-k retrieval metrics over a ranked list of document ids, used to evaluate (and tune) ranking quality against a validation set. |
+| `SaturatingQueryTermWeighter` | class | `IQueryTermWeighter` | Weights a query's terms by a saturating function of how many times each one was written: w(t) = (k3 + 1) · qtf(t) / (k3 + qtf(t)), normalized so the heaviest… |
 | `ScoreConfidence` | class | — | Maps an ordered result set's raw scores into calibrated confidences in [0,1] — the "is this really the answer?" gauge that raw lexical scores (BM25, TF-IDF,… |
 | `ScoreConfidenceMethod` | enum | — | How an ordered result set's raw scores are mapped into a calibrated per-result confidence in [0,1]. |
 | `SpreadBm25Scorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | BM25 whose term frequency is a spatial spread rather than a count: how many distinct windows of the document contain the term, instead of how many times it… |

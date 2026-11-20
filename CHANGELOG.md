@@ -2,6 +2,24 @@
 
 ### Added
 
+- **`SaturatingQueryTermWeighter`** (`LexiSharp.Ranking`): the query-side half of BM25's saturation.
+  A term written `qtf` times in the query weighs `(k3 + 1) · qtf / (k3 + qtf)` — normalized so the
+  heaviest term keeps `1` — instead of counting `qtf` times, which is what `QueryTermWeighting`
+  does with no ceiling. `k3 = 0` returns `1` for every term and is the no-op control; a query whose
+  terms all occur once returns an empty map and ranks through the prototype scorer, at no cost.
+  Apply it through `ReweightingTextSearchEngine`, which rebuilds the scorer per query; it is the
+  saturating alternative to `QueryTermWeighting.QueryFrequency`, not an addition to it. Measured
+  nDCG@10, `--no-tuned`, default analysis, k1 = 1.5 / b = 0.75: **ArguAna 0.320 → 0.346** (k3 = 8;
+  0.343 at k3 = 4, 0.346 at k3 = 16, 0.320 at k3 = 0) with no wall-clock change, **FiQA-2018
+  0.232 → 0.234**, **NFCorpus 0.308 → 0.307** and **SciFact 0.662 → 0.662**. The reading is the
+  query length: ArguAna's queries are whole arguments whose content words repeat, FiQA's are
+  questions, the other two are keyword strings that do not.
+
+- **`--query-saturation <list>`** in `bench/LexiSharp.Eval`, one BM25 row per `k3` in a
+  comma-separated list (`k3 = 0` is the control), so a workload with real model-generated expansions
+  can be measured with the same harness, corpus and qrels as every other row. Uses
+  `--reference-bm25` as its operating point when that flag is given.
+
 - **`QueryTermStatistic` and `IQueryTermStatistics`** (`LexiSharp.Core`), with
   `RankedTextSearchEngine.DescribeQuery` and `LexiSharpIndex<T>.DescribeQuery` on top: one entry per
   distinct query term with its document frequency, the corpus's document count, its share of the
