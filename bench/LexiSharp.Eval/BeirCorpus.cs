@@ -232,10 +232,11 @@ internal static class BeirLoader
 
         Console.WriteLine($"Downloading {name} (BEIR) from {downloadUrl}");
 
-        // 100 s is the HttpClient default, and it covers the whole transfer: a 30 MB zip on a busy
-        // CI runner exceeds it, and the failure then arrives as a cancelled task and an abort
-        // rather than as a checksum or a network error. Ten minutes matches the 20 Newsgroups
-        // download next door; the retry covers a runner whose first connection is dropped.
+        // 100 s is the HttpClient default, and it covers the whole exchange: a large zip on a busy
+        // runner can exceed it, and a host that does not answer leaves the connect hanging until it
+        // expires. Both used to arrive as a cancelled task and an abort rather than as a network
+        // error. Ten minutes matches the 20 Newsgroups download next door; the retry covers a
+        // transient drop.
         using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
 
         const int attempts = 3;
