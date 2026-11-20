@@ -52,7 +52,7 @@ namespace LexiSharp.Ranking;
 /// rather than quietly ranking on zeros.
 /// </para>
 /// </remarks>
-public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPlannableScorer, IFieldScopedScorer
+public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPlannableScorer, IFieldScopedScorer, IQueryTermStatistics
 {
     private static readonly Dictionary<string, double> EmptyWeights = new(StringComparer.Ordinal);
 
@@ -134,6 +134,10 @@ public sealed class Bm25FScorer : IScoreExplainer, ITermOverlapScorer, IQueryPla
 
     /// <inheritdoc />
     public string Name => "BM25F";
+
+    /// <inheritdoc />
+    public IReadOnlyList<QueryTermStatistic> DescribeTerms(IReadOnlyList<string> terms, IReadOnlyTextIndex index) =>
+        TermStatistics.Describe(terms, index, TermStatistics.Bm25Idf);
 
     /// <inheritdoc />
     public double Score(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)

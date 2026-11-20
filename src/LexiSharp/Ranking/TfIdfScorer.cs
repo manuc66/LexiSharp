@@ -11,10 +11,14 @@ namespace LexiSharp.Ranking;
 /// <c>idf(t) = log((N + 1) / (df(t) + 1)) + 1</c>.
 /// This smoothed variant guarantees a positive idf, so a score of 0 truly means « no match ».
 /// </remarks>
-public sealed class TfIdfScorer : ITermOverlapScorer, IQueryPlannableScorer, IScoreExplainer
+public sealed class TfIdfScorer : ITermOverlapScorer, IQueryPlannableScorer, IScoreExplainer, IQueryTermStatistics
 {
     /// <inheritdoc />
     public string Name => "TF-IDF";
+
+    /// <inheritdoc />
+    public IReadOnlyList<QueryTermStatistic> DescribeTerms(IReadOnlyList<string> terms, IReadOnlyTextIndex index) =>
+        TermStatistics.Describe(terms, index, TermStatistics.SmoothedIdf);
 
     /// <inheritdoc />
     public double Score(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)

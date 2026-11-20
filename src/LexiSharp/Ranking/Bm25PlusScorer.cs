@@ -45,7 +45,7 @@ namespace LexiSharp.Ranking;
 /// the paper's starting value is not a tuned row whatever <c>k1</c> and <c>b</c> it carries.
 /// </para>
 /// </remarks>
-public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQueryPlannableScorer
+public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQueryPlannableScorer, IQueryTermStatistics
 {
     private readonly double _k1;
     private readonly double _b;
@@ -100,6 +100,10 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
 
     /// <inheritdoc />
     public string Name => "BM25+";
+
+    /// <inheritdoc />
+    public IReadOnlyList<QueryTermStatistic> DescribeTerms(IReadOnlyList<string> terms, IReadOnlyTextIndex index) =>
+        TermStatistics.Describe(terms, index, TermStatistics.Bm25Idf);
 
     /// <inheritdoc />
     public double Score(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)

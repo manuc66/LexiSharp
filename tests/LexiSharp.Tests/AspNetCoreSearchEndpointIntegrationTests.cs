@@ -35,6 +35,43 @@ public class AspNetCoreSearchEndpointIntegrationTests
     }
 
     [Fact]
+    public async Task Endpoint_BindsStatsAndFacetsFromTheQueryString()
+    {
+        // The mapped route enumerates its query-string parameters by hand, so a facade option that
+        // was not added there is a 404-to-nothing: the handler supports it, the route never sees it.
+        var app = BuildApp(new SearchDocument(
+            "d4",
+            "distributed storage",
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["kind"] = "article" }));
+
+        await app.StartAsync();
+
+        try
+        {
+            var client = app.GetTestClient();
+
+            var response = await client.GetAsync("/search?q=distributed&stats=true&facets=kind");
+            var body = await response.Content.ReadAsStringAsync();
+
+            Assert.True(response.StatusCode == System.Net.HttpStatusCode.OK, $"unexpected status {response.StatusCode}: {body}");
+
+            using var document = JsonDocument.Parse(body);
+            JsonElement terms = document.RootElement.GetProperty("terms");
+            Assert.Contains(
+                terms.EnumerateArray(),
+                term => term.GetProperty("term").GetString() == "distributed"
+                        && term.GetProperty("documentFrequency").GetInt32() == 3);
+
+            JsonElement facets = document.RootElement.GetProperty("facets");
+            Assert.Equal("kind", facets[0].GetProperty("field").GetString());
+        }
+        finally
+        {
+            await app.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task Endpoint_RoutesThroughBindingAndSerialization()
     {
         var app = BuildApp();

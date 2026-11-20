@@ -460,6 +460,61 @@ empty — and `SearchWithNumericFacets` is opt-in: an engine that implements the
 not this one throws `NotSupportedException` rather than returning buckets that look like a
 match set where nothing parsed. Currently stock-engine only.
 
+## Query statistics: what the corpus says about your terms
+
+A result page cannot tell you whether a query was too narrow or too broad: ten hits out of a page
+budget of ten looks the same whether the corpus held eleven matches or eleven thousand. The
+statistics behind those hits can:
+
+```csharp
+IReadOnlyList<QueryTermStatistic> terms = index.DescribeQuery("distributed consensus");
+
+foreach (var term in terms)
+    Console.WriteLine(
+        $"{term.Term}: df={term.DocumentFrequency}/{term.DocumentCount} " +
+        $"share={term.DocumentShare:P1} idf={term.InverseDocumentFrequency:0.###}");
+```
+
+Nothing is scored: each term costs one vocabulary walk, so this is the cheap question to ask
+before spending a query on an agent's guess. The figures are:
+
+| Member | Meaning |
+| --- | --- |
+| `DocumentFrequency` | documents whose text carries the term; `0` means the corpus has never seen it |
+| `DocumentCount` | the corpus's `N` — the same one the scorer's idf divides by |
+| `DocumentShare` | `df / N`; scorer-independent, and the number to compare across corpora |
+| `InverseDocumentFrequency` | the **active scorer's** idf, or `null` when it has none |
+| `IsAbsent` | `df == 0`, the one verdict among the measurements |
+
+`InverseDocumentFrequency` is the scorer's own value, not a library-wide convention: BM25 reports
+`ln(1 + (N − df + 0.5) / (df + 0.5))`, TF-IDF its smoothed `log((N + 1) / (df + 1)) + 1`, and a
+query-likelihood scorer reports nothing at all rather than a number it does not compute. For a
+corpus fact that does not depend on which scorer is wired, read `DocumentShare`. The value agrees
+with `Explain`'s per-term `InverseDocumentFrequency` for the same term, by test.
+
+The terms are the ones a search would **score**: the query language is parsed, prefixes, fuzzy
+atoms and synonyms are resolved against the vocabulary, and prohibited (`-term`) atoms are
+excluded — they gate rather than score. Field-scoped atoms (`title:term`) are excluded as well,
+because their frequency would be the field's and a `QueryTermStatistic` has no field to name.
+A repeated term is described once. On the facade,
+`LexiSharpIndex<T>.DescribeQuery` describes the query **as written**, without the fuzzy rewriting
+`EnableFuzzy` adds to a search: one term expanded to its vocabulary neighbourhood would answer a
+question the caller did not ask.
+
+Over HTTP, the two agent-facing additions are opt-in query-string parameters:
+
+```
+GET /search?q=distributed+consensus&stats=true&facets=kind,lang
+```
+
+- `stats=true` adds `terms` to the JSON body — one entry per term, in reading order.
+- `facets=kind,lang` adds `facets`, the same buckets `SearchWithFacets` returns, counted over the
+  whole match set rather than the page. Comma-separated, trimmed, duplicates collapsed, at most
+  eight fields (`LexiSharpSearchEndpoint.MaxFacetFields`, a larger request refused with `400`).
+
+Neither changes the ranking or the page. A request that asks for neither gets exactly the payload
+it got before the options existed — the properties are omitted, not `null`.
+
 ## Span-first API
 
 The text entry points accept `ReadOnlySpan<char>`, so a query already living in a buffer need

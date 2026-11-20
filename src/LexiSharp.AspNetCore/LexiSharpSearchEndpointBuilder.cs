@@ -18,7 +18,8 @@ public static class LexiSharpSearchEndpointBuilder
     /// Register the index in DI first, for example
     /// <c>builder.Services.AddSingleton(new LexiSharpIndex&lt;MyDocument&gt;(o =&gt; { ... }));</c>.
     /// Query-string parameters mirror <see cref="LexiSharpSearchParameters"/>: <c>q</c>,
-    /// <c>limit</c>, <c>offset</c>, <c>minimumScore</c> and <c>highlight</c>.
+    /// <c>limit</c>, <c>offset</c>, <c>minimumScore</c>, <c>highlight</c>, <c>stats</c> and
+    /// <c>facets</c>.
     /// </remarks>
     /// <param name="endpoints">The route builder of the application or a convention group.</param>
     /// <param name="pattern">Route pattern, default <c>/search</c>.</param>
@@ -39,7 +40,9 @@ public static class LexiSharpSearchEndpointBuilder
                 [FromQuery] int limit = 10,
                 [FromQuery] int offset = 0,
                 [FromQuery] double minimumScore = double.NegativeInfinity,
-                [FromQuery] bool highlight = false) =>
+                [FromQuery] bool highlight = false,
+                [FromQuery] bool stats = false,
+                [FromQuery] string? facets = null) =>
                 LexiSharpSearchEndpoint.Handle(
                     index,
                     new LexiSharpSearchParameters
@@ -49,6 +52,8 @@ public static class LexiSharpSearchEndpointBuilder
                         Offset = offset,
                         MinimumScore = minimumScore,
                         Highlight = highlight,
+                        Stats = stats,
+                        Facets = facets,
                     },
                     cancellationToken));
     }

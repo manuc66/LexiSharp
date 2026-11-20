@@ -52,7 +52,7 @@ namespace LexiSharp.Ranking;
 /// evaluation harness exist to measure that on the corpus at hand rather than to assume it.
 /// </para>
 /// </remarks>
-public sealed class Bm25VaScorer : ITextScorer, IScoreExplainer, ITermOverlapScorer
+public sealed class Bm25VaScorer : ITextScorer, IScoreExplainer, ITermOverlapScorer, IQueryTermStatistics
 {
     private readonly double _k1;
     private readonly double _b;
@@ -106,6 +106,10 @@ public sealed class Bm25VaScorer : ITextScorer, IScoreExplainer, ITermOverlapSco
 
     /// <inheritdoc />
     public string Name => "BM25VA";
+
+    /// <inheritdoc />
+    public IReadOnlyList<QueryTermStatistic> DescribeTerms(IReadOnlyList<string> terms, IReadOnlyTextIndex index) =>
+        TermStatistics.Describe(terms, index, TermStatistics.Bm25Idf);
 
     /// <inheritdoc />
     public double Score(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)

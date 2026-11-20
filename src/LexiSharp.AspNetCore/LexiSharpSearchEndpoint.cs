@@ -1,4 +1,6 @@
+using System.Text.Json.Serialization;
 using LexiSharp;
+using LexiSharp.Core;
 using LexiSharp.Highlighting;
 using Microsoft.AspNetCore.Http;
 
@@ -23,10 +25,40 @@ public sealed record LexiSharpSearchHit<TDocument>(
 /// <summary>The payload of a successful search response.</summary>
 /// <param name="Query">The query that was searched, echoed back to the caller.</param>
 /// <param name="Hits">The ranked, paginated page.</param>
+/// <remarks>
+/// The two optional parts are <c>null</c> unless the request asked for them, and are omitted from
+/// the JSON when they are — a response to a request that asked for neither is byte-identical to the
+/// one this endpoint returned before they existed.
+/// </remarks>
 public sealed record LexiSharpSearchResponse<TDocument>(
     string Query,
     IReadOnlyList<LexiSharpSearchHit<TDocument>> Hits)
-    where TDocument : class;
+    where TDocument : class
+{
+    /// <summary>
+    /// Corpus statistics for the query's terms, or <c>null</c> when <c>stats</c> was not requested.
+    /// </summary>
+    /// <remarks>
+    /// One entry per distinct term, in reading order: its document frequency, the corpus's document
+    /// count, its share of the corpus and the scorer's inverse document frequency (<c>null</c> when
+    /// the scorer does not report one). It is what tells a caller that a query returning two hits was
+    /// narrow because its terms occur in two documents, rather than because it was badly ranked.
+    /// </remarks>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<QueryTermStatistic>? Terms { get; init; }
+
+    /// <summary>
+    /// One bucket per requested facet field over the whole match set, or <c>null</c> when no
+    /// <c>facets</c> field was requested.
+    /// </summary>
+    /// <remarks>
+    /// Counts are independent of the page: they cover every document the query matched, which is the
+    /// distribution a caller pages through or narrows with. An unknown field yields no bucket rather
+    /// than an error, so a client can ask for the same field set on every request.
+    /// </remarks>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<FacetBucket>? Facets { get; init; }
+}
 
 /// <summary>The payload of a failed search response.</summary>
 /// <param name="Field">The parameter the problem is about (e.g. <c>q</c>).</param>
@@ -77,6 +109,18 @@ public static class LexiSharpSearchEndpoint
     public const int MaxOffset = 10_000;
 
     /// <summary>
+    /// Largest number of facet fields one request may count. A request naming more is refused with
+    /// <c>400</c>.
+    /// </summary>
+    /// <remarks>
+    /// Counting is one dictionary increment per matched document per field, so the cost of a facet
+    /// request is the match set times the number of fields: a list of ten thousand fields is a
+    /// request to make one query do ten thousand passes' worth of work. Eight is more fields than a
+    /// search UI filters by, and a caller that needs more can split the request.
+    /// </remarks>
+    public const int MaxFacetFields = 8;
+
+    /// <summary>
     /// How this endpoint highlights: the document's own characters are HTML-encoded around the
     /// <c>&lt;em&gt;</c> the highlighter inserts.
     /// </summary>
@@ -95,6 +139,38 @@ public static class LexiSharpSearchEndpoint
     /// </para>
     /// </remarks>
     private static readonly HighlightOptions EscapedHighlight = new() { EscapeHtml = true };
+
+    /// <summary>
+    /// Splits the <c>facets</c> parameter into field names: comma-separated, trimmed, empty entries
+    /// dropped, duplicates collapsed, first-occurrence order.
+    /// </summary>
+    /// <remarks>
+    /// Stops one past <paramref name="limit"/> rather than parsing the whole string: the caller only
+    /// has to know whether the request exceeded the bound, and a request naming ten thousand fields
+    /// should not cost ten thousand substrings to refuse.
+    /// </remarks>
+    private static IReadOnlyList<string> ParseFacetFields(string? facets, int limit)
+    {
+        if (string.IsNullOrWhiteSpace(facets))
+            return Array.Empty<string>();
+
+        var fields = new List<string>();
+
+        foreach (string part in facets.Split(','))
+        {
+            string field = part.Trim();
+
+            if (field.Length == 0 || fields.Contains(field, StringComparer.Ordinal))
+                continue;
+
+            fields.Add(field);
+
+            if (fields.Count > limit)
+                break;
+        }
+
+        return fields;
+    }
 
     /// <summary>Runs a search on the index and builds the HTTP response.</summary>
     /// <exception cref="ArgumentNullException"><paramref name="index"/> or <paramref name="parameters"/> is null.</exception>
@@ -149,6 +225,15 @@ public static class LexiSharpSearchEndpoint
                 $"The 'offset' parameter is at most {MaxOffset}; {parameters.Offset} was requested."));
         }
 
+        IReadOnlyList<string> facetFields = ParseFacetFields(parameters.Facets, MaxFacetFields);
+
+        if (facetFields.Count > MaxFacetFields)
+        {
+            return Results.BadRequest(new LexiSharpSearchError(
+                "facets",
+                $"The 'facets' parameter names at most {MaxFacetFields} fields; {facetFields.Count} were requested."));
+        }
+
         var queryOptions = new LexiSharpQueryOptions(
             Limit: parameters.Limit,
             MinimumScore: parameters.MinimumScore,
@@ -159,10 +244,28 @@ public static class LexiSharpSearchEndpoint
         };
 
         IReadOnlyList<LexiSharpHit<TDocument>> hits;
+        IReadOnlyList<FacetBucket>? facets = null;
+        IReadOnlyList<QueryTermStatistic>? terms = null;
 
         try
         {
-            hits = index.Search(parameters.Query, queryOptions, cancellationToken);
+            if (facetFields.Count > 0)
+            {
+                // The faceted call is the search plus the counts: it returns the same ranked page,
+                // so asking for buckets does not change what a caller receives besides `facets`.
+                var faceted = index.SearchWithFacets(parameters.Query, queryOptions, facetFields, cancellationToken);
+                hits = faceted.Results;
+                facets = faceted.Buckets;
+            }
+            else
+            {
+                hits = index.Search(parameters.Query, queryOptions, cancellationToken);
+            }
+
+            // After the search, because a query the engine refuses is refused once and reported as
+            // such; describing it first would turn the same refusal into an unlabelled failure.
+            if (parameters.Stats)
+                terms = index.DescribeQuery(parameters.Query);
         }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException)
         {
@@ -179,7 +282,11 @@ public static class LexiSharpSearchEndpoint
                 hit.DocumentId,
                 hit.Score,
                 hit.Document,
-                hit.HighlightedText)).ToList());
+                hit.HighlightedText)).ToList())
+        {
+            Terms = terms,
+            Facets = facets,
+        };
 
         return Results.Ok(response);
     }
