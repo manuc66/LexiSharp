@@ -231,10 +231,32 @@ internal static class BeirLoader
         string zipPath = Path.Combine(dataBaseDir, $"{name}.zip");
 
         Console.WriteLine($"Downloading {name} (BEIR) from {downloadUrl}");
-        using var client = new HttpClient();
-        await using (Stream response = await client.GetStreamAsync(downloadUrl))
-        await using (FileStream zip = File.Create(zipPath))
-            await response.CopyToAsync(zip);
+
+        // 100 s is the HttpClient default, and it covers the whole transfer: a 30 MB zip on a busy
+        // CI runner exceeds it, and the failure then arrives as a cancelled task and an abort
+        // rather than as a checksum or a network error. Ten minutes matches the 20 Newsgroups
+        // download next door; the retry covers a runner whose first connection is dropped.
+        using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+
+        const int attempts = 3;
+
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await using (Stream response = await client.GetStreamAsync(downloadUrl))
+                await using (FileStream zip = File.Create(zipPath))
+                    await response.CopyToAsync(zip);
+
+                break;
+            }
+            catch (Exception exception) when (
+                attempt < attempts && exception is HttpRequestException or TaskCanceledException)
+            {
+                Console.WriteLine($"Download failed ({exception.Message}); retrying ({attempt}/{attempts}).");
+                await Task.Delay(TimeSpan.FromSeconds(2 * attempt));
+            }
+        }
 
         string actualMd5 = await ComputeMd5Async(zipPath);
 
