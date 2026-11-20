@@ -50,6 +50,22 @@ foreach (var step in trace.Steps)
 or formats anything. Pass one and each stage appends to it as it runs, so a decorated pipeline
 accumulates its whole chain.
 
+The trace also carries one fact that is not a per-document step: `trace.Discrimination` says whether
+the returned page's **scores** separated its documents at all. Two documents with the same score have
+no order between them, so a page whose scores tie was ordered by `SearchOptions.TieBreak` rather than
+by relevance. It reports `NoDiscrimination`, `TiedAtCut`, `TiedWithinPage`, `CutUnobserved` or
+`Determined`, needs no relevance judgements, and is therefore available on live traffic where a
+metric is not.
+
+```csharp
+if (trace.Discrimination is { } discrimination && !discrimination.PageOrderDetermined)
+    Console.WriteLine(discrimination.Explain());   // "the page holds a tie; which order it is shown in is arbitrary"
+```
+
+It is measured on the cut page, so it costs one pass over the page and nothing per candidate. A page
+that fills the requested depth may hide a tie past the cut; the profile reports that as
+`CutUnobserved` rather than claiming a determination it cannot support.
+
 ### The merge's own arithmetic
 
 A weighted merge turns two raw scores into one with `Σ wᵢ·sᵢ/divisorᵢ`, and the per-document rows

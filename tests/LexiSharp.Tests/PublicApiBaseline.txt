@@ -91,6 +91,7 @@ C|LexiSharp.Core.CompressedHit|Void .ctor(System.String, Double, System.String, 
 C|LexiSharp.Core.ContextualBoost<TPayload>|Void .ctor(System.Object, IntPtr)
 C|LexiSharp.Core.DamerauLevenshteinTermCorrector|Void .ctor(System.Collections.Generic.IEnumerable`1[System.String], Int32)
 C|LexiSharp.Core.DetailedSearchResult|Void .ctor(System.String, Double, LexiSharp.Core.SearchDocument, System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Double])
+C|LexiSharp.Core.DiscriminationProfile|Void .ctor(Int32, Int32, Int32, Int32, Boolean, Boolean, Boolean, Double, LexiSharp.Core.DiscriminationVerdict)
 C|LexiSharp.Core.EngineRetrievalMetrics|Void .ctor(System.String, Int64, Double, Double, Double, Int32)
 C|LexiSharp.Core.EntityTriplet|Void .ctor(System.String, System.String, System.String)
 C|LexiSharp.Core.FacetBucket|Void .ctor(System.String, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.FacetValue])
@@ -113,6 +114,7 @@ C|LexiSharp.Core.ParsedQuery|Void .ctor(System.Collections.Generic.IReadOnlyList
 C|LexiSharp.Core.PassthroughTermCorrector|Void .ctor()
 C|LexiSharp.Core.QueryExpansion|Void .ctor(System.String, LexiSharp.Core.QueryExpansionKind, Int32)
 C|LexiSharp.Core.QueryRoute|Void .ctor(System.String, Double)
+C|LexiSharp.Core.QueryTermStatistic|Void .ctor(System.String, Int32, Int32, System.Nullable`1[System.Double])
 C|LexiSharp.Core.RawQuerySegments|Void .ctor(System.String, System.Collections.Generic.IReadOnlyList`1[System.String])
 C|LexiSharp.Core.RerankedTextSearchEngine|Void .ctor(LexiSharp.Core.ITextSearchEngine, LexiSharp.Core.IReranker, Int32, LexiSharp.Core.RetrievalTelemetry)
 C|LexiSharp.Core.RetrievalAgreementReport|Void .ctor(System.String, LexiSharp.Core.RetrievalAgreement, System.Collections.Generic.IReadOnlyList`1[System.String], System.Collections.Generic.IReadOnlyList`1[System.String], System.Collections.Generic.IReadOnlyList`1[System.String], System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Double])
@@ -254,7 +256,6 @@ C|LexiSharp.Ranking.Bm25VaTuningResult|Void .ctor(Double, Double, Double, LexiSh
 C|LexiSharp.Ranking.Bm25ValidationQuery|Void .ctor(System.String, System.Collections.Generic.IReadOnlyCollection`1[System.String], System.Collections.Generic.IReadOnlySet`1[System.String])
 C|LexiSharp.Ranking.BooleanScorer|Void .ctor(LexiSharp.Ranking.BooleanMatch)
 C|LexiSharp.Ranking.CalibratedScoreConfidence|Void .ctor()
-C|LexiSharp.Ranking.DiscriminationProfile|Void .ctor(System.String, Int32, Int32, Int32, Int32, Boolean, Boolean, Boolean, Double, LexiSharp.Ranking.DiscriminationVerdict)
 C|LexiSharp.Ranking.DocumentLengthRatioScorer|Void .ctor()
 C|LexiSharp.Ranking.FeedbackAwareTextSearchEngine<TPayload>|Void .ctor(LexiSharp.Core.ITextSearchEngine, System.Func`2[TPayload,LexiSharp.Ranking.QueryFeedbackHistory], Double, Double, Boolean)
 C|LexiSharp.Ranking.FeedbackAwareTextSearchEngine<TPayload>|Void .ctor(LexiSharp.Core.ITextSearchEngine, System.Func`2[TPayload,LexiSharp.Ranking.QueryFeedbackHistory], Double, Double, Boolean, Int32, LexiSharp.Ranking.FeedbackBoostMode)
@@ -308,6 +309,13 @@ F|LexiSharp.Classification.SplitCriterion|InformationGain|LexiSharp.Classificati
 F|LexiSharp.Compression.CompressingTextSearchEngine|EngineName|System.String|static|CompressingTextSearchEngine
 F|LexiSharp.Core.BoostedTextSearchEngine<TPayload>|EngineName|System.String|static|BoostedTextSearchEngine
 F|LexiSharp.Core.BoostedTextSearchEngine|EngineName|System.String|static|BoostedTextSearchEngine
+F|LexiSharp.Core.DiscriminationVerdict|CutUnobserved|LexiSharp.Core.DiscriminationVerdict|static|5
+F|LexiSharp.Core.DiscriminationVerdict|Determined|LexiSharp.Core.DiscriminationVerdict|static|6
+F|LexiSharp.Core.DiscriminationVerdict|NoDiscrimination|LexiSharp.Core.DiscriminationVerdict|static|2
+F|LexiSharp.Core.DiscriminationVerdict|NoResults|LexiSharp.Core.DiscriminationVerdict|static|0
+F|LexiSharp.Core.DiscriminationVerdict|SingleResult|LexiSharp.Core.DiscriminationVerdict|static|1
+F|LexiSharp.Core.DiscriminationVerdict|TiedAtCut|LexiSharp.Core.DiscriminationVerdict|static|3
+F|LexiSharp.Core.DiscriminationVerdict|TiedWithinPage|LexiSharp.Core.DiscriminationVerdict|static|4
 F|LexiSharp.Core.EmbeddingUse|Passage|LexiSharp.Core.EmbeddingUse|static|0
 F|LexiSharp.Core.EmbeddingUse|Query|LexiSharp.Core.EmbeddingUse|static|1
 F|LexiSharp.Core.FieldType|StringArray|LexiSharp.Core.FieldType|static|1
@@ -434,13 +442,6 @@ F|LexiSharp.Ranking.BooleanMatch|AllTerms|LexiSharp.Ranking.BooleanMatch|static|
 F|LexiSharp.Ranking.BooleanMatch|AnyTerm|LexiSharp.Ranking.BooleanMatch|static|1
 F|LexiSharp.Ranking.CalibrationMethod|IsotonicRegression|LexiSharp.Ranking.CalibrationMethod|static|0
 F|LexiSharp.Ranking.CalibrationMethod|PlattScaling|LexiSharp.Ranking.CalibrationMethod|static|1
-F|LexiSharp.Ranking.DiscriminationVerdict|CutUnobserved|LexiSharp.Ranking.DiscriminationVerdict|static|5
-F|LexiSharp.Ranking.DiscriminationVerdict|Determined|LexiSharp.Ranking.DiscriminationVerdict|static|6
-F|LexiSharp.Ranking.DiscriminationVerdict|NoDiscrimination|LexiSharp.Ranking.DiscriminationVerdict|static|2
-F|LexiSharp.Ranking.DiscriminationVerdict|NoResults|LexiSharp.Ranking.DiscriminationVerdict|static|0
-F|LexiSharp.Ranking.DiscriminationVerdict|SingleResult|LexiSharp.Ranking.DiscriminationVerdict|static|1
-F|LexiSharp.Ranking.DiscriminationVerdict|TiedAtCut|LexiSharp.Ranking.DiscriminationVerdict|static|3
-F|LexiSharp.Ranking.DiscriminationVerdict|TiedWithinPage|LexiSharp.Ranking.DiscriminationVerdict|static|4
 F|LexiSharp.Ranking.FeedbackAwareTextSearchEngine<TPayload>|EngineName|System.String|static|FeedbackAwareTextSearchEngine
 F|LexiSharp.Ranking.FeedbackAwareTextSearchEngine|EngineName|System.String|static|FeedbackAwareTextSearchEngine
 F|LexiSharp.Ranking.FeedbackBoostMode|Additive|LexiSharp.Ranking.FeedbackBoostMode|static|0
@@ -923,6 +924,12 @@ M|LexiSharp.Core.DetailedSearchResult|Int32 GetHashCode()
 M|LexiSharp.Core.DetailedSearchResult|LexiSharp.Core.SearchResult ToSearchResult()
 M|LexiSharp.Core.DetailedSearchResult|System.String ToString()
 M|LexiSharp.Core.DetailedSearchResult|Void Deconstruct(System.String ByRef, Double ByRef, LexiSharp.Core.SearchDocument ByRef, System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Double] ByRef)
+M|LexiSharp.Core.DiscriminationProfile|Boolean Equals(LexiSharp.Core.DiscriminationProfile)
+M|LexiSharp.Core.DiscriminationProfile|Boolean Equals(System.Object)
+M|LexiSharp.Core.DiscriminationProfile|Int32 GetHashCode()
+M|LexiSharp.Core.DiscriminationProfile|System.String Explain()
+M|LexiSharp.Core.DiscriminationProfile|System.String ToString()
+M|LexiSharp.Core.DiscriminationProfile|Void Deconstruct(Int32 ByRef, Int32 ByRef, Int32 ByRef, Int32 ByRef, Boolean ByRef, Boolean ByRef, Boolean ByRef, Double ByRef, LexiSharp.Core.DiscriminationVerdict ByRef)
 M|LexiSharp.Core.DocumentHierarchy|Boolean Contains(System.String)
 M|LexiSharp.Core.DocumentHierarchy|Boolean IsLeaf(System.String)
 M|LexiSharp.Core.DocumentHierarchy|Boolean IsRoot(System.String)
@@ -1033,6 +1040,7 @@ M|LexiSharp.Core.IListableSearchEngine|System.Collections.Generic.IReadOnlyList`
 M|LexiSharp.Core.IQueryCostEstimator|Int32 Select(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.RoutedEngine], System.ReadOnlySpan`1[System.Char], LexiSharp.Core.SearchOptions)
 M|LexiSharp.Core.IQueryCostProbe|Int64 EstimateCandidateCount(System.ReadOnlySpan`1[System.Char], LexiSharp.Core.SearchOptions)
 M|LexiSharp.Core.IQueryRouter|System.Threading.Tasks.ValueTask`1[LexiSharp.Core.QueryRoute] RouteAsync(System.String, System.Collections.Generic.IReadOnlyList`1[System.String], System.Threading.CancellationToken)
+M|LexiSharp.Core.IQueryTermStatistics|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.QueryTermStatistic] DescribeTerms(System.Collections.Generic.IReadOnlyList`1[System.String], LexiSharp.Core.IReadOnlyTextIndex)
 M|LexiSharp.Core.IQueryTermWeighter|System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Double] Weigh(System.Collections.Generic.IReadOnlyList`1[System.String])
 M|LexiSharp.Core.IQueryTransformer|System.Collections.Generic.IReadOnlyList`1[System.String] Transform(System.String)
 M|LexiSharp.Core.IReadOnlyTextIndex|Boolean Contains(System.String)
@@ -1114,6 +1122,7 @@ M|LexiSharp.Core.ParsedQuery|Int32 GetHashCode()
 M|LexiSharp.Core.ParsedQuery|System.String ToString()
 M|LexiSharp.Core.ParsedQuery|Void Deconstruct(System.Collections.Generic.IReadOnlyList`1[System.String] ByRef, System.Collections.Generic.IReadOnlyList`1[System.Collections.Generic.IReadOnlyList`1[System.String]] ByRef, System.Collections.Generic.IReadOnlyList`1[System.String] ByRef, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.QueryExpansion] ByRef)
 M|LexiSharp.Core.PassthroughTermCorrector|System.Collections.Generic.IReadOnlyList`1[System.ValueTuple`2[System.String,System.Double]] Correct(System.String)
+M|LexiSharp.Core.QueryDiscrimination|LexiSharp.Core.DiscriminationProfile Measure(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult], Int32, Boolean)
 M|LexiSharp.Core.QueryExpansion|Boolean Equals(LexiSharp.Core.QueryExpansion)
 M|LexiSharp.Core.QueryExpansion|Boolean Equals(System.Object)
 M|LexiSharp.Core.QueryExpansion|Int32 GetHashCode()
@@ -1131,6 +1140,11 @@ M|LexiSharp.Core.QueryRoute|System.String ToString()
 M|LexiSharp.Core.QueryRoute|Void Deconstruct(System.String ByRef, Double ByRef)
 M|LexiSharp.Core.QuerySyntax|LexiSharp.Core.QueryFeatures Detect(System.String, System.Collections.Generic.IReadOnlySet`1[System.String])
 M|LexiSharp.Core.QuerySyntax|Void EnsureSupported(System.String, LexiSharp.Core.QueryFeatures, System.String, System.Collections.Generic.IReadOnlySet`1[System.String])
+M|LexiSharp.Core.QueryTermStatistic|Boolean Equals(LexiSharp.Core.QueryTermStatistic)
+M|LexiSharp.Core.QueryTermStatistic|Boolean Equals(System.Object)
+M|LexiSharp.Core.QueryTermStatistic|Int32 GetHashCode()
+M|LexiSharp.Core.QueryTermStatistic|System.String ToString()
+M|LexiSharp.Core.QueryTermStatistic|Void Deconstruct(System.String ByRef, Int32 ByRef, Int32 ByRef, System.Nullable`1[System.Double] ByRef)
 M|LexiSharp.Core.RawQuerySegments|Boolean Equals(LexiSharp.Core.RawQuerySegments)
 M|LexiSharp.Core.RawQuerySegments|Boolean Equals(System.Object)
 M|LexiSharp.Core.RawQuerySegments|Int32 GetHashCode()
@@ -1237,6 +1251,7 @@ M|LexiSharp.Core.SearchRoute|System.String ToString()
 M|LexiSharp.Core.SearchRoute|Void Deconstruct(System.String ByRef, LexiSharp.Core.ITextSearchEngine ByRef, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.MetadataFilter] ByRef)
 M|LexiSharp.Core.SearchTrace|System.Collections.Generic.IReadOnlyDictionary`2[LexiSharp.Core.TraceStage,System.Int32] StageCounts()
 M|LexiSharp.Core.SearchTrace|Void Record(LexiSharp.Core.TraceStep ByRef)
+M|LexiSharp.Core.SearchTrace|Void RecordDiscrimination(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult], Int32, Boolean)
 M|LexiSharp.Core.SearchTrace|Void RecordScoreStage(System.String, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult])
 M|LexiSharp.Core.SparseEmbeddingProviderExtensions|System.Threading.Tasks.Task`1[System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Single]] GetSparseEmbeddingAsync(LexiSharp.Core.ISparseEmbeddingProvider, System.String, System.Threading.CancellationToken)
 M|LexiSharp.Core.StageRetrievalMetrics|Boolean Equals(LexiSharp.Core.StageRetrievalMetrics)
@@ -1819,12 +1834,6 @@ M|LexiSharp.Ranking.BooleanScorer|LexiSharp.Core.ScoreExplanation Explain(System
 M|LexiSharp.Ranking.CalibratedScoreConfidence|Boolean ShouldAbstain(Double)
 M|LexiSharp.Ranking.CalibratedScoreConfidence|Double PredictProba(Double)
 M|LexiSharp.Ranking.CalibratedScoreConfidence|LexiSharp.Ranking.CalibratedScoreConfidence Fit(System.Collections.Generic.IReadOnlyList`1[System.ValueTuple`2[System.Double,System.Boolean]], LexiSharp.Ranking.CalibrationMethod)
-M|LexiSharp.Ranking.DiscriminationProfile|Boolean Equals(LexiSharp.Ranking.DiscriminationProfile)
-M|LexiSharp.Ranking.DiscriminationProfile|Boolean Equals(System.Object)
-M|LexiSharp.Ranking.DiscriminationProfile|Int32 GetHashCode()
-M|LexiSharp.Ranking.DiscriminationProfile|System.String Explain()
-M|LexiSharp.Ranking.DiscriminationProfile|System.String ToString()
-M|LexiSharp.Ranking.DiscriminationProfile|Void Deconstruct(System.String ByRef, Int32 ByRef, Int32 ByRef, Int32 ByRef, Int32 ByRef, Boolean ByRef, Boolean ByRef, Boolean ByRef, Double ByRef, LexiSharp.Ranking.DiscriminationVerdict ByRef)
 M|LexiSharp.Ranking.DocumentLengthRatioScorer|Double Score(System.String, System.Collections.Generic.IReadOnlyList`1[System.String], LexiSharp.Core.IReadOnlyTextIndex)
 M|LexiSharp.Ranking.FeedbackAwareTextSearchEngine<TPayload>|Boolean Learn(TPayload, System.String, System.String)
 M|LexiSharp.Ranking.FeedbackAwareTextSearchEngine<TPayload>|Boolean Learn(TPayload, System.String, System.String, Double)
@@ -1847,7 +1856,6 @@ M|LexiSharp.Ranking.FeedbackAwareTextSearchEngine|Void Learn(System.String, Syst
 M|LexiSharp.Ranking.FeedbackAwareTextSearchEngine|Void Learn(System.String, System.String, Double)
 M|LexiSharp.Ranking.FeedbackAwareTextSearchEngine|Void Learn(System.String, System.String, Int32, Double)
 M|LexiSharp.Ranking.ProximityReranker|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult] Rerank(System.String, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult])
-M|LexiSharp.Ranking.QueryDiscrimination|LexiSharp.Ranking.DiscriminationProfile Measure(System.String, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult], Int32, Boolean)
 M|LexiSharp.Ranking.QueryFeedbackHistory|System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Double] GetFuzzyAssociationScores(System.String, Double, System.Collections.Generic.IReadOnlySet`1[System.String])
 M|LexiSharp.Ranking.QueryFeedbackHistory|System.Collections.Generic.IReadOnlyList`1[System.ValueTuple`2[System.String,System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Double]]] Snapshot()
 M|LexiSharp.Ranking.QueryFeedbackHistory|System.Collections.Generic.IReadOnlyList`1[System.ValueTuple`2[System.String,System.Double]] GetAssociations(System.String)
@@ -1986,7 +1994,7 @@ P|LexiSharp.Benchmarking.BenchmarkQueryDelta|QueryId|System.String|getset
 P|LexiSharp.Benchmarking.BenchmarkQueryDelta|QueryText|System.String|getset
 P|LexiSharp.Benchmarking.BenchmarkQueryDelta|Reading|System.String|get
 P|LexiSharp.Benchmarking.BenchmarkQueryDelta|Verdict|LexiSharp.Benchmarking.BenchmarkDeltaVerdict|getset
-P|LexiSharp.Benchmarking.BenchmarkQueryResult|Discrimination|LexiSharp.Ranking.DiscriminationProfile|getset
+P|LexiSharp.Benchmarking.BenchmarkQueryResult|Discrimination|LexiSharp.Core.DiscriminationProfile|getset
 P|LexiSharp.Benchmarking.BenchmarkQueryResult|FirstRelevantRank|System.Nullable<System.Int32>|getset
 P|LexiSharp.Benchmarking.BenchmarkQueryResult|Metrics|LexiSharp.Benchmarking.BenchmarkMetrics|getset
 P|LexiSharp.Benchmarking.BenchmarkQueryResult|QueryId|System.String|getset
@@ -2249,6 +2257,17 @@ P|LexiSharp.Core.DetailedSearchResult|Contributions|System.Collections.Generic.I
 P|LexiSharp.Core.DetailedSearchResult|DocumentId|System.String|getset
 P|LexiSharp.Core.DetailedSearchResult|Document|LexiSharp.Core.SearchDocument|getset
 P|LexiSharp.Core.DetailedSearchResult|Score|System.Double|getset
+P|LexiSharp.Core.DiscriminationProfile|CutStraddled|System.Boolean|getset
+P|LexiSharp.Core.DiscriminationProfile|DistinctInPage|System.Int32|getset
+P|LexiSharp.Core.DiscriminationProfile|DistinctScores|System.Int32|getset
+P|LexiSharp.Core.DiscriminationProfile|Hits|System.Int32|getset
+P|LexiSharp.Core.DiscriminationProfile|LargestClass|System.Int32|getset
+P|LexiSharp.Core.DiscriminationProfile|PageMembershipDetermined|System.Boolean|get
+P|LexiSharp.Core.DiscriminationProfile|PageOrderDetermined|System.Boolean|get
+P|LexiSharp.Core.DiscriminationProfile|PageTied|System.Boolean|getset
+P|LexiSharp.Core.DiscriminationProfile|ScoreRange|System.Double|getset
+P|LexiSharp.Core.DiscriminationProfile|TruncatedAtCut|System.Boolean|getset
+P|LexiSharp.Core.DiscriminationProfile|Verdict|LexiSharp.Core.DiscriminationVerdict|getset
 P|LexiSharp.Core.DocumentHierarchy|Count|System.Int32|get
 P|LexiSharp.Core.DocumentHierarchy|Nodes|System.Collections.Generic.IReadOnlyCollection<System.String>|get
 P|LexiSharp.Core.DocumentHierarchy|Roots|System.Collections.Generic.IReadOnlyCollection<System.String>|get
@@ -2355,6 +2374,12 @@ P|LexiSharp.Core.QueryExpansion|MaxEdits|System.Int32|getset
 P|LexiSharp.Core.QueryExpansion|Operator|LexiSharp.Core.QueryTermOperator|getset
 P|LexiSharp.Core.QueryRoute|Confidence|System.Double|getset
 P|LexiSharp.Core.QueryRoute|RouteId|System.String|getset
+P|LexiSharp.Core.QueryTermStatistic|DocumentCount|System.Int32|getset
+P|LexiSharp.Core.QueryTermStatistic|DocumentFrequency|System.Int32|getset
+P|LexiSharp.Core.QueryTermStatistic|DocumentShare|System.Double|get
+P|LexiSharp.Core.QueryTermStatistic|InverseDocumentFrequency|System.Nullable<System.Double>|getset
+P|LexiSharp.Core.QueryTermStatistic|IsAbsent|System.Boolean|get
+P|LexiSharp.Core.QueryTermStatistic|Term|System.String|getset
 P|LexiSharp.Core.RawQuerySegments|FreeText|System.String|getset
 P|LexiSharp.Core.RawQuerySegments|Phrases|System.Collections.Generic.IReadOnlyList<System.String>|getset
 P|LexiSharp.Core.RetrievalAgreementReport|AbsentSources|System.Collections.Generic.IReadOnlyList<System.String>|getset
@@ -2428,6 +2453,7 @@ P|LexiSharp.Core.SearchRoute|Engine|LexiSharp.Core.ITextSearchEngine|getset
 P|LexiSharp.Core.SearchRoute|Filters|System.Collections.Generic.IReadOnlyList<LexiSharp.Core.MetadataFilter>|getset
 P|LexiSharp.Core.SearchRoute|Id|System.String|getset
 P|LexiSharp.Core.SearchTrace|Capacity|System.Int32|get
+P|LexiSharp.Core.SearchTrace|Discrimination|LexiSharp.Core.DiscriminationProfile|get
 P|LexiSharp.Core.SearchTrace|Dropped|System.Int32|get
 P|LexiSharp.Core.SearchTrace|IsTruncated|System.Boolean|get
 P|LexiSharp.Core.SearchTrace|Steps|System.Collections.Generic.IReadOnlyList<LexiSharp.Core.TraceStep>|get
@@ -2871,18 +2897,6 @@ P|LexiSharp.Ranking.BooleanScorer|Name|System.String|get
 P|LexiSharp.Ranking.CalibratedScoreConfidence|AbstainScore|System.Double|get
 P|LexiSharp.Ranking.CalibratedScoreConfidence|AbstainThreshold|System.Double|get
 P|LexiSharp.Ranking.CalibratedScoreConfidence|IsTrained|System.Boolean|get
-P|LexiSharp.Ranking.DiscriminationProfile|CutStraddled|System.Boolean|getset
-P|LexiSharp.Ranking.DiscriminationProfile|DistinctInPage|System.Int32|getset
-P|LexiSharp.Ranking.DiscriminationProfile|DistinctScores|System.Int32|getset
-P|LexiSharp.Ranking.DiscriminationProfile|Hits|System.Int32|getset
-P|LexiSharp.Ranking.DiscriminationProfile|LargestClass|System.Int32|getset
-P|LexiSharp.Ranking.DiscriminationProfile|PageMembershipDetermined|System.Boolean|get
-P|LexiSharp.Ranking.DiscriminationProfile|PageOrderDetermined|System.Boolean|get
-P|LexiSharp.Ranking.DiscriminationProfile|PageTied|System.Boolean|getset
-P|LexiSharp.Ranking.DiscriminationProfile|QueryId|System.String|getset
-P|LexiSharp.Ranking.DiscriminationProfile|ScoreRange|System.Double|getset
-P|LexiSharp.Ranking.DiscriminationProfile|TruncatedAtCut|System.Boolean|getset
-P|LexiSharp.Ranking.DiscriminationProfile|Verdict|LexiSharp.Ranking.DiscriminationVerdict|getset
 P|LexiSharp.Ranking.DocumentLengthRatioScorer|Name|System.String|get
 P|LexiSharp.Ranking.FeedbackAwareTextSearchEngine|Histories|System.Collections.Generic.IReadOnlyList<System.ValueTuple<LexiSharp.Ranking.QueryFeedbackHistory,System.Double>>|get
 P|LexiSharp.Ranking.FeedbackAwareTextSearchEngine|History|LexiSharp.Ranking.QueryFeedbackHistory|get
@@ -3025,6 +3039,8 @@ T|LexiSharp.Core.CompressedHit|class||System.IEquatable<LexiSharp.Core.Compresse
 T|LexiSharp.Core.ContextualBoost<TPayload>|class|System.MulticastDelegate|System.ICloneable,System.Runtime.Serialization.ISerializable
 T|LexiSharp.Core.DamerauLevenshteinTermCorrector|class||LexiSharp.Core.ITermCorrector
 T|LexiSharp.Core.DetailedSearchResult|class||System.IEquatable<LexiSharp.Core.DetailedSearchResult>
+T|LexiSharp.Core.DiscriminationProfile|class||System.IEquatable<LexiSharp.Core.DiscriminationProfile>
+T|LexiSharp.Core.DiscriminationVerdict|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
 T|LexiSharp.Core.DocumentHierarchy|class||
 T|LexiSharp.Core.EmbeddingProviderExtensions|class||
 T|LexiSharp.Core.EmbeddingUse|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
@@ -3070,6 +3086,7 @@ T|LexiSharp.Core.IQueryCostEstimator|interface||
 T|LexiSharp.Core.IQueryCostProbe|interface||
 T|LexiSharp.Core.IQueryRouter|interface||
 T|LexiSharp.Core.IQuerySyntaxSupport|interface||
+T|LexiSharp.Core.IQueryTermStatistics|interface||LexiSharp.Core.ITextScorer
 T|LexiSharp.Core.IQueryTermWeighter|interface||
 T|LexiSharp.Core.IQueryTransformer|interface||
 T|LexiSharp.Core.IReadOnlyTextIndex|interface||
@@ -3103,6 +3120,7 @@ T|LexiSharp.Core.NumericFacetRange|class||System.IEquatable<LexiSharp.Core.Numer
 T|LexiSharp.Core.NumericFacetRequest|class||System.IEquatable<LexiSharp.Core.NumericFacetRequest>
 T|LexiSharp.Core.ParsedQuery|class||System.IEquatable<LexiSharp.Core.ParsedQuery>
 T|LexiSharp.Core.PassthroughTermCorrector|class||LexiSharp.Core.ITermCorrector
+T|LexiSharp.Core.QueryDiscrimination|class||
 T|LexiSharp.Core.QueryExpansionKind|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
 T|LexiSharp.Core.QueryExpansion|class||System.IEquatable<LexiSharp.Core.QueryExpansion>
 T|LexiSharp.Core.QueryFeatures|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
@@ -3110,6 +3128,7 @@ T|LexiSharp.Core.QueryParser|class||
 T|LexiSharp.Core.QueryRoute|class||System.IEquatable<LexiSharp.Core.QueryRoute>
 T|LexiSharp.Core.QuerySyntax|class||
 T|LexiSharp.Core.QueryTermOperator|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
+T|LexiSharp.Core.QueryTermStatistic|class||System.IEquatable<LexiSharp.Core.QueryTermStatistic>
 T|LexiSharp.Core.RawQuerySegments|class||System.IEquatable<LexiSharp.Core.RawQuerySegments>
 T|LexiSharp.Core.RerankedTextSearchEngine|class||LexiSharp.Core.IQueryCostProbe,LexiSharp.Core.ITextSearchEngine
 T|LexiSharp.Core.RetrievalAgreementAnalyzer|class||
@@ -3289,8 +3308,6 @@ T|LexiSharp.Ranking.BooleanMatch|enum||System.IComparable,System.IConvertible,Sy
 T|LexiSharp.Ranking.BooleanScorer|class||LexiSharp.Core.IScoreExplainer,LexiSharp.Core.ITermOverlapScorer,LexiSharp.Core.ITextScorer
 T|LexiSharp.Ranking.CalibratedScoreConfidence|class||
 T|LexiSharp.Ranking.CalibrationMethod|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
-T|LexiSharp.Ranking.DiscriminationProfile|class||System.IEquatable<LexiSharp.Ranking.DiscriminationProfile>
-T|LexiSharp.Ranking.DiscriminationVerdict|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
 T|LexiSharp.Ranking.DocumentLengthRatioScorer|class||LexiSharp.Core.ITextScorer
 T|LexiSharp.Ranking.FeedbackAwareTextSearchEngine<TPayload>|class||LexiSharp.Core.IContextualSearchEngine<TPayload>,LexiSharp.Core.IQueryCostProbe,LexiSharp.Core.ITextSearchEngine
 T|LexiSharp.Ranking.FeedbackAwareTextSearchEngine|class||LexiSharp.Core.IQueryCostProbe,LexiSharp.Core.ITextSearchEngine
@@ -3298,7 +3315,6 @@ T|LexiSharp.Ranking.FeedbackBoostMode|enum||System.IComparable,System.IConvertib
 T|LexiSharp.Ranking.NdcgGain|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
 T|LexiSharp.Ranking.ProximityMode|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
 T|LexiSharp.Ranking.ProximityReranker|class||LexiSharp.Core.IReranker
-T|LexiSharp.Ranking.QueryDiscrimination|class||
 T|LexiSharp.Ranking.QueryFeedbackHistory|class||
 T|LexiSharp.Ranking.QueryLikelihoodScorer|class||LexiSharp.Core.IScoreExplainer,LexiSharp.Core.ITermOverlapScorer,LexiSharp.Core.ITextScorer
 T|LexiSharp.Ranking.QueryTermWeighting|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable

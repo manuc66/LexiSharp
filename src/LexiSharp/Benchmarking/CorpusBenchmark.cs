@@ -136,7 +136,7 @@ public static class CorpusBenchmark
             f1 += queryF1;
             judged++;
 
-            var discrimination = QueryDiscrimination.Measure(query.Id, retrieved, topK, complete: retrieved.Count <= topK);
+            var discrimination = QueryDiscrimination.Measure(retrieved, topK, complete: retrieved.Count <= topK);
 
             // A class that reaches past the cut is incomplete here, so the expectation cannot be
             // computed exactly; null says "not computable", which the report keeps distinct from zero.

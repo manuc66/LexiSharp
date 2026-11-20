@@ -120,6 +120,31 @@ public sealed class SearchTrace
     /// <summary>Number of steps that did not fit within <see cref="Capacity"/>.</summary>
     public int Dropped { get; private set; }
 
+    /// <summary>
+    /// Whether the page's scores separated its documents, recorded by
+    /// <see cref="RecordDiscrimination"/>; <c>null</c> until a caller asks for it.
+    /// </summary>
+    /// <remarks>
+    /// A trace records what the pipeline did to each document. This records the one fact about the
+    /// page as a whole that the per-document steps cannot express: whether the order those steps
+    /// produced was a decision or a tie-break. It needs no relevance judgement, so it is available
+    /// on live traffic where a metric is not.
+    /// </remarks>
+    public DiscriminationProfile? Discrimination { get; private set; }
+
+    /// <summary>
+    /// Measures and records whether the page's scores discriminate. Called on the page the engine
+    /// returns, so the cost is one dictionary pass over the page and nothing per candidate.
+    /// </summary>
+    /// <param name="page">The ranked page, best first.</param>
+    /// <param name="cutoff">The page depth the caller asked for.</param>
+    /// <param name="complete">
+    /// Whether the engine had nothing more to return. False when the page is exactly the requested
+    /// depth and more matches may exist, which is what makes a score class at the cut unobservable.
+    /// </param>
+    public void RecordDiscrimination(IReadOnlyList<SearchResult> page, int cutoff, bool complete = false) =>
+        Discrimination = QueryDiscrimination.Measure(page, cutoff, complete);
+
     /// <summary>True when steps were dropped, i.e. <see cref="Steps"/> is not the whole story.</summary>
     public bool IsTruncated => Dropped > 0;
 

@@ -1,4 +1,4 @@
-using LexiSharp.Ranking;
+using LexiSharp.Core;
 
 namespace LexiSharp.Benchmarking;
 

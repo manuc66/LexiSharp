@@ -105,8 +105,8 @@ public class QueryDiscriminationTests
         // engine stopped at the page. The measurement cannot tell, so the caller declares it.
         var ranked = Rank([("a", 3.0), ("b", 2.0)]);
 
-        DiscriminationProfile truncated = QueryDiscrimination.Measure("q", ranked, 2);
-        DiscriminationProfile whole = QueryDiscrimination.Measure("q", ranked, 2, complete: true);
+        DiscriminationProfile truncated = QueryDiscrimination.Measure(ranked, 2);
+        DiscriminationProfile whole = QueryDiscrimination.Measure(ranked, 2, complete: true);
 
         Assert.Equal(DiscriminationVerdict.CutUnobserved, truncated.Verdict);
         Assert.True(truncated.TruncatedAtCut);
@@ -148,9 +148,8 @@ public class QueryDiscriminationTests
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => Measure([("a", 1.0)], cutoff: 0));
         Assert.Throws<ArgumentOutOfRangeException>(() => Measure([("a", 1.0)], cutoff: -1));
-        Assert.Throws<ArgumentNullException>(() => QueryDiscrimination.Measure("q", null!, 10));
-        Assert.Throws<ArgumentException>(() => QueryDiscrimination.Measure(" ", Rank([("a", 1.0)]), 10));
-    }
+        Assert.Throws<ArgumentNullException>(() => QueryDiscrimination.Measure(null!, 10));
+            }
 
     [Fact]
     public void ExplainSaysWhatWasMeasuredWithoutSpeculating()
@@ -162,7 +161,7 @@ public class QueryDiscriminationTests
     }
 
     private static DiscriminationProfile Measure((string Id, double Score)[] results, int cutoff) =>
-        QueryDiscrimination.Measure("q", Rank(results), cutoff, complete: true);
+        QueryDiscrimination.Measure(Rank(results), cutoff, complete: true);
 
     [Fact]
     public void TheReferenceCorpusHasNoUndiscriminatedQueryAndNoTieAtTheReportedCut()
@@ -178,7 +177,7 @@ public class QueryDiscriminationTests
 
         var profiles = queries
             .Select(query => QueryDiscrimination.Measure(
-                query.Key, engine.Search(query.Value, new SearchOptions(depth)), cutoff: 10))
+                engine.Search(query.Value, new SearchOptions(depth)), cutoff: 10))
             .ToList();
 
         Assert.DoesNotContain(profiles, p =>
@@ -198,7 +197,7 @@ public class QueryDiscriminationTests
         var engine = new RankedTextSearchEngine(index, new Bm25Scorer(), tokenizer);
 
         var results = engine.Search("-zzzznotaword", new SearchOptions(index.Count));
-        DiscriminationProfile profile = QueryDiscrimination.Measure("prohibited", results, cutoff: 10);
+        DiscriminationProfile profile = QueryDiscrimination.Measure(results, cutoff: 10);
 
         Assert.Equal(index.Count, profile.Hits);
         Assert.Equal(DiscriminationVerdict.NoDiscrimination, profile.Verdict);

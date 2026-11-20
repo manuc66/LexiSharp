@@ -161,7 +161,7 @@ public sealed class RetrievalEvaluator
             judged++;
             graded |= query.IsGraded;
 
-            var discrimination = QueryDiscrimination.Measure(query.Id, retrieved, TopK, complete: retrieved.Count <= TopK);
+            var discrimination = QueryDiscrimination.Measure(retrieved, TopK, complete: retrieved.Count <= TopK);
 
             byQuery.Add(new BenchmarkQueryResult(
                 query.Id,

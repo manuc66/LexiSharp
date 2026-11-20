@@ -1,6 +1,4 @@
-using LexiSharp.Core;
-
-namespace LexiSharp.Ranking;
+namespace LexiSharp.Core;
 
 /// <summary>
 /// Whether a query's <em>scores</em> separate the documents it returned, decided from the scores
@@ -64,7 +62,6 @@ public enum DiscriminationVerdict
 }
 
 /// <summary>One query's score structure, measured once and read by every consumer.</summary>
-/// <param name="QueryId">The query this profile describes.</param>
 /// <param name="Hits">How many documents the query returned.</param>
 /// <param name="DistinctScores">How many different scores those documents carry.</param>
 /// <param name="LargestClass">
@@ -88,7 +85,6 @@ public enum DiscriminationVerdict
 /// boolean would let a caller report a stable number it cannot defend.
 /// </remarks>
 public sealed record DiscriminationProfile(
-    string QueryId,
     int Hits,
     int DistinctScores,
     int LargestClass,
@@ -141,8 +137,8 @@ public sealed record DiscriminationProfile(
 /// </para>
 /// <para>
 /// The tie-aware metrics themselves are not computed here. They need the relevance grades, and
-/// <see cref="RetrievalMetrics.TieAwareNdcgAtK(IReadOnlyList{SearchResult}, IReadOnlyDictionary{string, double}, int, NdcgGain)"/>
-/// is where they live. This type stops at the fact the metric rests on.
+/// <c>RetrievalMetrics.TieAwareNdcgAtK</c> (in the ranking namespace) is where they live. This type
+/// stops at the fact the metric rests on.
 /// </para>
 /// <para>
 /// Cost is one pass and one dictionary over the returned list, which the caller already holds: no
@@ -154,7 +150,6 @@ public static class QueryDiscrimination
     /// <summary>
     /// Profiles one query's result list at a page depth.
     /// </summary>
-    /// <param name="queryId">The query the list answers.</param>
     /// <param name="ranked">
     /// The ranked results, best first. Not re-sorted: a tie is read where the engine put it.
     /// <para>
@@ -175,18 +170,16 @@ public static class QueryDiscrimination
     /// conservative reading — an unobserved tie is reported as unobserved rather than as absent.
     /// </param>
     public static DiscriminationProfile Measure(
-        string queryId,
         IReadOnlyList<SearchResult> ranked,
         int cutoff,
         bool complete = false)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(queryId);
         ArgumentNullException.ThrowIfNull(ranked);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(cutoff);
 
         if (ranked.Count == 0)
             return new DiscriminationProfile(
-                queryId, 0, 0, 0, 0, false, false, false, 0, DiscriminationVerdict.NoResults);
+                0, 0, 0, 0, false, false, false, 0, DiscriminationVerdict.NoResults);
 
         int pageEnd = Math.Min(cutoff, ranked.Count);
 
@@ -245,7 +238,6 @@ public static class QueryDiscrimination
             : DiscriminationVerdict.Determined;
 
         return new DiscriminationProfile(
-            queryId,
             ranked.Count,
             classSizes.Count,
             largestClass,
