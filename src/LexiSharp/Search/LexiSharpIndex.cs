@@ -417,6 +417,13 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
     /// The token reaches both halves of the call: the counting pass over the base engine's match set
     /// and the ranking the decorated pipeline produces. An overload rather than a defaulted parameter,
     /// for the reason given on <see cref="Search(string, LexiSharpQueryOptions?, CancellationToken)"/>.
+    /// <para>
+    /// <b>One search, not two, when nothing decorates the engine.</b> A facade without a reranker or a
+    /// query transformer sets its pipeline to the base engine itself, and the faceted pass has already
+    /// produced the ranked page — running <see cref="Search(string, LexiSharpQueryOptions?)"/> again would score every candidate
+    /// twice for the same answer. The second call stays for the decorated case, where the base
+    /// engine's page is not the pipeline's.
+    /// </para>
     /// </remarks>
     /// <param name="query">Raw query text.</param>
     /// <param name="options">Optional per-search options.</param>
@@ -437,10 +444,14 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
         if (coreOptions.IsEmpty)
             return new LexiSharpFacetedResult<TDocument>(Array.Empty<LexiSharpHit<TDocument>>(), Array.Empty<FacetBucket>());
 
-        var buckets = _baseEngine.SearchWithFacets(effectiveQuery, coreOptions, facetFields, cancellationToken).Buckets;
-        var results = MapHits(_engine.Search(effectiveQuery, coreOptions, cancellationToken), null, options?.HighlightOptions);
+        var faceted = _baseEngine.SearchWithFacets(effectiveQuery, coreOptions, facetFields, cancellationToken);
 
-        return new LexiSharpFacetedResult<TDocument>(results, buckets);
+        IReadOnlyList<SearchResult> ranked = ReferenceEquals(_engine, _baseEngine)
+            ? faceted.Results
+            : _engine.Search(effectiveQuery, coreOptions, cancellationToken);
+
+        return new LexiSharpFacetedResult<TDocument>(
+            MapHits(ranked, null, options?.HighlightOptions), faceted.Buckets);
     }
 
     /// <summary>
