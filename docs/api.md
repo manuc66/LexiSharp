@@ -234,6 +234,8 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `ContextualBoost<TPayload>` | delegate | — | A boost that depends on the search as a whole, not only on the candidate in hand: it sees the query, the pre-boost ranking, and the caller's payload. |
 | `DamerauLevenshteinTermCorrector` | class | `ITermCorrector` | A corrector based on Damerau-Levenshtein distance (insertion, deletion, substitution and adjacent transposition), walked over the vocabulary. Distance 1 and 2… |
 | `DetailedSearchResult` | record | — | A ranked document whose final score is broken down by the source signal that produced it. |
+| `DiscriminationProfile` | record | — | One query's score structure, measured once and read by every consumer. |
+| `DiscriminationVerdict` | enum | — | Whether a query's scores separate the documents it returned, decided from the scores alone and with no relevance judgement. |
 | `DocumentHierarchy` | class | — | A validated parent/child forest over searchable document ids — the « hierarchical metadata » seam. Declare the tree your chunks belong to (a chunk under a… |
 | `EmbeddingProviderExtensions` | class | — | Backwards-compatible call shape: embeds text as a Passage. |
 | `EmbeddingUse` | enum | — | The role a piece of text plays when it is embedded. Several models encode queries and documents differently by construction (e.g. E5 prefixes queries with… |
@@ -262,6 +264,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `NumericFacetRequest` | record | — | One numeric facet over Fields: either explicit boundaries, or a bucket count whose boundaries are derived from the match set — a histogram. |
 | `ParsedQuery` | record | — | The structured form of a raw query: free terms, quoted phrase constraints, expansion atoms, and the combined literal term list a scorer starts from. |
 | `PassthroughTermCorrector` | class | `ITermCorrector` | A corrector that returns the term unchanged — the safe default that never alters a query. |
+| `QueryDiscrimination` | class | — | Measures whether a result list discriminates, from the scores alone. |
 | `QueryExpansion` | record | — | A free-text query atom carrying a search-time expansion operator: the base term (already tokenized to exactly one term) is matched against the index vocabulary… |
 | `QueryExpansionKind` | enum | — | How a query atom expands against the index vocabulary. |
 | `QueryFeatures` | enum | — | The optional LexiSharp query-syntax features a raw query can carry. Engines declare which ones they interpret; using an unsupported one is a hard error rather… |
@@ -442,8 +445,6 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `BooleanScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | Pure boolean filter. A matching document gets a score of 1, a non-matching one 0. Because the RankedTextSearchEngine discards scores below MinimumScore, this… |
 | `CalibratedScoreConfidence` | class | — | A learned confidence calibrator that maps raw scores to calibrated probabilities using isotonic regression or Platt scaling, with an optional Youden-derived… |
 | `CalibrationMethod` | enum | — | The calibration method used by CalibratedScoreConfidence. |
-| `DiscriminationProfile` | record | — | One query's score structure, measured once and read by every consumer. |
-| `DiscriminationVerdict` | enum | — | Whether a query's scores separate the documents it returned, decided from the scores alone and with no relevance judgement. |
 | `DocumentLengthRatioScorer` | class | `ITextScorer` | A document's length relative to the corpus average: \|D\| / avgdl, where both figures come from the index. One for an average document, above one for a long… |
 | `FeedbackAwareTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that augments a primary search engine with a learned query → document feedback channel — one history for every search. |
 | `FeedbackAwareTextSearchEngine<TPayload>` | class | `IContextualSearchEngine`, `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that augments a primary search engine with a learned query → document feedback channel, choosing the history per search from the caller's… |
@@ -451,7 +452,6 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `NdcgGain` | enum | — | How a relevance level is turned into a gain in NdcgAtK. |
 | `ProximityMode` | enum | — | How ProximityReranker turns a term window into a score change. |
 | `ProximityReranker` | class | `IReranker` | Re-ranks a candidate list by how close together the query terms actually occur in each document, refining the order a term-frequency scorer produced without… |
-| `QueryDiscrimination` | class | — | Measures whether a result list discriminates, from the scores alone. |
 | `QueryFeedbackHistory` | class | — | A learned relevance feedback channel: it records which document a user chose for past queries, and uses those associations to boost matching documents in future… |
 | `QueryLikelihoodScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | Query likelihood retrieval model with Jelinek-Mercer smoothing, a probabilistic language-model alternative to BM25. |
 | `QueryTermWeighting` | enum | — | How a scorer treats a term that occurs more than once in a query. |

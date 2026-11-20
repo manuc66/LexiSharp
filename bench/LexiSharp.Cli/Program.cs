@@ -25,6 +25,7 @@ public static class Program
         + "  --configs <list>     Comma-separated: bm25, bm25-tuned, tfidf, ql, hybrid, bm25-semantic, bm25f, bm25f-title, bm25f-tuned, bm25-proximity, bm25-proximity-full, bm25-proximity-boost, bm25+, bm25+-tuned, bm25l, bm25l-tuned (default: bm25,tfidf,ql,hybrid,bm25-tuned)\n"
         + "  --metric <name>      Objective the *-tuned configs maximize: precision, recall, f1, ndcg (default: f1)\n"
         + "  --json <path>        Write the results as JSON to this file\n"
+        + "  --tie-detail         List every query whose ordering the scores did not decide\n"
         + "  --help, -h           Show this help\n"
         + "\n"
         + "Usage: lexisharp diff <corpus-dir> --queries <file> --qrels <file> --baseline <cfg> --candidate <cfg>\n"
@@ -88,6 +89,7 @@ public static class Program
         double epsilon = 1e-9;
         int topK = 10;
         int? limit = null;
+        bool tieDetail = false;
         // What the *-tuned configurations maximize. Explicit rather than buried in a default,
         // because a tuned row is only as meaningful as its objective: on a corpus where the
         // default (F1) is flat across the grid, the tuner has nothing to discriminate on and its
@@ -110,6 +112,9 @@ public static class Program
                     break;
                 case "--limit" when i + 1 < args.Length:
                     limit = ParsePositive(args[++i], "--limit");
+                    break;
+                case "--tie-detail":
+                    tieDetail = true;
                     break;
                 case "--configs" when i + 1 < args.Length:
                     configNames = args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -203,7 +208,7 @@ public static class Program
                 return RunVerify(corpusDir, queriesPath, qrelsPath, topK, limit, configNames, againstPath!, tuningMetric);
             }
 
-            return Run(corpusDir, queriesPath, qrelsPath, topK, limit, configNames, jsonPath, tuningMetric);
+            return Run(corpusDir, queriesPath, qrelsPath, topK, limit, configNames, jsonPath, tuningMetric, tieDetail);
         }
         catch (OperationCanceledException)
         {
@@ -569,7 +574,8 @@ public static class Program
         int? limit,
         string[] configNames,
         string? jsonPath,
-        TuningMetric tuningMetric)
+        TuningMetric tuningMetric,
+        bool tieDetail)
     {
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, eventArgs) =>
@@ -596,7 +602,7 @@ public static class Program
 
         var results = CorpusBenchmark.Run(documents, queries, configs, new BenchmarkOptions { TopK = topK }, cts.Token);
 
-        PrintTable(results, topK);
+        PrintTable(results, topK, tieDetail);
 
         if (jsonPath is not null)
         {
@@ -778,7 +784,7 @@ public static class Program
         return configs;
     }
 
-    private static void PrintTable(IReadOnlyList<BenchmarkConfigResult> results, int topK)
+    private static void PrintTable(IReadOnlyList<BenchmarkConfigResult> results, int topK, bool tieDetail)
     {
         string header = $"{"Config",-22} {"nDCG@" + topK,10} {"MAP@" + topK,10} {"MRR@" + topK,10} {"R@" + topK,10} {"P@" + topK,10} {"F1@" + topK,10} {"ms/q",8}";
 
@@ -834,6 +840,26 @@ public static class Program
                     $"{Format(tie.MeanWidth),-8} " +
                     $"{Format(tie.MaxWidth),-8} " +
                     $"{tie.Measured + "/" + tie.Queries,-10}  {verdicts}");
+
+                if (!tieDetail)
+                    continue;
+
+                foreach (var query in result.PerQuery)
+                {
+                    if (query.Discrimination is not { } profile
+                        || profile.Verdict is DiscriminationVerdict.Determined
+                            or DiscriminationVerdict.SingleResult
+                            or DiscriminationVerdict.NoResults)
+                    {
+                        continue;
+                    }
+
+                    string value = query.TieAwareNdcg is { } metric
+                        ? $"point {Format(query.Metrics.NdcgAtK)}  expected {Format(metric.Expected)}  [{Format(metric.Minimum)}..{Format(metric.Maximum)}]"
+                        : "not computable: a tie reaches past the cut";
+
+                    Console.WriteLine($"    {query.QueryId,-20} {profile.Verdict,-16} {value}");
+                }
             }
         }
     }

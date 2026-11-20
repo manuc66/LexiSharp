@@ -703,7 +703,15 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
         // Tracing happens here, on the cut page, not inside the scoring loop above: the score is
         // already in hand, so a trace costs O(limit) after the fact and nothing per candidate.
-        options.Trace?.RecordScoreStage(_scorer.Name, results);
+        if (options.Trace is { } trace)
+        {
+            trace.RecordScoreStage(_scorer.Name, results);
+
+            // A page shorter than the request means the engine had nothing more to give; one that
+            // fills it may hide a tie past the cut, which the profile reports as unobserved rather
+            // than as absent.
+            trace.RecordDiscrimination(results, options.Limit, complete: count < options.Limit);
+        }
 
         if (instrumented)
         {

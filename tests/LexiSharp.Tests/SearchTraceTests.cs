@@ -43,6 +43,28 @@ public class SearchTraceTests
     }
 
     [Fact]
+    public void TheTraceRecordsWhetherThePageWasDecidedByTheScoresOrByTheTieBreak()
+    {
+        // Two documents share a score, so the order inside the page is the tie-break's. The trace
+        // carries the one fact the per-document steps cannot: that the order was a choice.
+        var engine = new RankedTextSearchEngine(new InMemoryTextIndex(), new Bm25Scorer());
+        engine.Index(
+        [
+            new SearchDocument("a", "token"),
+            new SearchDocument("b", "token refresh"),
+            new SearchDocument("c", "token refresh"),
+        ]);
+
+        var trace = new SearchTrace();
+        var results = engine.Search("token", new SearchOptions(Limit: 5, Trace: trace));
+
+        Assert.Equal(3, results.Count);
+        Assert.NotNull(trace.Discrimination);
+        Assert.Equal(DiscriminationVerdict.TiedWithinPage, trace.Discrimination!.Verdict);
+        Assert.Equal(3, trace.Discrimination.Hits);
+    }
+
+    [Fact]
     public void DenseAndSparseEnginesAlsoRecordTheScoreStage()
     {
         // A stage that only the BM25 engine recorded would leave the dense lane of the demo's

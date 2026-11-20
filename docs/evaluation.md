@@ -1005,6 +1005,11 @@ Guo et al. (FRAME 2026) show the same run scoring 0.85 or 0.17 depending on it. 
 is shipping the measurement in the metric API and in the benchmark table, so the interval is visible
 next to the point.
 
+`--tie-detail` lists every query the benchmark found affected, with the point, the expectation and
+the interval — or `not computable: a tie reaches past the cut` when the class could not be completed.
+Without the flag the section is one line per configuration, because a run that ties nowhere should not
+print twenty-two rows saying so.
+
 On the reference corpus at k=10 every interval has width zero — no tie crosses a relevance grade
 there. At k=5 one query (`ordinary-05`) has a tie that reaches the cut, so its tie-aware value is
 reported as not computable from a page-limited retrieval rather than as a number. That is the
