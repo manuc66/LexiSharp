@@ -91,6 +91,10 @@ public static class Program
         var reweightMode = QueryTermWeightingMode.Redundancy;
         int reweightMinTerms = 0;
 
+        // Query-side saturation (k3). Empty means off, and it costs nothing to leave off: the
+        // weighter is one object per row and the rows only exist when asked for.
+        var querySaturations = new List<double>();
+
         // Spread-tf sweep. Empty means off: the scorer declines the fast paths, so a default run
         // pays neither the positions reads nor the slower per-document loop.
         var spreadAlphas = new List<double>();
@@ -409,6 +413,9 @@ public static class Program
                     break;
                 case "--reweight-min-terms" when i + 1 < args.Length:
                     reweightMinTerms = ParseNonNegative(args[++i], "--reweight-min-terms");
+                    break;
+                case "--query-saturation" when i + 1 < args.Length:
+                    querySaturations.AddRange(ParseStrengths(args[++i]));
                     break;
                 case "--spread" when i + 1 < args.Length:
                     spreadAlphas.AddRange(ParseAlphas(args[++i]));
@@ -803,7 +810,7 @@ public static class Program
                 querySyntaxReference, segment, tuneBm25F, tuneSearchOptions, bm25Va, tuneBm25Va,
                 analyzePath, analyzeBaseline, analyzeCandidate,
                 disagreementLeft, disagreementRight,
-                expandDensities, expandRankings, reweightStrengths, reweightMode, reweightMinTerms, spreadAlphas, spreadWindow, annEfValues, annConnection, backendLane, rerankCacheDir,
+                expandDensities, expandRankings, reweightStrengths, reweightMode, reweightMinTerms, querySaturations, spreadAlphas, spreadWindow, annEfValues, annConnection, backendLane, rerankCacheDir,
                 heldOutFraction, sparseLane, bootstrap, bootstrapResamples, bootstrapBaseline,
                 bootstrapCorrection, diagnoseDocument, diagnoseQuery, diagnoseDepth,
                 analysisDiff, stem);
@@ -944,6 +951,7 @@ public static class Program
         string? disagreementLeft, string? disagreementRight,
         IReadOnlyList<double> expandDensities, IReadOnlyList<ExpansionRanking> expandRankings,
         IReadOnlyList<double> reweightStrengths, QueryTermWeightingMode reweightMode, int reweightMinTerms,
+        IReadOnlyList<double> querySaturations,
         IReadOnlyList<double> spreadAlphas, int spreadWindow,
         IReadOnlyList<int> annEfValues, string? annConnection, BackendLane? backendLane,
         string? rerankCacheDir, double? heldOutFraction, SparseLane? sparseLane,
@@ -1128,6 +1136,14 @@ public static class Program
 
                 queryReweights.Add((name, new CoOccurrenceQueryTermWeighter(graph, strength, reweightMode, reweightMinTerms)));
             }
+        }
+
+        foreach (double k3 in querySaturations.Distinct().OrderBy(value => value))
+        {
+            string name =
+                $"BM25 + query saturation (k3={k3.ToString("0.####", CultureInfo.InvariantCulture)})";
+
+            queryReweights.Add((name, new SaturatingQueryTermWeighter(k3)));
         }
 
         // Both exit paths flush the cache: a diagnosis probes the cross-encoder rows too, and the
@@ -1628,6 +1644,7 @@ public static class Program
             $"--reweight-mode expects 'redundancy' or 'centrality', got '{value}'."),
     };
 
+
     private static IEnumerable<double> ParseStrengths(string value)
     {
         foreach (string part in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
@@ -2064,6 +2081,14 @@ public static class Program
                                 Do nothing below n distinct query terms. The relation is an estimate
                                 from the query itself, and the measurements show the short-query
                                 corpora losing; a floor is the line between acting and declining.
+              --query-saturation <list>
+                                Add one BM25 row per query-side saturation constant k3 in a
+                                comma-separated list (>= 0): a term written qtf times weighs
+                                (k3 + 1) * qtf / (k3 + qtf) instead of qtf, normalized so the
+                                heaviest term keeps weight 1. k3 = 0 is the no-op control, and 8 is
+                                the default constant. This is the saturating alternative to
+                                QueryTermWeighting.QueryFrequency, not an addition to it. Uses
+                                --reference-bm25 as its BM25 operating point when that flag is given.
               --spread <list>    Add a spread-tf matrix: one BM25 spread row per alpha in the
                                 comma-separated list (values in [0, 1]) crossed with b = 0, 0.5
                                 and 1. alpha = 0 is the raw-count control and must reproduce BM25

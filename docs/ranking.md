@@ -1037,6 +1037,66 @@ why the feature is opt-in and measured per corpus.
 3 s at `--jobs 8` against BM25's 0.9 s, because the scorer still uses the ordinary BM25 paths —
 unlike BM25VA, nothing here declines them.
 
+## Saturating a repeated query term (`SaturatingQueryTermWeighter`)
+
+BM25 saturates a term's occurrences in the **document** with `k1`. The **query** side is linear:
+a word the caller wrote five times counts five times. That is a fine reading of a three-word query
+and a poor one of a paragraph, where a prompt or a generated expansion repeats a concept and the
+repetition is accidentally worth as much as a deliberate mention.
+
+`SaturatingQueryTermWeighter` applies the matching curve to the query side:
+
+```csharp
+ITextSearchEngine engine = new ReweightingTextSearchEngine(
+    index,
+    new Bm25Scorer(),
+    new SaturatingQueryTermWeighter(k3: 8),   // the default constant
+    Tokenizer.Default);
+```
+
+A term written `qtf` times weighs `(k3 + 1) · qtf / (k3 + qtf)` — at `k3 = 8`, twice is `1.8×`
+once, ten times is `5×`, and the ratio converges to `k3 + 1 = 9×` however long the query gets. The
+weights are **relative**: they are normalized so the heaviest term carries `1`, which leaves every
+score of a query multiplied by the same constant — the ranking is what changes, not the scale.
+`k3 = 0` returns `1` for every term and is the no-op control; a query whose terms all occur once
+returns an empty map and is ranked by the prototype scorer, at no cost.
+
+**Use it with `QueryTermWeighting.Distinct`** (the `Bm25Scorer` default). `QueryFrequency` also
+multiplies a term's idf by its count, so the two together count the repetition twice;
+`SaturatingQueryTermWeighter` is the *saturating* alternative to that setting, not an addition to
+it. Custom weights — an agent's own expansion weights, a learned query encoder — need no weighter at
+all: `IWeightedQueryScorer.WithTermWeights` is the seam underneath, applied to a scorer copy for
+one query. Only `Bm25Scorer` consumes weights today, so the variants without per-query weights
+(BM25+, BM25L, BM25VA) cannot be driven by it.
+
+**The measurement.** nDCG@10, `--no-tuned`, default analysis, `k1 = 1.5`, `b = 0.75`, the BM25 row
+this repository pins:
+
+| Corpus | BM25 | k3=0 (control) | k3=4 | k3=8 | k3=16 |
+|---|---:|---:|---:|---:|---:|
+| ArguAna (1 406 q) | 0.320 | 0.320 | 0.343 | **0.346** | **0.346** |
+| FiQA-2018 (648 q) | 0.232 | 0.232 | 0.234 | **0.234** | 0.233 |
+| NFCorpus (323 q) | 0.308 | 0.308 | 0.308 | 0.307 | 0.307 |
+| SciFact (300 q) | 0.662 | 0.662 | 0.662 | 0.662 | 0.662 |
+
+**+0.026 on ArguAna, +0.002 on FiQA, −0.001 and 0 elsewhere.** The reading is the query length,
+and it is the same reading the co-occurrence weighter gets one section above: ArguAna's queries are
+whole arguments, so their content words repeat and the query side has something to saturate;
+NFCorpus's and SciFact's are keyword strings that almost never repeat, so the weighter is the
+identity and the rows are the control row to the last digit of the metric. FiQA sits in between —
+real questions, a repetition here and there — and reads a thousandth of a point up, with R@10 moving
+0.298 → 0.304. `k3 = 8` and `k3 = 16` are equal on ArguAna, so the default is not a constant fitted
+to that corpus — the curve is already flat there. The wall column does not move (0.8 s for BM25,
+0.5 s for the saturated row on ArguAna at `--jobs 7`): this changes one multiplication per query
+term, not the scoring path.
+
+**What this is not.** It is not a measurement of a model-generated query workload: BEIR's queries
+are human-written, and ArguAna's repetition is rhetorical rather than prompt-induced. It establishes
+that the saturating reading is worth more than the linear one where repetition exists, and free
+where it does not — which is the property a pipeline that feeds LLM expansions into the lexical
+engine needs. A workload with real HyDE expansions can be measured with the same flag:
+`--query-saturation 0,4,8` on the harness.
+
 ## Explainable scoring and BM25 tuning
 
 Audit any ranking decision term by term, then let the corpus pick its own parameters. The

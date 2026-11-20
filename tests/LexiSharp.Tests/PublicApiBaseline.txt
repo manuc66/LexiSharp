@@ -267,6 +267,7 @@ C|LexiSharp.Ranking.ProximityReranker|Void .ctor(LexiSharp.Core.ITextIndex, Lexi
 C|LexiSharp.Ranking.QueryFeedbackHistory|Void .ctor(LexiSharp.Linguistics.ITokenizer)
 C|LexiSharp.Ranking.QueryLikelihoodScorer|Void .ctor(Double)
 C|LexiSharp.Ranking.RankedTextSearchEngine|Void .ctor(LexiSharp.Core.IReadOnlyTextIndex, LexiSharp.Core.ITextScorer, LexiSharp.Linguistics.ITokenizer, LexiSharp.Linguistics.SynonymMap, LexiSharp.Core.RetrievalTelemetry)
+C|LexiSharp.Ranking.SaturatingQueryTermWeighter|Void .ctor(Double)
 C|LexiSharp.Ranking.SpreadBm25Scorer|Void .ctor(Double, Double, Int32, Double, LexiSharp.Ranking.QueryTermWeighting, Boolean)
 C|LexiSharp.Ranking.TfIdfScorer|Void .ctor()
 C|LexiSharp.Ranking.TieAwareMetric|Void .ctor(Double, Double, Double)
@@ -456,6 +457,7 @@ F|LexiSharp.Ranking.QueryTermWeighting|QueryFrequency|LexiSharp.Ranking.QueryTer
 F|LexiSharp.Ranking.RankedTextSearchEngine|EngineName|System.String|static|RankedTextSearchEngine
 F|LexiSharp.Ranking.RankedTextSearchEngine|MaxExpansionAtoms|System.Int32|static|32
 F|LexiSharp.Ranking.RankedTextSearchEngine|MaxExpansionsPerAtom|System.Int32|static|64
+F|LexiSharp.Ranking.SaturatingQueryTermWeighter|DefaultSaturation|System.Double|static|8
 F|LexiSharp.Ranking.ScoreConfidenceMethod|WinnerMargin|LexiSharp.Ranking.ScoreConfidenceMethod|static|0
 F|LexiSharp.Ranking.ScoreConfidenceMethod|ZScore|LexiSharp.Ranking.ScoreConfidenceMethod|static|1
 F|LexiSharp.Ranking.TieBreak|DocumentId|LexiSharp.Ranking.TieBreak|static|0
@@ -1902,6 +1904,7 @@ M|LexiSharp.Ranking.RetrievalMetrics|Double RecallAtK(System.Collections.Generic
 M|LexiSharp.Ranking.RetrievalMetrics|Double ReciprocalRankAtK(System.Collections.Generic.IReadOnlyCollection`1[System.String], System.Collections.Generic.IReadOnlyCollection`1[System.String], Int32)
 M|LexiSharp.Ranking.RetrievalMetrics|LexiSharp.Ranking.TieAwareMetric TieAwareNdcgAtK(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult], System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Double], Int32)
 M|LexiSharp.Ranking.RetrievalMetrics|LexiSharp.Ranking.TieAwareMetric TieAwareNdcgAtK(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult], System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Double], Int32, LexiSharp.Ranking.NdcgGain)
+M|LexiSharp.Ranking.SaturatingQueryTermWeighter|System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Double] Weigh(System.Collections.Generic.IReadOnlyList`1[System.String])
 M|LexiSharp.Ranking.ScoreConfidence|Double TopConfidence(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult], LexiSharp.Ranking.ScoreConfidenceMethod)
 M|LexiSharp.Ranking.ScoreConfidence|Double TopConfidence(System.Collections.Generic.IReadOnlyList`1[System.Double], LexiSharp.Ranking.ScoreConfidenceMethod)
 M|LexiSharp.Ranking.ScoreConfidence|System.Collections.Generic.IReadOnlyList`1[System.Double] Compute(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult], LexiSharp.Ranking.ScoreConfidenceMethod)
@@ -2921,6 +2924,7 @@ P|LexiSharp.Ranking.ProximityReranker|Name|System.String|get
 P|LexiSharp.Ranking.QueryFeedbackHistory|Count|System.Int32|get
 P|LexiSharp.Ranking.QueryLikelihoodScorer|Name|System.String|get
 P|LexiSharp.Ranking.RankedTextSearchEngine|SupportedQueryFeatures|LexiSharp.Core.QueryFeatures|get
+P|LexiSharp.Ranking.SaturatingQueryTermWeighter|Saturation|System.Double|get
 P|LexiSharp.Ranking.SpreadBm25Scorer|Name|System.String|get
 P|LexiSharp.Ranking.TfIdfScorer|Name|System.String|get
 P|LexiSharp.Ranking.TieAwareMetric|Expected|System.Double|getset
@@ -3337,6 +3341,7 @@ T|LexiSharp.Ranking.QueryLikelihoodScorer|class||LexiSharp.Core.IScoreExplainer,
 T|LexiSharp.Ranking.QueryTermWeighting|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
 T|LexiSharp.Ranking.RankedTextSearchEngine|class||LexiSharp.Core.IExplainableSearchEngine,LexiSharp.Core.IFacetedSearchEngine,LexiSharp.Core.IQueryCostProbe,LexiSharp.Core.IQuerySyntaxSupport,LexiSharp.Core.ITextSearchEngine
 T|LexiSharp.Ranking.RetrievalMetrics|class||
+T|LexiSharp.Ranking.SaturatingQueryTermWeighter|class||LexiSharp.Core.IQueryTermWeighter
 T|LexiSharp.Ranking.ScoreConfidenceMethod|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
 T|LexiSharp.Ranking.ScoreConfidence|class||
 T|LexiSharp.Ranking.SpreadBm25Scorer|class||LexiSharp.Core.IScoreExplainer,LexiSharp.Core.ITermOverlapScorer,LexiSharp.Core.ITextScorer
