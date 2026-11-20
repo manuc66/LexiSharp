@@ -192,6 +192,7 @@ internal static class Evaluation
         bool bm25Va = false,
         bool tuneBm25Va = false,
         IReadOnlyList<(string Name, IQueryTermWeighter Weighter)>? queryReweights = null,
+        IReadOnlyList<IScoreNormalizer>? hybridNormalizers = null,
         IReadOnlyList<double>? spreadAlphas = null,
         int spreadWindow = 8)
     {
@@ -234,8 +235,8 @@ internal static class Evaluation
 
         ConfigurationSet configurations = BuildConfigurations(
             corpus, index, tokenizer, queryTerms, referenceBm25, saturationConstant, singlePrecision,
-            bm25Va, queryExpansions, queryReweights, spreadAlphas, spreadWindow, dense, reranker,
-            rerankCandidates);
+            bm25Va, queryExpansions, queryReweights, hybridNormalizers, spreadAlphas, spreadWindow,
+            dense, reranker, rerankCandidates);
 
         bool anyTitle = configurations.AnyTitle;
         bool fieldStatistics = configurations.FieldStatistics;
@@ -400,6 +401,7 @@ internal static class Evaluation
         bool bm25Va,
         IReadOnlyList<(string Name, ITermExpander Expander)>? queryExpansions,
         IReadOnlyList<(string Name, IQueryTermWeighter Weighter)>? queryReweights,
+        IReadOnlyList<IScoreNormalizer>? hybridNormalizers,
         IReadOnlyList<double>? spreadAlphas,
         int spreadWindow,
         DenseVectors? dense,
@@ -477,6 +479,17 @@ internal static class Evaluation
                     new ReciprocalRankFusionMerger(), tokenizer)),
             })
             .ToArray();
+
+        // One row per requested normalizer, beside the default one rather than replacing it: the
+        // question is which mapping the blend deserves, and a table that shows both answers on the
+        // same queries is the only way to read the answer off the run instead of across two runs.
+        foreach (IScoreNormalizer normalizer in hybridNormalizers ?? Array.Empty<IScoreNormalizer>())
+        {
+            builders = builders
+                .Append(new($"Hybrid BM25+QL weighted ({normalizer.Name})", () => Hybrid(index,
+                    new WeightedScoreResultMerger(normalizer, 1.0, 1.0), tokenizer)))
+                .ToArray();
+        }
 
         if (anyTitle && fieldStatistics)
         {

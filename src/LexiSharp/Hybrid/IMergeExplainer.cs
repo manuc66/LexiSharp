@@ -40,4 +40,16 @@ public interface IMergeExplainer
     /// computed for a merge that would not have run.
     /// </exception>
     MergeExplanation Explain(IReadOnlyList<IReadOnlyList<SearchResult>> perEngineResults);
+
+    /// <summary>
+    /// The name of the mapping behind <see cref="MergeExplanation.Normalization"/> — the
+    /// <see cref="IScoreNormalizer.Name"/> the merger divides by, <c>"max"</c> by default.
+    /// </summary>
+    /// <remarks>
+    /// Reported rather than inferred because a trace that always says <c>max</c> describes the wrong
+    /// arithmetic the moment a merger is built with another normalizer, and the label is the only
+    /// thing in the trace that would not change with it. A default implementation keeps a third-party
+    /// merger that predates the seam compiling, and <c>max</c> is what it computes.
+    /// </remarks>
+    string NormalizationName => "max";
 }

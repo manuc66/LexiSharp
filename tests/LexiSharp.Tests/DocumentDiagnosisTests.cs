@@ -520,7 +520,8 @@ public class DocumentDiagnosisTests
         ConfigurationSet configurations = Evaluation.BuildConfigurations(
             corpus, index, tokenizer, Evaluation.QueryTermsFor(queryFrequency: false),
             referenceBm25: null, saturationConstant: true, singlePrecision: false, bm25Va: false,
-            queryExpansions: null, queryReweights: null, spreadAlphas: null, spreadWindow: 8,
+            queryExpansions: null, queryReweights: null, hybridNormalizers: null,
+            spreadAlphas: null, spreadWindow: 8,
             dense: null, reranker: null, rerankCandidates: 100);
 
         Assert.Equal(results.Select(result => result.Name), configurations.Configurations.Select(row => row.Name));
@@ -618,7 +619,8 @@ public class DocumentDiagnosisTests
         Evaluation.BuildConfigurations(
             corpus, index, new Tokenizer(options), Evaluation.QueryTermsFor(queryFrequency: false),
             referenceBm25: null, saturationConstant: true, singlePrecision: false, bm25Va: false,
-            queryExpansions: null, queryReweights: null, spreadAlphas: null, spreadWindow: 8,
+            queryExpansions: null, queryReweights: null, hybridNormalizers: null,
+            spreadAlphas: null, spreadWindow: 8,
             dense: null, reranker: null, rerankCandidates: 100);
 
     private static string Write(DocumentDiagnosisReport report)

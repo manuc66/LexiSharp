@@ -87,6 +87,7 @@ are listed first.
 | `ITermExpander` | — | Derives the additional terms to index for a document from its own tokenization. | [guide](embeddings.md) |
 | `IMergeExplainer` | — | A merger that can state the arithmetic behind the list it returned, without keeping any state between searches. | [guide](pipelines.md) |
 | `IResultMerger` | — | Strategy that turns several ranked result lists — one per source engine — into a single coherent, de-duplicated, ordered list. | [guide](pipelines.md) |
+| `IScoreNormalizer` | — | Strategy that puts one source engine's scores on a scale comparable with another's, before a score-blending merger combines them. | [guide](pipelines.md) |
 | `IKeywordExtractor` | — | Strategy for pulling the most representative terms out of a single text — tag generation, query expansion seeds, summary highlights. | [guide](text-analysis.md) |
 | `ISpanTokenizer` | `ITokenizer` | A tokenizer that can also report where each normalized term sits in the source text — the basis for search-result highlighting. | [guide](text-analysis.md) |
 | `IStemmer` | — | Pluggable stemmer used by the Tokenizer to fold inflected forms onto a common stem. The library ships one implementation, PorterStemmer (English, no… | [guide](text-analysis.md) |
@@ -364,13 +365,17 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `ContextualTermOverlapScorer` | class | `IContextualEvidenceScorer` | A model-free IContextualEvidenceScorer used to exercise the multi-hop expansion stack with no external dependency: it scores a candidate by the fraction of… |
 | `CrossEncoderReranker` | class | `IReranker` | Precision-oriented reranker: re-scores every candidate with a pairwise (cross-encoder) model and reorders the list by the model's judgment. |
 | `HybridTextSearchEngine` | class | `IDetailedSearchEngine`, `ITextSearchEngine` | A federated search engine: queries a list of delegate engines, then merges their results into one coherent ordering through an IResultMerger. |
+| `MaxScoreNormalizer` | class | `IScoreNormalizer` | Divides each engine's scores by that engine's largest finite score — the mapping both score mergers applied before IScoreNormalizer existed, and the default. |
 | `MaxSimReranker` | class | `IReranker` | Late-interaction reranker (ColBERT-style): scores each candidate with MaxSim between the token-level embeddings of the query and of the document, then reorders… |
 | `MaximalMarginalRelevanceReranker` | class | `IReranker` | Diversity-preserving reranker: greedily re-orders candidates so that each next pick is both relevant to the query and different from what has already been… |
-| `MergeExplanation` | record | — | The arithmetic a weighted merge applied: one weight and one divisor per source engine. |
+| `MergeExplanation` | record | — | The arithmetic a weighted merge applied: one weight and one normalisation per source engine. |
+| `MinMaxScoreNormalizer` | class | `IScoreNormalizer` | Stretches each engine's scores across [0, 1]: subtract that engine's smallest positive score, divide by the distance to its largest. |
 | `ReciprocalRankFusionMerger` | class | `IResultMerger` | Merges ranked lists with Reciprocal Rank Fusion: each document accumulates the reciprocal of its rank (plus a constant k) across every engine that returned it. |
 | `RerankingResultMerger` | class | `IResultMerger` | Default merger: rebuilds a single temporary index from the union of candidate documents returned by every engine, then re-scores every candidate with one shared… |
+| `ScoreNormalization` | record struct | — | One engine's scores mapped onto a comparable scale: subtract Offset, then divide by Scale — (s − offset) / scale. |
+| `SumScoreNormalizer` | class | `IScoreNormalizer` | Divides each engine's scores by their sum, so each engine contributes one unit of mass in total however many documents it returned. |
 | `VectorSimilarity` | class | — | Pure vector math helpers used to compare embeddings. These are arithmetic utilities, not an embedding pipeline: vectors must already exist (see… |
-| `WeightedScoreResultMerger` | class | `IMergeExplainer`, `IResultMerger` | Blends the native per-engine scores instead of re-ranking. Every engine's scores are normalized to [0, 1] (divided by that engine's maximum positive score),… |
+| `WeightedScoreResultMerger` | class | `IMergeExplainer`, `IResultMerger` | Blends the native per-engine scores instead of re-ranking. Every engine's scores are put on a comparable scale by an IScoreNormalizer — by default divided by… |
 
 #### `LexiSharp.Indexing`
 

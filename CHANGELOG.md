@@ -2,6 +2,25 @@
 
 ### Added
 
+- **`IScoreNormalizer`** (`LexiSharp.Hybrid`), with `MaxScoreNormalizer` (the default),
+  `MinMaxScoreNormalizer` and `SumScoreNormalizer`, wired into `WeightedScoreResultMerger`,
+  `CombSumResultMerger` and `CombMNZResultMerger`. The mapping from one engine's scores to a
+  comparable scale is now a seam instead of a hard-coded division: `max` divides by the list's best
+  score, `minmax` stretches the list across `[0, 1]`, `sum` gives each engine one unit of mass. All
+  three are stateless and read the candidate list they are handed, so none needs a calibration set.
+  The default is `max`, so an existing pipeline's scores do not move. `MergeExplanation` gained
+  `Offsets` (the shift a min-max mapping applies), `IMergeExplainer` gained `NormalizationName`, and
+  the merge trace prints both, so a contribution can still be reproduced by hand. Measured
+  nDCG@10 on `Hybrid BM25+QL` (weights 1/1, `--no-tuned`): ArguAna 0.320 / 0.320 / 0.320,
+  FiQA-2018 0.232 / 0.232 / 0.232, **NFCorpus 0.308 / 0.299 / 0.308** (max / minmax / sum),
+  SciFact 0.662 / 0.662 / 0.662. No
+  normalizer beats the default and min-max loses 0.009 on NFCorpus, which is why the default did not
+  change; on these corpora the blend reads BM25's score, so the run bounds the risk rather than
+  settling which mapping is right for two complementary halves.
+
+- **`--hybrid-normalizer <list>`** in `bench/LexiSharp.Eval`: one `Hybrid BM25+QL weighted` row per
+  normalizer in the list (`max`, `minmax`, `sum`), beside the default row rather than replacing it.
+
 - **`SaturatingQueryTermWeighter`** (`LexiSharp.Ranking`): the query-side half of BM25's saturation.
   A term written `qtf` times in the query weighs `(k3 + 1) · qtf / (k3 + qtf)` — normalized so the
   heaviest term keeps `1` — instead of counting `qtf` times, which is what `QueryTermWeighting`

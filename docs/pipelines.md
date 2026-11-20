@@ -143,6 +143,47 @@ Reciprocal Rank Fusion never looks at scores, so it bridges engines whose scores
 comparable — the sparse and dense embedding backends land in the same formula without
 calibration.
 
+### Normalizing the scores before a blend
+
+A score blend (`WeightedScoreResultMerger`, `CombSumResultMerger`, `CombMNZResultMerger`) has to put
+one engine's scores on the other's scale first, and that mapping is a choice, not a detail. It is
+`IScoreNormalizer`, and the two mergers that consume it take one in their constructor:
+
+```csharp
+IResultMerger blend = new WeightedScoreResultMerger(
+    new MinMaxScoreNormalizer(),
+    weights: [1.0, 1.0]);
+```
+
+| Normalizer | Mapping | Unit set by | Costs |
+| --- | --- | --- | --- |
+| `MaxScoreNormalizer` (default) | `s / max(s)` | the single best score | everything else is a fraction of one document |
+| `MinMaxScoreNormalizer` | `(s − min(s)) / (max(s) − min(s))` | both ends of the list | a tightly packed list is stretched; the last document of each list contributes `0` |
+| `SumScoreNormalizer` | `s / Σs` | the whole list (L1) | the unit depends on the pool depth the search returned |
+
+All three are stateless and read the list they are given — one engine's candidates for one query —
+so none of them needs a calibration set. The default is `MaxScoreNormalizer`, which is the behaviour
+the mergers had before the seam existed: passing none changes no score.
+
+**The measurement, and why the default did not change.** nDCG@10, `--no-tuned`, `Hybrid BM25+QL`,
+weights 1/1, `--hybrid-normalizer minmax,sum`:
+
+| Corpus | max | minmax | sum |
+|---|---:|---:|---:|
+| ArguAna (1 406 q) | **0.320** | 0.320 | 0.320 |
+| FiQA-2018 (648 q) | **0.232** | 0.232 | 0.232 |
+| NFCorpus (323 q) | **0.308** | 0.299 | 0.308 |
+| SciFact (300 q) | **0.662** | 0.662 | 0.662 |
+
+**No normalizer beats the default, and min-max loses 0.009 on NFCorpus.** The honest reading is
+narrower than the table: on these four corpora the BM25+QL blend reads exactly BM25's score — the
+query-likelihood half is weaker than BM25 on all of them (`docs/ranking.md` measures it) — so the
+blend has almost no room to be changed by its normalization, and this run cannot rank the three
+strategies. What it does establish is that changing the default is not justified by evidence, which
+is why `max` stays the default and the other two are opt-in. The rows to settle the question are
+hybrids whose two halves are genuinely complementary (lexical + dense, or lexical + learned
+sparse); `--hybrid-normalizer` measures those the same way.
+
 For score breakdowns, `SearchWithDetails()` returns `DetailedSearchResult`s where each
 document also carries its raw per-source score (`Contributions`), keyed by the labels passed
 as `sourceNames` to the constructor (`"lexical"`, `"semantic"`, ... — default `"engine-N"`).
