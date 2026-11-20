@@ -23,4 +23,40 @@ public sealed record LexiSharpSearchParameters
 
     /// <summary>Wrap matched terms in the hit text. Defaults to <c>false</c>.</summary>
     public bool Highlight { get; init; }
+
+    /// <summary>
+    /// Include corpus statistics for the query's terms in the response. Defaults to <c>false</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Maps to the <c>stats</c> query-string parameter. What it adds is one entry per distinct term
+    /// with its document frequency, the corpus's document count, its share of the corpus and the
+    /// scorer's inverse document frequency — the numbers a caller needs to tell a query that is too
+    /// narrow from one that is too broad, which a page of hits cannot show because the page is
+    /// capped by <see cref="Limit"/>.
+    /// </para>
+    /// <para>
+    /// It costs one vocabulary walk per distinct query term and no scoring work. It does not change
+    /// the ranking or the page.
+    /// </para>
+    /// </remarks>
+    public bool Stats { get; init; }
+
+    /// <summary>
+    /// Comma-separated names of <c>SearchDocument.Fields</c> to count over the whole match set.
+    /// Defaults to <c>null</c> — no facet counts are produced.
+    /// </summary>
+    /// <remarks>
+    /// Maps to the <c>facets</c> query-string parameter. Counts cover every document the query
+    /// matched, not just the returned page, so a caller can see the shape of a result set it is
+    /// paging through or about to narrow. An unknown field simply yields no bucket, and a value a
+    /// matched document does not carry does not count for it — the same contract as
+    /// <see cref="LexiSharpIndex{TDocument}.SearchWithFacets(string, LexiSharpQueryOptions?, IReadOnlyList{string}?)"/>.
+    /// <para>
+    /// Bounded by <see cref="LexiSharpSearchEndpoint.MaxFacetFields"/>: counting is one dictionary
+    /// increment per matched document per field, so an unbounded list would let one request pay for
+    /// an arbitrary amount of work per result.
+    /// </para>
+    /// </remarks>
+    public string? Facets { get; init; }
 }

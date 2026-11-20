@@ -406,7 +406,27 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
     public LexiSharpFacetedResult<TDocument> SearchWithFacets(
         string query,
         LexiSharpQueryOptions? options = null,
-        IReadOnlyList<string>? facetFields = null)
+        IReadOnlyList<string>? facetFields = null) =>
+        SearchWithFacets(query, options, facetFields, CancellationToken.None);
+
+    /// <summary>
+    /// Same search as <see cref="SearchWithFacets(string, LexiSharpQueryOptions?, IReadOnlyList{string}?)"/>,
+    /// stopping when <paramref name="cancellationToken"/> is cancelled.
+    /// </summary>
+    /// <remarks>
+    /// The token reaches both halves of the call: the counting pass over the base engine's match set
+    /// and the ranking the decorated pipeline produces. An overload rather than a defaulted parameter,
+    /// for the reason given on <see cref="Search(string, LexiSharpQueryOptions?, CancellationToken)"/>.
+    /// </remarks>
+    /// <param name="query">Raw query text.</param>
+    /// <param name="options">Optional per-search options.</param>
+    /// <param name="facetFields">Fields to count; null/empty yields no buckets.</param>
+    /// <param name="cancellationToken">Token observed by the search.</param>
+    public LexiSharpFacetedResult<TDocument> SearchWithFacets(
+        string query,
+        LexiSharpQueryOptions? options,
+        IReadOnlyList<string>? facetFields,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
 
@@ -417,8 +437,8 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
         if (coreOptions.IsEmpty)
             return new LexiSharpFacetedResult<TDocument>(Array.Empty<LexiSharpHit<TDocument>>(), Array.Empty<FacetBucket>());
 
-        var buckets = _baseEngine.SearchWithFacets(effectiveQuery, coreOptions, facetFields).Buckets;
-        var results = MapHits(_engine.Search(effectiveQuery, coreOptions), null, options?.HighlightOptions);
+        var buckets = _baseEngine.SearchWithFacets(effectiveQuery, coreOptions, facetFields, cancellationToken).Buckets;
+        var results = MapHits(_engine.Search(effectiveQuery, coreOptions, cancellationToken), null, options?.HighlightOptions);
 
         return new LexiSharpFacetedResult<TDocument>(results, buckets);
     }
@@ -470,6 +490,41 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
         ArgumentNullException.ThrowIfNull(query);
 
         return _baseEngine.Explain(documentId, Fuzzify(query));
+    }
+
+    /// <summary>
+    /// What the corpus says about the terms a search for <paramref name="query"/> would score:
+    /// one <see cref="QueryTermStatistic"/> per distinct term, in reading order.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The numbers are read off the index, not produced by a search: no document is scored, so this
+    /// is the cheap way to ask a question a result page cannot answer — <em>is this query too narrow
+    /// or too broad for this corpus</em>. A term whose
+    /// <see cref="QueryTermStatistic.DocumentFrequency"/> is <c>0</c> is a typo or an unseen
+    /// expansion; a term whose <see cref="QueryTermStatistic.DocumentShare"/> is close to <c>1</c>
+    /// cannot separate documents at all.
+    /// </para>
+    /// <para>
+    /// <b>Described as written, not as fuzzified.</b> When <see cref="LexiSharpIndexOptions{TDocument}.EnableFuzzy"/>
+    /// is on, a search rewrites each query word into a fuzzy atom; this method reads the words the
+    /// caller typed. The statistics then describe the question, which is what a caller inspecting a
+    /// query wants to see — the variants the rewriting adds are a scoring detail, and listing them
+    /// would turn one term into the vocabulary neighbourhood it expands to.
+    /// </para>
+    /// <para>
+    /// <see cref="QueryTermStatistic.InverseDocumentFrequency"/> is the active scorer's own value, and
+    /// <c>null</c> when that scorer does not implement <see cref="Core.IQueryTermStatistics"/>. The
+    /// frequency and the share are always reported.
+    /// </para>
+    /// </remarks>
+    /// <param name="query">Raw query text.</param>
+    /// <returns>One entry per distinct scoring term; empty for a query with no scoring term or an empty index.</returns>
+    public IReadOnlyList<QueryTermStatistic> DescribeQuery(string query)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        return _baseEngine.DescribeQuery(query);
     }
 
     /// <summary>

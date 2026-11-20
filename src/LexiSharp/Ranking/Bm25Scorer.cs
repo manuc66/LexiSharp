@@ -23,7 +23,7 @@ namespace LexiSharp.Ranking;
 /// <c>arithmetic</c> fixes the precision. All three default to this library's own conventions.
 /// </para>
 /// </remarks>
-public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlannableScorer, IWeightedQueryScorer
+public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlannableScorer, IWeightedQueryScorer, IQueryTermStatistics
 {
     private readonly double _k1;
     private readonly double _b;
@@ -173,6 +173,10 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
 
     /// <inheritdoc />
     public string Name => "BM25";
+
+    /// <inheritdoc />
+    public IReadOnlyList<QueryTermStatistic> DescribeTerms(IReadOnlyList<string> terms, IReadOnlyTextIndex index) =>
+        TermStatistics.Describe(terms, index, TermStatistics.Bm25Idf);
 
     /// <inheritdoc />
     public double Score(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)

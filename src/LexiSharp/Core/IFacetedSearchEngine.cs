@@ -38,6 +38,28 @@ public interface IFacetedSearchEngine : ITextSearchEngine
         IReadOnlyList<string>? facetFields = null);
 
     /// <summary>
+    /// Same search as <see cref="SearchWithFacets(string, SearchOptions?, IReadOnlyList{string}?)"/>,
+    /// stopping when <paramref name="cancellationToken"/> is cancelled.
+    /// </summary>
+    /// <remarks>
+    /// A default-implemented overload rather than a parameter on the member above: implementing that
+    /// signature is what a third-party engine already does, and the engines that cannot honour a token
+    /// keep working — they simply run to completion, which is what they did before the overload
+    /// existed. <c>RankedTextSearchEngine</c> honours it: a client that disconnects mid-facet should
+    /// not leave the counting pass running, and that pass reads every matched document.
+    /// </remarks>
+    /// <param name="query">Raw query text; it is tokenized internally.</param>
+    /// <param name="options">Optional search options (<see cref="SearchOptions.Default"/> when null).</param>
+    /// <param name="facetFields">Fields to count; null/empty yields no buckets.</param>
+    /// <param name="cancellationToken">Token observed by the search.</param>
+    FacetedSearchResult SearchWithFacets(
+        string query,
+        SearchOptions? options,
+        IReadOnlyList<string>? facetFields,
+        CancellationToken cancellationToken) =>
+        SearchWithFacets(query, options, facetFields);
+
+    /// <summary>
     /// Same search as <see cref="ITextSearchEngine.Search(ReadOnlySpan{char}, SearchOptions?, CancellationToken)"/>
     /// plus facet buckets, without materializing the query as a string.
     /// </summary>

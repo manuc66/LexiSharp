@@ -63,6 +63,7 @@ are listed first.
 | `IQueryCostProbe` | — | Optional capability of an ITextSearchEngine that can estimate, cheaply and without running a search, how many documents a query is likely to touch — the signal… | [guide](reference.md) |
 | `IQueryRouter` | — | Picks which route (engine + optional filters) a RoutingSearchEngine should run a query on — a semantic/intent decision, as opposed to IQueryCostEstimator which… | [guide](reference.md) |
 | `IQuerySyntaxSupport` | — | Declares which QueryFeatures an ITextSearchEngine interprets, so callers can discover the supported query syntax instead of discovering it by getting wrong… | [guide](reference.md) |
+| `IQueryTermStatistics` | `ITextScorer` | Optional capability of an ITextScorer that can describe a query's terms from the corpus statistics alone, without scoring a document. | [guide](reference.md) |
 | `IQueryTermWeighter` | — | Computes a weight for each term of a tokenized query, before the query reaches a scorer. | [guide](reference.md) |
 | `IQueryTransformer` | — | Rewrites a raw query into one or more searchable variants before retrieval — the « pre-retrieval transformation » seam. Rewriting, decomposing a question into… | [guide](reference.md) |
 | `IReadOnlyTextIndex` | — | The read-only view of an ITextIndex: the corpus statistics and per-document lookups a scorer, a reranker or an extractor needs, with none of the mutation… | [guide](reference.md) |
@@ -272,6 +273,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `QueryRoute` | record | — | The decision an IQueryRouter returns for a query: which route to run, and how confident the router is. |
 | `QuerySyntax` | class | — | Detects and validates the LexiSharp query syntax a raw query carries, so an engine that does not interpret a feature fails fast instead of silently treating the… |
 | `QueryTermOperator` | enum | — | What a query atom asks of the documents that contain it. |
+| `QueryTermStatistic` | record | — | What the corpus says about one query term: how many documents carry it, and how rare the active scorer considers it. |
 | `RawQuerySegments` | record | — | The raw, un-tokenized quote-level split of a query: text outside quotes and the literal interior of each quoted segment. SQL backends forward these strings to… |
 | `RerankedTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that re-ranks the matches of an inner engine before they are returned. |
 | `RetrievalAgreement` | enum | — | How much the sources of a federated search agree about one document. |
@@ -421,24 +423,24 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `Bm25FGridPoint` | record | — | One evaluated BM25F configuration and the quality it achieved. |
 | `Bm25FParameterTuner` | class | — | Finds the BM25F parameters (k1, b, and a weight per named field) that best satisfy a set of labeled validation queries, by brute-force grid search in two… |
 | `Bm25FParameters` | record | — | BM25F tuning knobs: term-frequency saturation (k1), document-length normalization (b), and how much each field counts for. |
-| `Bm25FScorer` | class | `IFieldScopedScorer`, `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | BM25F ranking: BM25 over a document split into weighted fields, so a term in a title can count for more than the same term in a body. |
+| `Bm25FScorer` | class | `IFieldScopedScorer`, `IQueryTermStatistics`, `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | BM25F ranking: BM25 over a document split into weighted fields, so a term in a title can count for more than the same term in a body. |
 | `Bm25FTuningResult` | record | — | The outcome of a Tune run: the best configuration found, the quality it achieved, and the full evaluation grid for inspection. |
 | `Bm25GridPoint` | record | — | One evaluated (k1, b) combination and the quality it achieved. |
 | `Bm25LGridPoint` | record | — | One evaluated BM25L configuration and the quality it achieved. |
 | `Bm25LParameterTuner` | class | — | Finds the BM25L parameters (k1, b and the lower bound delta) that best satisfy a set of labeled validation queries, by brute-force grid search. |
-| `Bm25LScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | BM25L relevance: Okapi BM25 with a compressed term frequency in the numerator and a lower bound on it, which lengthens the reach of rare terms in long… |
+| `Bm25LScorer` | class | `IQueryTermStatistics`, `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | BM25L relevance: Okapi BM25 with a compressed term frequency in the numerator and a lower bound on it, which lengthens the reach of rare terms in long… |
 | `Bm25LTuningResult` | record | — | The outcome of a Tune run: the best configuration found, the quality it achieved, and the full evaluation grid for inspection. |
 | `Bm25ParameterTuner` | class | — | Finds the Okapi BM25 parameters (k1, b) that best satisfy a set of labeled validation queries, by brute-force grid search. |
 | `Bm25Parameters` | record | — | Okapi BM25 tuning knobs: term-frequency saturation (k1) and document-length normalization (b). |
 | `Bm25PlusGridPoint` | record | — | One evaluated BM25+ configuration and the quality it achieved. |
 | `Bm25PlusParameterTuner` | class | — | Finds the BM25+ parameters (k1, b and the lower bound delta) that best satisfy a set of labeled validation queries, by brute-force grid search. |
-| `Bm25PlusScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | BM25+ relevance: Okapi BM25 with the hard term-presence cut replaced by a lower-bounded one, so a document that matches more distinct query terms is rewarded… |
+| `Bm25PlusScorer` | class | `IQueryTermStatistics`, `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | BM25+ relevance: Okapi BM25 with the hard term-presence cut replaced by a lower-bounded one, so a document that matches more distinct query terms is rewarded… |
 | `Bm25PlusTuningResult` | record | — | The outcome of a Tune run: the best configuration found, the quality it achieved, and the full evaluation grid for inspection. |
-| `Bm25Scorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer`, `IWeightedQueryScorer` | Okapi BM25 relevance — the standard non-semantic ranking model for full-text search. It blends term saturation (k1) with document-length normalization (b). |
+| `Bm25Scorer` | class | `IQueryTermStatistics`, `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer`, `IWeightedQueryScorer` | Okapi BM25 relevance — the standard non-semantic ranking model for full-text search. It blends term saturation (k1) with document-length normalization (b). |
 | `Bm25TuningResult` | record | — | The outcome of a Tune run: the best parameter pair found, the quality it achieved and the full evaluation grid for inspection. |
 | `Bm25VaGridPoint` | record | — | One evaluated (k1, b) combination of a Bm25VaParameterTuner. |
 | `Bm25VaParameterTuner` | class | — | Finds the (k1, b) of Bm25VaScorer that best satisfy a set of labeled validation queries, by the same brute-force grid search as Bm25ParameterTuner. |
-| `Bm25VaScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | BM25VA — Okapi BM25 whose length normalization is shared with the document's verboseness, the average number of times a term is repeated in the document… |
+| `Bm25VaScorer` | class | `IQueryTermStatistics`, `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | BM25VA — Okapi BM25 whose length normalization is shared with the document's verboseness, the average number of times a term is repeated in the document… |
 | `Bm25VaTuningResult` | record | — | The outcome of a Bm25VaParameterTuner run: the best (k1, b) found, the quality it achieved and the full grid for inspection. |
 | `Bm25ValidationQuery` | record | — | One labeled validation query of a Bm25ParameterTuner: a raw query together with the ids of the documents a good ranking should surface. |
 | `BooleanMatch` | enum | — | How the modifiers of a BooleanScorer are combined. |
@@ -460,7 +462,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `ScoreConfidence` | class | — | Maps an ordered result set's raw scores into calibrated confidences in [0,1] — the "is this really the answer?" gauge that raw lexical scores (BM25, TF-IDF,… |
 | `ScoreConfidenceMethod` | enum | — | How an ordered result set's raw scores are mapped into a calibrated per-result confidence in [0,1]. |
 | `SpreadBm25Scorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | BM25 whose term frequency is a spatial spread rather than a count: how many distinct windows of the document contain the term, instead of how many times it… |
-| `TfIdfScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | Classic TF-IDF relevance. A document matches when it contains at least one query term; rare terms are weighted more than common ones. |
+| `TfIdfScorer` | class | `IQueryTermStatistics`, `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | Classic TF-IDF relevance. A document matches when it contains at least one query term; rare terms are weighted more than common ones. |
 | `TieAwareMetric` | record struct | — | A metric's value over every ordering the scores leave admissible: the expectation under uniform random tie-breaking, and the exact best and worst case. |
 | `TieBreak` | enum | — | How the engines order candidates whose scores are exactly equal. |
 | `TuningMetric` | enum | — | The quality metric a Bm25ParameterTuner maximizes over its validation set. |

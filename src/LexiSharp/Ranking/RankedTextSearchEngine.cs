@@ -334,6 +334,23 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
 
     /// <inheritdoc />
     public FacetedSearchResult SearchWithFacets(
+        string query,
+        SearchOptions? options,
+        IReadOnlyList<string>? facetFields,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        var collector = FacetCollector.Create(facetFields, numeric: null);
+        var results = RunQuery(query.AsSpan(), options ?? SearchOptions.Default, collector, cancellationToken);
+
+        return new FacetedSearchResult(
+            results,
+            collector is null ? Array.Empty<FacetBucket>() : collector.Build());
+    }
+
+    /// <inheritdoc />
+    public FacetedSearchResult SearchWithFacets(
         ReadOnlySpan<char> query,
         SearchOptions? options = null,
         IReadOnlyList<string>? facetFields = null)
@@ -2098,6 +2115,78 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
             total += _index.DocumentFrequency(parsed.ScopedTerms[i].Term);
 
         return total;
+    }
+
+    /// <summary>
+    /// What the corpus says about the terms <paramref name="query"/> would score, without running
+    /// the search: one <see cref="QueryTermStatistic"/> per distinct term, in reading order.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The terms are resolved exactly as a search would resolve them — the query language is parsed,
+    /// synonyms and prefix/fuzzy atoms are expanded against the vocabulary, and field scopes are
+    /// validated — because a description of a query other than the one the engine runs is a
+    /// description of nothing. The cost is the resolution the search already pays once per query:
+    /// one vocabulary walk per term, and no document is read or scored.
+    /// </para>
+    /// <para>
+    /// The inverse document frequency comes from the active scorer when it implements
+    /// <see cref="IQueryTermStatistics"/>, and is <c>null</c> otherwise — this method never invents a
+    /// number the scorer did not produce. <see cref="QueryTermStatistic.DocumentFrequency"/> and
+    /// <see cref="QueryTermStatistic.DocumentShare"/> are corpus facts and are always reported, so a
+    /// caller whose scorer cannot report an idf still learns whether a term is rare.
+    /// </para>
+    /// <para>
+    /// A prohibited atom (<c>-term</c>) gates rather than scores. Its terms are not among this
+    /// answer's entries, for the same reason they are absent from a search's scoring list: excluding
+    /// a document says nothing about how relevant it is. A field-scoped atom (<c>title:term</c>) is
+    /// absent too, and for a different reason: its frequency would be the field's, not the corpus's,
+    /// and <see cref="QueryTermStatistic"/> has no field — reporting the corpus-wide frequency under
+    /// a scope's name would attribute the wrong number to the wrong question.
+    /// </para>
+    /// </remarks>
+    /// <param name="query">Raw query text, parsed with the engine's tokenizer.</param>
+    /// <returns>One entry per distinct scoring term; empty for a query with no scoring term.</returns>
+    public IReadOnlyList<QueryTermStatistic> DescribeQuery(string query)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        return DescribeQuery(query.AsSpan());
+    }
+
+    /// <summary>
+    /// Same as <see cref="DescribeQuery(string)"/>, without materializing the query as a string.
+    /// </summary>
+    /// <param name="query">Raw query text, parsed with the engine's tokenizer.</param>
+    /// <returns>One entry per distinct scoring term; empty for a query with no scoring term.</returns>
+    public IReadOnlyList<QueryTermStatistic> DescribeQuery(ReadOnlySpan<char> query)
+    {
+        if (_index.Count == 0)
+            return Array.Empty<QueryTermStatistic>();
+
+        var prepared = BuildQuery(query, SearchOptions.Default, KnownFieldNames(query, SearchOptions.Default));
+        var terms = TermDeduplicator.Distinct(prepared.Terms);
+
+        if (terms.Count == 0)
+            return Array.Empty<QueryTermStatistic>();
+
+        return _scorer is IQueryTermStatistics statistics
+            ? statistics.DescribeTerms(terms, _index)
+            : DescribeFrequencies(terms);
+    }
+
+    /// <summary>
+    /// The fallback for a scorer that cannot name its idf: the corpus facts, with the rarity left
+    /// unreported rather than approximated by a formula this scorer does not use.
+    /// </summary>
+    private IReadOnlyList<QueryTermStatistic> DescribeFrequencies(IReadOnlyList<string> terms)
+    {
+        int documentCount = _index.StatisticDocumentCount;
+        var described = new QueryTermStatistic[terms.Count];
+
+        for (int i = 0; i < terms.Count; i++)
+            described[i] = new QueryTermStatistic(terms[i], _index.DocumentFrequency(terms[i]), documentCount, null);
+
+        return described;
     }
 
     /// <summary>

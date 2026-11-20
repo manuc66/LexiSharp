@@ -23,7 +23,7 @@ public sealed record LexiSharpHit<TDocument>(
 
 /// <summary>
 /// Ranked hits plus one facet bucket per requested field, as returned by
-/// <see cref="LexiSharpIndex{TDocument}.SearchWithFacets"/>.
+/// <see cref="LexiSharpIndex{TDocument}.SearchWithFacets(string, LexiSharpQueryOptions?, IReadOnlyList{string}?)"/>.
 /// </summary>
 /// <param name="Results">The ranked, paginated page.</param>
 /// <param name="Buckets">

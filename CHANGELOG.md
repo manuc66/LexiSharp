@@ -2,6 +2,34 @@
 
 ### Added
 
+- **`QueryTermStatistic` and `IQueryTermStatistics`** (`LexiSharp.Core`), with
+  `RankedTextSearchEngine.DescribeQuery` and `LexiSharpIndex<T>.DescribeQuery` on top: one entry per
+  distinct query term with its document frequency, the corpus's document count, its share of the
+  corpus and the active scorer's inverse document frequency — read off the index without scoring a
+  document, so the answer costs one vocabulary walk per term. The terms described are the ones a
+  search would score, after query-language parsing, synonym and prefix/fuzzy resolution and
+  prohibited-atom removal. The idf is the scorer's own (BM25's `ln(1 + (N − df + 0.5) / (df + 0.5))`,
+  TF-IDF's smoothed variant) and is `null` for a scorer that has no such quantity, rather than a
+  number attributed to it; a test pins it against `Explain`'s per-term figure for the same term.
+  `DocumentShare` (`df / N`) is the scorer-independent reading, which is what a caller comparing
+  corpora or scorers should read.
+
+- **`stats` and `facets` on the ASP.NET Core search endpoint**, and `Terms`/`Facets` on
+  `LexiSharpSearchResponse<TDocument>`. `stats=true` returns the term statistics above;
+  `facets=kind,lang` returns string-facet buckets counted over the whole match set, the same
+  contract as `SearchWithFacets`. Both are opt-in and change neither the ranking nor the page, and
+  a request that asks for neither receives a payload byte-identical to the previous one — the two
+  properties are omitted from the JSON rather than written as `null`. The facet list is bounded by
+  `LexiSharpSearchEndpoint.MaxFacetFields` (8) and a larger request is refused with `400`: counting
+  is one increment per matched document per field, so an unbounded list would let one request buy
+  arbitrary work per result.
+
+- **`IFacetedSearchEngine.SearchWithFacets(…, CancellationToken)`** and the matching
+  `LexiSharpIndex<T>.SearchWithFacets` overload: the faceted path now observes the request's token
+  in `RankedTextSearchEngine`, where a client that disconnects mid-count used to leave the counting
+  pass reading every matched document. A default implementation keeps third-party engines that do
+  not override it compiling and running as before.
+
 - **`PostgresBm25SearchEngine`** (`LexiSharp.Postgres`): Okapi BM25 over **stock PostgreSQL**. The
   `tsvector` column and its GIN index do the matching and `Bm25Scorer` does the ranking over the
   term frequencies the vector already stores, so the only server-side requirement is
