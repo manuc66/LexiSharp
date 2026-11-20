@@ -114,7 +114,6 @@ C|LexiSharp.Core.ParsedQuery|Void .ctor(System.Collections.Generic.IReadOnlyList
 C|LexiSharp.Core.PassthroughTermCorrector|Void .ctor()
 C|LexiSharp.Core.QueryExpansion|Void .ctor(System.String, LexiSharp.Core.QueryExpansionKind, Int32)
 C|LexiSharp.Core.QueryRoute|Void .ctor(System.String, Double)
-C|LexiSharp.Core.QueryTermStatistic|Void .ctor(System.String, Int32, Int32, System.Nullable`1[System.Double])
 C|LexiSharp.Core.RawQuerySegments|Void .ctor(System.String, System.Collections.Generic.IReadOnlyList`1[System.String])
 C|LexiSharp.Core.RerankedTextSearchEngine|Void .ctor(LexiSharp.Core.ITextSearchEngine, LexiSharp.Core.IReranker, Int32, LexiSharp.Core.RetrievalTelemetry)
 C|LexiSharp.Core.RetrievalAgreementReport|Void .ctor(System.String, LexiSharp.Core.RetrievalAgreement, System.Collections.Generic.IReadOnlyList`1[System.String], System.Collections.Generic.IReadOnlyList`1[System.String], System.Collections.Generic.IReadOnlyList`1[System.String], System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Double])
@@ -1040,7 +1039,6 @@ M|LexiSharp.Core.IListableSearchEngine|System.Collections.Generic.IReadOnlyList`
 M|LexiSharp.Core.IQueryCostEstimator|Int32 Select(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.RoutedEngine], System.ReadOnlySpan`1[System.Char], LexiSharp.Core.SearchOptions)
 M|LexiSharp.Core.IQueryCostProbe|Int64 EstimateCandidateCount(System.ReadOnlySpan`1[System.Char], LexiSharp.Core.SearchOptions)
 M|LexiSharp.Core.IQueryRouter|System.Threading.Tasks.ValueTask`1[LexiSharp.Core.QueryRoute] RouteAsync(System.String, System.Collections.Generic.IReadOnlyList`1[System.String], System.Threading.CancellationToken)
-M|LexiSharp.Core.IQueryTermStatistics|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.QueryTermStatistic] DescribeTerms(System.Collections.Generic.IReadOnlyList`1[System.String], LexiSharp.Core.IReadOnlyTextIndex)
 M|LexiSharp.Core.IQueryTermWeighter|System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Double] Weigh(System.Collections.Generic.IReadOnlyList`1[System.String])
 M|LexiSharp.Core.IQueryTransformer|System.Collections.Generic.IReadOnlyList`1[System.String] Transform(System.String)
 M|LexiSharp.Core.IReadOnlyTextIndex|Boolean Contains(System.String)
@@ -1140,11 +1138,6 @@ M|LexiSharp.Core.QueryRoute|System.String ToString()
 M|LexiSharp.Core.QueryRoute|Void Deconstruct(System.String ByRef, Double ByRef)
 M|LexiSharp.Core.QuerySyntax|LexiSharp.Core.QueryFeatures Detect(System.String, System.Collections.Generic.IReadOnlySet`1[System.String])
 M|LexiSharp.Core.QuerySyntax|Void EnsureSupported(System.String, LexiSharp.Core.QueryFeatures, System.String, System.Collections.Generic.IReadOnlySet`1[System.String])
-M|LexiSharp.Core.QueryTermStatistic|Boolean Equals(LexiSharp.Core.QueryTermStatistic)
-M|LexiSharp.Core.QueryTermStatistic|Boolean Equals(System.Object)
-M|LexiSharp.Core.QueryTermStatistic|Int32 GetHashCode()
-M|LexiSharp.Core.QueryTermStatistic|System.String ToString()
-M|LexiSharp.Core.QueryTermStatistic|Void Deconstruct(System.String ByRef, Int32 ByRef, Int32 ByRef, System.Nullable`1[System.Double] ByRef)
 M|LexiSharp.Core.RawQuerySegments|Boolean Equals(LexiSharp.Core.RawQuerySegments)
 M|LexiSharp.Core.RawQuerySegments|Boolean Equals(System.Object)
 M|LexiSharp.Core.RawQuerySegments|Int32 GetHashCode()
@@ -2374,12 +2367,6 @@ P|LexiSharp.Core.QueryExpansion|MaxEdits|System.Int32|getset
 P|LexiSharp.Core.QueryExpansion|Operator|LexiSharp.Core.QueryTermOperator|getset
 P|LexiSharp.Core.QueryRoute|Confidence|System.Double|getset
 P|LexiSharp.Core.QueryRoute|RouteId|System.String|getset
-P|LexiSharp.Core.QueryTermStatistic|DocumentCount|System.Int32|getset
-P|LexiSharp.Core.QueryTermStatistic|DocumentFrequency|System.Int32|getset
-P|LexiSharp.Core.QueryTermStatistic|DocumentShare|System.Double|get
-P|LexiSharp.Core.QueryTermStatistic|InverseDocumentFrequency|System.Nullable<System.Double>|getset
-P|LexiSharp.Core.QueryTermStatistic|IsAbsent|System.Boolean|get
-P|LexiSharp.Core.QueryTermStatistic|Term|System.String|getset
 P|LexiSharp.Core.RawQuerySegments|FreeText|System.String|getset
 P|LexiSharp.Core.RawQuerySegments|Phrases|System.Collections.Generic.IReadOnlyList<System.String>|getset
 P|LexiSharp.Core.RetrievalAgreementReport|AbsentSources|System.Collections.Generic.IReadOnlyList<System.String>|getset
@@ -3086,7 +3073,6 @@ T|LexiSharp.Core.IQueryCostEstimator|interface||
 T|LexiSharp.Core.IQueryCostProbe|interface||
 T|LexiSharp.Core.IQueryRouter|interface||
 T|LexiSharp.Core.IQuerySyntaxSupport|interface||
-T|LexiSharp.Core.IQueryTermStatistics|interface||LexiSharp.Core.ITextScorer
 T|LexiSharp.Core.IQueryTermWeighter|interface||
 T|LexiSharp.Core.IQueryTransformer|interface||
 T|LexiSharp.Core.IReadOnlyTextIndex|interface||
@@ -3128,7 +3114,6 @@ T|LexiSharp.Core.QueryParser|class||
 T|LexiSharp.Core.QueryRoute|class||System.IEquatable<LexiSharp.Core.QueryRoute>
 T|LexiSharp.Core.QuerySyntax|class||
 T|LexiSharp.Core.QueryTermOperator|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
-T|LexiSharp.Core.QueryTermStatistic|class||System.IEquatable<LexiSharp.Core.QueryTermStatistic>
 T|LexiSharp.Core.RawQuerySegments|class||System.IEquatable<LexiSharp.Core.RawQuerySegments>
 T|LexiSharp.Core.RerankedTextSearchEngine|class||LexiSharp.Core.IQueryCostProbe,LexiSharp.Core.ITextSearchEngine
 T|LexiSharp.Core.RetrievalAgreementAnalyzer|class||
