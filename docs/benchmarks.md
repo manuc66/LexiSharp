@@ -1815,6 +1815,53 @@ column as the shape of the walk, not as what a fuzzy atom costs today.
 `Stopwatch` in a plain process, not a BenchmarkDotNet report; read the direction and the cold/warm
 split, not the last digit.
 
+## Sparse engine lane (`sparse-engine`): where a learned-sparse query spends its time
+
+The `sparse-wand` lane measures a contiguous layout and says the shipped engine's
+dictionary-of-dictionaries is where the order of magnitude is. This lane measures the engine itself,
+through `Import`, so a layout change has a before and an after on the same synthetic corpus.
+
+```bash
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- sparse-engine 50000 173
+```
+
+**Query shapes, not one average.** The lane separates the fixed cost from the posting work: 40
+**absent** terms (no postings, so the term dictionary is the only thing touched), 40 **tail** terms
+with a few hundred postings each, and **1 / 10 / 40 / 100 head** terms — the union a real expansion
+reaches. The corpus is synthetic: 50,000 documents, 173 distinct terms each, a 30,000-term Zipf
+popularity, weights skewed low. It is the SPLADE shape, not a measurement of SPLADE.
+
+**A 50,000-document run, one host, indicative:**
+
+| Query | p50 | Allocation/search |
+|---|---:|---:|
+| 40 absent terms | 4.1 µs | 864 B |
+| 40 tail terms | 439 µs | 1,392 B |
+| 1 head term | 50 µs | 1,384 B |
+| 10 head terms | 223 µs | 1,392 B |
+| 40 head terms | 655 µs | 1,392 B |
+| 100 head terms | 1.35 ms | 1,392 B |
+
+**The dictionary is not where the query time goes.** Forty absent terms cost 4 µs: the fixed setup
+plus 40 dictionary misses. The time then scales with the postings the query reaches — 10 head terms
+cost 223 µs, 100 cost 1.35 ms — so the remaining cost is the posting walk, the ordinal-indexed
+`ScoreAccumulator` writes, and the top-`k` scan over the union. That is why the layout change below
+replaced the **document-id** dictionary in the inner loop, not the term dictionary: the latter is
+40 lookups per query, while the former was one hash per posting entry.
+
+**Before and after the layout change**, 10,000 documents / 40 head terms, same generated query set:
+**~800 µs and 390 KB per search** in the dictionary-of-dictionaries, **~98 µs and 1.4 KB** with
+contiguous postings and an ordinal accumulator — about **8× faster and 280× less allocation**. At
+50,000 documents the old layout reads 3.4–5.3 ms and 1.8 MB per search (random head-40 draws), against
+0.53–0.65 ms and 1.4 KB for the fixed head-40 shape above; the two query draws are not identical, so
+read that row as a direction, not a ratio. Import at 50,000 documents falls from ~4.0 s to ~2.4 s.
+
+**What it does not measure.** The provider (ONNX inference is outside the engine), a real SPLADE
+distribution, concurrent searches, or rebuilds under mutation. Nor the cost of removing a document:
+the posting arrays close their gap when an entry leaves, which is linear in the list it leaves and
+was a constant-time delete per term in the document-id dictionary. The allocation figure is managed heap
+on the calling thread, not RSS.
+
 
 ## Similarity (`LevenshteinBenchmarks`)
 
