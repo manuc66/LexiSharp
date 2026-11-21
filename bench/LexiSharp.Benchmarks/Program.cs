@@ -28,6 +28,14 @@ public static class Program
             return;
         }
 
+        // The same question on a real segment's blocks, plus the block-walk cost and mapped/array
+        // search. See SegmentWandLane.
+        if (args.Length > 0 && args[0] == "segment-wand")
+        {
+            SegmentWandLane.Run(args[1..]);
+            return;
+        }
+
         // The same question for learned-sparse vectors, whose posting lists are denser than text's.
         // See SparseWandLane.
         if (args.Length > 0 && args[0] == "sparse-wand")
