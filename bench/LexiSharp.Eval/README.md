@@ -12,7 +12,9 @@ compare configs (BM25 variants, TF-IDF, query likelihood, dense, hybrids) head t
 
 All numbers are from the BEIR paper (Thakur et al. 2021, Table 2, Pyserini BM25).
 Each dataset is downloaded on first use from the BEIR public mirror and its zip is verified
-against its published md5.
+against its published md5. When that host does not answer, the same file is fetched from the
+Internet Archive's capture of the same URL and must pass the same md5: a fallback is a second
+way to get the artifact, never a second artifact.
 
 | Dataset | Zip md5 | Test queries | Relevance | BM25 nDCG@10 (BEIR) |
 |---------|---------|--------------|-----------|---------------------|
@@ -23,7 +25,10 @@ against its published md5.
 The three md5 values are the ones published in the BEIR README, so the zips this harness
 verifies are the same artifacts BEIR distributes. The mirror is deliberate: BEIR datasets are
 re-hosted on Hugging Face, and re-hosts have not always matched the original content, which
-would silently turn a pinned hash into a different experiment.
+would silently turn a pinned hash into a different experiment. That is also why the fallback is
+an archive of the same URL rather than one of those re-hosts: an archived capture can be checked
+against the published md5, so it either is the same file or it is rejected, and a re-host that
+repacked the corpus cannot be checked at all.
 
 ## Dataset licenses
 
