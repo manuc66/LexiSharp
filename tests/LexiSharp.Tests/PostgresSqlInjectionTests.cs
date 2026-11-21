@@ -176,6 +176,99 @@ public class PostgresSqlInjectionTests
         }
     }
 
+    [SkippableFact]
+    public void Bm25Engine_StoresADocumentCarryingSqlAsText()
+    {
+        SkipIfNoServer();
+
+        string table = Table("bm25doc");
+        using var engine = new PostgresBm25SearchEngine(
+            ConnectionString!, new PostgresBm25Options { Table = table });
+
+        try
+        {
+            string payload = Payload(table);
+            engine.Add(new SearchDocument("d1", payload + " common"));
+
+            var results = engine.Search("common", new SearchOptions(Limit: 10));
+
+            Assert.Equal("d1", Assert.Single(results).DocumentId);
+            AssertTableStillHasOneRow(table);
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    /// <summary>
+    /// The BM25 engine turns the query into lexemes on the server and gates candidates on a subset
+    /// of them. Both travel as values: the lexeme array is a <c>text[]</c> parameter, and the gate's
+    /// disjunction is built by <c>quote_literal</c> inside the statement rather than by string
+    /// concatenation. The trace is what proves the gate path ran.
+    /// </summary>
+    [SkippableFact]
+    public void Bm25Engine_TreatsTheQueryAndItsGateTermsAsValues()
+    {
+        SkipIfNoServer();
+
+        string table = Table("bm25query");
+        using var engine = new PostgresBm25SearchEngine(
+            ConnectionString!, new PostgresBm25Options { Table = table });
+
+        try
+        {
+            string payload = Payload(table);
+
+            // The payload's terms have to exist in the corpus, or the rare-term gate has no term to
+            // choose and falls back to the whole match — the other parameterized path.
+            engine.Add(new SearchDocument("d1", payload + " common"));
+
+            var trace = new SearchTrace();
+            engine.Search(payload, new SearchOptions(Limit: 10, ParseQuerySyntax: false, Trace: trace));
+
+            Assert.Contains(trace.Steps, step =>
+                step.Stage == TraceStage.Gate
+                && step.Detail is not null
+                && step.Detail.Contains("rare-term gate", StringComparison.Ordinal));
+
+            AssertTableStillHasOneRow(table);
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    [SkippableFact]
+    public void Bm25Engine_TreatsAFilterFieldAndValueAsParameters()
+    {
+        SkipIfNoServer();
+
+        string table = Table("bm25filter");
+        using var engine = new PostgresBm25SearchEngine(
+            ConnectionString!, new PostgresBm25Options { Table = table });
+
+        try
+        {
+            string payload = Payload(table);
+            engine.Add(new SearchDocument(
+                "d1", "common term", new Dictionary<string, string> { ["kind"] = "a" }));
+
+            var option = new SearchOptions(
+                Limit: 10,
+                Filters: [new MetadataFilter($"kind{payload}", MetadataFilterOperator.Equal, payload)]);
+
+            engine.Search("common", option);
+
+            AssertTableStillHasOneRow(table);
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
     private static bool ExtensionAvailable(string name)
     {
         using var connection = new NpgsqlConnection(ConnectionString);
@@ -188,3 +281,4 @@ public class PostgresSqlInjectionTests
         return (long)command.ExecuteScalar()! > 0;
     }
 }
+
