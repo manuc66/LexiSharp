@@ -33,6 +33,14 @@
   the lane the mapping is measurable on; the BM25 + query-likelihood rows the flag also reaches are
   not complementary enough to distinguish the normalizers.
 
+- **`segment-wand` lane in `bench/LexiSharp.Benchmarks`**: the block-bound ceiling on a real
+  segment, per block and per eight-block skip-table entry, beside the cost of walking headers versus
+  decoding entries and the array/mapped engine on the same query. At 100,000 documents the head term
+  reads 98.3 % of its entries in a block below the final top-10 threshold and 87.7 % in an eight-block
+  group that could be skipped together, but the full decode is only about 10 % of the search's p50;
+  tail queries have nothing to prune. It is a ceiling, not a traversal, and it does not measure a
+  skip entry carrying a bound. Recorded in `docs/benchmarks.md`.
+
 - **`sparse-wand` lane in `bench/LexiSharp.Benchmarks`**: the pruning ceiling for learned-sparse
   vectors, measured on the shape a SPLADE model produces (50,000 documents, 173 postings each,
   queries drawn by document frequency) in the layout a sparse index would store — contiguous
