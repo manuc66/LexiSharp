@@ -41,6 +41,12 @@ internal static class SparseEngineLane
         int documents = args.Length > 0 ? ParsePositive(args[0], "documents") : DefaultDocuments;
         int termsPerDocument = args.Length > 1 ? ParsePositive(args[1], "terms per document") : DefaultTermsPerDocument;
 
+        // Each document draws its terms from the same fixed vocabulary, so asking for more distinct
+        // terms than the vocabulary holds would never fill the vector and would hang the lane.
+        if (termsPerDocument > VocabularySize)
+            throw new ArgumentException(
+                $"sparse-engine needs at most {Number(VocabularySize)} terms per document, got {Number(termsPerDocument)}.");
+
         Console.WriteLine(
             $"sparse-engine   {Number(documents)} documents, {Number(termsPerDocument)} terms/document, " +
             $"vocabulary {Number(VocabularySize)}; absent / rare / head-1 / head-10 / head-40 / head-100 queries");

@@ -48,7 +48,9 @@
   integer ordinal; each term keeps arrays of `(ordinal, weight)` instead of
   `Dictionary<documentId, weight>`; a query accumulates into the same generation-stamped
   `ScoreAccumulator` the lexical engine uses and fills a bounded top-`k` window. The public surface
-  and the learned weights are unchanged. On the synthetic 50,000-document SPLADE shape, 10,000
+  and the learned weights are unchanged. A `TieBreak.InsertionOrder` request now orders a tied page
+  by the document's ordinal, as the lexical engine does; before this change the engine ignored the
+  option and ordered ties by document id. On the synthetic 50,000-document SPLADE shape, 10,000
   documents / 40 head terms falls from **~800 µs and 390 KB per search** to **~98 µs and 1.4 KB**
   (same generated query set), and a 50,000-document import from ~4.0 s to ~2.4 s. The new
   `sparse-engine` lane separates the fixed cost (40 absent terms: 4.1 µs) from the posting work
