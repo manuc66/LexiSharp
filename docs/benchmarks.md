@@ -1767,6 +1767,42 @@ p50 / 63.7 ms mean (and the first, uncontended run read 45 ms / 112 ms). `--keep
 in place for `EXPLAIN`; the plan that mattered was a sort spilling to disk because the candidate
 rows carried content and jsonb.
 
+## Prepared statements (`prepare`): what naming the statement buys
+
+Binding a value as a parameter and preparing a statement are different things. Npgsql binds every
+value either way; without `Max Auto Prepare` the statement is unnamed and the server parses it on
+each execution. This lane asks the only question that matters for the connection string: does
+preparing it buy anything on these engines?
+
+```bash
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- prepare \
+  --connection "Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp" \
+  --dataset nfcorpus,scifact --queries 300 --passes 4
+```
+
+Two tables over the same corpus, the same 300 queries, one connection with `Max Auto Prepare=0` and
+one with `20;Auto Prepare Min Usages=1`; four interleaved passes. The lane checks that the two
+configurations return the same ids and scores on the warm-up queries before timing anything, so a
+plan flip is a failure rather than a quiet part of the delta. p50, one host, three runs:
+
+| corpus | plain p50 | prepared p50 | prepared / plain |
+|---|---:|---:|---:|
+| NFCorpus (3,633 documents) | 0.965-1.013 ms | 0.956-0.988 ms | −2.5 % to −0.1 % |
+| SciFact (5,183 documents) | 2.272-2.274 ms | 2.298-2.309 ms | +1.0 % to +1.6 % |
+
+**The effect is inside the run-to-run drift, and its sign flips with the corpus.** On NFCorpus the
+prepared connection is up to 2.5 % ahead on the median; on SciFact it is 1.0-1.6 % behind. Parsing
+and planning are a small share of a query that already scores thousands of rows, so the setting is
+not where this engine's cost is. The repository therefore chooses no setting: `Max Auto Prepare` is
+the caller's connection-string option, and this lane is what to run before turning it on.
+
+What would make it pay is a workload where parse/plan is a larger share than it is here — a very
+cheap query on a small corpus, or a selective filter — and those rows do not exist. The equality
+check covers the generic-plan risk on these two corpora; a corpus whose plan depends on parameter
+values needs its own run, because the check can only see a ranking that changed, not the plan that
+would change it at another size. Not measured: filters, the vector and sparse engines (their
+statement text differs), `Limit` other than 10, and any server but the one on this host.
+
 ## Tokenizer (`TokenizerBenchmarks`)
 
 Tokenizing the same text under different normalizations. The `Ratio` column is only
@@ -2013,6 +2049,9 @@ dotnet run --project bench/LexiSharp.Benchmarks -c Release -- store 100000
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- wand 100000
 # stock-PostgreSQL index, statistics and query latency, per engine and pool size (see the PostgreSQL lane above):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- postgres --dataset nfcorpus,scifact \
+  --connection "Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp"
+# what naming the statement buys: Max Auto Prepare 0 against 20, same corpus and queries (see the prepare lane above):
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- prepare --dataset nfcorpus,scifact \
   --connection "Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=lexisharp"
 # one shared index at 1/2/4/8 callers, raw and synchronized (see the concurrency lane above):
 dotnet run --project bench/LexiSharp.Benchmarks -c Release -- concurrency --runs 5

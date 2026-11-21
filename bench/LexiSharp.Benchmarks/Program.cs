@@ -87,6 +87,13 @@ public static class Program
             return;
         }
 
+        // What a server-side prepared statement buys on the stock-PostgreSQL text engine. See PrepareLane.
+        if (args.Length > 0 && args[0] == "prepare")
+        {
+            PrepareLane.Run(args[1..]);
+            return;
+        }
+
         // Index, corpus statistics and query latency of the stock-PostgreSQL text engines. See PostgresLane.
         if (args.Length > 0 && args[0] == "postgres")
         {
