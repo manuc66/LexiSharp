@@ -267,8 +267,14 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
         // The window is sized to the page the caller asked for, never to the candidate set. A
         // candidate costs one comparison against the worst kept row; a SearchResult is built only
         // for the rows that survive.
+        //
+        // The ordinal handed to the window is the document's position in the ordinal space, which is
+        // what TieBreak.InsertionOrder compares — the same capability the lexical engine declares.
+        // Without it the window falls back to the order the candidates arrived in, which here is the
+        // order the accumulator first touched them, i.e. the query's term order: two spellings of
+        // the same query would then hand two different pages for a tie.
         int window = Math.Min(options.Window, scores.Count);
-        var top = new TopRankedWindow(window, options.TieBreak, DocumentAt, IdAt);
+        var top = new TopRankedWindow(window, options.TieBreak, DocumentAt, IdAt, ordinalsAreInsertionPositions: true);
 
         for (int i = 0; i < scores.Count; i++)
         {
@@ -284,7 +290,7 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
             if (document is null || !options.PassesFilters(document))
                 continue;
 
-            top.Add(score, ordinal, document, i);
+            top.Add(score, ordinal, document);
         }
 
         int skip = Math.Min(options.Offset, top.Count);
@@ -357,9 +363,11 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
         new Dictionary<string, float>();
 
     /// <summary>
-    /// One term's postings as contiguous arrays: ordinals ascending, weights aligned. Appending and
-    /// removing preserve the order, so two searches over an unchanged corpus visit entries in the
-    /// same sequence and sum the same doubles.
+    /// One term's postings as contiguous arrays: ordinals and weights aligned. There is no sort
+    /// order — a new document appends its ordinal, and a freed ordinal reused by a later add is
+    /// appended below ones already stored — so the array must not be read as ascending. Removal
+    /// preserves the relative order of the rest, so two searches over an unchanged corpus visit the
+    /// entries in the same sequence and sum the same doubles.
     /// </summary>
     private sealed class PostingList
     {

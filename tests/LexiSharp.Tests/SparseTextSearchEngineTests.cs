@@ -1,5 +1,6 @@
 using LexiSharp.Core;
 using LexiSharp.Indexing;
+using LexiSharp.Ranking;
 using Xunit;
 
 namespace LexiSharp.Tests;
@@ -155,6 +156,57 @@ public class SparseTextSearchEngineTests
     }
 
     [Fact]
+    public void Search_InsertionOrder_BreaksTiesByTheOrderDocumentsWereAdded()
+    {
+        // The first-added document is reached by the *second* query term, so neither the id order
+        // nor the order the accumulator happens to touch the candidates can produce this page.
+        var engine = new SparseTextSearchEngine(new StubSparseProvider(t => t switch
+        {
+            "first" => new Dictionary<string, float> { ["dog"] = 1f },
+            "second" => new Dictionary<string, float> { ["cat"] = 1f },
+            "q" => new Dictionary<string, float> { ["cat"] = 1f, ["dog"] = 1f },
+            _ => Empty,
+        }));
+
+        // Ids sort the other way round, so the two tie-breaks cannot both produce this page.
+        engine.Add(Doc("z-first", "first"));
+        engine.Add(Doc("a-second", "second"));
+
+        var results = engine.Search("q", new SearchOptions(Limit: 10, TieBreak: TieBreak.InsertionOrder));
+
+        Assert.Equal(new[] { "z-first", "a-second" }, results.Select(r => r.DocumentId).ToArray());
+        Assert.All(results, r => Assert.Equal(1.0, r.Score, 1e-9));
+    }
+
+    [Fact]
+    public void Search_InsertionOrder_DoesNotDependOnTheOrderTheQueryTermsAreRead()
+    {
+        // Each document reaches the tie through a different term. A tie-break that recorded the
+        // order the accumulator first touched the candidates would follow the query's term order
+        // and hand the two spellings of the same query two different pages.
+        var engine = new SparseTextSearchEngine(new StubSparseProvider(t => t switch
+        {
+            "first" => new Dictionary<string, float> { ["t2"] = 1f },
+            "second" => new Dictionary<string, float> { ["t1"] = 1f },
+            "q-12" => new Dictionary<string, float> { ["t1"] = 1f, ["t2"] = 1f },
+            "q-21" => new Dictionary<string, float> { ["t2"] = 1f, ["t1"] = 1f },
+            _ => Empty,
+        }));
+
+        engine.Add(Doc("z-first", "first"));
+        engine.Add(Doc("a-second", "second"));
+
+        var forwards = engine.Search("q-12", new SearchOptions(Limit: 10, TieBreak: TieBreak.InsertionOrder));
+        var backwards = engine.Search("q-21", new SearchOptions(Limit: 10, TieBreak: TieBreak.InsertionOrder));
+
+        // "z-first" was added first despite its id sorting last.
+        Assert.Equal(new[] { "z-first", "a-second" }, forwards.Select(r => r.DocumentId).ToArray());
+        Assert.Equal(
+            forwards.Select(r => r.DocumentId),
+            backwards.Select(r => r.DocumentId));
+    }
+
+    [Fact]
     public void Add_ReplacesExistingDocument()
     {
         var engine = new SparseTextSearchEngine(new StubSparseProvider(t => t switch
@@ -188,6 +240,33 @@ public class SparseTextSearchEngineTests
         // After c1 is gone, only c2 matches "cat".
         var results = engine.Search("q-cat");
         Assert.Single(results, r => r.DocumentId == "c2");
+    }
+
+    [Fact]
+    public void AddAfterRemove_ReusesTheFreedOrdinalWithoutResurrectingItsPostings()
+    {
+        var engine = new SparseTextSearchEngine(new StubSparseProvider(t => t switch
+        {
+            "removed" => new Dictionary<string, float> { ["gone"] = 1f },
+            "kept" => new Dictionary<string, float> { ["kept"] = 1f },
+            "added" => new Dictionary<string, float> { ["fresh"] = 1f },
+            "q-gone" => new Dictionary<string, float> { ["gone"] = 1f },
+            "q-kept" => new Dictionary<string, float> { ["kept"] = 1f },
+            "q-fresh" => new Dictionary<string, float> { ["fresh"] = 1f },
+            _ => Empty,
+        }));
+
+        engine.Add(Doc("r", "removed")); // ordinal 0
+        engine.Add(Doc("k", "kept"));    // ordinal 1
+        engine.Remove("r");
+        engine.Add(Doc("n", "added"));   // takes the freed ordinal 0
+
+        // The reused slot carries the new document, not the one it replaced: the term the removed
+        // document posted reaches nothing, and each surviving term reaches exactly its document.
+        Assert.Empty(engine.Search("q-gone"));
+        Assert.Equal(new[] { "n" }, engine.Search("q-fresh").Select(r => r.DocumentId).ToArray());
+        Assert.Equal(new[] { "k" }, engine.Search("q-kept").Select(r => r.DocumentId).ToArray());
+        Assert.Equal(2, engine.Count);
     }
 
     [Fact]
