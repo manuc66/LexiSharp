@@ -478,7 +478,8 @@ public sealed class InMemoryVectorSearchEngine : ITextSearchEngine, IQuerySyntax
 
         // Whether there is anything to gate on, asked once instead of once per document: the
         // common search has no filters, and `PassesFilters` answering that costs two property reads
-        // and two null tests on every document of the corpus.
+        // and two null tests on every document of the corpus. This predicate must stay a superset
+        // of what `PassesFilters` checks — it is the same question asked early, not a second rule.
         bool gated = options.Filters is { Count: > 0 } || options.ExcludedDocumentIds is { Count: > 0 };
 
         for (int slot = 0; slot < _slotCount; slot++)
