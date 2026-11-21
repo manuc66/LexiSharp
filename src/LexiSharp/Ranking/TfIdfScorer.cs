@@ -11,7 +11,7 @@ namespace LexiSharp.Ranking;
 /// <c>idf(t) = log((N + 1) / (df(t) + 1)) + 1</c>.
 /// This smoothed variant guarantees a positive idf, so a score of 0 truly means « no match ».
 /// </remarks>
-public sealed class TfIdfScorer : ITermOverlapScorer, IQueryPlannableScorer, IScoreExplainer, IQueryTermStatistics
+public sealed class TfIdfScorer : ITermOverlapScorer, IQueryPlannableScorer, IScoreExplainer, IQueryTermStatistics, IScoreBoundScorer
 {
     /// <inheritdoc />
     public string Name => "TF-IDF";
@@ -19,6 +19,73 @@ public sealed class TfIdfScorer : ITermOverlapScorer, IQueryPlannableScorer, ISc
     /// <inheritdoc />
     public IReadOnlyList<QueryTermStatistic> DescribeTerms(IReadOnlyList<string> terms, IReadOnlyTextIndex index) =>
         TermStatistics.Describe(terms, index, TermStatistics.SmoothedIdf);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// TF-IDF has no length normalization, so the bound is the term's largest frequency times its
+    /// idf. The document length the index reports is unused by the formula and therefore unused here.
+    /// </remarks>
+    bool IScoreBoundScorer.TryGetQueryBound(
+        IReadOnlyList<string> queryTerms,
+        IReadOnlyTextIndex index,
+        out QueryScoreBound bound)
+    {
+        ArgumentNullException.ThrowIfNull(queryTerms);
+        ArgumentNullException.ThrowIfNull(index);
+
+        int documentCount = index.StatisticDocumentCount;
+
+        if (documentCount == 0)
+        {
+            bound = new QueryScoreBound(Name, 0, Array.Empty<TermScoreBound>());
+
+            return true;
+        }
+
+        var terms = queryTerms is DistinctTermList
+            ? queryTerms
+            : TermDeduplicator.Distinct(queryTerms);
+
+        var entries = new TermScoreBound[terms.Count];
+        double total = 0;
+
+        for (int i = 0; i < terms.Count; i++)
+        {
+            string term = terms[i];
+            int df = index.DocumentFrequency(term);
+
+            if (df <= 0)
+            {
+                entries[i] = new TermScoreBound(term, 0, 0, 0, 0, 0);
+                continue;
+            }
+
+            if (!index.TryGetTermFrequencyBound(term, out TermFrequencyBound frequencies) ||
+                frequencies.MaxFrequency <= 0)
+            {
+                bound = default;
+
+                return false;
+            }
+
+            double idf = Math.Log((documentCount + 1.0) / (df + 1.0)) + 1.0;
+            double contribution = frequencies.MaxFrequency * idf;
+
+            entries[i] = new TermScoreBound(
+                term,
+                df,
+                frequencies.MaxFrequency,
+                frequencies.MinDocumentLength,
+                idf,
+                contribution);
+
+            total += contribution;
+        }
+
+        bound = new QueryScoreBound(Name, total, entries);
+
+        return true;
+    }
 
     /// <inheritdoc />
     public double Score(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)

@@ -23,7 +23,7 @@ namespace LexiSharp.Ranking;
 /// <c>arithmetic</c> fixes the precision. All three default to this library's own conventions.
 /// </para>
 /// </remarks>
-public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlannableScorer, IWeightedQueryScorer, IQueryTermStatistics
+public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlannableScorer, IWeightedQueryScorer, IQueryTermStatistics, IScoreBoundScorer
 {
     private readonly double _k1;
     private readonly double _b;
@@ -177,6 +177,88 @@ public sealed class Bm25Scorer : IScoreExplainer, ITermOverlapScorer, IQueryPlan
     /// <inheritdoc />
     public IReadOnlyList<QueryTermStatistic> DescribeTerms(IReadOnlyList<string> terms, IReadOnlyTextIndex index) =>
         TermStatistics.Describe(terms, index, TermStatistics.Bm25Idf);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The idf is the one <see cref="Score"/> uses, including any per-query weight this copy carries,
+    /// and the frequency pair comes from the index's posting statistics. A term the corpus does not
+    /// hold contributes zero; a term it holds but cannot bound makes the whole query decline, because
+    /// publishing a total built from some terms and not others would be a number that looks like a
+    /// bound and is not one.
+    /// </remarks>
+    bool IScoreBoundScorer.TryGetQueryBound(
+        IReadOnlyList<string> queryTerms,
+        IReadOnlyTextIndex index,
+        out QueryScoreBound bound)
+    {
+        ArgumentNullException.ThrowIfNull(queryTerms);
+        ArgumentNullException.ThrowIfNull(index);
+
+        int documentCount = index.StatisticDocumentCount;
+        double averageLength = index.AverageDocumentLength;
+
+        if (documentCount == 0 || averageLength <= 0)
+        {
+            bound = new QueryScoreBound(Name, 0, Array.Empty<TermScoreBound>());
+
+            return true;
+        }
+
+        var terms = Terms(queryTerms);
+        var entries = new TermScoreBound[terms.Count];
+        double total = 0;
+
+        for (int i = 0; i < terms.Count; i++)
+        {
+            string term = terms[i];
+            int df = index.DocumentFrequency(term);
+
+            if (df <= 0)
+            {
+                entries[i] = new TermScoreBound(term, 0, 0, 0, 0, 0);
+                continue;
+            }
+
+            if (!index.TryGetTermFrequencyBound(term, out TermFrequencyBound frequencies) ||
+                frequencies.MaxFrequency <= 0)
+            {
+                bound = default;
+
+                return false;
+            }
+
+            double idf = Math.Log(1.0 + ((documentCount - df + 0.5) / (df + 0.5))) * Weight(term);
+            double contribution = Bm25UpperBound.Bm25(
+                idf,
+                frequencies.MaxFrequency,
+                frequencies.MinDocumentLength,
+                _k1,
+                _b,
+                _saturation,
+                averageLength);
+
+            // The single-precision arithmetic narrows each contribution and rounds the total once.
+            // The bound is evaluated in double, so it needs room for that narrowing: a relative
+            // margin far above float's last-place error keeps the bound above the value the scorer
+            // actually returns without changing which documents a normalizer can rank.
+            if (_arithmetic == Bm25Arithmetic.SinglePrecision)
+                contribution *= 1.0 + 1e-5;
+
+            entries[i] = new TermScoreBound(
+                term,
+                df,
+                frequencies.MaxFrequency,
+                frequencies.MinDocumentLength,
+                idf,
+                contribution);
+
+            total += contribution;
+        }
+
+        bound = new QueryScoreBound(Name, total, entries);
+
+        return true;
+    }
 
     /// <inheritdoc />
     public double Score(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
