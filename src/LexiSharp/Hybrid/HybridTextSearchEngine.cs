@@ -202,8 +202,17 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
             }
         }
 
+        // Only a merger that can consume a context pays for asking the engines for one. The default
+        // rank-only and re-ranking mergers do not, so a pipeline that predates the seam allocates and
+        // tokenizes exactly what it did before.
+        var contexts = _merger is IContextualResultMerger { UsesContexts: true }
+            ? BuildScoreContexts(query, options)
+            : null;
+
         long mergeStarted = instrumented ? RetrievalTelemetry.StartTimer() : 0;
-        var merged = _merger.Merge(perEngine, query);
+        var merged = _merger is IContextualResultMerger contextual
+            ? contextual.Merge(perEngine, query, contexts)
+            : _merger.Merge(perEngine, query);
 
         var page = merged
             .Where(x => !double.IsNaN(x.Score) && !double.IsInfinity(x.Score)
@@ -219,7 +228,7 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
                     (contributionsByDocument.GetValueOrDefault(x.DocumentId) ?? new Dictionary<string, double>())))
             .ToList();
 
-        RecordMergeStage(options.Trace, perEngine, page);
+        RecordMergeStage(options.Trace, perEngine, contexts, page);
 
         if (instrumented)
         {
@@ -251,12 +260,13 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
     private void RecordMergeStage(
         SearchTrace? trace,
         IReadOnlyList<IReadOnlyList<SearchResult>> perEngine,
+        IReadOnlyList<ScoreNormalizationContext?>? contexts,
         IReadOnlyList<DetailedSearchResult> page)
     {
         if (trace is null)
             return;
 
-        RecordMergeExplanation(trace, perEngine);
+        RecordMergeExplanation(trace, perEngine, contexts);
 
         for (int i = 0; i < page.Count; i++)
         {
@@ -275,17 +285,52 @@ public sealed class HybridTextSearchEngine : ITextSearchEngine, IDetailedSearchE
     /// attached and the merger implements <see cref="IMergeExplainer"/>.
     /// </summary>
     private void RecordMergeExplanation(
-        SearchTrace trace, IReadOnlyList<IReadOnlyList<SearchResult>> perEngine)
+        SearchTrace trace,
+        IReadOnlyList<IReadOnlyList<SearchResult>> perEngine,
+        IReadOnlyList<ScoreNormalizationContext?>? contexts)
     {
         if (_merger is not IMergeExplainer explainer)
             return;
+
+        MergeExplanation explanation = _merger is IContextualMergeExplainer contextual
+            ? contextual.Explain(perEngine, contexts)
+            : explainer.Explain(perEngine);
 
         trace.Record(new TraceStep(
             TraceStage.Merge,
             string.Empty,
             double.NaN,
             double.NaN,
-            FormatMergeExplanation(explainer.Explain(perEngine), explainer.NormalizationName, perEngine)));
+            FormatMergeExplanation(explanation, explainer.NormalizationName, perEngine)));
+    }
+
+    /// <summary>
+    /// Asks every source engine that can answer for the query's upper bound.
+    /// </summary>
+    /// <remarks>
+    /// Null when no engine reports one, so a pipeline of engines that predate the capability pays no
+    /// allocation and the merger takes the list-measuring path unchanged. A context is allocated per
+    /// engine that answers, not per candidate, and only a search whose merger can consume one uses it.
+    /// </remarks>
+    private IReadOnlyList<ScoreNormalizationContext?>? BuildScoreContexts(
+        string query,
+        SearchOptions options)
+    {
+        ScoreNormalizationContext?[]? contexts = null;
+
+        for (int i = 0; i < _engines.Count; i++)
+        {
+            if (_engines[i] is not IScoreBoundSearchEngine boundEngine ||
+                !boundEngine.TryGetQueryBound(query, options, out QueryScoreBound bound))
+            {
+                continue;
+            }
+
+            contexts ??= new ScoreNormalizationContext?[_engines.Count];
+            contexts[i] = new ScoreNormalizationContext(bound.UpperBound, bound.ScorerName);
+        }
+
+        return contexts;
     }
 
     /// <summary>
