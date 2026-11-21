@@ -324,6 +324,29 @@ public class PostgresSparseSearchEngineTests
                 new PostgresSparseOptions { Vocabulary = new Dictionary<string, int>() }));
     }
 
+    /// <summary>
+    /// A dimension is a count of coordinates: zero and negative values are not a configuration the
+    /// engine can install, and the constructor is where the caller finds out. Without the check the
+    /// DDL is the first thing to fail — <c>sparsevec(0)</c> — after the connection is opened.
+    /// </summary>
+    [Fact]
+    public void Constructor_NonPositiveDimension_Throws()
+    {
+        foreach (int dimension in new[] { 0, -1 })
+        {
+            Assert.Throws<ArgumentException>(() =>
+                new PostgresSparseSearchEngine(
+                    "Host=127.0.0.1;Port=1;Database=none;Username=none;Password=none",
+                    new StubSparseProvider(Docs),
+                    new PostgresSparseOptions
+                    {
+                        Vocabulary = new Dictionary<string, int> { ["apple"] = 0 },
+                        Dimension = dimension,
+                    },
+                    autoCreateSchema: false));
+        }
+    }
+
     [SkippableFact]
     public void Search_FiltersGateResults()
     {

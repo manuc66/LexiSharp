@@ -108,6 +108,7 @@ public sealed record PostgresSparseOptions
         SafeIdentifier.IsValid(Schema) && SafeIdentifier.IsValid(Table)
         && Vocabulary.Count > 0
         && Vocabulary.Values.All(index => index >= 0)
+        && (Dimension is null || Dimension > 0)
         && HnswM > 0 && HnswEfConstruction > 0
         && PostgresIndexOptions.IsWeightingValid(FieldWeights, DefaultFieldWeight);
 
