@@ -1662,8 +1662,9 @@ public static class Program
                 "max" => new MaxScoreNormalizer(),
                 "minmax" => new MinMaxScoreNormalizer(),
                 "sum" => new SumScoreNormalizer(),
+                "upper-bound" => new UpperBoundScoreNormalizer(),
                 _ => throw new ArgumentException(
-                    $"--hybrid-normalizer expects 'max', 'minmax' or 'sum', got '{part}'."),
+                    $"--hybrid-normalizer expects 'max', 'minmax', 'sum' or 'upper-bound', got '{part}'."),
             };
         }
     }
@@ -2115,9 +2116,14 @@ public static class Program
               --hybrid-normalizer <list>
                                 Add one 'Hybrid BM25+QL weighted' row per score normalizer in a
                                 comma-separated list: 'max' (the default the existing row uses),
-                                'minmax' or 'sum'. The rows differ only in how each engine's scores
-                                become comparable before they are averaged, which is the one choice
-                                a score-blending hybrid makes without seeing relevance.
+                                'minmax', 'sum' or 'upper-bound'. With --dense, add one
+                                'Hybrid BM25+Dense weighted' row per normalizer too; that is the
+                                complementary lane the mapping is measurable on. The rows differ
+                                only in how each engine's scores become comparable before they are
+                                averaged, which is the one choice a score-blending hybrid makes
+                                without seeing relevance. 'upper-bound' divides a lexical engine by
+                                the query's theoretical maximum, and falls back to 'max' for a query
+                                the engine rewrites or a scorer that cannot report one.
               --spread <list>    Add a spread-tf matrix: one BM25 spread row per alpha in the
                                 comma-separated list (values in [0, 1]) crossed with b = 0, 0.5
                                 and 1. alpha = 0 is the raw-count control and must reproduce BM25

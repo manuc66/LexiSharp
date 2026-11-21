@@ -425,6 +425,45 @@ internal sealed class SegmentOverlay
     public int DocumentFrequency(string term) =>
         _postings.TryGetValue(term, out var postings) ? CountDistinct(postings) : 0;
 
+    /// <summary>
+    /// The largest frequency and the smallest document length this term has in the overlay, which is
+    /// what a scorer bounds its contribution with.
+    /// </summary>
+    /// <remarks>
+    /// A linear walk of the term's entries, unlike a segment's O(1) dictionary read. The overlay is
+    /// bounded by the commit threshold and is the part a caller flushes, so this is the size that can
+    /// afford it; a larger structure would store the pair at write time.
+    /// </remarks>
+    public bool TryGetTermFrequencyBound(string term, out TermFrequencyBound bound)
+    {
+        if (!_postings.TryGetValue(term, out var postings) || postings.Count == 0)
+        {
+            bound = default;
+
+            return false;
+        }
+
+        int maxFrequency = 0;
+        int minLength = int.MaxValue;
+
+        for (int i = 0; i < postings.Count; i++)
+        {
+            var (ordinal, frequency) = postings[i];
+
+            if (frequency > maxFrequency)
+                maxFrequency = frequency;
+
+            int length = _lengths[ordinal];
+
+            if (length < minLength)
+                minLength = length;
+        }
+
+        bound = new TermFrequencyBound(maxFrequency, minLength);
+
+        return true;
+    }
+
     private static int CountDistinct(List<(int Ordinal, int Frequency)> postings)
     {
         // Ascending by ordinal, so a run of equal ordinals is one document.

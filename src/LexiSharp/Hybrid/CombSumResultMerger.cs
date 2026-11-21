@@ -15,7 +15,7 @@ namespace LexiSharp.Hybrid;
 /// (<see cref="ReciprocalRankFusionMerger"/>), a low rank with a dominant score still counts
 /// fully — use CombSUM when the scores, not just the order, are meaningful.
 /// </remarks>
-public sealed class CombSumResultMerger : IResultMerger
+public sealed class CombSumResultMerger : IContextualResultMerger
 {
     private readonly IScoreNormalizer _normalizer;
 
@@ -38,9 +38,19 @@ public sealed class CombSumResultMerger : IResultMerger
     public string Name => "CombSum";
 
     /// <inheritdoc />
+    public bool UsesContexts => _normalizer is IContextualScoreNormalizer;
+
+    /// <inheritdoc />
     public IReadOnlyList<SearchResult> Merge(
         IReadOnlyList<IReadOnlyList<SearchResult>> perEngineResults,
-        string query)
+        string query) =>
+        Merge(perEngineResults, query, null);
+
+    /// <inheritdoc />
+    public IReadOnlyList<SearchResult> Merge(
+        IReadOnlyList<IReadOnlyList<SearchResult>> perEngineResults,
+        string query,
+        IReadOnlyList<ScoreNormalizationContext?>? contexts)
     {
         ArgumentNullException.ThrowIfNull(perEngineResults);
         _ = query;
@@ -55,7 +65,13 @@ public sealed class CombSumResultMerger : IResultMerger
         for (int i = 0; i < engineCount; i++)
         {
             var results = perEngineResults[i];
-            ScoreNormalization normalization = _normalizer.Measure(results);
+            ScoreNormalization normalization =
+                contexts is not null &&
+                i < contexts.Count &&
+                contexts[i] is { } context &&
+                _normalizer is IContextualScoreNormalizer contextual
+                    ? contextual.Measure(results, context)
+                    : _normalizer.Measure(results);
 
             foreach (var result in results)
             {

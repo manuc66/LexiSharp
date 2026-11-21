@@ -12,7 +12,7 @@ namespace LexiSharp.Hybrid;
 /// <see cref="CombSumResultMerger"/> for the normalized sum (the same normalizer, the same
 /// non-positive/non-finite handling) and only scales the result by the hit count, then re-orders.
 /// </remarks>
-public sealed class CombMNZResultMerger : IResultMerger
+public sealed class CombMNZResultMerger : IContextualResultMerger
 {
     private readonly CombSumResultMerger _sum;
 
@@ -34,13 +34,23 @@ public sealed class CombMNZResultMerger : IResultMerger
     public string Name => "CombMNZ";
 
     /// <inheritdoc />
+    public bool UsesContexts => _sum.UsesContexts;
+
+    /// <inheritdoc />
     public IReadOnlyList<SearchResult> Merge(
         IReadOnlyList<IReadOnlyList<SearchResult>> perEngineResults,
-        string query)
+        string query) =>
+        Merge(perEngineResults, query, null);
+
+    /// <inheritdoc />
+    public IReadOnlyList<SearchResult> Merge(
+        IReadOnlyList<IReadOnlyList<SearchResult>> perEngineResults,
+        string query,
+        IReadOnlyList<ScoreNormalizationContext?>? contexts)
     {
         ArgumentNullException.ThrowIfNull(perEngineResults);
 
-        var summed = _sum.Merge(perEngineResults, query);
+        var summed = _sum.Merge(perEngineResults, query, contexts);
 
         if (summed.Count == 0)
             return summed;
