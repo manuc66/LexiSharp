@@ -69,7 +69,8 @@ that fills the requested depth may hide a tie past the cut; the profile reports 
 ### The merge's own arithmetic
 
 A weighted merge turns two raw scores into one with `Σ wᵢ·sᵢ/divisorᵢ`, and the per-document rows
-above carry only `sᵢ`. So a merger that can explain itself — `WeightedScoreResultMerger` does —
+above carry only `sᵢ`. So a merger that can explain itself — `WeightedScoreResultMerger` and
+`BayesianFusionMerger` do —
 also records **one row per search**, with an empty document id:
 
 ```

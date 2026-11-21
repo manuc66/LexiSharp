@@ -395,6 +395,14 @@ the symbol packages and the generated API page are part of the release gate.
   naive Bayes combination `(p₁·p₂)/(p₁·p₂+(1−p₁)·(1−p₂))`; RRF k=60; metric nDCG@10. The test
   now asserts 0.6927 (±0.002) and a margin of 0.02 over RRF, instead of `Assert.True(true)`.
 
+- **`BayesianFusionMerger` now explains its own arithmetic.** It implements `IMergeExplainer`:
+  unit weights (naive Bayes does not weight sources) and identity normalisation (calibration is a
+  function of each engine's own score, not a division), with `NormalizationName = "calibrated"` so
+  the trace labels the row honestly. The per-document detail carries the raw per-engine scores
+  already; the query-level step records the weights and the label, and a reader with the trace and
+  the merger's calibrators can reproduce `p = (p₁·p₂)/(p₁·p₂+(1−p₁)·(1−p₂))` by hand.
+  A rank merger still implements no such contract.
+
 - **`ReformulatingTextSearchEngine`** in `LexiSharp.Expansion`: generates query variants
   from a term corrector's uncertainty (one variant per term with a distinct correction) and
   fuses the result lists. Accepts an optional `CalibratedScoreConfidence` to fuse variants

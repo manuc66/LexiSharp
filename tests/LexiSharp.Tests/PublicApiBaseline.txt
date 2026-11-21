@@ -1422,6 +1422,7 @@ M|LexiSharp.Highlighting.TextHighlighter|System.Collections.Generic.IReadOnlyLis
 M|LexiSharp.Highlighting.TextHighlighter|System.Collections.Generic.IReadOnlyList`1[System.Range] MatchRanges(System.String, System.Collections.Generic.IReadOnlyList`1[System.String], LexiSharp.Linguistics.ISpanTokenizer)
 M|LexiSharp.Highlighting.TextHighlighter|System.String HighlightFull(System.String, System.Collections.Generic.IReadOnlyList`1[System.String], LexiSharp.Linguistics.ISpanTokenizer, LexiSharp.Highlighting.HighlightOptions)
 M|LexiSharp.Hybrid.AsyncCrossEncoderReranker|System.Threading.Tasks.Task`1[System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult]] RerankAsync(System.String, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult], System.Threading.CancellationToken)
+M|LexiSharp.Hybrid.BayesianFusionMerger|LexiSharp.Hybrid.MergeExplanation Explain(System.Collections.Generic.IReadOnlyList`1[System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult]])
 M|LexiSharp.Hybrid.BayesianFusionMerger|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult] Merge(System.Collections.Generic.IReadOnlyList`1[System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult]], System.String)
 M|LexiSharp.Hybrid.CascadeRerankOptions|Boolean Equals(LexiSharp.Hybrid.CascadeRerankOptions)
 M|LexiSharp.Hybrid.CascadeRerankOptions|Boolean Equals(System.Object)
@@ -2609,6 +2610,7 @@ P|LexiSharp.Highlighting.HighlightSnippet|Start|System.Int32|getset
 P|LexiSharp.Highlighting.HighlightSnippet|Text|System.String|getset
 P|LexiSharp.Hybrid.AsyncCrossEncoderReranker|Name|System.String|get
 P|LexiSharp.Hybrid.BayesianFusionMerger|Name|System.String|get
+P|LexiSharp.Hybrid.BayesianFusionMerger|NormalizationName|System.String|get
 P|LexiSharp.Hybrid.CascadeRerankOptions|FinalLimit|System.Nullable<System.Int32>|getset
 P|LexiSharp.Hybrid.CascadeRerankOptions|MinimumScore|System.Double|getset
 P|LexiSharp.Hybrid.CascadeRerankOptions|StageLimit|System.Nullable<System.Int32>|getset
@@ -3302,7 +3304,7 @@ T|LexiSharp.Highlighting.HighlightOptions|class||System.IEquatable<LexiSharp.Hig
 T|LexiSharp.Highlighting.HighlightSnippet|class||System.IEquatable<LexiSharp.Highlighting.HighlightSnippet>
 T|LexiSharp.Highlighting.TextHighlighter|class||
 T|LexiSharp.Hybrid.AsyncCrossEncoderReranker|class||LexiSharp.Core.IAsyncReranker
-T|LexiSharp.Hybrid.BayesianFusionMerger|class||LexiSharp.Hybrid.IResultMerger
+T|LexiSharp.Hybrid.BayesianFusionMerger|class||LexiSharp.Hybrid.IMergeExplainer,LexiSharp.Hybrid.IResultMerger
 T|LexiSharp.Hybrid.CascadeRerankOptions|class||System.IEquatable<LexiSharp.Hybrid.CascadeRerankOptions>
 T|LexiSharp.Hybrid.CascadeRerankPipeline|class||LexiSharp.Core.IReranker
 T|LexiSharp.Hybrid.CombMNZResultMerger|class||LexiSharp.Hybrid.IContextualResultMerger,LexiSharp.Hybrid.IResultMerger
