@@ -184,6 +184,7 @@ C|LexiSharp.Hybrid.RerankingResultMerger|Void .ctor(LexiSharp.Core.ITextScorer, 
 C|LexiSharp.Hybrid.ScoreNormalizationContext|Void .ctor(System.Nullable`1[System.Double], System.String)
 C|LexiSharp.Hybrid.ScoreNormalization|Void .ctor(Double, Double)
 C|LexiSharp.Hybrid.SumScoreNormalizer|Void .ctor()
+C|LexiSharp.Hybrid.UpperBoundBayesianFusionMerger|Void .ctor()
 C|LexiSharp.Hybrid.UpperBoundScoreNormalizer|Void .ctor()
 C|LexiSharp.Hybrid.WeightedScoreResultMerger|Void .ctor(Double[])
 C|LexiSharp.Hybrid.WeightedScoreResultMerger|Void .ctor(LexiSharp.Hybrid.IScoreNormalizer, Double[])
@@ -1471,6 +1472,8 @@ M|LexiSharp.Hybrid.ScoreNormalization|Int32 GetHashCode()
 M|LexiSharp.Hybrid.ScoreNormalization|System.String ToString()
 M|LexiSharp.Hybrid.ScoreNormalization|Void Deconstruct(Double ByRef, Double ByRef)
 M|LexiSharp.Hybrid.SumScoreNormalizer|LexiSharp.Hybrid.ScoreNormalization Measure(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult])
+M|LexiSharp.Hybrid.UpperBoundBayesianFusionMerger|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult] Merge(System.Collections.Generic.IReadOnlyList`1[System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult]], System.String)
+M|LexiSharp.Hybrid.UpperBoundBayesianFusionMerger|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult] Merge(System.Collections.Generic.IReadOnlyList`1[System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult]], System.String, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Hybrid.ScoreNormalizationContext])
 M|LexiSharp.Hybrid.UpperBoundScoreNormalizer|LexiSharp.Hybrid.ScoreNormalization Measure(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult])
 M|LexiSharp.Hybrid.UpperBoundScoreNormalizer|LexiSharp.Hybrid.ScoreNormalization Measure(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult], LexiSharp.Hybrid.ScoreNormalizationContext)
 M|LexiSharp.Hybrid.VectorSimilarity|Single CosineSimilarity(System.ReadOnlySpan`1[System.Single], System.ReadOnlySpan`1[System.Single])
@@ -2639,6 +2642,8 @@ P|LexiSharp.Hybrid.ScoreNormalizationContext|ScorerName|System.String|getset
 P|LexiSharp.Hybrid.ScoreNormalization|Offset|System.Double|getset
 P|LexiSharp.Hybrid.ScoreNormalization|Scale|System.Double|getset
 P|LexiSharp.Hybrid.SumScoreNormalizer|Name|System.String|get
+P|LexiSharp.Hybrid.UpperBoundBayesianFusionMerger|Name|System.String|get
+P|LexiSharp.Hybrid.UpperBoundBayesianFusionMerger|UsesContexts|System.Boolean|get
 P|LexiSharp.Hybrid.UpperBoundScoreNormalizer|Name|System.String|get
 P|LexiSharp.Hybrid.WeightedScoreResultMerger|Name|System.String|get
 P|LexiSharp.Hybrid.WeightedScoreResultMerger|NormalizationName|System.String|get
@@ -3328,6 +3333,7 @@ T|LexiSharp.Hybrid.RerankingResultMerger|class||LexiSharp.Hybrid.IResultMerger
 T|LexiSharp.Hybrid.ScoreNormalizationContext|class||System.IEquatable<LexiSharp.Hybrid.ScoreNormalizationContext>
 T|LexiSharp.Hybrid.ScoreNormalization|struct||System.IEquatable<LexiSharp.Hybrid.ScoreNormalization>
 T|LexiSharp.Hybrid.SumScoreNormalizer|class||LexiSharp.Hybrid.IScoreNormalizer
+T|LexiSharp.Hybrid.UpperBoundBayesianFusionMerger|class||LexiSharp.Hybrid.IContextualResultMerger,LexiSharp.Hybrid.IResultMerger
 T|LexiSharp.Hybrid.UpperBoundScoreNormalizer|class||LexiSharp.Hybrid.IContextualScoreNormalizer,LexiSharp.Hybrid.IScoreNormalizer
 T|LexiSharp.Hybrid.VectorSimilarity|class||
 T|LexiSharp.Hybrid.WeightedScoreResultMerger|class||LexiSharp.Hybrid.IContextualMergeExplainer,LexiSharp.Hybrid.IContextualResultMerger,LexiSharp.Hybrid.IMergeExplainer,LexiSharp.Hybrid.IResultMerger
