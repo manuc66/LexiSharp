@@ -454,7 +454,8 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
             SELECT id, content, category, fields, text_fields
             FROM {_options.QualifiedTableName}
             WHERE id = ANY(@ids);
-            """; // NOSONAR:S2077 (identifier only, validated + quoted)
+            """;
+#pragma warning restore S2077
 
         command.Parameters.AddWithValue("ids", ids);
 
@@ -597,7 +598,13 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
     private string[] ReadQueryLexemes(NpgsqlConnection connection, string query)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = PostgresTsQueryText.QueryLexemes(_indexOptions.TextSearchConfig); // NOSONAR:S2077 (validated config only)
+
+        // The config name is a validated identifier (SafeIdentifier: [A-Za-z0-9_]+, quoted by the
+        // same check); the query text is `@query`. Scoped to the statement so the rule stays on for
+        // the rest of the file.
+#pragma warning disable S2077
+        command.CommandText = PostgresTsQueryText.QueryLexemes(_indexOptions.TextSearchConfig);
+#pragma warning restore S2077
         command.Parameters.AddWithValue("query", query);
 
         return command.ExecuteScalar() as string[] ?? Array.Empty<string>();
