@@ -365,7 +365,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
 | `AsyncCrossEncoderReranker` | class | `IAsyncReranker` | Asynchronous counterpart of CrossEncoderReranker: re-scores every candidate with a pairwise (cross-encoder) model via IAsyncCrossEncoderScorer and reorders the… |
-| `BayesianFusionMerger` | class | `IResultMerger` | Merges per-engine results by calibrating each engine's native score to a probability of relevance and combining them with the naive Bayes rule, instead of… |
+| `BayesianFusionMerger` | class | `IMergeExplainer`, `IResultMerger` | Merges per-engine results by calibrating each engine's native score to a probability of relevance and combining them with the naive Bayes rule, instead of… |
 | `CascadeRerankOptions` | record | — | Controls how a CascadeRerankPipeline passes candidates from stage to stage. |
 | `CascadeRerankPipeline` | class | `IReranker` | Chains rerankers in cascade: each stage re-ranks the output of the previous one, and the shortlist may be trimmed between stages so only the strongest… |
 | `CombMNZResultMerger` | class | `IContextualResultMerger`, `IResultMerger` | Blend strategy that multiplies each document's CombSUM score by the number of engines that retrieved it — the classic CombMNZ. |

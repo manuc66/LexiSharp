@@ -34,8 +34,16 @@ namespace LexiSharp.Hybrid;
 /// vs RRF 0.6628 (+0.03). The gain comes from preserving score magnitude that RRF
 /// discards.
 /// </para>
+/// <para>
+/// Explains its own arithmetic through <see cref="IMergeExplainer"/>: unit weights
+/// (naive Bayes does not weight sources) and identity normalisation, reported as
+/// <c>"calibrated"</c> so a trace labels the row honestly — the calibration is a function
+/// of each engine's own score, not a division. The per-document detail carries the raw
+/// per-engine scores; a reader with the trace and this merger's calibrators can reproduce
+/// <c>p = (p₁·p₂)/(p₁·p₂+(1−p₁)·(1−p₂))</c>.
+/// </para>
 /// </remarks>
-public sealed class BayesianFusionMerger : IResultMerger
+public sealed class BayesianFusionMerger : IResultMerger, IMergeExplainer
 {
     private readonly CalibratedScoreConfidence[] _calibrators;
 
@@ -142,4 +150,31 @@ public sealed class BayesianFusionMerger : IResultMerger
             .Select(x => new SearchResult(x.DocId, x.Score, docMap[x.DocId]))
             .ToList();
     }
+
+    /// <inheritdoc />
+    public MergeExplanation Explain(IReadOnlyList<IReadOnlyList<SearchResult>> perEngineResults)
+    {
+        ArgumentNullException.ThrowIfNull(perEngineResults);
+
+        int engineCount = perEngineResults.Count;
+
+        if (engineCount == 0)
+            return new MergeExplanation(Array.Empty<double>(), Array.Empty<double>());
+
+        if (_calibrators.Length != engineCount)
+            throw new InvalidOperationException(
+                $"BayesianFusionMerger expects {engineCount} calibrators but got {_calibrators.Length}.");
+
+        // Naive Bayes: every engine has unit weight and no divisor, because the combination is
+        // (Π pᵢ)/(Π pᵢ + Π (1−pᵢ)) with pᵢ = calibratorᵢ.PredictProba(sᵢ). The raw scores are
+        // already in the per-document Contributions; the calibration is a function of each
+        // engine's own score, so there is no per-query divisor to report — the label
+        // "calibrated" says so, and the calibrators live in the merger for a reader to re-run.
+        return new MergeExplanation(
+            Enumerable.Repeat(1.0, engineCount).ToArray(),
+            Enumerable.Repeat(1.0, engineCount).ToArray());
+    }
+
+    /// <inheritdoc />
+    public string NormalizationName => "calibrated";
 }
