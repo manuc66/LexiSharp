@@ -488,8 +488,9 @@ Scores that are exactly equal are ordered by document id, ordinally, on every SQ
 the in-memory engines return under the default `TieBreak.DocumentId`. The statements spell it
 `id COLLATE "C"` because the database's default collation is locale-sensitive and `en_US.utf8` sorts
 `a` before `A`. A bare `ORDER BY score DESC` leaves the order to the executor, so the same query can
-page differently after a plan change. `TieBreak.InsertionOrder` has no counterpart on a SQL table
-and is ignored there: the id order is the answer.
+page differently after a plan change. `TieBreak.InsertionOrder` has no counterpart on a SQL table, so
+the engines refuse it with `NotSupportedException` before opening a connection rather than answering
+with a different order under its name.
 
 ParadeDB's scores are Tantivy's and PostgreSQL-native, so they are **not** numerically comparable
 to `Bm25Scorer`/`TfIdfScorer` — use the hybrid engine's `ReciprocalRankFusionMerger` (or re-rank)

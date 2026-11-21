@@ -256,6 +256,13 @@
 
 ### Changed
 
+- **`TieBreak.InsertionOrder` is refused by every SQL engine.** Insertion order is the document's
+  position in the in-memory index's ordinal space, and a SQL table has no such position for the
+  engine to read: ordering by the heap's physical order would stop being true after an update, a
+  `VACUUM FULL` or a plan change. The backends answered with an id-ordered page under the option's
+  name; they now throw `NotSupportedException` before opening a connection. `TieBreak.DocumentId` —
+  the default, and the order `id COLLATE "C"` implements — is unchanged.
+
 - **The segment format is version 6: a term dictionary entry carries its largest frequency and
   smallest document length.** The two integers are aggregated by the pass that already measures each
   posting block, so the write pays no second walk; a reader gets a scorer's term bound in the same
