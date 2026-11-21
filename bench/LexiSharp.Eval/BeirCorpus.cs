@@ -23,6 +23,14 @@ internal sealed class BeirCorpus
 /// A BEIR dataset, its published BM25 baseline (Thakur et al. 2021, Table 2), and — where an
 /// independent implementation publishes one for the same index and task — its current reference.
 /// </summary>
+/// <param name="DownloadUrls">
+/// Where the zip can be fetched, in the order they are tried. Every entry must serve the same
+/// bytes as <paramref name="ExpectedMd5"/> names — a second source of the same artifact, not a
+/// second corpus. The published mirror is a single fileserver with no failover, and it has been
+/// unreachable for hours, which turned a green gate red for a reason no commit could have caused;
+/// the fallback is the Internet Archive's copy of that same URL, whose bytes are checked against
+/// the same hash before the zip is extracted.
+/// </param>
 /// <param name="Bm25Ndcg10Ref">The figure in Table 2 of the BEIR paper.</param>
 /// <param name="PublishedNdcg10Ref">
 /// BM25 nDCG@10 from the Anserini regression for this corpus's "flat" index, which is the
@@ -41,7 +49,7 @@ internal sealed class BeirCorpus
 /// <param name="PublishedSource">Where the Anserini figure and fingerprint are published.</param>
 internal sealed record BeirDataset(
     string Name,
-    string DownloadUrl,
+    IReadOnlyList<string> DownloadUrls,
     string ExpectedMd5,
     double Bm25Ndcg10Ref,
     bool Graded,
@@ -56,7 +64,7 @@ internal sealed record BeirDataset(
     [
         new(
             "nfcorpus",
-            "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/nfcorpus.zip",
+            PublishedAndArchived("nfcorpus", archivedAt: "20250628051701"),
             "a89dba18a62ef92f7d323ec890a0d38d",
             Bm25Ndcg10Ref: 0.325,
             Graded: true,
@@ -67,7 +75,7 @@ internal sealed record BeirDataset(
             PublishedSource: "https://github.com/castorini/anserini/blob/master/src/main/resources/reproduce/from-document-collection/configs/beir-v1.0.0-nfcorpus.flat.yaml"),
         new(
             "scifact",
-            "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip",
+            PublishedAndArchived("scifact", archivedAt: "20261022010350"),
             "5f7d1de60b170fc8027bb7898e2efca1",
             Bm25Ndcg10Ref: 0.665,
             Graded: false,
@@ -78,7 +86,7 @@ internal sealed record BeirDataset(
             PublishedSource: "https://github.com/castorini/anserini/blob/master/src/main/resources/reproduce/from-document-collection/configs/beir-v1.0.0-scifact.flat.yaml"),
         new(
             "arguana",
-            "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/arguana.zip",
+            PublishedAndArchived("arguana", archivedAt: "20250504011344"),
             "8ad3e3c2a5867cdced806d6503f29b99",
             Bm25Ndcg10Ref: 0.315,
             Graded: false,
@@ -92,7 +100,7 @@ internal sealed record BeirDataset(
         // The 38 documents with no text are why Anserini indexes 57,600 of the file's 57,638.
         new(
             "fiqa",
-            "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/fiqa.zip",
+            PublishedAndArchived("fiqa", archivedAt: "20250504011332"),
             "17918ed23cd04fb15047f73e6c3bd9d9",
             Bm25Ndcg10Ref: 0.236,
             Graded: false,
@@ -102,6 +110,24 @@ internal sealed record BeirDataset(
             NonEmptyDocuments: 57_600,
             PublishedSource: "https://github.com/castorini/anserini/blob/master/src/main/resources/reproduce/from-document-collection/configs/beir-v1.0.0-fiqa.flat.yaml",
             InAll: false),
+    ];
+
+    /// <summary>
+    /// The published download for a corpus, then the Internet Archive's capture of that same URL.
+    /// </summary>
+    /// <remarks>
+    /// The archive is not a second source of the corpus, it is a second copy of the same file: the
+    /// zip is still verified against <see cref="ExpectedMd5"/>, so a capture that held different
+    /// bytes would be rejected rather than indexed. The timestamp names one capture, and the
+    /// <c>id_</c> suffix asks for the raw bytes instead of the archive's rewritten HTML page around
+    /// them. A fallback is worth the second URL because the published host is one unmirrored
+    /// fileserver: on 2026-11-21 it answered nothing for hours and a push turned the pinned
+    /// reference red with no commit to blame, which is the one failure this gate must not have.
+    /// </remarks>
+    private static IReadOnlyList<string> PublishedAndArchived(string name, string archivedAt) =>
+    [
+        $"https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/{name}.zip",
+        $"https://web.archive.org/web/{archivedAt}id_/https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/{name}.zip",
     ];
 
     public static BeirDataset Resolve(string name)
@@ -168,7 +194,7 @@ public sealed record IndexFingerprint(int Documents, int NonEmptyDocuments, long
 internal static class BeirLoader
 {
     public static Task<BeirCorpus> LoadOrDownloadAsync(string dataBaseDir, BeirDataset dataset) =>
-        LoadOrDownloadAsync(dataBaseDir, dataset.Name, dataset.DownloadUrl, dataset.ExpectedMd5);
+        LoadOrDownloadAsync(dataBaseDir, dataset.Name, dataset.DownloadUrls, dataset.ExpectedMd5);
 
     /// <summary>
     /// The same load for a corpus that has no published quality figure.
@@ -180,12 +206,24 @@ internal static class BeirLoader
     /// giving that corpus a quality figure to satisfy a constructor would put a number in the tree
     /// that nothing measures. So the download-and-parse half takes the three things it actually uses.
     /// </remarks>
+    public static Task<BeirCorpus> LoadOrDownloadAsync(
+        string dataBaseDir, string name, string downloadUrl, string expectedMd5) =>
+        LoadOrDownloadAsync(dataBaseDir, name, [downloadUrl], expectedMd5);
+
+    /// <summary>
+    /// The download-and-parse half, with every source that serves the same artifact.
+    /// </summary>
+    /// <remarks>
+    /// The sources are tried in order and each one is checked against <paramref name="expectedMd5"/>
+    /// before it is extracted, so a list is a list of ways to fetch one corpus. Adding a corpus with
+    /// no published figure (a benchmark lane's) passes a single URL and gets the same checksum gate.
+    /// </remarks>
     public static async Task<BeirCorpus> LoadOrDownloadAsync(
-        string dataBaseDir, string name, string downloadUrl, string expectedMd5)
+        string dataBaseDir, string name, IReadOnlyList<string> downloadUrls, string expectedMd5)
     {
         LexiSharp.PathSafety.ThrowIfUnsafe(dataBaseDir, nameof(dataBaseDir));
 
-        string root = await EnsureDatasetAsync(dataBaseDir, name, downloadUrl, expectedMd5);
+        string root = await EnsureDatasetAsync(dataBaseDir, name, downloadUrls, expectedMd5);
 
         var documents = ParseJsonLines(
             Path.Combine(root, "corpus.jsonl"),
@@ -213,7 +251,7 @@ internal static class BeirLoader
 
     /// <summary>Returns the directory containing the BEIR-formatted files, downloading them first when missing.</summary>
     private static async Task<string> EnsureDatasetAsync(
-        string dataBaseDir, string name, string downloadUrl, string expectedMd5)
+        string dataBaseDir, string name, IReadOnlyList<string> downloadUrls, string expectedMd5)
     {
         string nested = Path.Combine(dataBaseDir, name);
 
@@ -230,49 +268,94 @@ internal static class BeirLoader
         Directory.CreateDirectory(dataBaseDir);
         string zipPath = Path.Combine(dataBaseDir, $"{name}.zip");
 
-        Console.WriteLine($"Downloading {name} (BEIR) from {downloadUrl}");
-
-        // 100 s is the HttpClient default, and it covers the whole exchange: a large zip on a busy
-        // runner can exceed it, and a host that does not answer leaves the connect hanging until it
-        // expires. Both used to arrive as a cancelled task and an abort rather than as a network
-        // error. Ten minutes matches the 20 Newsgroups download next door; the retry covers a
-        // transient drop.
-        using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-
-        const int attempts = 3;
-
-        for (int attempt = 1; ; attempt++)
-        {
-            try
-            {
-                await using (Stream response = await client.GetStreamAsync(downloadUrl))
-                await using (FileStream zip = File.Create(zipPath))
-                    await response.CopyToAsync(zip);
-
-                break;
-            }
-            catch (Exception exception) when (
-                attempt < attempts && exception is HttpRequestException or TaskCanceledException)
-            {
-                Console.WriteLine($"Download failed ({exception.Message}); retrying ({attempt}/{attempts}).");
-                await Task.Delay(TimeSpan.FromSeconds(2 * attempt));
-            }
-        }
-
-        string actualMd5 = await ComputeMd5Async(zipPath);
-
-        if (!string.Equals(actualMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
-        {
-            File.Delete(zipPath);
-            throw new InvalidOperationException(
-                $"{name} download checksum mismatch: expected {expectedMd5}, got {actualMd5}.");
-        }
+        await DownloadVerifiedAsync(name, downloadUrls, expectedMd5, zipPath);
 
         Console.WriteLine("Download complete, checksum verified.");
         ZipFile.ExtractToDirectory(zipPath, dataBaseDir, overwriteFiles: true);
         File.Delete(zipPath);
 
         return Directory.Exists(nested) ? nested : dataBaseDir;
+    }
+
+    /// <summary>
+    /// Fetches the zip from the first source that serves <paramref name="expectedMd5"/>'s bytes.
+    /// </summary>
+    /// <remarks>
+    /// A source that answers with a different file is skipped and named in the failure rather than
+    /// silently accepted: the hash is what makes a number a pin, and it is also what makes the
+    /// second source a copy of the same corpus instead of a different one. A mismatch is reported as
+    /// a mismatch even when another source merely failed to answer, because "the archive serves a
+    /// different file" and "the host is down" need different fixes.
+    /// </remarks>
+    private static async Task DownloadVerifiedAsync(
+        string name, IReadOnlyList<string> downloadUrls, string expectedMd5, string zipPath)
+    {
+        var failures = new List<string>();
+        bool checksumMismatch = false;
+
+        // 100 s is the HttpClient default, and it covers the whole exchange: a large zip on a busy
+        // runner can exceed it, and a host that does not answer leaves the connect hanging until it
+        // expires. Both used to arrive as a cancelled task and an abort rather than as a network
+        // error. Ten minutes matches the 20 Newsgroups download next door; the retry covers a
+        // transient drop, and the source after the retries covers a host that is simply gone.
+        //
+        // The connect gets its own, much shorter budget. It is the part that hangs when a host is
+        // gone (2026-11-21: three attempts of a ten-minute timeout each, with nothing to show), and
+        // no timeout can separate it from a slow body. Fifteen seconds is generous for a TCP
+        // handshake and TLS, and it turns "the published host is down" into a fallback that starts
+        // in under a minute instead of half an hour.
+        using var handler = new SocketsHttpHandler { ConnectTimeout = TimeSpan.FromSeconds(15) };
+        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(10) };
+
+        const int attempts = 3;
+
+        foreach (string downloadUrl in downloadUrls)
+        {
+            Console.WriteLine($"Downloading {name} (BEIR) from {downloadUrl}");
+
+            for (int attempt = 1; attempt <= attempts; attempt++)
+            {
+                try
+                {
+                    await using (Stream response = await client.GetStreamAsync(downloadUrl))
+                    await using (FileStream zip = File.Create(zipPath))
+                        await response.CopyToAsync(zip);
+
+                    string actualMd5 = await ComputeMd5Async(zipPath);
+
+                    if (string.Equals(actualMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
+                        return;
+
+                    // The next source, not another attempt at this one: the same URL answering with
+                    // the same wrong bytes twenty seconds later is the expected outcome of a capture
+                    // that drifted, and it is not what a retry is for.
+                    File.Delete(zipPath);
+                    checksumMismatch = true;
+                    failures.Add($"{downloadUrl}: checksum mismatch, expected {expectedMd5}, got {actualMd5}");
+                    break;
+                }
+                catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+                {
+                    failures.Add($"{downloadUrl}: {exception.Message}");
+
+                    if (attempt == attempts)
+                        break;
+
+                    Console.WriteLine($"Download failed ({exception.Message}); retrying ({attempt}/{attempts}).");
+                    await Task.Delay(TimeSpan.FromSeconds(2 * attempt));
+                }
+            }
+        }
+
+        string detail = string.Join("; ", failures);
+
+        if (checksumMismatch)
+        {
+            throw new InvalidOperationException(
+                $"{name} download checksum mismatch — no source served the file the pin names ({detail}).");
+        }
+
+        throw new HttpRequestException($"{name} could not be downloaded from any source ({detail}).");
     }
 
     private static async Task<string> ComputeMd5Async(string path)
