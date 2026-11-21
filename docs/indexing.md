@@ -413,6 +413,15 @@ third plane of the posting block, and they cost about 15% of a segment on the me
 a segment that is already 72% document text. A segment written before this format is refused by the
 reader rather than misread.
 
+The term dictionary also carries, per term, the **largest frequency** and the **smallest document
+length** among the documents holding it. They are aggregated by the same pass that sizes the posting
+blocks, so they cost two integers per term rather than a second walk. A segment answers them from the
+dictionary; the in-memory index computes them with the flat posting copy it already builds for
+scoring. A scorer uses the pair to bound its contribution for a query without a second walk of the
+postings; the bound is what `UpperBoundScoreNormalizer` divides by, and the same arithmetic is what a
+pruned block traversal would compare against its threshold. The pair is conservative rather than exact — its two figures can
+come from two different documents — which is what makes it a bound rather than a guess.
+
 ### The write-ahead journal
 
 A store opened and written to keeps **one file of what changed** rather than a corpus per write. Opening
