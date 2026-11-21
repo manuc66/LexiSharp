@@ -232,23 +232,26 @@ public sealed class PostgresSparseSearchEngine : ITextSearchEngine, IDisposable,
 
         await using var command = connection.CreateCommand();
 
-        string tsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content", "EXCLUDED.text_fields");
-        string tsvInsertExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "@content", "@text_fields");
+        var tsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content", "EXCLUDED.text_fields", "tsv_up");
+        var tsvInsertExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "@content", "@text_fields", "tsv");
 
         string insertSql = $"""
             INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, sparse, tsv)
-            VALUES (@id, @content, @category, @fields, @text_fields, @sparse::sparsevec, {tsvInsertExpr})
+            VALUES (@id, @content, @category, @fields, @text_fields, @sparse::sparsevec, {tsvInsertExpr.Sql})
             ON CONFLICT (id) DO UPDATE
                 SET content = EXCLUDED.content,
                     category = EXCLUDED.category,
                     fields = EXCLUDED.fields,
                     text_fields = EXCLUDED.text_fields,
                     sparse = EXCLUDED.sparse,
-                    tsv = {tsvExpr};
+                    tsv = {tsvExpr.Sql};
             """;
 
         // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); values are parameters.
         command.CommandText = insertSql; // NOSONAR:S2077
+
+        tsvInsertExpr.Bind(command);
+        tsvExpr.Bind(command);
 
         command.Parameters.AddWithValue("id", document.Id);
         command.Parameters.AddWithValue("content", document.Text);

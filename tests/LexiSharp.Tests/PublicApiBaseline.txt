@@ -242,6 +242,7 @@ C|LexiSharp.Postgres.PostgresSparseSearchEngine|Void .ctor(System.String, LexiSh
 C|LexiSharp.Postgres.PostgresTextSearchEngine|Void .ctor(System.String, LexiSharp.Postgres.PostgresIndexOptions, System.Nullable`1[System.Boolean])
 C|LexiSharp.Postgres.PostgresVectorOptions|Void .ctor()
 C|LexiSharp.Postgres.PostgresVectorSearchEngine|Void .ctor(System.String, LexiSharp.Core.IEmbeddingProvider, LexiSharp.Postgres.PostgresVectorOptions, System.Nullable`1[System.Boolean])
+C|LexiSharp.Postgres.TsvExpressionSql|Void .ctor(System.String, System.Collections.Generic.IReadOnlyList`1[System.Collections.Generic.KeyValuePair`2[System.String,System.String]])
 C|LexiSharp.Ranking.Bm25FGridPoint|Void .ctor(Double, Double, System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Double], Double)
 C|LexiSharp.Ranking.Bm25FParameterTuner|Void .ctor(LexiSharp.Core.ITextIndex, System.Collections.Generic.IEnumerable`1[LexiSharp.Ranking.Bm25ValidationQuery], LexiSharp.Linguistics.ITokenizer, LexiSharp.Core.SearchOptions)
 C|LexiSharp.Ranking.Bm25FParameters|Void .ctor(Double, Double, System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Double])
@@ -1769,8 +1770,8 @@ M|LexiSharp.Postgres.PostgresIndexOptions|Boolean Equals(LexiSharp.Postgres.Post
 M|LexiSharp.Postgres.PostgresIndexOptions|Boolean Equals(System.Object)
 M|LexiSharp.Postgres.PostgresIndexOptions|Int32 GetHashCode()
 M|LexiSharp.Postgres.PostgresIndexOptions|System.String ToString()
+M|LexiSharp.Postgres.PostgresSchema|LexiSharp.Postgres.TsvExpressionSql TsvExpression(LexiSharp.Postgres.PostgresIndexOptions, System.String, System.String, System.String)
 M|LexiSharp.Postgres.PostgresSchema|System.String RankWeightsArray(LexiSharp.Postgres.PostgresIndexOptions)
-M|LexiSharp.Postgres.PostgresSchema|System.String TsvExpression(LexiSharp.Postgres.PostgresIndexOptions, System.String, System.String)
 M|LexiSharp.Postgres.PostgresSchema|System.Threading.Tasks.Task CreateDocumentTableAsync(Npgsql.NpgsqlConnection, LexiSharp.Postgres.PostgresIndexOptions, System.Threading.CancellationToken)
 M|LexiSharp.Postgres.PostgresSparseOptions|Boolean Equals(LexiSharp.Postgres.PostgresSparseOptions)
 M|LexiSharp.Postgres.PostgresSparseOptions|Boolean Equals(System.Object)
@@ -1817,6 +1818,12 @@ M|LexiSharp.Postgres.PostgresVectorSearchEngine|Void Dispose()
 M|LexiSharp.Postgres.PostgresVectorSearchEngine|Void DropSchema()
 M|LexiSharp.Postgres.PostgresVectorSearchEngine|Void EnsureSchema()
 M|LexiSharp.Postgres.PostgresVectorSearchEngine|Void Index(System.Collections.Generic.IEnumerable`1[LexiSharp.Core.SearchDocument])
+M|LexiSharp.Postgres.TsvExpressionSql|Boolean Equals(LexiSharp.Postgres.TsvExpressionSql)
+M|LexiSharp.Postgres.TsvExpressionSql|Boolean Equals(System.Object)
+M|LexiSharp.Postgres.TsvExpressionSql|Int32 GetHashCode()
+M|LexiSharp.Postgres.TsvExpressionSql|System.String ToString()
+M|LexiSharp.Postgres.TsvExpressionSql|Void Bind(Npgsql.NpgsqlCommand)
+M|LexiSharp.Postgres.TsvExpressionSql|Void Deconstruct(System.String ByRef, System.Collections.Generic.IReadOnlyList`1[System.Collections.Generic.KeyValuePair`2[System.String,System.String]] ByRef)
 M|LexiSharp.Ranking.Bm25FGridPoint|Boolean Equals(LexiSharp.Ranking.Bm25FGridPoint)
 M|LexiSharp.Ranking.Bm25FGridPoint|Boolean Equals(System.Object)
 M|LexiSharp.Ranking.Bm25FGridPoint|Int32 GetHashCode()
@@ -2932,6 +2939,8 @@ P|LexiSharp.Postgres.PostgresVectorOptions|QualifiedTableName|System.String|get
 P|LexiSharp.Postgres.PostgresVectorOptions|Schema|System.String|getset
 P|LexiSharp.Postgres.PostgresVectorOptions|Table|System.String|getset
 P|LexiSharp.Postgres.PostgresVectorSearchEngine|SupportedQueryFeatures|LexiSharp.Core.QueryFeatures|get
+P|LexiSharp.Postgres.TsvExpressionSql|Parameters|System.Collections.Generic.IReadOnlyList<System.Collections.Generic.KeyValuePair<System.String,System.String>>|getset
+P|LexiSharp.Postgres.TsvExpressionSql|Sql|System.String|getset
 P|LexiSharp.Ranking.Bm25FGridPoint|B|System.Double|getset
 P|LexiSharp.Ranking.Bm25FGridPoint|FieldWeights|System.Collections.Generic.IReadOnlyDictionary<System.String,System.Double>|getset
 P|LexiSharp.Ranking.Bm25FGridPoint|K1|System.Double|getset
@@ -3411,6 +3420,7 @@ T|LexiSharp.Postgres.PostgresVectorSearchEngine|class||LexiSharp.Core.IDetailedS
 T|LexiSharp.Postgres.SparseDistance|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
 T|LexiSharp.Postgres.TrgmIndexKind|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
 T|LexiSharp.Postgres.TrgmSearchMode|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
+T|LexiSharp.Postgres.TsvExpressionSql|class||System.IEquatable<LexiSharp.Postgres.TsvExpressionSql>
 T|LexiSharp.Postgres.VectorDistance|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
 T|LexiSharp.Postgres.VectorIndexMethod|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
 T|LexiSharp.Ranking.Bm25Arithmetic|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
