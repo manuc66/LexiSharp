@@ -461,5 +461,7 @@ public readonly record struct TieAwareMetric(double Expected, double Minimum, do
     public double Width => Maximum - Minimum;
 
     /// <summary>Every admissible ordering agrees: no tie reached a position that is scored.</summary>
-    public bool IsDetermined => Maximum == Minimum;
+    // The definition, not a tolerance: the two are the extreme values the same ties can produce,
+    // and "equal" is what "every admissible ordering agrees" means.
+    public bool IsDetermined => Maximum == Minimum; // NOSONAR:S1244
 }

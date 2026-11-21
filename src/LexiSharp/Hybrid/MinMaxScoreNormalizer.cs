@@ -63,12 +63,14 @@ public sealed class MinMaxScoreNormalizer : IScoreNormalizer
             if (score > max) max = score;
         }
 
-        if (max == double.NegativeInfinity)
+        // Sentinels, both: one is the identity a running maximum starts at, the other asks whether
+        // a single distinct score was ever seen. Neither is a comparison between two measurements.
+        if (max == double.NegativeInfinity) // NOSONAR:S1244
             return ScoreNormalization.None;
 
         // One distinct positive score: no spread. Dividing by zero would drop every document from the
         // blend, so the list degenerates to the max normalizer's answer — the top document carries 1.
-        return max == min
+        return max == min // NOSONAR:S1244
             ? new ScoreNormalization(0, max)
             : new ScoreNormalization(min, max - min);
     }
