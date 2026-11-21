@@ -160,10 +160,11 @@ IResultMerger blend = new WeightedScoreResultMerger(
 | `MaxScoreNormalizer` (default) | `s / max(s)` | the single best score | everything else is a fraction of one document |
 | `MinMaxScoreNormalizer` | `(s − min(s)) / (max(s) − min(s))` | both ends of the list | a tightly packed list is stretched; the last document of each list contributes `0` |
 | `SumScoreNormalizer` | `s / Σs` | the whole list (L1) | the unit depends on the pool depth the search returned |
+| `UpperBoundScoreNormalizer` | `s / MaxScore(Q)` | the query's theoretical maximum, when the engine reports it | falls back to `max` for a query or scorer without a bound |
 
-All three are stateless and read the list they are given — one engine's candidates for one query —
-so none of them needs a calibration set. The default is `MaxScoreNormalizer`, which is the behaviour
-the mergers had before the seam existed: passing none changes no score.
+The first three are stateless and read the list they are given — one engine's candidates for one
+query — so none of them needs a calibration set. The default is `MaxScoreNormalizer`, which is the
+behaviour the mergers had before the seam existed: passing none changes no score.
 
 **The measurement, and why the default did not change.** nDCG@10, `--no-tuned`, `Hybrid BM25+QL`,
 weights 1/1, `--hybrid-normalizer minmax,sum`:
@@ -183,6 +184,72 @@ strategies. What it does establish is that changing the default is not justified
 is why `max` stays the default and the other two are opt-in. The rows to settle the question are
 hybrids whose two halves are genuinely complementary (lexical + dense, or lexical + learned
 sparse); `--hybrid-normalizer` measures those the same way.
+
+### Normalising by the query's upper bound
+
+`UpperBoundScoreNormalizer` divides a lexical engine's scores by the largest score any document
+*could* reach for the query, instead of by the largest score the page happened to return. The bound
+comes from the scorer: for BM25, each term contributes at most
+
+```
+idf(t) · maxTf(t) · (k1 + 1) / (maxTf(t) + k1 · (1 − b + b · minLen(t) / avgdl))
+```
+
+where `maxTf(t)` is the largest term frequency in one document carrying `t`, and `minLen(t)` is the
+smallest token count among those documents. Both statistics are stored by the segment dictionary and
+built with the in-memory posting copy, so asking for them costs no posting walk.
+
+```csharp
+IResultMerger blend = new WeightedScoreResultMerger(
+    new UpperBoundScoreNormalizer(),
+    weights: [1.0, 1.0]);
+```
+
+`CombSumResultMerger` and `CombMNZResultMerger` accept it too; `RerankingResultMerger` and
+`ReciprocalRankFusionMerger` re-score or read ranks, so there is no per-engine scale to normalize
+and they need no context.
+
+It is opt-in, and it falls back to `MaxScoreNormalizer` whenever it cannot answer — a phrase,
+prefix, fuzzy, required/prohibited or field-scoped query, an empty corpus, a scorer that does not
+implement `IScoreBoundScorer` (`BM25`, `BM25+`, `BM25L` and TF-IDF do; `BM25F`, `BM25VA`,
+query-likelihood and boolean do not), or an index that cannot report its posting statistics. A
+decorator that rebuilds the scorer per query — `ReweightingTextSearchEngine`, for one — does not
+forward the capability today, so its searches fall back even though the scorer underneath could
+bound them. A fallback is per query, so a run can contain both mappings; the trace names the
+normalizer, not the per-query choice.
+
+**The bound is valid but not tight.** It sums each term's independent maximum, so it bounds a
+document that achieved every term's best value at once; no such document need exist. A loose bound
+scales a query's scores down as a whole, which leaves the ranking of one engine unchanged and is
+absorbed by the fusion weight.
+
+**The measurement, on the lane where the two scales are genuinely different.** nDCG@10,
+`--no-tuned`, `--dense` (multilingual-e5-small), weights 1/1, paired bootstrap over queries with
+10,000 resamples and a Holm correction across the configurations; baseline is the default
+`max` blend:
+
+| Corpus | max | upper-bound | Δ [95 %] | p (Holm) | minmax Δ [95 %] (p) |
+|---|---:|---:|---|---:|---|
+| SciFact (300 q) | 0.6810 | **0.6939** | **+0.0130** [+0.0064, +0.0207] | 0.0002 (0.0036) | +0.0217 [+0.0016, +0.0418] (0.3113) |
+| NFCorpus (323 q) | **0.3233** | 0.3227 | −0.0006 [−0.0041, +0.0027] | 0.7348 (0.7348) | **+0.0112** [+0.0027, +0.0200] (0.0339) |
+
+**Upper-bound's SciFact gain survives the correction, and its NFCorpus result is neutral**
+(−0.0006, interval crossing zero). Min-max has the larger point estimate on both corpora, but its
+SciFact interval includes zero; its NFCorpus gain is the one that survives. On the earlier
+BM25 + query-likelihood lane min-max lost 0.009 on NFCorpus. That is why `max` stays the default and
+both alternatives are opt-in: two corpora and one dense model establish a direction, not a
+replacement.
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset scifact --dense --no-tuned \
+  --hybrid-normalizer max,minmax,sum,upper-bound \
+  --bootstrap --bootstrap-baseline "Hybrid BM25+Dense weighted"
+```
+
+The per-engine bound is also reachable directly: `RankedTextSearchEngine.TryGetQueryBound` returns
+the total and the per-term figures, for a caller that wants to normalise outside a hybrid or to see
+which term made the bound loose. `UpperBoundScoreNormalizer` and
+`IContextualScoreNormalizer` are covered in the [API reference](api.md).
 
 For score breakdowns, `SearchWithDetails()` returns `DetailedSearchResult`s where each
 document also carries its raw per-source score (`Contributions`), keyed by the labels passed
