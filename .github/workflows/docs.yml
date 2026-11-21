@@ -17,9 +17,14 @@ permissions:
   pages: write
   id-token: write
 
+# Not cancel-in-progress, and for the reason GitHub gives for this group specifically: a deployment
+# cancelled between its artifact upload and the Pages API call leaves `deploy-pages` reporting "No
+# artifacts named github-pages were found for this workflow run" even though the upload step
+# succeeded — the failure this workflow was intermittently hitting. A push that arrives mid-deploy
+# now waits for the deploy instead of replacing it.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
