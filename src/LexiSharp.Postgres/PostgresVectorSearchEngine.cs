@@ -877,6 +877,8 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         if (options.IsEmpty || string.IsNullOrWhiteSpace(query) || columns.Count == 0)
             return SearchOutcome.Empty;
 
+        PostgresTieBreak.EnsureSupported(options);
+
         // ParseQuerySyntax: false is the caller saying "literal text, do not consult the query
         // parser" — and EnsureSupported is a parser call.
         if (options.ParseQuerySyntax)

@@ -228,6 +228,8 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
         if (options.IsEmpty || string.IsNullOrWhiteSpace(query))
             return Array.Empty<SearchResult>();
 
+        PostgresTieBreak.EnsureSupported(options);
+
         // ParseQuerySyntax: false is the caller saying "literal text, do not consult the query
         // parser" — and EnsureSupported is a parser call.
         if (options.ParseQuerySyntax)
