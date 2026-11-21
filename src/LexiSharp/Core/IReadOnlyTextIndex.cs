@@ -96,4 +96,31 @@ public interface IReadOnlyTextIndex
     /// <see cref="TextFields.Default"/>; a single-field index returns only that.
     /// </summary>
     IReadOnlyCollection<string> Fields => [TextFields.Default];
+
+    /// <summary>
+    /// Reports the largest term frequency and the smallest document length among the documents that
+    /// carry <paramref name="term"/>, which is what a scorer needs to bound its contribution without
+    /// scoring a document.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The default declines, so an index written before the capability existed keeps compiling and a
+    /// scorer that asks for a bound falls back rather than inventing one from a statistic it cannot
+    /// read. The built-in indexes answer it: the in-memory index from the flat posting copy it already
+    /// builds for scoring, and a segment from the statistics its writer stored in the term dictionary.
+    /// </para>
+    /// <para>
+    /// A bound built from the pair is valid even when the two figures come from different documents:
+    /// a term's contribution rises with its frequency and falls with the document length, so the value
+    /// at the maximum frequency and the minimum length is at or above every document's.
+    /// </para>
+    /// </remarks>
+    /// <param name="term">The normalized term, as the index stores it.</param>
+    /// <param name="bound">The bound on success; <c>default</c> on failure.</param>
+    /// <returns><c>true</c> when this index can answer for the term.</returns>
+    bool TryGetTermFrequencyBound(string term, out TermFrequencyBound bound)
+    {
+        bound = default;
+        return false;
+    }
 }

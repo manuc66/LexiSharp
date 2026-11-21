@@ -233,6 +233,67 @@ internal sealed class SegmentReader
     /// </summary>
     public bool TryFindTerm(ReadOnlySpan<char> term, out int documentFrequency, out PostingBlockReader postings)
     {
+        if (!TryFindTermEntry(term, out StoredTermEntry entry))
+        {
+            documentFrequency = 0;
+            postings = default;
+
+            return false;
+        }
+
+        documentFrequency = entry.DocumentFrequency;
+        postings = _source.TryView(entry.PostingsOffset, entry.PostingsLength, out var view)
+            ? new PostingBlockReader(view)
+            : new PostingBlockReader(_source, entry.PostingsOffset, entry.PostingsLength, Scratch);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Reads a term's stored frequency bound without building a postings cursor.
+    /// </summary>
+    /// <remarks>
+    /// The term dictionary carries the pair at write time, so this is the same binary search as a
+    /// term lookup and no walk of the postings: a scorer asking for a bound must not pay O(df) for a
+    /// question the format already answered.
+    /// </remarks>
+    public bool TryGetTermBound(ReadOnlySpan<char> term, out TermFrequencyBound bound)
+    {
+        if (!TryFindTermEntry(term, out StoredTermEntry entry))
+        {
+            bound = default;
+
+            return false;
+        }
+
+        bound = new TermFrequencyBound(entry.MaxFrequency, entry.MinDocumentLength);
+
+        return true;
+    }
+
+    /// <summary>One term's dictionary entry, as the reader compares and returns it.</summary>
+    private readonly record struct StoredTermEntry(
+        int DocumentFrequency,
+        int PostingsOffset,
+        int PostingsLength,
+        int MaxFrequency,
+        int MinDocumentLength);
+
+    /// <summary>
+    /// Finds a term's dictionary entry by its UTF-8 bytes, without decoding the stored term.
+    /// </summary>
+    private bool TryFindTermEntry(ReadOnlySpan<char> term, out StoredTermEntry entry)
+    {
+        // An empty term encodes to an empty byte string, and an empty byte string compares equal to
+        // whichever entry the binary search happens to land on. No vocabulary holds the empty term,
+        // so refuse it rather than returning the first term's postings or statistics.
+        if (term.IsEmpty)
+        {
+            entry = default;
+
+            return false;
+        }
+
         Span<byte> encoded = term.Length <= 256 ? stackalloc byte[term.Length * 4] : new byte[term.Length * 4];
         int length = Encoding.UTF8.GetBytes(term, encoded);
         var wanted = encoded[..length];
@@ -243,14 +304,11 @@ internal sealed class SegmentReader
         while (low <= high)
         {
             int middle = (low + high) / 2;
-            var entry = ReadTermEntry(middle, wanted, out int comparison);
+            int offset = CompareTermEntry(middle, wanted, out int comparison);
 
             if (comparison == 0)
             {
-                documentFrequency = entry.DocumentFrequency;
-                postings = _source.TryView(entry.PostingsOffset, entry.PostingsLength, out var view)
-                    ? new PostingBlockReader(view)
-                    : new PostingBlockReader(_source, entry.PostingsOffset, entry.PostingsLength, Scratch);
+                entry = ReadStoredTermEntry(offset);
 
                 return true;
             }
@@ -261,8 +319,7 @@ internal sealed class SegmentReader
                 high = middle - 1;
         }
 
-        documentFrequency = 0;
-        postings = default;
+        entry = default;
 
         return false;
     }
@@ -300,7 +357,7 @@ internal sealed class SegmentReader
         while (low < high)
         {
             int middle = (low + high) / 2;
-            ReadTermEntry(middle, wanted, out int comparison);
+            CompareTermEntry(middle, wanted, out int comparison);
 
             if (comparison < 0)
                 low = middle + 1;
@@ -325,34 +382,16 @@ internal sealed class SegmentReader
     /// </summary>
     public bool TryResolveTerm(ReadOnlySpan<char> term, out TermRegion region)
     {
-        Span<byte> encoded = term.Length <= 256 ? stackalloc byte[term.Length * 4] : new byte[term.Length * 4];
-        int length = Encoding.UTF8.GetBytes(term, encoded);
-        var wanted = encoded[..length];
-
-        int low = 0;
-        int high = TermCount - 1;
-
-        while (low <= high)
+        if (!TryFindTermEntry(term, out StoredTermEntry entry))
         {
-            int middle = (low + high) / 2;
-            var entry = ReadTermEntry(middle, wanted, out int comparison);
+            region = default;
 
-            if (comparison == 0)
-            {
-                region = new TermRegion(entry.PostingsOffset, entry.PostingsLength);
-
-                return true;
-            }
-
-            if (comparison < 0)
-                low = middle + 1;
-            else
-                high = middle - 1;
+            return false;
         }
 
-        region = default;
+        region = new TermRegion(entry.PostingsOffset, entry.PostingsLength);
 
-        return false;
+        return true;
     }
 
     /// <summary>
@@ -397,10 +436,15 @@ internal sealed class SegmentReader
     /// The term's bytes are compared in place and never decoded, because the binary search that calls
     /// this reads only the comparison.
     /// </remarks>
-    private (int DocumentFrequency, int PostingsOffset, int PostingsLength) ReadTermEntry(
-        int index,
-        ReadOnlySpan<byte> wanted,
-        out int comparison)
+    /// <summary>
+    /// Compares the entry at <paramref name="index"/> with the wanted bytes and returns its offset.
+    /// </summary>
+    /// <remarks>
+    /// Only the term is read on a comparison. The five integers that follow it are read by
+    /// <see cref="ReadStoredTermEntry"/> once the binary search has found the entry, so a step that
+    /// does not match pays for one slice and one comparison rather than five source reads.
+    /// </remarks>
+    private int CompareTermEntry(int index, ReadOnlySpan<byte> wanted, out int comparison)
     {
         int entry = EntryOffset(_termsTableOffset, index);
         int termLength = ReadInt32(entry, "term length");
@@ -412,10 +456,20 @@ internal sealed class SegmentReader
         // comparison, so decoding it allocated log2(vocabulary) strings per look-up — and decoding it
         // after the reads below would read a scratch buffer they may have refilled. The bytes are
         // compared in place, which is what the search needs.
-        return (
+        return entry;
+    }
+
+    /// <summary>Reads the five integers an entry stores after its term bytes.</summary>
+    private StoredTermEntry ReadStoredTermEntry(int entry)
+    {
+        int termLength = ReadInt32(entry, "term length");
+
+        return new StoredTermEntry(
             ReadInt32(entry + sizeof(int) + termLength, "document frequency"),
             ReadInt32(entry + (2 * sizeof(int)) + termLength, "postings offset"),
-            ReadInt32(entry + (3 * sizeof(int)) + termLength, "postings length"));
+            ReadInt32(entry + (3 * sizeof(int)) + termLength, "postings length"),
+            ReadInt32(entry + (4 * sizeof(int)) + termLength, "maximum term frequency"),
+            ReadInt32(entry + (5 * sizeof(int)) + termLength, "minimum document length"));
     }
 
     private string ReadLengthPrefixed(int at, out int after)

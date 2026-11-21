@@ -638,6 +638,51 @@ internal sealed class SegmentChain : IReadOnlyTextIndex, IAccumulatingIndex, ICa
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// A term lives in exactly one generation, so the chain's maximum is the maximum of the
+    /// generations' and its minimum is the minimum of theirs. Tombstoned documents stay in the
+    /// segments' statistics, which makes the result conservative rather than wrong: the bound may be
+    /// looser than the live corpus, never lower than a score the chain can return.
+    /// </remarks>
+    public bool TryGetTermFrequencyBound(string term, out TermFrequencyBound bound)
+    {
+        ArgumentNullException.ThrowIfNull(term);
+
+        int maxFrequency = 0;
+        int minLength = int.MaxValue;
+        bool found = false;
+
+        for (int i = 0; i < _segments.Length; i++)
+        {
+            if (!_segments[i].TryGetTermFrequencyBound(term, out TermFrequencyBound segment))
+                continue;
+
+            found = true;
+
+            if (segment.MaxFrequency > maxFrequency)
+                maxFrequency = segment.MaxFrequency;
+
+            if (segment.MinDocumentLength < minLength)
+                minLength = segment.MinDocumentLength;
+        }
+
+        if (_overlay.TryGetTermFrequencyBound(term, out TermFrequencyBound overlay))
+        {
+            found = true;
+
+            if (overlay.MaxFrequency > maxFrequency)
+                maxFrequency = overlay.MaxFrequency;
+
+            if (overlay.MinDocumentLength < minLength)
+                minLength = overlay.MinDocumentLength;
+        }
+
+        bound = found ? new TermFrequencyBound(maxFrequency, minLength) : default;
+
+        return found;
+    }
+
+    /// <inheritdoc />
     public int CorpusFrequency(string term)
     {
         int total = 0;
