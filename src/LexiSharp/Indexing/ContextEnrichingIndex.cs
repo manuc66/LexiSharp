@@ -202,6 +202,10 @@ public sealed class ContextEnrichingIndex : ITextIndex, IUnorderedCandidateIndex
     public int DocumentFrequency(string term) => _inner.DocumentFrequency(term);
 
     /// <inheritdoc />
+    public bool TryGetTermFrequencyBound(string term, out TermFrequencyBound bound) =>
+        _inner.TryGetTermFrequencyBound(term, out bound);
+
+    /// <inheritdoc />
     public int CorpusFrequency(string term) => _inner.CorpusFrequency(term);
 
     /// <inheritdoc />

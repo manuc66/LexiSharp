@@ -75,7 +75,7 @@ namespace LexiSharp.Ranking;
 /// must reduce to exactly one term or the constructor throws.
 /// </para>
 /// </remarks>
-public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostProbe, IExplainableSearchEngine, IQuerySyntaxSupport
+public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostProbe, IExplainableSearchEngine, IQuerySyntaxSupport, IScoreBoundSearchEngine
 {
     /// <summary>
     /// Upper bound on how many vocabulary terms a single prefix/fuzzy atom may contribute to
@@ -321,6 +321,65 @@ public sealed class RankedTextSearchEngine : IFacetedSearchEngine, IQueryCostPro
     /// <inheritdoc />
     public IReadOnlyList<SearchResult> Search(ReadOnlySpan<char> query, SearchOptions? options = null, CancellationToken cancellationToken = default) =>
         RunQuery(query, options ?? SearchOptions.Default, null, cancellationToken);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <para>
+    /// The tokenizer is the engine's own and the scorer is the one the search would run, so the bound
+    /// describes the scores this engine returns rather than a second implementation's idea of them.
+    /// A query the engine rewrites — a phrase, an expansion, a required or prohibited operator, a
+    /// field scope — is declined: those change which terms score, and the bound for the literal text
+    /// would not be the bound for the ranking.
+    /// </para>
+    /// <para>
+    /// The index must implement <see cref="IReadOnlyTextIndex.TryGetTermFrequencyBound"/>, which the
+    /// built-in in-memory and segmented indexes do. A custom index that does not makes the scorer
+    /// decline rather than estimate.
+    /// </para>
+    /// </remarks>
+    public bool TryGetQueryBound(string query, SearchOptions? options, out QueryScoreBound bound)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        options ??= SearchOptions.Default;
+
+        if (_index.Count == 0 ||
+            string.IsNullOrWhiteSpace(query) ||
+            _scorer is not IScoreBoundScorer scorer ||
+            (options.ParseQuerySyntax && !QueryParser.IsPlain(query.AsSpan(), options.KnownFields)))
+        {
+            bound = default;
+
+            return false;
+        }
+
+        var terms = _tokenizer.Tokenize(query);
+
+        if (terms.Count == 0)
+        {
+            bound = new QueryScoreBound(_scorer.Name, 0, Array.Empty<TermScoreBound>());
+
+            return true;
+        }
+
+        // A parsed plain query still gains its direct synonyms, and the search scores those terms.
+        // The bound has to cover them too: a synonym can carry a rarer term than the word the caller
+        // wrote, and a bound built from the literal text would sit below the score the engine returns.
+        // The literal path (ParseQuerySyntax: false) bypasses the query language and its synonym
+        // resolution, so the bound must bypass it too — otherwise it bounds a query the engine never
+        // ran, and a rare synonym it never scored damps every score of the literal search.
+        if (options.ParseQuerySyntax && _synonyms is not null)
+        {
+            var expanded = new List<string>(terms);
+
+            for (int i = 0; i < terms.Count; i++)
+                AppendSynonyms(expanded, terms[i]);
+
+            return scorer.TryGetQueryBound(expanded, _index, out bound);
+        }
+
+        return scorer.TryGetQueryBound(terms, _index, out bound);
+    }
 
     /// <inheritdoc />
     public FacetedSearchResult SearchWithFacets(

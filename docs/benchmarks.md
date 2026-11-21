@@ -976,6 +976,48 @@ for another corpus. The one-term tail's 0.0 % holds for the queries this lane ru
 occurs at most once per document; a tail term with repeated occurrences in some documents does have a
 threshold above its common contribution and can be pruned.
 
+## Segment lane (`segment-wand`): what a block bound can skip on a real segment
+
+The `wand` lane measures flat arrays and says the segment path is not measured. This lane reads the
+real block headers a segment stores, computes the same BM25 bound per block, and counts the entries a
+traversal could skip against the engine's final top-10 threshold. It also prices the two things a
+segment traversal needs: the block headers themselves, and a bound at the eight-block granularity of
+one skip-table entry.
+
+```bash
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- segment-wand 100000
+```
+
+**What it reports.** Per query and per term: document frequency, blocks, entries per block, one-entry
+blocks, and the per-block bound. Then the **per-block ceiling** (entries in a block whose bound is
+below the final threshold) and the **superblock ceiling** (the same test over the eight consecutive
+blocks one skip-table entry spans, using their maximum bound). Finally, the cost of walking the first
+term's headers versus decoding every entry, and the array and mapped engines on the same query. The
+array and mapped pages are compared bit for bit.
+
+**A 100,000-document run, indicative only** (Zipf 1.07, 50 tokens/document, BM25 k1=1.5, b=0.75,
+`Limit: 10`; one host, one run):
+
+| Query | Entries | Blocks | Per-block ceiling | 8-block ceiling | Headers / full decode | Array p50 / mapped p50 |
+|---|---:|---:|---:|---:|---:|---:|
+| one head term (`w1x`) | 95,402 | 782 | **98.3 %** | **87.7 %** | 26.9 µs / 180.7 µs | 1.74 ms / 1.94 ms |
+| one tail term | 9 | 9 | 0.0 % | 0.0 % | 0.6 µs / 0.7 µs | 3.5 µs / 8.1 µs |
+| three tail terms | 29 | 29 | 0.0 % | 0.0 % | 0.6 µs / 0.7 µs | 7.1 µs / 18.2 µs |
+
+The tail rows have no full page or only one-entry blocks, so there is nothing to prune. The head row
+is where the question lives: **98.3 % of the entries sit in a block whose bound cannot reach the
+page**, and **87.7 %** sit in an eight-block group that could be skipped together if the skip entry
+carried a bound. But the full decode is 180.7 µs of a 1.74 ms search, about **10 %**; pruning every
+entry it can would therefore save at most that order of magnitude, before the traversal's own cursor,
+pivot and heap bookkeeping. The mapped engine is 1.11× the array one here, consistent with the store
+lane; the tail ratio is not meaningful at these microsecond scales.
+
+**What it does not measure.** The traversal itself. A real block-max WAND or MaxScore has a pivot,
+cursors, a heap and a threshold that grows from zero; this lane takes the final threshold, so its
+numbers are a **ceiling**. It also does not measure a format whose skip entry carries a bound — that
+is the experiment the 8-block column is meant to justify, not a result it reports. The bounds are read
+through the array source, which is fine for the format but not for a cold mapping.
+
 ## Sparse lane (`sparse-wand`): the pruning ceiling for learned-sparse vectors
 
 The question this lane answers is whether a block-max traversal over sparse vectors has anything to

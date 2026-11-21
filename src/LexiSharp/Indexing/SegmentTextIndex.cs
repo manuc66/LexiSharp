@@ -344,6 +344,14 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
         _reader.TryFindTerm(term.AsSpan(), out int frequency, out _) ? frequency : 0;
 
     /// <inheritdoc />
+    public bool TryGetTermFrequencyBound(string term, out TermFrequencyBound bound)
+    {
+        ArgumentNullException.ThrowIfNull(term);
+
+        return _reader.TryGetTermBound(term.AsSpan(), out bound);
+    }
+
+    /// <inheritdoc />
     public int CorpusFrequency(string term)
     {
         if (!_reader.TryFindTerm(term.AsSpan(), out _, out var postings))

@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using LexiSharp.Core;
 
 namespace LexiSharp.Indexing;
 
@@ -85,21 +86,58 @@ internal static class PostingBlocks
         ReadOnlySpan<int> ordinals,
         ReadOnlySpan<int> frequencies,
         ReadOnlySpan<int> lengths,
-        ReadOnlySpan<int> positions)
+        ReadOnlySpan<int> positions) =>
+        Measure(ordinals, frequencies, lengths, positions, out _);
+
+    /// <summary>
+    /// Bytes <see cref="Write"/> would write for these postings, and the term-level frequency bound
+    /// the same walk can aggregate from its blocks.
+    /// </summary>
+    /// <remarks>
+    /// The bound is a by-product of the measurement rather than a second walk: every block's largest
+    /// frequency and smallest length are already computed to size its header, and the term's pair is
+    /// their maximum and minimum. A caller that stores the pair pays no extra pass over the postings.
+    /// </remarks>
+    /// <param name="ordinals">The term's document ordinals, ascending.</param>
+    /// <param name="frequencies">The term's frequency at the same position in <paramref name="ordinals"/>.</param>
+    /// <param name="lengths">Token count per document ordinal.</param>
+    /// <param name="positions">Every entry's positions, in entry order.</param>
+    /// <param name="bound">The term's frequency bound on return; <c>default</c> for empty postings.</param>
+    public static int Measure(
+        ReadOnlySpan<int> ordinals,
+        ReadOnlySpan<int> frequencies,
+        ReadOnlySpan<int> lengths,
+        ReadOnlySpan<int> positions,
+        out TermFrequencyBound bound)
     {
         int blockCount = CountBlocks(ordinals);
         int total = Varints.Size(blockCount) + (SkipCount(blockCount) * SkipEntryBytes);
 
         int index = 0;
         int positionStart = 0;
+        int maxFrequency = 0;
+        int minLength = int.MaxValue;
 
         while (index < ordinals.Length)
         {
             int end = WindowEnd(ordinals, index);
-            total += Layout(ordinals, frequencies, lengths, positions, positionStart, index, end).Size;
+            BlockLayout layout = Layout(ordinals, frequencies, lengths, positions, positionStart, index, end);
+
+            total += layout.Size;
+
+            if (layout.MaxFrequency > maxFrequency)
+                maxFrequency = layout.MaxFrequency;
+
+            if (layout.MinLength < minLength)
+                minLength = layout.MinLength;
+
             positionStart += FrequencySum(frequencies, index, end);
             index = end;
         }
+
+        bound = ordinals.Length == 0
+            ? default
+            : new TermFrequencyBound(maxFrequency, minLength);
 
         return total;
     }
@@ -153,8 +191,8 @@ internal static class PostingBlocks
     }
 
     /// <summary>
-    /// Writes the region and returns how many bytes it took, which is <see cref="Measure"/> for the
-    /// same postings.
+    /// Writes the region and returns how many bytes it took, which is <c>Measure</c> for the same
+    /// postings.
     /// </summary>
     public static int Write(
         ReadOnlySpan<int> ordinals,

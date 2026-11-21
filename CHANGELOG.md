@@ -2,6 +2,45 @@
 
 ### Added
 
+- **Theoretical query bounds for lexical scores.** `TermFrequencyBound` and
+  `IReadOnlyTextIndex.TryGetTermFrequencyBound` expose the largest frequency and the smallest
+  document length among the documents carrying a term; `IScoreBoundScorer` turns that pair into a
+  query's upper bound, and `IScoreBoundSearchEngine` exposes the same bound from
+  `RankedTextSearchEngine`. `BM25`, `BM25+`, `BM25L` and TF-IDF implement the scorer capability;
+  `BM25F`, `BM25VA`, query-likelihood and boolean decline, and a syntax-bearing query is declined
+  because the engine rewrites which terms score. The in-memory index reads the pair from the flat
+  posting copy it already builds; a segment stores it in the term dictionary, aggregated by the same
+  pass that sizes the posting blocks, so a query pays no posting walk for it. The bound is valid but
+  not tight — it sums each term's independent maximum — and a scorer's arithmetic is the only source
+  of it.
+
+- **`UpperBoundScoreNormalizer`** (`LexiSharp.Hybrid`), with `IContextualScoreNormalizer`,
+  `IContextualResultMerger`, `IContextualMergeExplainer` and `ScoreNormalizationContext`, wired into
+  `HybridTextSearchEngine`, `WeightedScoreResultMerger`, `CombSumResultMerger` and
+  `CombMNZResultMerger`. It divides a lexical engine's scores by the query's theoretical maximum when
+  the engine reports one, and falls back to `MaxScoreNormalizer` otherwise — an unsupported scorer, a
+  rewritten query, an empty corpus or an index without posting statistics. Measured on the
+  lexical + dense lane (multilingual-e5-small, weights 1/1, 10,000-resample paired bootstrap):
+  **SciFact +0.0130 nDCG@10** (95 % CI [+0.0064, +0.0207], Holm p = 0.0036) and **NFCorpus −0.0006**
+  (CI [−0.0041, +0.0027]). Its SciFact gain is the one that survives the Holm correction, and its
+  NFCorpus result is neutral; min-max has the larger point estimate on both, but its SciFact interval
+  includes zero. Two corpora and one dense model are still a direction rather than a replacement, so
+  `MaxScoreNormalizer` stays the default. The merge trace reports the divisor the merge actually
+  used.
+
+- **`--hybrid-normalizer upper-bound`** in `bench/LexiSharp.Eval`, beside `max`, `minmax` and `sum`,
+  and the dense lane now adds one `Hybrid BM25+Dense weighted` row per requested normalizer. That is
+  the lane the mapping is measurable on; the BM25 + query-likelihood rows the flag also reaches are
+  not complementary enough to distinguish the normalizers.
+
+- **`segment-wand` lane in `bench/LexiSharp.Benchmarks`**: the block-bound ceiling on a real
+  segment, per block and per eight-block skip-table entry, beside the cost of walking headers versus
+  decoding entries and the array/mapped engine on the same query. At 100,000 documents the head term
+  reads 98.3 % of its entries in a block below the final top-10 threshold and 87.7 % in an eight-block
+  group that could be skipped together, but the full decode is only about 10 % of the search's p50;
+  tail queries have nothing to prune. It is a ceiling, not a traversal, and it does not measure a
+  skip entry carrying a bound. Recorded in `docs/benchmarks.md`.
+
 - **`sparse-wand` lane in `bench/LexiSharp.Benchmarks`**: the pruning ceiling for learned-sparse
   vectors, measured on the shape a SPLADE model produces (50,000 documents, 173 postings each,
   queries drawn by document frequency) in the layout a sparse index would store — contiguous
@@ -152,6 +191,13 @@
   reason: a custom engine outside the core assembly needs to report the stage under the same name.
 
 ### Changed
+
+- **The segment format is version 6: a term dictionary entry carries its largest frequency and
+  smallest document length.** The two integers are aggregated by the pass that already measures each
+  posting block, so the write pays no second walk; a reader gets a scorer's term bound in the same
+  binary search that finds the postings. A version-5 segment is refused by the reader rather than
+  misread, as every earlier format change has been. The in-memory index needs no format change: the
+  pair is computed with the flat posting copy it already builds on first use.
 
 - The shared documents table's upsert and row reader are now one implementation
   (`PostgresDocumentWriter`/`PostgresDocumentReader`), used by the lexical and BM25 engines, and the

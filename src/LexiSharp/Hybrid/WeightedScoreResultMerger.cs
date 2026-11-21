@@ -20,7 +20,7 @@ namespace LexiSharp.Hybrid;
 /// historical behaviour, so passing none changes nothing about an existing pipeline's scores.
 /// </para>
 /// </remarks>
-public sealed class WeightedScoreResultMerger : IResultMerger, IMergeExplainer
+public sealed class WeightedScoreResultMerger : IContextualResultMerger, IContextualMergeExplainer
 {
     private readonly double[] _weights;
     private readonly IScoreNormalizer _normalizer;
@@ -62,12 +62,22 @@ public sealed class WeightedScoreResultMerger : IResultMerger, IMergeExplainer
     public string Name => "WeightedScore";
 
     /// <inheritdoc />
+    public bool UsesContexts => _normalizer is IContextualScoreNormalizer;
+
+    /// <inheritdoc />
     public string NormalizationName => _normalizer.Name;
 
     /// <inheritdoc />
     public IReadOnlyList<SearchResult> Merge(
         IReadOnlyList<IReadOnlyList<SearchResult>> perEngineResults,
-        string query)
+        string query) =>
+        Merge(perEngineResults, query, null);
+
+    /// <inheritdoc />
+    public IReadOnlyList<SearchResult> Merge(
+        IReadOnlyList<IReadOnlyList<SearchResult>> perEngineResults,
+        string query,
+        IReadOnlyList<ScoreNormalizationContext?>? contexts)
     {
         ArgumentNullException.ThrowIfNull(perEngineResults);
         _ = query;
@@ -82,19 +92,31 @@ public sealed class WeightedScoreResultMerger : IResultMerger, IMergeExplainer
         var merged = new Dictionary<string, (SearchDocument Document, double Score)>(StringComparer.Ordinal);
 
         for (int i = 0; i < engineCount; i++)
-            AccumulateEngine(merged, perEngineResults[i], weights[i], _normalizer.Measure(perEngineResults[i]));
+        {
+            AccumulateEngine(
+                merged,
+                perEngineResults[i],
+                weights[i],
+                Measure(perEngineResults[i], contexts, i));
+        }
 
         return Rank(merged);
     }
 
     /// <inheritdoc />
     /// <remarks>
-    /// The normalizer is asked to measure the same lists <see cref="Merge"/> measured, so the
+    /// The normalizer is asked to measure the same lists <c>Merge</c> measured, so the
     /// explanation and the merge cannot disagree about a divisor: a second implementation of "the
     /// largest score" would be a second source of truth for the only numbers this type exists to
     /// report.
     /// </remarks>
-    public MergeExplanation Explain(IReadOnlyList<IReadOnlyList<SearchResult>> perEngineResults)
+    public MergeExplanation Explain(IReadOnlyList<IReadOnlyList<SearchResult>> perEngineResults) =>
+        Explain(perEngineResults, null);
+
+    /// <inheritdoc />
+    public MergeExplanation Explain(
+        IReadOnlyList<IReadOnlyList<SearchResult>> perEngineResults,
+        IReadOnlyList<ScoreNormalizationContext?>? contexts)
     {
         ArgumentNullException.ThrowIfNull(perEngineResults);
 
@@ -111,7 +133,7 @@ public sealed class WeightedScoreResultMerger : IResultMerger, IMergeExplainer
 
         for (int i = 0; i < engineCount; i++)
         {
-            ScoreNormalization normalization = _normalizer.Measure(perEngineResults[i]);
+            ScoreNormalization normalization = Measure(perEngineResults[i], contexts, i);
             scales[i] = normalization.Scale;
             offsets[i] = normalization.Offset;
             shifted |= normalization.Offset != 0;
@@ -122,6 +144,26 @@ public sealed class WeightedScoreResultMerger : IResultMerger, IMergeExplainer
         // Left empty when nothing shifts, which is the documented reading of "empty means offset 0"
         // and keeps the historical report of a max-normalized merge byte for byte what it was.
         return shifted ? explanation with { Offsets = offsets } : explanation;
+    }
+
+    /// <summary>
+    /// The mapping an engine's list goes through: the contextual one when the normalizer and the
+    /// context both exist, and the historical list measurement otherwise.
+    /// </summary>
+    private ScoreNormalization Measure(
+        IReadOnlyList<SearchResult> results,
+        IReadOnlyList<ScoreNormalizationContext?>? contexts,
+        int engine)
+    {
+        if (contexts is not null &&
+            engine < contexts.Count &&
+            contexts[engine] is { } context &&
+            _normalizer is IContextualScoreNormalizer contextual)
+        {
+            return contextual.Measure(results, context);
+        }
+
+        return _normalizer.Measure(results);
     }
 
     private double[] ResolveWeights(int engineCount)

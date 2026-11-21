@@ -185,6 +185,14 @@ was designed from:
   [Evaluation](evaluation.md#classification-on-20-newsgroups); [Benchmarks](benchmarks.md#classification-classificationbenchmarks)
   reports cost. Measure on your own labels before trusting either. See
   [question trees](text-analysis.md#question-trees-classification-and-corpus-division).
+- **Upper-bound score normalisation is opt-in, and its one measured gain is not enough to change the
+  default.** `UpperBoundScoreNormalizer` divides a lexical engine's scores by the scorer's
+  theoretical maximum for the query, which is valid but can be loose, and falls back to the page
+  maximum whenever the engine cannot report one. On the lexical + dense lane it reads
+  **+0.0130 nDCG@10 on SciFact** (95 % CI [+0.0064, +0.0207], Holm-adjusted p = 0.0036) and
+  **−0.0006 on NFCorpus** (CI [−0.0041, +0.0027]). Two corpora and one dense model establish a
+  direction, not a replacement, so `MaxScoreNormalizer` stays the default. See
+  [hybrid search](pipelines.md#normalising-by-the-query-upper-bound).
 - **Combinatorial coverage is partial.** Engines, scorers, rerankers and mergers are tested
   individually *and* in the combinations described here, but not every pairing is exercised.
   Treat an unusual combination as supported but unproven until you test it on your data.

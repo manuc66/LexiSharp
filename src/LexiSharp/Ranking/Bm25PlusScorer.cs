@@ -45,7 +45,7 @@ namespace LexiSharp.Ranking;
 /// the paper's starting value is not a tuned row whatever <c>k1</c> and <c>b</c> it carries.
 /// </para>
 /// </remarks>
-public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQueryPlannableScorer, IQueryTermStatistics
+public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQueryPlannableScorer, IQueryTermStatistics, IScoreBoundScorer
 {
     private readonly double _k1;
     private readonly double _b;
@@ -104,6 +104,74 @@ public sealed class Bm25PlusScorer : IScoreExplainer, ITermOverlapScorer, IQuery
     /// <inheritdoc />
     public IReadOnlyList<QueryTermStatistic> DescribeTerms(IReadOnlyList<string> terms, IReadOnlyTextIndex index) =>
         TermStatistics.Describe(terms, index, TermStatistics.Bm25Idf);
+
+    /// <inheritdoc />
+    bool IScoreBoundScorer.TryGetQueryBound(
+        IReadOnlyList<string> queryTerms,
+        IReadOnlyTextIndex index,
+        out QueryScoreBound bound)
+    {
+        ArgumentNullException.ThrowIfNull(queryTerms);
+        ArgumentNullException.ThrowIfNull(index);
+
+        int documentCount = index.StatisticDocumentCount;
+        double averageLength = index.AverageDocumentLength;
+
+        if (documentCount == 0 || averageLength <= 0)
+        {
+            bound = new QueryScoreBound(Name, 0, Array.Empty<TermScoreBound>());
+
+            return true;
+        }
+
+        var terms = Terms(queryTerms);
+        var entries = new TermScoreBound[terms.Count];
+        double total = 0;
+
+        for (int i = 0; i < terms.Count; i++)
+        {
+            string term = terms[i];
+            int df = index.DocumentFrequency(term);
+
+            if (df <= 0)
+            {
+                entries[i] = new TermScoreBound(term, 0, 0, 0, 0, 0);
+                continue;
+            }
+
+            if (!index.TryGetTermFrequencyBound(term, out TermFrequencyBound frequencies) ||
+                frequencies.MaxFrequency <= 0)
+            {
+                bound = default;
+
+                return false;
+            }
+
+            double idf = Math.Log(1.0 + ((documentCount - df + 0.5) / (df + 0.5)));
+            double contribution = Bm25UpperBound.Bm25Plus(
+                idf,
+                frequencies.MaxFrequency,
+                frequencies.MinDocumentLength,
+                _k1,
+                _b,
+                _delta,
+                averageLength);
+
+            entries[i] = new TermScoreBound(
+                term,
+                df,
+                frequencies.MaxFrequency,
+                frequencies.MinDocumentLength,
+                idf,
+                contribution);
+
+            total += contribution;
+        }
+
+        bound = new QueryScoreBound(Name, total, entries);
+
+        return true;
+    }
 
     /// <inheritdoc />
     public double Score(string documentId, IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
