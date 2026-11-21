@@ -44,6 +44,17 @@
   the lane the mapping is measurable on; the BM25 + query-likelihood rows the flag also reaches are
   not complementary enough to distinguish the normalizers.
 
+- **`SparseTextSearchEngine`'s postings are now ordinal-based and contiguous.** A document gets an
+  integer ordinal; each term keeps arrays of `(ordinal, weight)` instead of
+  `Dictionary<documentId, weight>`; a query accumulates into the same generation-stamped
+  `ScoreAccumulator` the lexical engine uses and fills a bounded top-`k` window. The public surface
+  and the learned weights are unchanged. On the synthetic 50,000-document SPLADE shape, 10,000
+  documents / 40 head terms falls from **~800 µs and 390 KB per search** to **~98 µs and 1.4 KB**
+  (same generated query set), and a 50,000-document import from ~4.0 s to ~2.4 s. The new
+  `sparse-engine` lane separates the fixed cost (40 absent terms: 4.1 µs) from the posting work
+  (100 head terms: 1.35 ms), which is why the term dictionary was left as a dictionary: it is 40
+  lookups per query, not one hash per posting.
+
 - **`segment-wand` lane in `bench/LexiSharp.Benchmarks`**: the block-bound ceiling on a real
   segment, per block and per eight-block skip-table entry, beside the cost of walking headers versus
   decoding entries and the array/mapped engine on the same query. At 100,000 documents the head term
