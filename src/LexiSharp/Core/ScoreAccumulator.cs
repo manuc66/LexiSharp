@@ -56,7 +56,7 @@ internal sealed class ScoreAccumulator : IDisposable
     /// and one of them lands on the generation of the pass that just rented it. The ordinal is
     /// then treated as already touched, never recorded, and the search silently returns one document
     /// fewer. That is not a hypothesis: it failed
-    /// <c>ScoreAccumulatorTests.Rent_IgnoresTheFlagsTheArrayCameBackWith</c> on the 252nd
+    /// <c>ScoreAccumulatorTests.Rent_IgnoresTheOrdinalsTheArrayCameBackWith</c> on the 252nd
     /// sequential rent, with the missing ordinal equal to the round number.
     /// </remarks>
     private static readonly ArrayPool<int> StampPool = ArrayPool<int>.Create();
@@ -73,7 +73,6 @@ internal sealed class ScoreAccumulator : IDisposable
         _stamps = stamps;
         _ordinals = ordinals;
         _generation = generation;
-        _ordinals = ordinals;
         _count = 0;
     }
 
