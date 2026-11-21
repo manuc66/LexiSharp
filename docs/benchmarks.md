@@ -1068,35 +1068,6 @@ that a traversal's bookkeeping would have to be nearly free to pay for itself on
 the cost of building the bounds, quantized weights, and any real corpus. The ceilings are on entries,
 not on time.
 
-## Vocabulary lane (`prefix-expansion`): a prefix range against the whole-vocabulary walk
-
-A prefix atom asks the index for the terms starting with its base. An index that only enumerates its
-vocabulary answers by walking every term; one that keeps it ordered answers by range. The in-memory
-index maintains an ordered set as terms are added and removed; this lane measures that range against
-the same vocabulary with no range capability.
-
-```bash
-dotnet run --project bench/LexiSharp.Benchmarks -c Release -- prefix-expansion 200000
-```
-
-**A 200,000-term run, one host, indicative:**
-
-| Prefix | Matches | First query in the process | Warm query | Whole-vocabulary walk |
-|---|---:|---:|---:|---:|
-| `term1999` | 64 | 6.5 ms (JIT) | 36.2 µs | 5.1 ms |
-| `term19999` | 10 | 44.4 µs | 4.0 µs | 5.1 ms |
-| `term199999` | 1 | 13.1 µs | 1.8 µs | 5.1 ms |
-
-The first row is JIT, not a data-structure build: the ordered set is maintained during indexing, so
-a write between two queries costs an insertion, not a re-sort. A high-fanout B+tree would reduce the
-pointer chasing inside the ordered set; the measurable change here is that the vocabulary walk is
-gone. Fuzzy atoms are unchanged: they still walk every term, and one fuzzy atom on this vocabulary
-costs tens of milliseconds.
-
-**What it does not measure.** Ingestion, concurrent writes, or the resolver's per-atom cap. It is a
-`Stopwatch` in a plain process, not a BenchmarkDotNet report; read the direction and the cold/warm
-split, not the last digit.
-
 The accumulating pass walks the posting lists term at a time and folds them into a buffer as long as
 the ordinal space. That buffer is rented from `ArrayPool` and its recorded-flags array is cleared
 before every search, so the search pays a cost proportional to the **corpus** before it reads a
@@ -1813,6 +1784,37 @@ input:
 Read at this scale (roughly): ASCII-only input tokenizes ~5× faster than input requiring
 accent removal, and allocations scale accordingly. Absolute numbers will differ on any other
 machine.
+
+## Vocabulary lane (`prefix-expansion`): a prefix range against the whole-vocabulary walk
+
+A prefix atom asks the index for the terms starting with its base. An index that only enumerates its
+vocabulary answers by walking every term; one that keeps it ordered answers by range. The in-memory
+index maintains an ordered set as terms are added and removed; this lane measures that range against
+the same vocabulary with no range capability.
+
+```bash
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- prefix-expansion 200000
+```
+
+**A 200,000-term run, one host, indicative:**
+
+| Prefix | Matches | First query in the process | Warm query | Whole-vocabulary walk |
+|---|---:|---:|---:|---:|
+| `term1999` | 64 | 6.5 ms (JIT) | 36.2 µs | 5.1 ms |
+| `term19999` | 10 | 44.4 µs | 4.0 µs | 5.1 ms |
+| `term199999` | 1 | 13.1 µs | 1.8 µs | 5.1 ms |
+
+The first row is JIT, not a data-structure build: the ordered set is maintained during indexing, so
+a write between two queries costs an insertion, not a re-sort. A high-fanout B+tree would reduce the
+pointer chasing inside the ordered set; the measurable change here is that the vocabulary walk is
+gone. Fuzzy atoms still walk every term — and they now walk the ordered set rather than the posting
+map's keys, which the `walk` column does not price: its baseline is an array snapshot, so read that
+column as the shape of the walk, not as what a fuzzy atom costs today.
+
+**What it does not measure.** Ingestion, concurrent writes, or the resolver's per-atom cap. It is a
+`Stopwatch` in a plain process, not a BenchmarkDotNet report; read the direction and the cold/warm
+split, not the last digit.
+
 
 ## Similarity (`LevenshteinBenchmarks`)
 

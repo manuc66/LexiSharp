@@ -870,6 +870,12 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
             {
                 posting = new PostingList(candidate);
                 _postings.Add(candidate, posting);
+
+                // The ordered vocabulary carries every term the map carries, for the prefix range;
+                // a term posted here is no different from one posted by Post, so it joins the set in
+                // the same place. Skipping it leaves Vocabulary short and the term unreachable by a
+                // prefix or fuzzy atom, which is how the semantic lexical index stays searchable.
+                _sortedTerms.Add(candidate);
             }
 
             string term = posting.Term;

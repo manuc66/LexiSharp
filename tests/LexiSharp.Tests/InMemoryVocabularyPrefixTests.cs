@@ -58,4 +58,41 @@ public class InMemoryVocabularyPrefixTests
         index.Remove("carpenter");
         Assert.Equal(["car", "cart"], Prefix(index, "car"));
     }
+
+    /// <summary>
+    /// <see cref="InMemoryTextIndex.AddExpansionTerms"/> posts a term without tokenizing a new
+    /// document, and the vocabulary is what a prefix or a fuzzy atom is resolved against. A term it
+    /// posts is a term of the index like any other, so it has to be in the ordered vocabulary too —
+    /// otherwise the exact term matches and neither expansion can reach it.
+    /// </summary>
+    [Fact]
+    public void TermsInjectedByAddExpansionTerms_ArePartOfTheVocabulary()
+    {
+        var index = new InMemoryTextIndex();
+        index.Add(new SearchDocument("x", "the oauth token expiry loop"));
+        index.AddExpansionTerms("x", ["refreshment"]);
+
+        Assert.Contains("refreshment", index.Vocabulary);
+        Assert.Equal(index.VocabularySize, index.Vocabulary.Count());
+        Assert.Equal(["refreshment"], Prefix(index, "refre"));
+    }
+
+    /// <summary>
+    /// The injected term leaves with the document, on the same path a literal term takes: the
+    /// posting list empties, the term is dropped from the map, and the ordered vocabulary has to
+    /// follow.
+    /// </summary>
+    [Fact]
+    public void RemovingADocument_DropsItsExpansionTermsFromTheVocabulary()
+    {
+        var index = new InMemoryTextIndex();
+        index.Add(new SearchDocument("x", "the oauth token expiry loop"));
+        index.AddExpansionTerms("x", ["refreshment"]);
+
+        index.Remove("x");
+
+        Assert.DoesNotContain("refreshment", index.Vocabulary);
+        Assert.Empty(Prefix(index, "refre"));
+        Assert.Equal(index.VocabularySize, index.Vocabulary.Count());
+    }
 }
