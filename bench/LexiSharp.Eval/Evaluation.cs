@@ -603,6 +603,17 @@ internal static class Evaluation
                 new ITextSearchEngine[] { bm25, denseEngine }, new WeightedScoreResultMerger(1.0, 1.0))));
             buildersList.Add(new("Hybrid BM25+Dense RRF", () => new HybridTextSearchEngine(
                 new ITextSearchEngine[] { bm25, denseEngine }, new ReciprocalRankFusionMerger())));
+
+            // The lane the normalizer question actually needs: two genuinely different scales. The
+            // BM25+QL rows above are not complementary enough to tell the mappings apart, which the
+            // documentation says rather than hiding.
+            foreach (IScoreNormalizer normalizer in hybridNormalizers ?? Array.Empty<IScoreNormalizer>())
+            {
+                buildersList.Add(new($"Hybrid BM25+Dense weighted ({normalizer.Name})", () =>
+                    new HybridTextSearchEngine(
+                        new ITextSearchEngine[] { bm25, denseEngine },
+                        new WeightedScoreResultMerger(normalizer, 1.0, 1.0))));
+            }
         }
 
         if (reranker is not null)

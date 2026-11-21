@@ -238,7 +238,13 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// and it is why the build is skipped for the tiny lists that gain nothing from it.
     /// </para>
     /// </remarks>
-    private sealed class FlatPosting(int epoch, int[] ordinals, int[] frequencies, int[] positionOffsets, int[] positions)
+    private sealed class FlatPosting(
+        int epoch,
+        int[] ordinals,
+        int[] frequencies,
+        int[] positionOffsets,
+        int[] positions,
+        TermFrequencyBound bound)
     {
         public int Epoch { get; } = epoch;
 
@@ -251,6 +257,16 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
 
         /// <summary>All of the term's positions, flattened in ordinal order.</summary>
         public int[] Positions { get; } = positions;
+
+        /// <summary>
+        /// The largest frequency and the smallest document length this term's entries hold.
+        /// </summary>
+        /// <remarks>
+        /// Computed in the same pass that builds the two planes, not in a second walk: the bound is
+        /// read by a scorer once per query term, and reading it must not cost a scan of the postings
+        /// the query is about to walk anyway.
+        /// </remarks>
+        public TermFrequencyBound Bound { get; } = bound;
 
         public int Count => Ordinals.Length;
 
@@ -1310,6 +1326,21 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     int[]? IPostingArrayIndex.LengthsByOrdinal => AccumulationLengths();
 
     /// <inheritdoc />
+    public bool TryGetTermFrequencyBound(string term, out TermFrequencyBound bound)
+    {
+        ArgumentNullException.ThrowIfNull(term);
+
+        if (_postings.TryGetValue(term, out var posting))
+        {
+            bound = FlatFor(posting).Bound;
+            return true;
+        }
+
+        bound = default;
+        return false;
+    }
+
+    /// <inheritdoc />
     bool IPostingArrayIndex.TryResolvePostingArrays(string term, out PostingArrays postings)
     {
         if (_postings.TryGetValue(term, out var posting))
@@ -1440,7 +1471,11 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
             at += entries[i].Frequency;
         }
 
-        return new FlatPosting(epoch, ordinals, frequencies, offsets, positions);
+        // The bound is read against the same length array the accumulation loops read, so a
+        // quantized-length index bounds the scores it actually produces rather than the exact ones.
+        var bound = TermFrequencyBound.Measure(ordinals, frequencies, AccumulationLengths());
+
+        return new FlatPosting(epoch, ordinals, frequencies, offsets, positions, bound);
     }
 
     /// <inheritdoc />

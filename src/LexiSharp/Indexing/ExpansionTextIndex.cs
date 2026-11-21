@@ -137,6 +137,13 @@ public sealed class ExpansionTextIndex : ITextIndex, IUnorderedCandidateIndex, I
     }
 
     /// <inheritdoc />
+    public bool TryGetTermFrequencyBound(string term, out TermFrequencyBound bound)
+    {
+        ArgumentNullException.ThrowIfNullOrEmpty(term);
+        return _inner.TryGetTermFrequencyBound(term, out bound);
+    }
+
+    /// <inheritdoc />
     public int DocumentFrequency(string term)
     {
         ArgumentNullException.ThrowIfNullOrEmpty(term);

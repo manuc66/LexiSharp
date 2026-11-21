@@ -56,7 +56,7 @@ internal static class SegmentWriter
     internal const uint Magic = 0x3153584C;
 
     /// <summary>Format version. A reader refuses anything else rather than guessing.</summary>
-    internal const int Version = 5;
+    internal const int Version = 6;
 
     /// <summary>Fixed header size: everything else in the file is reached through it.</summary>
     internal const int HeaderBytes = 4 + 4 + 4 + 4 + (3 * 8) + 8;
@@ -119,7 +119,7 @@ internal static class SegmentWriter
     /// Every region's size is taken from the same primitives the write takes it from, rather than from
     /// a second hand-written encoding: a string's size is <see cref="Encoding.UTF8"/>'s byte count,
     /// which is what sizes the span <see cref="Body.WriteLengthPrefixed"/> encodes into; a postings
-    /// region is <see cref="PostingBlocks.Measure"/>, which is what sizes the span
+    /// region is <c>PostingBlocks.Measure</c>, which is what sizes the span
     /// <see cref="PostingBlocks.Write"/> encodes into. The tables are fixed width.
     /// <para>
     /// This builds the whole <see cref="SegmentPlan"/> and reports its total, so it pays the term sort
@@ -180,13 +180,21 @@ internal static class SegmentWriter
         // largest cost of the measure — a term's postings are walked to size them, and the build then
         // walked the same postings a second time for the write itself.
         var postingsSizes = new int[terms.Count];
+        var maxFrequencies = new int[terms.Count];
+        var minLengths = new int[terms.Count];
 
         for (int i = 0; i < terms.Count; i++)
         {
             var view = Resolve(source, terms[i]);
 
+            // The same walk sizes the postings and aggregates the term-level pair a scorer bounds its
+            // contribution with, so storing the pair costs the two writes in the term entry and no
+            // second pass over the corpus.
             postingsSizes[i] = PostingBlocks.Measure(
-                view.Ordinals, view.Frequencies, view.Lengths, view.Positions);
+                view.Ordinals, view.Frequencies, view.Lengths, view.Positions, out TermFrequencyBound bound);
+
+            maxFrequencies[i] = bound.MaxFrequency;
+            minLengths[i] = bound.MinDocumentLength;
 
             total += TermEntrySize(terms[i]) + postingsSizes[i];
         }
@@ -199,7 +207,7 @@ internal static class SegmentWriter
                 $"a segment's offsets are thirty-two bit, so it holds at most {MaxSegmentBytes} bytes; this corpus measures {total}");
         }
 
-        return new SegmentPlan(terms, postingsSizes, (int)total);
+        return new SegmentPlan(terms, postingsSizes, maxFrequencies, minLengths, (int)total);
     }
 
     /// <summary>
@@ -309,7 +317,13 @@ internal static class SegmentWriter
         for (int i = 0; i < terms.Count; i++)
         {
             termOffsets[i] = HeaderBytes + body.Position;
-            body.WriteTermEntry(terms[i], frequencies[i], postingsOffsets[i], postingsLengths[i]);
+            body.WriteTermEntry(
+                terms[i],
+                frequencies[i],
+                postingsOffsets[i],
+                postingsLengths[i],
+                plan.MaxFrequencies[i],
+                plan.MinLengths[i]);
         }
 
         long termsTableOffset = HeaderBytes + body.Position;
@@ -344,13 +358,24 @@ internal static class SegmentWriter
     /// the plan's value is that the two passes agree, and the only way they can is if nothing can change
     /// between them.
     /// </remarks>
-    private readonly ref struct SegmentPlan(List<string> terms, int[] postingsSizes, int total)
+    private readonly ref struct SegmentPlan(
+        List<string> terms,
+        int[] postingsSizes,
+        int[] maxFrequencies,
+        int[] minLengths,
+        int total)
     {
         /// <summary>The terms in code point order, which is the order the dictionary is written in.</summary>
         public readonly List<string> Terms = terms;
 
         /// <summary>Bytes each term's postings occupy, in the same order as <see cref="Terms"/>.</summary>
         public readonly int[] PostingsSizes = postingsSizes;
+
+        /// <summary>Largest term frequency per term, in the same order as <see cref="Terms"/>.</summary>
+        public readonly int[] MaxFrequencies = maxFrequencies;
+
+        /// <summary>Smallest document length per term, in the same order as <see cref="Terms"/>.</summary>
+        public readonly int[] MinLengths = minLengths;
 
         /// <summary>The segment's exact length, header included.</summary>
         public readonly int Total = total;
@@ -427,7 +452,7 @@ internal static class SegmentWriter
         value is null ? sizeof(int) : LengthPrefixedSize(value);
 
     /// <summary>Bytes <see cref="Body.WriteTermEntry"/> writes for <paramref name="term"/>.</summary>
-    private static int TermEntrySize(string term) => LengthPrefixedSize(term) + (3 * sizeof(int));
+    private static int TermEntrySize(string term) => LengthPrefixedSize(term) + (5 * sizeof(int));
 
     /// <summary>
     /// A cursor over the segment's body: where the next write lands, and the writes a segment's regions
@@ -524,13 +549,24 @@ internal static class SegmentWriter
             WriteLengthPrefixed(value);
         }
 
-        /// <summary>One term of the dictionary: its bytes, its document frequency, and where its postings lie.</summary>
-        public void WriteTermEntry(string term, int frequency, int postingsOffset, int postingsLength)
+        /// <summary>
+        /// One term of the dictionary: its bytes, its document frequency, where its postings lie, and
+        /// the two posting statistics a scorer bounds its contribution with.
+        /// </summary>
+        public void WriteTermEntry(
+            string term,
+            int frequency,
+            int postingsOffset,
+            int postingsLength,
+            int maxFrequency,
+            int minDocumentLength)
         {
             WriteLengthPrefixed(term);
             WriteInt32(frequency);
             WriteInt32(postingsOffset);
             WriteInt32(postingsLength);
+            WriteInt32(maxFrequency);
+            WriteInt32(minDocumentLength);
         }
     }
 }
