@@ -51,6 +51,9 @@ public sealed class MaxScoreNormalizer : IScoreNormalizer
                 max = score;
         }
 
-        return max == double.NegativeInfinity ? ScoreNormalization.None : new ScoreNormalization(0, max);
+        // Exact on purpose: a sentinel for "no finite score was seen", not a comparison between
+        // two computed values. A range would have to pick an epsilon for a value that is an
+        // identity, and the one that matters is the infinity itself.
+        return max == double.NegativeInfinity ? ScoreNormalization.None : new ScoreNormalization(0, max); // NOSONAR:S1244
     }
 }

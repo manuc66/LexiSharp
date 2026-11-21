@@ -330,6 +330,10 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
             command.Parameters.AddWithValue("gateTerms", gateTerms);
         }
 
+        // The only interpolations are a validated, quoted table name and an expression built from
+        // the match mode's own literals; every value is a parameter. S2077 cannot see that through
+        // the interpolation, so it is disabled here rather than project-wide.
+#pragma warning disable S2077
         command.CommandText = $"""
             SELECT t.id, t.tsv::text
             FROM {_options.QualifiedTableName} t
@@ -340,7 +344,8 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
                 ORDER BY score DESC, {PostgresSchema.OrdinalIdTieBreak}
                 LIMIT @pool
             ) s ON t.id = s.id;
-            """; // NOSONAR:S2077 (identifiers validated and quoted; query text parameterized)
+            """;
+#pragma warning restore S2077
 
         command.Parameters.AddWithValue("pool", PoolSize(_options, options));
 
@@ -444,6 +449,7 @@ public sealed class PostgresBm25SearchEngine : ITextSearchEngine, IDisposable, I
 
         using var command = connection.CreateCommand();
 
+#pragma warning disable S2077 // identifier only (validated + quoted); the ids are a parameter
         command.CommandText = $"""
             SELECT id, content, category, fields, text_fields
             FROM {_options.QualifiedTableName}

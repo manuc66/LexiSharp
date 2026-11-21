@@ -73,8 +73,10 @@ internal sealed class PostgresBm25Statistics
         using (var count = connection.CreateCommand())
         {
             // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted).
+#pragma warning disable S2077 // identifier only; NOSONAR does not apply to vulnerabilities
             count.CommandText =
-                $"SELECT count(*) FROM {options.QualifiedTableName} WHERE tsv IS NOT NULL AND tsv::text <> ''"; // NOSONAR:S2077
+                $"SELECT count(*) FROM {options.QualifiedTableName} WHERE tsv IS NOT NULL AND tsv::text <> ''";
+#pragma warning restore S2077
 
             documentCount = Convert.ToInt32(count.ExecuteScalar());
         }
@@ -85,8 +87,10 @@ internal sealed class PostgresBm25Statistics
         {
             // The inner query is a literal ts_stat evaluates; the table name is a validated,
             // quoted identifier and carries no quote character of its own.
+#pragma warning disable S2077 // identifier only; NOSONAR does not apply to vulnerabilities
             command.CommandText =
-                $"SELECT word, ndoc, nentry FROM ts_stat('SELECT tsv FROM {options.QualifiedTableName}')"; // NOSONAR:S2077
+                $"SELECT word, ndoc, nentry FROM ts_stat('SELECT tsv FROM {options.QualifiedTableName}')";
+#pragma warning restore S2077
 
             using var reader = command.ExecuteReader();
 
