@@ -44,6 +44,14 @@ public static class Program
             return;
         }
 
+        // Prefix expansion against an ordered vocabulary and against the whole-vocabulary walk.
+        // See VocabularyLane.
+        if (args.Length > 0 && args[0] == "prefix-expansion")
+        {
+            VocabularyLane.Run(args[1..]);
+            return;
+        }
+
         // Tail-query p50/p99 and allocation per corpus size, for the cursor pass's A/B. See CursorLane.
         if (args.Length > 0 && args[0] == "cursor")
         {

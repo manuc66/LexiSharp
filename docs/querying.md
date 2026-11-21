@@ -356,10 +356,24 @@ bound that:
   rewrites every plain term into an atom, so a long query on a fuzzy index is bounded by the same
   number.
 
-Prefix atoms are cheap on an index that implements `IVocabularyPrefixIndex` (the in-memory one
-keeps a sorted dictionary and answers a prefix as a range); the cost above is the fuzzy case.
-The bound is on the multiplier, not on the walk: making one atom sub-linear is a term index
-ordered for edit distance, which this library does not have.
+Prefix atoms are cheap on an index that implements `IVocabularyPrefixIndex`. The in-memory index
+keeps its vocabulary in code-unit order as terms are added and removed — an `O(log V)` update, not a
+rebuild — and answers a prefix as an ordered range. On a 200,000-term corpus:
+
+| Prefix | Matches | First query in the process | Warm query | Whole-vocabulary walk |
+|---|---:|---:|---:|---:|
+| `term1999` | 64 | 6.5 ms (JIT) | 36.2 µs | 5.1 ms |
+| `term19999` | 10 | 44.4 µs | 4.0 µs | 5.1 ms |
+| `term199999` | 1 | 13.1 µs | 1.8 µs | 5.1 ms |
+
+The first row includes one-time JIT, not a data-structure build: the ordered set is maintained
+during indexing, and a write between two queries costs an insertion rather than a re-sort. A
+high-fanout B+tree would reduce the pointer chasing inside the ordered set further; the point here
+is that the vocabulary walk is gone.
+
+The fuzzy case is unchanged: `catt~` still compares its base against every term. The bound above is
+on the multiplier, not on the walk; making one fuzzy atom sub-linear needs an index ordered for edit
+distance, which this library does not have.
 
 
 ## Synonyms
