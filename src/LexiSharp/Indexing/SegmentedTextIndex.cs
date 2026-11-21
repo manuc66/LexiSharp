@@ -470,6 +470,10 @@ public sealed class SegmentedTextIndex : ITextIndex, IVocabularyIndex, IAccumula
     public int DocumentFrequency(string term) => _chain.DocumentFrequency(term);
 
     /// <inheritdoc />
+    public bool TryGetTermFrequencyBound(string term, out TermFrequencyBound bound) =>
+        _chain.TryGetTermFrequencyBound(term, out bound);
+
+    /// <inheritdoc />
     public int CorpusFrequency(string term) => _chain.CorpusFrequency(term);
 
     /// <inheritdoc />
