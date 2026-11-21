@@ -1,4 +1,5 @@
 using LexiSharp.Core;
+using LexiSharp.Ranking;
 
 namespace LexiSharp.Indexing;
 
@@ -25,6 +26,14 @@ public sealed record SparseIndexEntry(
 /// index over <c>term → document → weight</c>, and the score of a document for a query is simply
 /// <c>score(q,d) = Σ_t w_q(t) · w_d(t, d)</c> over the terms both share — a dot product between
 /// two sparse vectors, never a frequency statistic.
+/// </para>
+/// <para>
+/// <b>The inner loop is ordinal-based.</b> A document gets an integer ordinal when it is added, and
+/// each term keeps contiguous arrays of <c>(ordinal, weight)</c> entries instead of a dictionary
+/// keyed by document id. A query accumulates into the same generation-stamped, ordinal-indexed
+/// buffer the lexical engine uses, then fills a bounded top-<c>k</c> window. The learned weights and
+/// the public surface are unchanged; what changed is that a posting entry no longer hashes a
+/// document id, allocates a result object, or sorts the whole candidate set.
 /// </para>
 /// <para>
 /// <b>Embeddings are computed externally</b>: the engine consumes an
@@ -55,9 +64,22 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
 
     private readonly ISparseEmbeddingProvider _embeddings;
 
+    /// <summary>Document id → the document, for the public read surface.</summary>
     private readonly Dictionary<string, SearchDocument> _documents = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, IReadOnlyDictionary<string, float>> _vectorsByDocument = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Dictionary<string, float>> _postings = new(StringComparer.Ordinal);
+
+    /// <summary>Document id → its ordinal. The one map the postings are addressed through.</summary>
+    private readonly Dictionary<string, int> _ordinals = new(StringComparer.Ordinal);
+
+    /// <summary>Ordinal → document, with <c>null</c> in a freed slot.</summary>
+    private readonly List<SearchDocument?> _byOrdinal = [];
+
+    /// <summary>Slots freed by a removal, reused before the ordinal space grows.</summary>
+    private readonly List<int> _freeOrdinals = [];
+
+    private readonly Dictionary<string, IReadOnlyDictionary<string, float>> _vectorsByDocument =
+        new(StringComparer.Ordinal);
+
+    private readonly Dictionary<string, PostingList> _postings = new(StringComparer.Ordinal);
 
     /// <param name="embeddings">External sparse embedding producer; never implemented inside LexiSharp.</param>
     public SparseTextSearchEngine(ISparseEmbeddingProvider embeddings)
@@ -115,17 +137,25 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
         if (!_documents.Remove(documentId))
             return false;
 
+        int ordinal = _ordinals[documentId];
+        _ordinals.Remove(documentId);
+
         if (_vectorsByDocument.Remove(documentId, out var vector))
         {
             foreach (var term in vector.Keys)
             {
-                if (_postings.TryGetValue(term, out var postings) &&
-                    postings.Remove(documentId) && postings.Count == 0)
-                {
+                if (!_postings.TryGetValue(term, out var postings))
+                    continue;
+
+                postings.Remove(ordinal);
+
+                if (postings.Count == 0)
                     _postings.Remove(term);
-                }
             }
         }
+
+        _byOrdinal[ordinal] = null;
+        _freeOrdinals.Add(ordinal);
 
         return true;
     }
@@ -134,6 +164,9 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
     public void Clear()
     {
         _documents.Clear();
+        _ordinals.Clear();
+        _byOrdinal.Clear();
+        _freeOrdinals.Clear();
         _vectorsByDocument.Clear();
         _postings.Clear();
     }
@@ -214,8 +247,10 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
             return Array.Empty<SearchResult>();
 
         // Accumulate dot products over the inverted index: only the terms the query actually
-        // activated (and the documents posting to them) ever get visited.
-        var scores = new Dictionary<string, double>(StringComparer.Ordinal);
+        // activated (and the documents posting to them) ever get visited. The accumulator is the
+        // same ordinal-indexed, generation-stamped buffer the lexical pass uses, so a search pays
+        // for the candidates it touches rather than for a corpus-sized clear.
+        using var scores = ScoreAccumulator.Rent(_byOrdinal.Count);
 
         foreach (var (term, queryWeight) in queryVector)
         {
@@ -225,35 +260,44 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
             if (!_postings.TryGetValue(term, out var postings))
                 continue;
 
-            foreach (var (documentId, documentWeight) in postings)
-            {
-                scores[documentId] = scores.GetValueOrDefault(documentId)
-                                     + ((double)queryWeight * documentWeight);
-            }
+            for (int i = 0; i < postings.Count; i++)
+                scores.Record(postings.OrdinalAt(i), (double)queryWeight * postings.WeightAt(i));
         }
 
-        var results = new List<SearchResult>(scores.Count);
+        // The window is sized to the page the caller asked for, never to the candidate set. A
+        // candidate costs one comparison against the worst kept row; a SearchResult is built only
+        // for the rows that survive.
+        //
+        // The ordinal handed to the window is the document's position in the ordinal space, which is
+        // what TieBreak.InsertionOrder compares — the same capability the lexical engine declares.
+        // Without it the window falls back to the order the candidates arrived in, which here is the
+        // order the accumulator first touched them, i.e. the query's term order: two spellings of
+        // the same query would then hand two different pages for a tie.
+        int window = Math.Min(options.Window, scores.Count);
+        var top = new TopRankedWindow(window, options.TieBreak, DocumentAt, IdAt, ordinalsAreInsertionPositions: true);
 
-        foreach (var (documentId, score) in scores)
+        for (int i = 0; i < scores.Count; i++)
         {
+            int ordinal = scores.OrdinalAt(i);
+            double score = scores[ordinal];
+
             // A score of exactly 0 means the query and the document share no positive term.
-            if (!(score > 0))
+            if (!(score > 0) || score < options.MinimumScore)
                 continue;
 
-            var document = _documents[documentId];
+            var document = _byOrdinal[ordinal];
 
-            if (!options.PassesFilters(document) || score < options.MinimumScore)
+            if (document is null || !options.PassesFilters(document))
                 continue;
 
-            results.Add(new SearchResult(documentId, score, document));
+            top.Add(score, ordinal, document);
         }
 
-        var page = results
-            .OrderByDescending(x => x.Score)
-            .ThenBy(x => x.DocumentId, StringComparer.Ordinal)
-            .Skip(options.Offset)
-            .Take(options.Limit)
-            .ToList();
+        int skip = Math.Min(options.Offset, top.Count);
+        int count = Math.Min(options.Limit, top.Count - skip);
+        var page = new SearchResult[count];
+
+        top.CopyBestTo(page, skip, count);
 
         // Recorded on the cut page, not per scored term.
         options.Trace?.RecordScoreStage("Sparse", page);
@@ -266,8 +310,26 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
         if (_documents.ContainsKey(document.Id))
             Remove(document.Id);
 
-        _documents[document.Id] = document;
+        int ordinal;
 
+        if (_freeOrdinals.Count > 0)
+        {
+            ordinal = _freeOrdinals[^1];
+            _freeOrdinals.RemoveAt(_freeOrdinals.Count - 1);
+            _byOrdinal[ordinal] = document;
+        }
+        else
+        {
+            ordinal = _byOrdinal.Count;
+            _byOrdinal.Add(document);
+        }
+
+        _documents[document.Id] = document;
+        _ordinals[document.Id] = ordinal;
+
+        // Build the stored vector first: a term repeated in the input must reach the posting list
+        // once, with its last weight, not once per occurrence. The old dictionary write happened to
+        // collapse a duplicate; contiguous arrays would append it.
         var weights = new Dictionary<string, float>(StringComparer.Ordinal);
 
         foreach (var (term, weight) in vector ?? EmptyVector)
@@ -276,19 +338,81 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
                 continue;
 
             weights[term] = weight;
+        }
 
+        foreach (var (term, weight) in weights)
+        {
             if (!_postings.TryGetValue(term, out var postings))
             {
-                postings = new Dictionary<string, float>(StringComparer.Ordinal);
+                postings = new PostingList();
                 _postings[term] = postings;
             }
 
-            postings[document.Id] = weight;
+            postings.Add(ordinal, weight);
         }
 
         _vectorsByDocument[document.Id] = weights;
     }
 
+    private SearchDocument? DocumentAt(int ordinal) =>
+        ordinal >= 0 && ordinal < _byOrdinal.Count ? _byOrdinal[ordinal] : null;
+
+    private string? IdAt(int ordinal) => DocumentAt(ordinal)?.Id;
+
     private static IReadOnlyDictionary<string, float> EmptyVector { get; } =
         new Dictionary<string, float>();
+
+    /// <summary>
+    /// One term's postings as contiguous arrays: ordinals and weights aligned. There is no sort
+    /// order — a new document appends its ordinal, and a freed ordinal reused by a later add is
+    /// appended below ones already stored — so the array must not be read as ascending. Removal
+    /// preserves the relative order of the rest, so two searches over an unchanged corpus visit the
+    /// entries in the same sequence and sum the same doubles.
+    /// </summary>
+    private sealed class PostingList
+    {
+        private int[] _ordinals = new int[4];
+        private float[] _weights = new float[4];
+
+        public int Count { get; private set; }
+
+        public int OrdinalAt(int index) => _ordinals[index];
+
+        public float WeightAt(int index) => _weights[index];
+
+        public void Add(int ordinal, float weight)
+        {
+            if (Count == _ordinals.Length)
+            {
+                Array.Resize(ref _ordinals, _ordinals.Length * 2);
+                Array.Resize(ref _weights, _weights.Length * 2);
+            }
+
+            _ordinals[Count] = ordinal;
+            _weights[Count] = weight;
+            Count++;
+        }
+
+        public bool Remove(int ordinal)
+        {
+            for (int i = 0; i < Count; i++)
+            {
+                if (_ordinals[i] != ordinal)
+                    continue;
+
+                int move = Count - i - 1;
+
+                if (move > 0)
+                {
+                    Array.Copy(_ordinals, i + 1, _ordinals, i, move);
+                    Array.Copy(_weights, i + 1, _weights, i, move);
+                }
+
+                Count--;
+                return true;
+            }
+
+            return false;
+        }
+    }
 }

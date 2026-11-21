@@ -14,7 +14,7 @@ namespace LexiSharp.Indexing;
 /// single thread (or synchronize externally). Read-only queries hold no shared mutable state and
 /// may run concurrently with one another.
 /// </remarks>
-public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IVocabularyIndex, IAccumulatingIndex, ISpanAccumulatingIndex, IFieldStatisticsIndex, ISpanPostingArrayIndex
+public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IVocabularyIndex, IVocabularyPrefixIndex, IAccumulatingIndex, ISpanAccumulatingIndex, IFieldStatisticsIndex, ISpanPostingArrayIndex
 {
     private readonly ITokenizer _tokenizer;
     private readonly bool _storePositions;
@@ -22,6 +22,19 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// <summary>Document id → the document's ordinal. The one map ids are resolved through.</summary>
     private readonly Dictionary<string, int> _documents = new(StringComparer.Ordinal);
     private readonly Dictionary<string, PostingList> _postings = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The same terms in code-unit order, for a prefix range. The map answers an exact term; this
+    /// set answers "every term with this prefix" without walking the map's arbitrary key order.
+    /// </summary>
+    /// <remarks>
+    /// A prefix query is a range, and a range needs an ordered structure that supports insertion and
+    /// removal between queries. Keeping a sorted array instead would make every prefix query after a
+    /// write pay an O(V log V) sort — measured at about 50 ms for 200,000 terms — so the ordered view
+    /// is maintained incrementally, at O(log V) per vocabulary change. It holds the same string
+    /// instances the posting map owns, not copies.
+    /// </remarks>
+    private readonly SortedSet<string> _sortedTerms = new(StringComparer.Ordinal);
 
     /// <summary>
     /// <see cref="_postings"/> seen through <see cref="ReadOnlySpan{T}"/>, so a query term that is
@@ -527,7 +540,63 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     public int VocabularySize => _postings.Count;
 
     /// <inheritdoc />
-    public IEnumerable<string> Vocabulary => _postings.Keys;
+    public IEnumerable<string> Vocabulary => _sortedTerms;
+
+    /// <summary>
+    /// The terms starting with <paramref name="prefix"/>, in code-unit order.
+    /// </summary>
+    /// <remarks>
+    /// The range's upper bound is the prefix with its last code unit below <see cref="char.MaxValue"/>
+    /// incremented and the rest dropped. A prefix made only of <c>U+FFFF</c> has no such bound and
+    /// falls back to the tail of the set; the <c>StartsWith</c> check then removes the impossible
+    /// neighbour a prefix-only upper bound would include.
+    /// </remarks>
+    IEnumerable<string> IVocabularyPrefixIndex.TermsWithPrefix(string prefix)
+    {
+        ArgumentNullException.ThrowIfNull(prefix);
+
+        if (_sortedTerms.Count == 0)
+            yield break;
+
+        string? upper = UpperBound(prefix);
+
+        if (upper is null)
+        {
+            // A prefix made only of U+FFFF has no finite upper bound. The case is a noncharacter
+            // corner; walking the set is safe and never runs for a normal query.
+            foreach (string term in _sortedTerms)
+            {
+                if (term.StartsWith(prefix, StringComparison.Ordinal))
+                    yield return term;
+            }
+
+            yield break;
+        }
+
+        foreach (string term in _sortedTerms.GetViewBetween(prefix, upper))
+        {
+            if (term.StartsWith(prefix, StringComparison.Ordinal))
+                yield return term;
+        }
+    }
+
+    /// <summary>The smallest string greater than every string starting with <paramref name="prefix"/>.</summary>
+    private static string? UpperBound(string prefix)
+    {
+        for (int i = prefix.Length - 1; i >= 0; i--)
+        {
+            if (prefix[i] == char.MaxValue)
+                continue;
+
+            char[] chars = new char[i + 1];
+            prefix.AsSpan(0, i).CopyTo(chars);
+            chars[i] = (char)(prefix[i] + 1);
+
+            return new string(chars);
+        }
+
+        return null;
+    }
 
     /// <inheritdoc />
     public long CorpusTokenCount => _totalTokens;
@@ -650,6 +719,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
             if (_postings.TryAdd(materialized, candidate))
             {
                 posting = candidate;
+                _sortedTerms.Add(materialized);
             }
             else
             {
@@ -800,6 +870,12 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
             {
                 posting = new PostingList(candidate);
                 _postings.Add(candidate, posting);
+
+                // The ordered vocabulary carries every term the map carries, for the prefix range;
+                // a term posted here is no different from one posted by Post, so it joins the set in
+                // the same place. Skipping it leaves Vocabulary short and the term unreachable by a
+                // prefix or fuzzy atom, which is how the semantic lexical index stays searchable.
+                _sortedTerms.Add(candidate);
             }
 
             string term = posting.Term;
@@ -851,6 +927,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
                     posting.ByOrdinal.Remove(ordinal) && posting.ByOrdinal.Count == 0)
                 {
                     _postings.Remove(term);
+                    _sortedTerms.Remove(term);
                 }
 
                 _corpusFrequencies.TryGetValue(term, out int corpusCount);
@@ -952,6 +1029,7 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     {
         _documents.Clear();
         _postings.Clear();
+        _sortedTerms.Clear();
         _tokens.Clear();
         _corpusFrequencies.Clear();
         _fieldFrequencies.Clear();
