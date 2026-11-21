@@ -1807,7 +1807,8 @@ public static class Program
             $"Reference (BEIR paper, Thakur et al. 2021, Table 2): BM25 nDCG@10 = " +
             $"{dataset.Bm25Ndcg10Ref.ToString("0.000", CultureInfo.InvariantCulture)} on {dataset.Name}.");
         Console.WriteLine("  https://arxiv.org/abs/2104.08663");
-        Console.WriteLine($"Dataset: {dataset.Name} via the BEIR public mirror, md5 {dataset.ExpectedMd5}.");
+        Console.WriteLine(
+            $"Dataset: {dataset.Name} via the BEIR public mirror or its archived copy, md5 {dataset.ExpectedMd5}.");
         Console.WriteLine(dataset.Graded
             ? "  Relevance is graded (3 levels) in the qrels."
             : "  Relevance is binary (0/1) in the qrels.");

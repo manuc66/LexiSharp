@@ -30,6 +30,32 @@ public class EvaluationHarnessTests
     }
 
     [Fact]
+    public void EveryDatasetHasASecondSourceOfTheSameArtifact()
+    {
+        // The gate must not go red because one fileserver is down (it did, on 2026-11-21), and the
+        // fallback is only a fallback if it is the same file: every source has to name the same zip,
+        // because the md5 the loader checks is the published one and nothing else is verified.
+        Assert.All(BeirDataset.All, dataset =>
+        {
+            Assert.True(
+                dataset.DownloadUrls.Count > 1,
+                $"{dataset.Name} lists a single source, so a host outage is a red gate.");
+
+            Assert.StartsWith(
+                "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/",
+                dataset.DownloadUrls[0],
+                StringComparison.Ordinal);
+
+            // The published host first, then copies of the very same URL — not a re-host that
+            // repacked the corpus, which no md5 could reject.
+            Assert.All(dataset.DownloadUrls, url =>
+                Assert.EndsWith($"/{dataset.Name}.zip", url, StringComparison.Ordinal));
+
+            Assert.Equal(32, dataset.ExpectedMd5.Length);
+        });
+    }
+
+    [Fact]
     public void TheBm25FTunedRowIsOptInAndSaysWhetherWeightingHelped()
     {
         BeirCorpus corpus = Corpus();
