@@ -17,11 +17,14 @@ permissions:
   pages: write
   id-token: write
 
-# Not cancel-in-progress, and for the reason GitHub gives for this group specifically: a deployment
-# cancelled between its artifact upload and the Pages API call leaves `deploy-pages` reporting "No
-# artifacts named github-pages were found for this workflow run" even though the upload step
-# succeeded — the failure this workflow was intermittently hitting. A push that arrives mid-deploy
-# now waits for the deploy instead of replacing it.
+# Not cancel-in-progress: that is what GitHub ships in its Pages starter workflow, and a deployment
+# cancelled between its artifact upload and the Pages API call is a deployment half-done.
+#
+# It is not, by itself, why this job was intermittently reporting "No artifacts named github-pages
+# were found for this workflow run" half a second after the upload step said the artifact was
+# uploaded. Turning cancellation off changed nothing: run 44957471339 carried that setting and still
+# failed, and none of the failed runs was cancelled or overlapped another. The retry near the deploy
+# step below is what covers the window that is actually there.
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -30,7 +33,7 @@ jobs:
   deploy:
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment_retry.outputs.page_url }}
     runs-on: ubuntu-latest
 
     steps:
@@ -71,5 +74,24 @@ jobs:
         with:
           path: ./_site
 
+      # The upload and the lookup go through different calls on the artifacts service, and on
+      # 2026-11-21 the lookup returned zero artifacts for a 12 MB artifact the upload had finalized
+      # half a second earlier (runs 44953395231, 44956229973, 44956793664, 44957471339), while runs
+      # minutes apart with the same content deployed normally. GitHub's own error text asks for a
+      # re-run at a later time, which is what this is.
+      #
+      # A retry is safe because the lookup happens before a deployment is created: deploy-pages
+      # fetches the artifact metadata first and only then creates the Pages deployment, so a second
+      # attempt after a failure of this kind cannot leave two deployments behind. continue-on-error
+      # keeps the job alive for the retry; a second failure fails the job as usual.
       - id: deployment
+        uses: actions/deploy-pages@v5
+        continue-on-error: true
+
+      - name: Wait for the artifact to be listed
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 20
+
+      - id: deployment_retry
+        if: steps.deployment.outcome == 'failure'
         uses: actions/deploy-pages@v5
