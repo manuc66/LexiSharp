@@ -510,6 +510,14 @@ is 3.9-4.2 ms against 3.6 ms. The group's flush carries a hundred records' text 
 record's, and these rows do not separate the flush syscall from the bytes it writes back. Read the
 33 µs as the journal-level amortised flush and 39-50 µs as what an end-to-end `Add` pays for it.
 
+**Not measured.** Three things these numbers do not cover. **Concurrent writers** — the journal is
+single-writer by contract, and a shared append path is a different design, not a tuning of this one. A
+**journal long enough for the open scan to matter**: the open reads every record to validate it and
+then reads them again to replay them, and a million entries is the size at which that would show; the
+largest journal measured here is the 20,000-entry one, whose open took 93 ms. And **device-flush latency
+on another disk**: the 3.1 ms strict figure is one NVMe host, and it is the number the grouped default
+exists to divide rather than a constant to carry between machines.
+
 ```bash
 dotnet build bench/LexiSharp.Benchmarks -c Release
 

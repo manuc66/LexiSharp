@@ -1420,12 +1420,12 @@ the symbol packages and the generated API page are part of the release gate.
   where the new reading is the intended one; elsewhere the query is unchanged.
 
 - **A store journals by default, and the store a commit replaces refuses writes.**
-  `SegmentedTextIndex(directory)` now opens or creates `journal.wal` and replays it; pass
-  `journal: JournalOptions.Disabled` for the previous behaviour. A directory holds one journal and one
-  writer, so `Commit` and `Merge` hand the journal to the store they return and the previous one throws
-  `InvalidOperationException` on its next write instead of handing out a sequence the new store would
-  also take. Write through the store those methods return — which is what their remarks already said a
-  caller should do.
+  `SegmentedTextIndex(directory)` now opens `journal.wal` beside its segments and replays it — creating
+  the file on the first write. Pass `journal: JournalOptions.Disabled` for the previous behaviour. A
+  directory holds one journal and one writer, so `Commit` and `Merge` hand the journal to the store
+  they return and the previous one throws `InvalidOperationException` on its next write instead of
+  handing out a sequence the new store would also take. Write through the store those methods return —
+  which is what their remarks already said a caller should do.
 
 - **The segment format is version 5.** The header gained an eight-byte field: the last write-ahead
   journal entry the segment contains, zero for a segment written without a journal. It lives in the
