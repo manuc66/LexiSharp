@@ -269,6 +269,90 @@ public class PostgresSqlInjectionTests
         }
     }
 
+    /// <summary>
+    /// The sparse and vector engines take their content as a vector, so the text payload cannot
+    /// reach a statement through them — but a filter's field and value can, and the filter is the
+    /// shared <c>PostgresMetadataFilterSql</c> fragment. These two pin that path on the engines the
+    /// earlier audit added later.
+    /// </summary>
+    [SkippableFact]
+    public void SparseEngine_TreatsAFilterFieldAndValueAsParameters()
+    {
+        SkipIfNoServer();
+        Skip.If(!ExtensionAvailable("vector"), "vector extension unavailable.");
+
+        string table = Table("sparsefilter");
+        var vocabulary = new Dictionary<string, int>
+        {
+            ["shared"] = 0,
+            ["common"] = 1,
+            ["term"] = 2,
+        };
+
+        var vector = (IReadOnlyDictionary<string, float>)new Dictionary<string, float>
+        {
+            ["shared"] = 1f,
+            ["common"] = 1f,
+            ["term"] = 1f,
+        };
+
+        using var engine = new PostgresSparseSearchEngine(
+            ConnectionString!,
+            new ConstantSparseProvider(vector),
+            new PostgresSparseOptions { Table = table, Vocabulary = vocabulary });
+
+        try
+        {
+            string payload = Payload(table);
+            engine.Add(new SearchDocument(
+                "d1", "shared common term", new Dictionary<string, string> { ["kind"] = "a" }));
+
+            var option = new SearchOptions(
+                Limit: 10,
+                Filters: [new MetadataFilter($"kind{payload}", MetadataFilterOperator.Equal, payload)]);
+
+            engine.Search("shared common term", option);
+
+            AssertTableStillHasOneRow(table);
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
+    [SkippableFact]
+    public void VectorEngine_TreatsAFilterFieldAndValueAsParameters()
+    {
+        SkipIfNoServer();
+        Skip.If(!ExtensionAvailable("vector"), "vector extension unavailable.");
+
+        string table = Table("vectorfilter");
+        using var engine = new PostgresVectorSearchEngine(
+            ConnectionString!,
+            new ConstantEmbeddingProvider(),
+            new PostgresVectorOptions { Table = table, Dimension = 2 });
+
+        try
+        {
+            string payload = Payload(table);
+            engine.Add(new SearchDocument(
+                "d1", "shared common term", new Dictionary<string, string> { ["kind"] = "a" }));
+
+            var option = new SearchOptions(
+                Limit: 10,
+                Filters: [new MetadataFilter($"kind{payload}", MetadataFilterOperator.Equal, payload)]);
+
+            engine.Search("shared common term", option);
+
+            AssertTableStillHasOneRow(table);
+        }
+        finally
+        {
+            engine.DropSchema();
+        }
+    }
+
     private static bool ExtensionAvailable(string name)
     {
         using var connection = new NpgsqlConnection(ConnectionString);
@@ -279,6 +363,27 @@ public class PostgresSqlInjectionTests
         command.Parameters.AddWithValue("name", name);
 
         return (long)command.ExecuteScalar()! > 0;
+    }
+
+    /// <summary>Every text gets the same vector: the filter is the subject, not the ranking.</summary>
+    private sealed class ConstantSparseProvider(IReadOnlyDictionary<string, float> vector)
+        : ISparseEmbeddingProvider
+    {
+        public Task<IReadOnlyDictionary<string, float>> GetSparseEmbeddingAsync(
+            string text, EmbeddingUse use, CancellationToken cancellationToken = default)
+            => Task.FromResult(vector);
+    }
+
+    /// <summary>Every text gets the same vector: the filter is the subject, not the ranking.</summary>
+    private sealed class ConstantEmbeddingProvider : IEmbeddingProvider
+    {
+        private static readonly float[] Vector = [1f, 0f];
+
+        public int Dimension => Vector.Length;
+
+        public Task<ReadOnlyMemory<float>> GetTextEmbeddingAsync(
+            string text, EmbeddingUse use, CancellationToken cancellationToken = default)
+            => Task.FromResult((ReadOnlyMemory<float>)Vector);
     }
 }
 
