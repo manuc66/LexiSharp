@@ -1,5 +1,6 @@
 using LexiSharp.Linguistics;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace LexiSharp.Tests;
 
@@ -10,7 +11,48 @@ namespace LexiSharp.Tests;
 /// </summary>
 public class FrenchStemmerTests
 {
+    private readonly ITestOutputHelper _output;
+
+    public FrenchStemmerTests(ITestOutputHelper output) => _output = output;
+
     private static readonly FrenchStemmer Stemmer = new();
+
+    /// <summary>
+    /// What the stemmer does to the shape of the reference vocabulary: how many distinct words fold
+    /// onto how many stems, and how many stems are shared by more than one word.
+    /// </summary>
+    /// <remarks>
+    /// This is a property of the analysis, not a retrieval measurement. Whether folding these words
+    /// onto stems helps or hurts a ranking is not measured anywhere in this repository, because no
+    /// French corpus with relevance judgments is part of the evaluation harness. The counts are pinned
+    /// because they are deterministic and they are what a change to the analysis would move.
+    /// </remarks>
+    [Fact]
+    public void StemmingFoldsTheReferenceVocabularyOntoFewerStems()
+    {
+        string[] words = File.ReadAllLines(Path.Combine(AppContext.BaseDirectory, "TestData", "SnowballFrench", "voc.txt"))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        var groups = words
+            .GroupBy(word => Stemmer.Stem(word), StringComparer.Ordinal)
+            .ToList();
+
+        int stems = groups.Count;
+        int shared = groups.Count(group => group.Count() > 1);
+        int largest = groups.Max(group => group.Count());
+
+        _output.WriteLine(
+            $"words {words.Length}, distinct stems {stems}, reduction {100.0 * (words.Length - stems) / words.Length:F1} %, "
+            + $"stems shared by more than one word {shared}, largest group {largest}");
+
+        // The reference vocabulary's own shape, pinned because it is deterministic and because it is
+        // what a change to the analysis would move.
+        Assert.Equal(21653, words.Length);
+        Assert.Equal(9926, stems);
+        Assert.Equal(3964, shared);
+        Assert.Equal(29, largest);
+    }
 
     /// <summary>
     /// The reference vocabulary published with the algorithm: <c>voc.txt</c> holds one word per

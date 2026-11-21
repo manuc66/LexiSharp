@@ -128,13 +128,18 @@ was designed from:
   See [contamination](evaluation.md#what-the-neural-rows-do-not-establish-contamination).
 - **Corpus-derived expansion is a measured loss** where it has been measured (0.8469 against BM25's
   0.8751 on the reference corpus) and is not a default for that reason.
-- **The learned and fitted channels have no measured value here.** `FeedbackAwareTextSearchEngine`
-  and the contextual boost add a bonus whose worth depends on the corpus and on the history they are
-  fed; no nDCG figure is claimed for either. `CalibratedScoreConfidence` fits a score → probability
-  mapping and derives an abstention threshold from it, and no fitted J is reported for it on
-  labelled data. Its isotonic and Platt fits are differential-tested against scikit-learn; the
-  fitted J itself remains unmeasured. For the feedback channel the open question is not only whether it pays but from how
-  many recorded associations it starts to. Measure on your own data before relying on either —
+- **The learned and fitted channels are measured on one corpus, and the figures are specific.**
+  On SciFact (300 judged test queries, BM25 at `k1 = 1.5, b = 0.75`): the query-level confidence —
+  the top result's score against whether that result is relevant — separates the two at J = 0.3838
+  over all 300 pairs and **0.4125 on a held-out half** whose oracle is 0.4342, so the fitted
+  threshold generalises. `FeedbackAwareTextSearchEngine` is worth **+0.0595 nDCG@10** when a query
+  repeats with its own choice recorded (30 queries improved, none worse), and **+0.0042** when the
+  history holds 150 *other* queries — the fuzzy path reached 31 of 150 held-out queries and moved
+  the metric by four thousandths. The open question is therefore narrower than "does it pay": a
+  query's own association pays immediately, and cross-query associations barely fire.
+  What should not be read into this: one corpus, one scorer configuration, binary relevance,
+  judged-relevant documents standing in for real clicks, and a file-order split. Measure on your
+  own data before relying on either —
   [learning from past choices](ranking.md#learning-from-past-choices-queryfeedbackhistory),
   [fitted confidence](observability.md#fitted-confidence-and-the-abstention-threshold-calibratedscoreconfidence).
 - **The question trees are greedy and uncalibrated, and the linear model is the accuracy leader.**
