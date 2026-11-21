@@ -383,6 +383,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `ScoreNormalization` | record struct | — | One engine's scores mapped onto a comparable scale: subtract Offset, then divide by Scale — (s − offset) / scale. |
 | `ScoreNormalizationContext` | record | — | What a hybrid knows about one source engine's scores beyond the result list itself: the query's theoretical upper bound, when the engine can report one. |
 | `SumScoreNormalizer` | class | `IScoreNormalizer` | Divides each engine's scores by their sum, so each engine contributes one unit of mass in total however many documents it returned. |
+| `UpperBoundBayesianFusionMerger` | class | `IContextualResultMerger`, `IResultMerger` | Merges per-engine results by normalizing each engine's scores by its query upper bound and combining them with the naive Bayes rule — the same combination as… |
 | `UpperBoundScoreNormalizer` | class | `IContextualScoreNormalizer`, `IScoreNormalizer` | Divides a lexical engine's scores by the theoretical upper bound for the query, when the engine can report it, so a score becomes a fraction of what the query… |
 | `VectorSimilarity` | class | — | Pure vector math helpers used to compare embeddings. These are arithmetic utilities, not an embedding pipeline: vectors must already exist (see… |
 | `WeightedScoreResultMerger` | class | `IContextualMergeExplainer`, `IContextualResultMerger`, `IMergeExplainer`, `IResultMerger` | Blends the native per-engine scores instead of re-ranking. Every engine's scores are put on a comparable scale by an IScoreNormalizer — by default divided by… |
@@ -542,6 +543,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `SparseDistance` | enum | — | Distance operator driving the sparse ANN index and the query ordering. |
 | `TrgmIndexKind` | enum | — | Which trigram index structures are created on the content field. |
 | `TrgmSearchMode` | enum | — | The way approximate (trigram) search matches documents. |
+| `TsvExpressionSql` | record | — | A tsv expression and the values it binds. |
 | `VectorDistance` | enum | — | Distance operator driving the ANN index and the query ordering. |
 | `VectorIndexMethod` | enum | — | Index access method used for the ANN index over the embedding column. |
 
