@@ -442,10 +442,28 @@ if (calibrated.ShouldAbstain(results[0].Score))
 | `IsotonicRegression` (default) | non-decreasing step function, interpolated between fitted points | PAVA over the pairs |
 | `PlattScaling` | smooth sigmoid | logistic regression on the scores |
 
-The threshold is the score maximizing Youden's J (`TPR - FPR`) over the labelled pairs,
-converted into the probability space the calibrator reports, so `ShouldAbstain` compares a
-probability against a probability. Reading it any other way would make the abstain rate a
-function of the corpus's score scale rather than of the data.
+The threshold is the score maximizing Youden's J (`TPR - FPR`) over the labelled pairs.
+`AbstainScore` is that score, and `ShouldAbstain` compares a score against it; `AbstainThreshold`
+is the same boundary expressed as a calibrated probability, for reading only. Comparing
+probabilities would move the boundary wherever the fit is flat — the measured cost of that
+reading on a tied-score fixture was J = 0.1552 where 0.1591 was reachable.
+
+**Measured on SciFact** (5,183 documents, 300 judged test queries, BM25 at `k1 = 1.5,
+b = 0.75`; one pair per query: the top result's score and whether that result is judged
+relevant). The query-level set is 300 pairs, 162 of them positive, and the split is the file's
+order:
+
+| set | best J | at the fitted score |
+|---|---|---|
+| all 300 pairs | 0.3838 | — |
+| first 150, fitted on | 0.3579 | 0.3579 (`AbstainScore = 28.80`) |
+| last 150, held out | 0.4342 (oracle) | **0.4125** |
+
+The fit reaches the best J its own half offers, and on the held-out half it lands within 0.022 of
+the best threshold that half would have allowed. The document-level figure beside this one — every
+result of every query, 1.4 M pairs of which 0.02 % are positive, J = 0.869 — measures whether a
+score separates a relevant document from the rest, which a scorer does at that imbalance; it is
+not a confidence estimate for a query, and it is not what the criterion was set for.
 
 Fitted on a set of pairs that all come from one corpus at one time, this is a statement about
 that corpus. Re-fit when the corpus changes materially.

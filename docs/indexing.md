@@ -285,6 +285,12 @@ Two things worth knowing before enabling either:
 - **Its effect on retrieval is not measured here.** No French corpus is part of the evaluation
   harness, so nothing claims an nDCG figure for it. The English numbers above are English
   measurements and say nothing about French — measure it on your own data before turning it on.
+  What *is* measured is what the analysis does to the vocabulary, which is a mechanism rather than
+  a ranking: over the algorithm's 21,653-word reference vocabulary it folds **21,653 distinct
+  words onto 9,926 stems** (−54.2 %), with **3,964 stems shared by more than one word** and the
+  largest group holding 29. That is both halves of what stemming can do to a search at once —
+  match an inflection to its base form, and conflate two words that are not the same word — and
+  which of them dominates is exactly what a retrieval measurement would have to say.
 
 Both are opt-in for the same reason `PorterStemmer` is: a default stemmer would silently change
 terms for every corpus that never asked for one, and an index can only be reloaded with the

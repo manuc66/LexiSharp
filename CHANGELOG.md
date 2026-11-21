@@ -2,6 +2,46 @@
 
 ### Added
 
+- **The learned channels' own criteria are measured, and the French stemmer's effect is measured as
+  a mechanism.**
+
+  The two channels this repository shipped with "no retrieval figure claimed" now have one, on
+  SciFact (5,183 documents, 300 judged test queries, BM25 at `k1 = 1.5, b = 0.75`):
+
+  - **Fitted confidence.** One pair per query — the top result's score and whether that result is
+    relevant — gives 300 pairs, 162 positive. Youden's J is **0.3838** over all of them; fitted on
+    the first 150 and read on the second, the threshold reaches the training half's best (0.3579 at
+    `AbstainScore = 28.80`) and scores **0.4125** held out, against an oracle of 0.4342 on that
+    half. The document-level figure the older measurement printed — every result of every query,
+    1.4 M pairs of which 0.02 % are positive, J = 0.869 — answers whether a score separates a
+    relevant document from the rest, which any scorer does at that imbalance, and is not a
+    query-level confidence.
+  - **Feedback channel.** With the history built from the first 150 queries and read on the second,
+    a history of *other* queries moves nDCG@10 by **+0.0042** at 150 recorded queries (31 of 150
+    held-out queries reached by an association, 2 improved, none worse). One association per query,
+    for the query itself, is worth **+0.0595** (0.6891 against 0.6297, 30 improved, none worse).
+    So the channel pays for the queries it has seen and is nearly inert for the ones it has not —
+    which is a narrower question than "does it pay".
+
+  - **Contextual boost, and the example is the failure.** The title-match boost `ranking.md` uses
+    as its example (`ScoreBoost(1.5, 0)` on any query term appearing in a title) takes SciFact's
+    base nDCG@10 from 0.6623 to **0.0996**, with 222 of 300 queries worse; gating it on
+    `TopConfidence < 0.5` recovers part of it to **0.2056**, with 187 still worse. The gate removes
+    35 regressions and leaves 187: the multiplier is a different ranking rather than a correction,
+    and that is a property of the boost, not evidence about the seam.
+
+  - **French stemming, as a mechanism.** The reference vocabulary's 21,653 distinct words fold onto
+    **9,926 stems** (−54.2 %), **3,964** of them shared by more than one word, the largest group
+    holding 29. That is the folding that can match an inflection and the ambiguity that can
+    conflate two words, together; which dominates a ranking is still unmeasured, because no French
+    corpus with judgments is part of the harness.
+
+  Both learned-channel figures come from `CalibrationMeasurementTests`, report-only tests that
+  print the table and assert nothing; the stemmer's counts are pinned in
+  `FrenchStemmerTests.StemmingFoldsTheReferenceVocabularyOntoFewerStems` because they are
+  deterministic. Limits stated with the figures: one corpus, one scorer configuration, binary
+  relevance, judged-relevant documents standing in for real clicks, and a file-order split.
+
 - **`InMemoryTextIndex` answers a prefix as an ordered range.** It now implements the internal
   `IVocabularyPrefixIndex`: the vocabulary is kept in code-unit order as terms are added and removed,
   at an `O(log V)` update rather than a rebuild, and a prefix becomes a range plus the matching

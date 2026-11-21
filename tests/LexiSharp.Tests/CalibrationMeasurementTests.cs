@@ -742,6 +742,294 @@ public class CalibrationMeasurementTests
         Assert.True(true);
     }
 
+    /// <summary>
+    /// The criterion the calibration was set against, asked at the level it was set for: can the top
+    /// result's score tell a query whose top result is relevant from one whose top result is not?
+    /// </summary>
+    /// <remarks>
+    /// The document-level measurement beside this one pools every result of every query — 1.4 M pairs of
+    /// which 0.02 % are positive — and answers "can a score separate a relevant document from the rest",
+    /// which any scorer does at that imbalance. The type's own contract is a <c>(score, isCorrect)</c>
+    /// pair where <c>isCorrect</c> is about the result the caller acts on; this is that question.
+    /// Report-only, like its neighbours: the figures are published with their protocol beside the type.
+    /// </remarks>
+    [Fact]
+    public void Calibration_J_QueryLevel_OnSciFact()
+    {
+        var data = TryLoadSciFact(_output);
+        if (data is null) return;
+        var (documents, queries, qrels) = data.Value;
+
+        var tokenizer = new Tokenizer();
+        var index = new InMemoryTextIndex(tokenizer);
+        index.Index(documents.Select(d =>
+            new SearchDocument(d.Id, string.IsNullOrEmpty(d.Title) ? d.Text : d.Title + " " + d.Text)));
+
+        var engine = new RankedTextSearchEngine(index, new Bm25Scorer(1.5, 0.75), tokenizer);
+
+        var pairs = new List<(double Score, bool IsCorrect)>();
+
+        foreach (var (qid, qtext) in queries)
+        {
+            if (!qrels.TryGetValue(qid, out var relevant)) continue;
+
+            var top = engine.Search(qtext, new SearchOptions(Limit: 1));
+
+            pairs.Add(top.Count == 0 ? (0.0, false) : (top[0].Score, relevant.Contains(top[0].DocumentId)));
+        }
+
+        int positives = pairs.Count(pair => pair.IsCorrect);
+        _output.WriteLine($"Query-level pairs: {pairs.Count}, positives (top-1 relevant): {positives} ({100.0 * positives / pairs.Count:F1} %)");
+        _output.WriteLine($"Best J over all of them = {BestJ(pairs):F4}");
+
+        int split = pairs.Count / 2;
+        var train = pairs.Take(split).ToList();
+        var test = pairs.Skip(split).ToList();
+
+        if (train.All(pair => pair.IsCorrect) || train.All(pair => !pair.IsCorrect))
+        {
+            _output.WriteLine("Training half holds one class; the split cannot be fitted.");
+            return;
+        }
+
+        var calibrator = CalibratedScoreConfidence.Fit(train);
+
+        _output.WriteLine(
+            $"Training half ({train.Count}): best J = {BestJ(train):F4}; fitted AbstainScore = {calibrator.AbstainScore:F4}, "
+            + $"J at it = {JAt(train, calibrator.AbstainScore):F4}");
+        _output.WriteLine(
+            $"Held-out half ({test.Count}): J at the fitted score = {JAt(test, calibrator.AbstainScore):F4}; "
+            + $"oracle best J on that half = {BestJ(test):F4}");
+    }
+
+    /// <summary>
+    /// The feedback channel against the size of its history, and the case it exists for: one query
+    /// repeated with the relevant result the base engine ranked lowest recorded as the choice.
+    /// </summary>
+    /// <remarks>
+    /// The history is built from the first half of the judged queries and read on the second half, so a
+    /// number here is not the channel reading back what it was given. Two questions are separated on
+    /// purpose: how many held-out queries a history of <i>other</i> queries reaches at all (the fuzzy
+    /// path, and the count is printed because a zero delta with zero fired queries says nothing about
+    /// the ranking), and what one association does for its own query.
+    /// </remarks>
+    [Fact]
+    public void FeedbackHistory_Associations_OnSciFact()
+    {
+        var data = TryLoadSciFact(_output);
+        if (data is null) return;
+        var (documents, queries, qrels) = data.Value;
+
+        var tokenizer = new Tokenizer();
+        var index = new InMemoryTextIndex(tokenizer);
+        index.Index(documents.Select(d =>
+            new SearchDocument(d.Id, string.IsNullOrEmpty(d.Title) ? d.Text : d.Title + " " + d.Text)));
+
+        var baseEngine = new RankedTextSearchEngine(index, new Bm25Scorer(1.5, 0.75), tokenizer);
+
+        var judged = queries.Where(query => qrels.ContainsKey(query.Id)).ToList();
+        int split = judged.Count / 2;
+        var train = judged.Take(split).ToList();
+        var test = judged.Skip(split).ToList();
+
+        double baseline = ComputeNdcg(baseEngine, test, qrels, 10);
+        _output.WriteLine($"Held-out queries: {test.Count}; base nDCG@10 = {baseline:F4}");
+
+        foreach (int size in new[] { 0, 10, 25, 50, 100, train.Count }.Distinct())
+        {
+            var history = new QueryFeedbackHistory(tokenizer);
+            int recorded = 0;
+
+            foreach (var (qid, qtext) in train.Take(size))
+            {
+                string? chosen = LowestRankedRelevant(baseEngine, qtext, qrels[qid]);
+
+                if (chosen is null) continue;
+
+                history.Record(qtext, chosen);
+                recorded++;
+            }
+
+            var engine = new FeedbackAwareTextSearchEngine(baseEngine, history, maxBoost: 5.0, minSimilarity: 0.3);
+            double ndcg = ComputeNdcg(engine, test, qrels, 10);
+            int fired = test.Count(query => history.GetFuzzyAssociations(query.Text, 0.3).Count > 0);
+            var (improvements, regressions) = Compare(baseEngine, engine, test, qrels, 10);
+
+            _output.WriteLine(
+                $"history {size,3} ({recorded} recorded): nDCG {ndcg:F4} ({ndcg - baseline:+0.0000;-0.0000}), "
+                + $"held-out queries with an association {fired}/{test.Count}, +{improvements} / -{regressions}");
+        }
+
+        var repeated = new QueryFeedbackHistory(tokenizer);
+        int chosenCount = 0;
+
+        foreach (var (qid, qtext) in test)
+        {
+            string? chosen = LowestRankedRelevant(baseEngine, qtext, qrels[qid]);
+
+            if (chosen is null) continue;
+
+            repeated.Record(qtext, chosen);
+            chosenCount++;
+        }
+
+        var repeatedEngine = new FeedbackAwareTextSearchEngine(baseEngine, repeated, maxBoost: 5.0, minSimilarity: 0.3);
+        double repeatedNdcg = ComputeNdcg(repeatedEngine, test, qrels, 10);
+        var (repeatedImprovements, repeatedRegressions) = Compare(baseEngine, repeatedEngine, test, qrels, 10);
+
+        _output.WriteLine(
+            $"one association per query ({chosenCount} recorded): nDCG {repeatedNdcg:F4} "
+            + $"({repeatedNdcg - baseline:+0.0000;-0.0000}), +{repeatedImprovements} / -{repeatedRegressions}");
+    }
+
+    /// <summary>
+    /// The relevant document the base engine ranks lowest — the one a click would have to correct.
+    /// </summary>
+    private static string? LowestRankedRelevant(RankedTextSearchEngine engine, string query, HashSet<string> relevant)
+    {
+        string? chosen = null;
+
+        foreach (var result in engine.Search(query, new SearchOptions(Limit: int.MaxValue)))
+        {
+            if (relevant.Contains(result.DocumentId))
+                chosen = result.DocumentId;
+        }
+
+        return chosen;
+    }
+
+    private static (int Improvements, int Regressions) Compare(
+        ITextSearchEngine baseline,
+        ITextSearchEngine candidate,
+        List<(string Id, string Text)> queries,
+        Dictionary<string, HashSet<string>> qrels,
+        int k)
+    {
+        int improvements = 0, regressions = 0;
+
+        foreach (var (qid, qtext) in queries)
+        {
+            var baseResults = baseline.Search(qtext, new SearchOptions(Limit: k)).Select(r => r.DocumentId).ToList();
+            var candidateResults = candidate.Search(qtext, new SearchOptions(Limit: k)).Select(r => r.DocumentId).ToList();
+
+            double baseQuery = NdcgForQuery(baseResults, qrels[qid], k);
+            double candidateQuery = NdcgForQuery(candidateResults, qrels[qid], k);
+
+            if (candidateQuery > baseQuery + 1e-9) improvements++;
+            if (candidateQuery < baseQuery - 1e-9) regressions++;
+        }
+
+        return (improvements, regressions);
+    }
+
+    /// <summary>Youden's J at the best score boundary of a labelled set.</summary>
+    private static double BestJ(IReadOnlyList<(double Score, bool IsCorrect)> pairs)
+    {
+        int positives = pairs.Count(pair => pair.IsCorrect);
+        int negatives = pairs.Count - positives;
+
+        if (positives == 0 || negatives == 0)
+            return double.NaN;
+
+        var ordered = pairs.OrderByDescending(pair => pair.Score).ToArray();
+        int truePositives = 0, falsePositives = 0;
+        double best = double.NegativeInfinity;
+
+        for (int i = 0; i < ordered.Length; i++)
+        {
+            if (ordered[i].IsCorrect) truePositives++;
+            else falsePositives++;
+
+            if (i < ordered.Length - 1 && ordered[i].Score == ordered[i + 1].Score)
+                continue;
+
+            best = Math.Max(best, (double)truePositives / positives - (double)falsePositives / negatives);
+        }
+
+        return best;
+    }
+
+    /// <summary>Youden's J at one score threshold: <c>score &gt;= threshold</c> is the positive call.</summary>
+    private static double JAt(IReadOnlyList<(double Score, bool IsCorrect)> pairs, double threshold)
+    {
+        int positives = 0, negatives = 0, truePositives = 0, falsePositives = 0;
+
+        foreach (var (score, correct) in pairs)
+        {
+            if (correct)
+            {
+                positives++;
+                if (score >= threshold) truePositives++;
+            }
+            else
+            {
+                negatives++;
+                if (score >= threshold) falsePositives++;
+            }
+        }
+
+        return positives == 0 || negatives == 0
+            ? double.NaN
+            : (double)truePositives / positives - (double)falsePositives / negatives;
+    }
+
+    private static (List<(string Id, string Title, string Text)> Documents, List<(string Id, string Text)> Queries,
+        Dictionary<string, HashSet<string>> Qrels)? TryLoadSciFact(ITestOutputHelper output)
+    {
+        string dataDir = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "..", "..", "bench", "LexiSharp.Eval", "data", "scifact"));
+
+        if (!File.Exists(Path.Combine(dataDir, "corpus.jsonl")))
+        {
+            output.WriteLine($"Corpus not found at {dataDir}, skipping.");
+            return null;
+        }
+
+        var documents = new List<(string Id, string Title, string Text)>();
+
+        foreach (string line in File.ReadLines(Path.Combine(dataDir, "corpus.jsonl")))
+        {
+            using var json = JsonDocument.Parse(line);
+
+            documents.Add((
+                json.RootElement.GetProperty("_id").GetString()!,
+                json.RootElement.TryGetProperty("title", out var title) ? title.GetString() ?? "" : "",
+                json.RootElement.TryGetProperty("text", out var text) ? text.GetString() ?? "" : ""));
+        }
+
+        var queries = new List<(string Id, string Text)>();
+
+        foreach (string line in File.ReadLines(Path.Combine(dataDir, "queries.jsonl")))
+        {
+            using var json = JsonDocument.Parse(line);
+
+            queries.Add((
+                json.RootElement.GetProperty("_id").GetString()!,
+                json.RootElement.GetProperty("text").GetString()!));
+        }
+
+        var qrels = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+
+        foreach (string line in File.ReadLines(Path.Combine(dataDir, "qrels", "test.tsv")).Skip(1))
+        {
+            string[] parts = line.Split('\t');
+            if (parts.Length < 3) continue;
+
+            if (!double.TryParse(parts[2], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out double score) || score <= 0) continue;
+
+            if (!qrels.TryGetValue(parts[0], out var set))
+            {
+                set = new HashSet<string>(StringComparer.Ordinal);
+                qrels[parts[0]] = set;
+            }
+
+            set.Add(parts[1]);
+        }
+
+        return (documents, queries, qrels);
+    }
+
     private void MeasureBoost(string label, ITextSearchEngine baseline, ITextSearchEngine boosted,
         List<(string Id, string Text)> queries, Dictionary<string, HashSet<string>> qrels, int k)
     {

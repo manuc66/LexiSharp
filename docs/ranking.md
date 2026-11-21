@@ -782,6 +782,36 @@ them again. Measured over a 2 000-query history: 3454 µs per query before that,
 the gap widens with the history. Past that size the walk is the thing to measure before assuming
 the channel is cheap; `GetAssociations`, an exact lookup keyed on the whole query, does not walk.
 
+### What the channel is worth, measured
+
+On SciFact (5,183 documents, 300 judged test queries, BM25 at `k1 = 1.5, b = 0.75`), with the
+history built from the first 150 queries and read on the second 150, `maxBoost: 5.0` and
+`minSimilarity: 0.3`. The recorded choice is the judged-relevant document the base engine ranks
+**lowest** — the result a click would have to correct:
+
+| recorded history | held-out nDCG@10 | Δ | held-out queries an association reached | improved / worse |
+|---|---:|---:|---:|---:|
+| 0 | 0.6297 | — | 0 / 150 | 0 / 0 |
+| 10 | 0.6297 | +0.0000 | 4 / 150 | 0 / 0 |
+| 25 | 0.6297 | +0.0000 | 5 / 150 | 0 / 0 |
+| 50 | 0.6330 | +0.0033 | 9 / 150 | 1 / 0 |
+| 100 | 0.6330 | +0.0033 | 25 / 150 | 1 / 0 |
+| 150 | 0.6339 | +0.0042 | 31 / 150 | 2 / 0 |
+
+What the channel is worth is the other case: **one association per query, for that query** — the
+query repeated with its choice recorded — is **0.6891 against 0.6297, +0.0595, with 30 queries
+improved and none made worse**.
+
+So "from how many associations" has two answers and only one of them is about counting. A query's
+own association pays immediately; associations between *different* queries — the fuzzy path — reach
+a fifth of the held-out queries at 150 recorded queries and move the metric by 0.004. The history
+is worth having for the queries it has seen, and is nearly inert for the ones it has not.
+
+The limits are the measurement's: one corpus, one scorer configuration, binary relevance, choices
+that are judged-relevant documents rather than real clicks (which are sometimes wrong), and a
+file-order split. The `CalibrationMeasurementTests.FeedbackHistory_Associations_OnSciFact` test
+reproduces the table with `dotnet test --filter`.
+
 ## Boosting on the search, not only on the document
 
 `BoostedTextSearchEngine`'s boost sees one candidate. That is enough for a decision the document
@@ -847,6 +877,20 @@ fusion score. A `Ranking.CalibratedScoreConfidence` fitted on one of those says 
 another, so a gate comparing it against a fitted threshold has to re-fit when the pipeline's
 engine changes. `TopConfidence` is the scale-invariant alternative, relative to the result set
 rather than a probability. `docs/observability.md` has the two composed.
+
+### Measured: the example boost is not safe
+
+`CalibrationMeasurementTests.ContextualBoost_Regressions_OnSciFact` runs the title-match boost this
+section uses as its example (`ScoreBoost(1.5, 0)`, any query term appearing in the title) over
+SciFact's 300 judged queries: base nDCG@10 **0.6623**, blind **0.0996** with **222 of 300** queries
+worse, and gated on `TopConfidence < 0.5` **0.2056** with **187** worse. The gate removes 35 of the
+regressions and leaves 187: a ×1.5 multiplier on a term that happens to appear in a title is a
+different ranking, not a correction of one, and no amount of context makes it a correction.
+
+That is a measurement of *that* boost, not of the seam. A boost that is a real correction — a fact
+about the document the ranking cannot see, or a choice the user made — is what the context exists
+for, and it has to be measured on the data it corrects; the section's own advice to gate on the
+ranking's uncertainty is necessary and not sufficient.
 
 ### Where the payload goes, and why it is not in `SearchOptions`
 
