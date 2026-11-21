@@ -2,6 +2,7 @@ using System.Text.Json;
 using LexiSharp.Core;
 using LexiSharp.Eval;
 using LexiSharp.Expansion;
+using LexiSharp.Hybrid;
 using LexiSharp.Indexing;
 using LexiSharp.Linguistics;
 using LexiSharp.Ranking;
@@ -1028,6 +1029,116 @@ public class CalibrationMeasurementTests
         }
 
         return (documents, queries, qrels);
+    }
+
+    [Fact]
+    public async Task UpperBoundBayesianFusion_OnSciFact()
+    {
+        string dataDir = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "..", "..", "bench", "LexiSharp.Eval", "data", "scifact"));
+
+        if (!File.Exists(Path.Combine(dataDir, "corpus.jsonl")))
+        {
+            _output.WriteLine($"Corpus not found at {dataDir}, skipping.");
+            return;
+        }
+
+        var documents = new List<(string Id, string Title, string Text)>();
+        foreach (string line in File.ReadLines(Path.Combine(dataDir, "corpus.jsonl")))
+        {
+            using var json = JsonDocument.Parse(line);
+            string id = json.RootElement.GetProperty("_id").GetString()!;
+            string title = json.RootElement.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
+            string text = json.RootElement.TryGetProperty("text", out var tx) ? tx.GetString() ?? "" : "";
+            documents.Add((id, title, text));
+        }
+
+        var queries = new List<(string Id, string Text)>();
+        foreach (string line in File.ReadLines(Path.Combine(dataDir, "queries.jsonl")))
+        {
+            using var json = JsonDocument.Parse(line);
+            string id = json.RootElement.GetProperty("_id").GetString()!;
+            string text = json.RootElement.GetProperty("text").GetString()!;
+            queries.Add((id, text));
+        }
+
+        var qrels = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (string line in File.ReadLines(Path.Combine(dataDir, "qrels", "test.tsv")).Skip(1))
+        {
+            string[] parts = line.Split('\t');
+            if (parts.Length < 3) continue;
+            if (!double.TryParse(parts[2], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out double score) || score <= 0) continue;
+            string qid = parts[0];
+            string did = parts[1];
+            if (!qrels.TryGetValue(qid, out var set))
+            {
+                set = new HashSet<string>(StringComparer.Ordinal);
+                qrels[qid] = set;
+            }
+            set.Add(did);
+        }
+
+        var tokenizer = new Tokenizer();
+        var searchDocs = documents.Select(d =>
+            new SearchDocument(d.Id, string.IsNullOrEmpty(d.Title) ? d.Text : d.Title + " " + d.Text)).ToList();
+
+        var baseIndex = new InMemoryTextIndex(tokenizer);
+        baseIndex.Index(searchDocs);
+
+        var bm25Engine = new RankedTextSearchEngine(baseIndex, new Bm25Scorer(1.5, 0.75), tokenizer);
+        // Bm25Scorer implements IScoreBoundScorer, and InMemoryTextIndex implements IScoreBoundSearchEngine
+        var boundEngine = new RankedTextSearchEngine(baseIndex, new Bm25Scorer(1.5, 0.75), tokenizer);
+
+        var qrelsQueries = queries.Where(q => qrels.ContainsKey(q.Id)).ToList();
+        int splitIdx = qrelsQueries.Count / 2;
+        var testQueries = qrelsQueries.Skip(splitIdx).ToList();
+
+        // Fit calibrator on training queries
+        var trainQueries = qrelsQueries.Take(splitIdx).ToList();
+        var trainPairs = new List<(double Score, bool IsCorrect)>();
+        foreach (var (qid, qtext) in trainQueries)
+        {
+            var results = bm25Engine.Search(qtext, new SearchOptions(Limit: int.MaxValue)).ToList();
+            foreach (var r in results)
+                trainPairs.Add((r.Score, qrels[qid].Contains(r.DocumentId)));
+        }
+        var calibrator = CalibratedScoreConfidence.Fit(trainPairs, CalibrationMethod.IsotonicRegression);
+
+        var bayesMerger = new BayesianFusionMerger(calibrator, calibrator);
+        var upperMerger = new UpperBoundBayesianFusionMerger();
+
+        // Hybrid with BM25 + BM25 (same engine twice, to test the merger)
+        // Actually, we need two different engines. Use BM25 and a second BM25 with different params.
+        var engine2 = new RankedTextSearchEngine(baseIndex, new Bm25Scorer(1.2, 0.75), tokenizer);
+        var hybridBayes = new HybridTextSearchEngine(new[] { bm25Engine, engine2 }, bayesMerger);
+        var hybridUpper = new HybridTextSearchEngine(new[] { bm25Engine, engine2 }, upperMerger);
+
+        double bayesNdcg = 0, upperNdcg = 0, rrfNdcg = 0;
+        int n = 0;
+
+        foreach (var (qid, qtext) in testQueries)
+        {
+            var bayesRes = hybridBayes.Search(qtext, new SearchOptions(Limit: 10)).Select(r => r.DocumentId).ToList();
+            var upperRes = hybridUpper.Search(qtext, new SearchOptions(Limit: 10)).Select(r => r.DocumentId).ToList();
+
+            // RRF for comparison
+            var rrfMerger = new ReciprocalRankFusionMerger();
+            var hybridRrf = new HybridTextSearchEngine(new[] { bm25Engine, engine2 }, rrfMerger);
+            var rrfRes = hybridRrf.Search(qtext, new SearchOptions(Limit: 10)).Select(r => r.DocumentId).ToList();
+
+            bayesNdcg += NdcgForQuery(bayesRes, qrels[qid], 10);
+            upperNdcg += NdcgForQuery(upperRes, qrels[qid], 10);
+            rrfNdcg += NdcgForQuery(rrfRes, qrels[qid], 10);
+            n++;
+        }
+
+        _output.WriteLine($"RRF nDCG@10: {rrfNdcg / n:F4}");
+        _output.WriteLine($"Bayesian (calibrated) nDCG@10: {bayesNdcg / n:F4}");
+        _output.WriteLine($"Bayesian (upper-bound) nDCG@10: {upperNdcg / n:F4}");
+        _output.WriteLine($"Upper-bound vs calibrated gap: {upperNdcg / n - bayesNdcg / n:+0.0000;-0.0000}");
+
+        Assert.True(true);
     }
 
     private void MeasureBoost(string label, ITextSearchEngine baseline, ITextSearchEngine boosted,
