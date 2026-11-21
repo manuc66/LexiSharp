@@ -39,12 +39,12 @@ public class PostgresFieldWeightingTests
 
         Assert.Equal(
             "to_tsvector('simple', unaccent(@content))",
-            PostgresSchema.TsvExpression(options, "@content"));
+            PostgresSchema.TsvExpression(options, "@content").Sql);
 
         Assert.Equal(
             "to_tsvector('simple', unaccent(@content || ' ' || "
             + "coalesce((select string_agg(value, ' ') from jsonb_each_text(@text_fields)), '')))",
-            PostgresSchema.TsvExpression(options, "@content", "@text_fields"));
+            PostgresSchema.TsvExpression(options, "@content", "@text_fields").Sql);
 
         Assert.Null(PostgresSchema.RankWeightsArray(options));
     }
@@ -62,7 +62,7 @@ public class PostgresFieldWeightingTests
         Assert.Equal(
             "to_tsvector('simple', unaccent(@content || ' ' || "
             + "coalesce((select string_agg(value, ' ') from jsonb_each_text(@text_fields)), '')))",
-            PostgresSchema.TsvExpression(options, "@content", "@text_fields"));
+            PostgresSchema.TsvExpression(options, "@content", "@text_fields").Sql);
 
         Assert.Null(PostgresSchema.RankWeightsArray(options));
 
@@ -88,21 +88,21 @@ public class PostgresFieldWeightingTests
             FieldWeights = TitleAboveBody,
         };
 
-        string expression = PostgresSchema.TsvExpression(options, "@content", "@text_fields");
+        var expression = PostgresSchema.TsvExpression(options, "@content", "@text_fields");
 
-        Assert.StartsWith("setweight(to_tsvector('simple', unaccent(@content)), 'D')", expression, StringComparison.Ordinal);
+        Assert.StartsWith("setweight(to_tsvector('simple', unaccent(@content)), 'D')", expression.Sql, StringComparison.Ordinal);
 
         // Unlisted entries stay searchable, at the default class, and are excluded from the
         // per-field sections rather than being counted twice.
         Assert.Contains(
             "setweight(to_tsvector('simple', unaccent(coalesce((select string_agg(value, ' ' order by key) "
-            + "from jsonb_each_text(@text_fields) where key not in ('title')), ''))), 'D')",
-            expression,
+            + "from jsonb_each_text(@text_fields) where key not in (@tsv_field_0)), ''))), 'D')",
+            expression.Sql,
             StringComparison.Ordinal);
 
         Assert.Contains(
-            "setweight(to_tsvector('simple', unaccent(coalesce(@text_fields ->> 'title', ''))), 'A')",
-            expression,
+            "setweight(to_tsvector('simple', unaccent(coalesce(@text_fields ->> @tsv_field_0, ''))), 'A')",
+            expression.Sql,
             StringComparison.Ordinal);
 
         Assert.Equal("'{0.1, 0.2, 0.4, 1.0}'", PostgresSchema.RankWeightsArray(options));
@@ -137,17 +137,17 @@ public class PostgresFieldWeightingTests
         };
 
         Assert.Equal(
-            PostgresSchema.TsvExpression(first, "@content", "@text_fields"),
-            PostgresSchema.TsvExpression(second, "@content", "@text_fields"));
+            PostgresSchema.TsvExpression(first, "@content", "@text_fields").Sql,
+            PostgresSchema.TsvExpression(second, "@content", "@text_fields").Sql);
     }
 
     /// <summary>
-    /// A field name is caller text, so the literal it becomes doubles its quotes. Without this a
-    /// field called <c>it's</c> is a syntax error at write time, not an injection — but a syntax
-    /// error only on the document that carries it.
+    /// A field name is caller text and travels as a value: a name carrying a quote changes the
+    /// parameter, never the statement. The old literal doubled the quote, which was correct only
+    /// while <c>standard_conforming_strings</c> was on.
     /// </summary>
     [Fact]
-    public void AFieldNameWithAQuote_IsEscapedIntoTheLiteral()
+    public void AFieldNameWithAQuote_IsAParameter()
     {
         var options = new PostgresIndexOptions
         {
@@ -155,10 +155,35 @@ public class PostgresFieldWeightingTests
             FieldWeights = new Dictionary<string, PostgresFieldWeight> { ["it's"] = PostgresFieldWeight.B },
         };
 
-        string expression = PostgresSchema.TsvExpression(options, "@content", "@text_fields");
+        var expression = PostgresSchema.TsvExpression(options, "@content", "@text_fields");
 
-        Assert.Contains("key not in ('it''s')", expression, StringComparison.Ordinal);
-        Assert.Contains("@text_fields ->> 'it''s'", expression, StringComparison.Ordinal);
+        Assert.Contains("key not in (@tsv_field_0)", expression.Sql, StringComparison.Ordinal);
+        Assert.Contains("@text_fields ->> @tsv_field_0", expression.Sql, StringComparison.Ordinal);
+        Assert.Contains(expression.Parameters, parameter => parameter.Key == "tsv_field_0" && parameter.Value == "it's");
+    }
+
+    /// <summary>
+    /// A field name travels as a bound parameter, not as a SQL literal. The literal form doubled its
+    /// quotes and was safe only while <c>standard_conforming_strings</c> was on — a backslash would
+    /// escape the closing quote on a server configured otherwise. As a parameter the name has no
+    /// syntax at all, so the setting stops mattering.
+    /// </summary>
+    [Fact]
+    public void AFieldNameIsAParameterNotALiteral()
+    {
+        const string name = @"a\b'c";
+
+        var options = new PostgresIndexOptions
+        {
+            Table = "t",
+            FieldWeights = new Dictionary<string, PostgresFieldWeight> { [name] = PostgresFieldWeight.B },
+        };
+
+        var expression = PostgresSchema.TsvExpression(options, "@content", "@text_fields");
+
+        Assert.DoesNotContain(name, expression.Sql, StringComparison.Ordinal);
+        Assert.Contains(expression.Parameters, parameter => parameter.Value == name);
+        Assert.Contains("@tsv_field_0", expression.Sql, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -173,7 +198,7 @@ public class PostgresFieldWeightingTests
 
         Assert.Equal(
             "setweight(to_tsvector('simple', unaccent(@content)), 'D')",
-            PostgresSchema.TsvExpression(options, "@content"));
+            PostgresSchema.TsvExpression(options, "@content").Sql);
     }
 
     /// <summary>
@@ -206,10 +231,10 @@ public class PostgresFieldWeightingTests
             DefaultFieldWeight = PostgresFieldWeight.B,
         };
 
-        string expected = PostgresSchema.TsvExpression(lexical, "EXCLUDED.content", "EXCLUDED.text_fields");
+        string expected = PostgresSchema.TsvExpression(lexical, "EXCLUDED.content", "EXCLUDED.text_fields").Sql;
 
-        Assert.Equal(expected, PostgresSchema.TsvExpression(vector.AsIndexOptions(), "EXCLUDED.content", "EXCLUDED.text_fields"));
-        Assert.Equal(expected, PostgresSchema.TsvExpression(sparse.AsIndexOptions(), "EXCLUDED.content", "EXCLUDED.text_fields"));
+        Assert.Equal(expected, PostgresSchema.TsvExpression(vector.AsIndexOptions(), "EXCLUDED.content", "EXCLUDED.text_fields").Sql);
+        Assert.Equal(expected, PostgresSchema.TsvExpression(sparse.AsIndexOptions(), "EXCLUDED.content", "EXCLUDED.text_fields").Sql);
 
         // Including the default class, which is what makes an unlisted field's contribution agree.
         Assert.Contains("), 'B')", expected, StringComparison.Ordinal);
@@ -426,6 +451,52 @@ public class PostgresFieldWeightingTests
             using var command = connection.CreateCommand();
             command.CommandText = $"SELECT tsv::text FROM public.{table} WHERE id = 'a'"; // NOSONAR:S2077 (test-owned name)
             return command.ExecuteScalar() as string;
+        }
+    }
+
+    /// <summary>
+    /// The old literal was safe only while <c>standard_conforming_strings</c> was on: with it off, a
+    /// backslash escapes the closing quote and a field name can end its own literal. The names are
+    /// bound parameters now, so the same document indexes and is found on a server configured the
+    /// other way — and the connection the engine uses is the one that reports the setting.
+    /// </summary>
+    [SkippableFact]
+    public void AFieldNameSurvivesAServerWithStandardConformingStringsOff()
+    {
+        Skip.If(ConnectionString is null, "POSTGRES_TEST_CONNECTION not set.");
+
+        const string name = @"a\b'c";
+        string connectionString = ConnectionString + ";Options='-c standard_conforming_strings=off'";
+
+        using (var check = new NpgsqlConnection(connectionString))
+        {
+            check.Open();
+
+            using var show = check.CreateCommand();
+            show.CommandText = "SHOW standard_conforming_strings";
+
+            Assert.Equal("off", (string)show.ExecuteScalar()!);
+        }
+
+        using var engine = new PostgresTextSearchEngine(connectionString, new PostgresIndexOptions
+        {
+            Table = $"lexisharp_weight_off_{Guid.NewGuid():N}"[..44],
+            FieldWeights = new Dictionary<string, PostgresFieldWeight> { [name] = PostgresFieldWeight.A },
+        });
+
+        try
+        {
+            engine.Add(new SearchDocument(
+                "d1", "unrelated prose",
+                TextFields: new Dictionary<string, string> { [name] = "pineapple" }));
+
+            var results = engine.Search("pineapple", new SearchOptions(Limit: 10));
+
+            Assert.Equal("d1", Assert.Single(results).DocumentId);
+        }
+        finally
+        {
+            engine.DropSchema();
         }
     }
 }

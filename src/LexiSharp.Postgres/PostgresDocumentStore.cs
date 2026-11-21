@@ -35,21 +35,24 @@ internal static class PostgresDocumentWriter
 
         using var command = connection.CreateCommand();
 
-        string tsvExpr = PostgresSchema.TsvExpression(options, "@content", "@text_fields");
-        string tsvExprUpsert = PostgresSchema.TsvExpression(options, "EXCLUDED.content", "EXCLUDED.text_fields");
+        var tsvExpr = PostgresSchema.TsvExpression(options, "@content", "@text_fields", "tsv");
+        var tsvExprUpsert = PostgresSchema.TsvExpression(options, "EXCLUDED.content", "EXCLUDED.text_fields", "tsv_up");
 
         string insertSql = $"""
             INSERT INTO {options.QualifiedTableName} (id, content, category, fields, text_fields, tsv)
-            VALUES (@id, @content, @category, @fields, @text_fields, {tsvExpr})
+            VALUES (@id, @content, @category, @fields, @text_fields, {tsvExpr.Sql})
             ON CONFLICT (id) DO UPDATE
                 SET content = EXCLUDED.content,
                     category = EXCLUDED.category,
                     fields = EXCLUDED.fields,
                     text_fields = EXCLUDED.text_fields,
-                    tsv = {tsvExprUpsert};
+                    tsv = {tsvExprUpsert.Sql};
             """;
 
         command.CommandText = insertSql; // NOSONAR:S2077
+
+        tsvExpr.Bind(command);
+        tsvExprUpsert.Bind(command);
 
         if (transaction is not null)
             command.Transaction = transaction;

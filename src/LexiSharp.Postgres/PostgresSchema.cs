@@ -1,4 +1,4 @@
-using System.Text;
+using System.Globalization;
 
 using Npgsql;
 
@@ -104,25 +104,62 @@ public static class PostgresSchema
     /// name, and for each named field — and concatenated with <c>||</c>, which offsets each
     /// section's term positions past the previous one's.
     /// </para>
+    /// <para>
+    /// <b>Field names are values, not syntax.</b> Each one is a parameter, named from
+    /// <paramref name="parameterPrefix"/> and sorted so the same configuration produces the same
+    /// SQL on every call. Bind them with <see cref="TsvExpressionSql.Bind"/>. A literal would have
+    /// doubled its quotes and still depended on <c>standard_conforming_strings</c> being on: a
+    /// backslash escapes the closing quote when it is off, and field names are free-form caller
+    /// text.
+    /// </para>
     /// </remarks>
-    public static string TsvExpression(PostgresIndexOptions options, string contentReference, string? textFieldsReference = null)
+    /// <param name="options">Naming and weighting options.</param>
+    /// <param name="contentReference">SQL naming the content (e.g. <c>@content</c>).</param>
+    /// <param name="textFieldsReference">SQL naming the text-fields jsonb column, or <c>null</c>.</param>
+    /// <param name="parameterPrefix">
+    /// Prefix for the field-name parameters; must match <c>[A-Za-z0-9_]</c>. Two expressions spliced
+    /// into one statement need different prefixes.
+    /// </param>
+    public static TsvExpressionSql TsvExpression(
+        PostgresIndexOptions options,
+        string contentReference,
+        string? textFieldsReference = null,
+        string parameterPrefix = "tsv_field")
     {
+        ArgumentNullException.ThrowIfNull(options);
+
         string ToVector(string text) => $"to_tsvector('{options.TextSearchConfig}', unaccent({text}))";
 
         if (options.FieldWeights is not { Count: > 0 } weights)
         {
             if (string.IsNullOrEmpty(textFieldsReference))
-                return ToVector(contentReference);
+                return new TsvExpressionSql(ToVector(contentReference), Array.Empty<KeyValuePair<string, string>>());
 
             // jsonb_each_text on a null column yields no rows, so the coalesce covers the
             // "no text fields" case without a conditional.
             string flattened = $"coalesce((select string_agg(value, ' ') from jsonb_each_text({textFieldsReference})), '')";
-            return ToVector($"{contentReference} || ' ' || {flattened}");
+
+            return new TsvExpressionSql(
+                ToVector($"{contentReference} || ' ' || {flattened}"),
+                Array.Empty<KeyValuePair<string, string>>());
         }
+
+        if (!SafeIdentifier.IsValid(parameterPrefix))
+            throw new ArgumentException("A parameter prefix must match [A-Za-z0-9_].", nameof(parameterPrefix));
 
         // Sorted, so the same configuration produces the same SQL bytes on every call (and the
         // same term positions in the vector) regardless of the dictionary's own order.
         var named = weights.OrderBy(entry => entry.Key, StringComparer.Ordinal).ToList();
+
+        var names = new string[named.Count];
+        var parameters = new List<KeyValuePair<string, string>>(named.Count);
+
+        for (int i = 0; i < named.Count; i++)
+        {
+            string name = parameterPrefix + "_" + i.ToString(CultureInfo.InvariantCulture);
+            names[i] = "@" + name;
+            parameters.Add(new KeyValuePair<string, string>(name, named[i].Key));
+        }
 
         var sections = new List<string>(named.Count + 2)
         {
@@ -135,15 +172,18 @@ public static class PostgresSchema
             // one field silently narrow the index for every other. One aggregating section, so
             // their terms share the default class rather than one class each.
             string unlisted = $"coalesce((select string_agg(value, ' ' order by key) from jsonb_each_text({textFieldsReference})"
-                + $" where key not in ({string.Join(", ", named.Select(entry => Literal(entry.Key)))}))"
-                + ", '')";
+                + $" where key not in ({string.Join(", ", names)})), '')";
             sections.Add(Weighted(ToVector(unlisted), options.DefaultFieldWeight));
 
-            sections.AddRange(named.Select(entry =>
-                Weighted(ToVector($"coalesce({textFieldsReference} ->> {Literal(entry.Key)}, '')"), entry.Value)));
+            for (int i = 0; i < named.Count; i++)
+            {
+                sections.Add(Weighted(
+                    ToVector($"coalesce({textFieldsReference} ->> {names[i]}, '')"),
+                    named[i].Value));
+            }
         }
 
-        return string.Join(" || ", sections);
+        return new TsvExpressionSql(string.Join(" || ", sections), parameters);
     }
 
     /// <summary>
@@ -170,19 +210,4 @@ public static class PostgresSchema
 
     private static string Weighted(string vector, PostgresFieldWeight weight) =>
         $"setweight({vector}, '{Letter(weight)}')";
-
-    /// <summary>A field name as a quoted SQL literal; names are free-form, so quotes are doubled.</summary>
-    /// <remarks>
-    /// Doubling the quote is complete under <c>standard_conforming_strings = on</c>, which is
-    /// PostgreSQL's default since 9.1 and the only value this library's SQL assumes anywhere else:
-    /// with it off, a backslash escapes the closing quote and a field name could end its own literal.
-    /// A server configured otherwise is out of contract, and the names arriving here are the
-    /// caller's configuration rather than a document's data.
-    /// </remarks>
-    private static string Literal(string value)
-    {
-        var literal = new StringBuilder(value.Length + 2).Append('\'');
-        literal.Append(value.Replace("'", "''", StringComparison.Ordinal)).Append('\'');
-        return literal.ToString();
-    }
 }

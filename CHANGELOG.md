@@ -284,6 +284,15 @@
 
 ### Fixed
 
+- **A text field's name is a bound parameter, so `standard_conforming_strings` no longer matters.**
+  The `tsv` expression the lexical, vector and sparse writers use turned each `FieldWeights` key into
+  a quoted literal, doubling the quote — complete only while `standard_conforming_strings` was on.
+  With it off, a backslash escapes the closing quote and a name can end its own literal. The
+  expression now carries the names as parameters (`PostgresSchema.TsvExpression` returns
+  `TsvExpressionSql`, and the callers bind them), which removes the server-setting precondition; a
+  live test indexes a name holding both a quote and a backslash on a session with the setting off.
+  The SQL for an unweighted table is unchanged.
+
 - **The FiQA page attributed the stock-PostgreSQL BM25 row's 0.2291 to its analysis.** It is the
   rare-term gate: ungated, the same `english` configuration reads **0.2430** at k1=0.9/b=0.4 with
   linear gains and depth 1,000, above the reference analysis's 0.2378 in memory and above the

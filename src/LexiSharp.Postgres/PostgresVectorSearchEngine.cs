@@ -704,23 +704,25 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
 
-        string tsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content", "EXCLUDED.text_fields");
-        string tsvInsertExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "@content", "@text_fields");
+        var tsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content", "EXCLUDED.text_fields", "tsv_up");
+        var tsvInsertExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "@content", "@text_fields", "tsv");
 
         string insertSql = $"""
             INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, embedding, tsv)
-            VALUES (@id, @content, @category, @fields, @text_fields, @embedding::vector, {tsvInsertExpr})
+            VALUES (@id, @content, @category, @fields, @text_fields, @embedding::vector, {tsvInsertExpr.Sql})
             ON CONFLICT (id) DO UPDATE
                 SET content = EXCLUDED.content,
                     category = EXCLUDED.category,
                     fields = EXCLUDED.fields,
                     text_fields = EXCLUDED.text_fields,
                     embedding = EXCLUDED.embedding,
-                    tsv = {tsvExpr};
+                    tsv = {tsvExpr.Sql};
             """;
 
         // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); values are parameters.
         command.CommandText = insertSql; // NOSONAR:S2077
+        tsvInsertExpr.Bind(command);
+        tsvExpr.Bind(command);
         AddCommonParameters(command, document);
         command.Parameters.AddWithValue("embedding", VectorText.Format(embedding));
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -742,23 +744,25 @@ public sealed class PostgresVectorSearchEngine : ITextSearchEngine, IDetailedSea
         string updateList = string.Join(", ",
             columns.Select(c => $"{SafeIdentifier.QuoteIdentifier($"{c}_embedding")} = EXCLUDED.{SafeIdentifier.QuoteIdentifier($"{c}_embedding")}"));
 
-        string multiTsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content", "EXCLUDED.text_fields");
-        string multiTsvInsertExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "@content", "@text_fields");
+        var multiTsvExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "EXCLUDED.content", "EXCLUDED.text_fields", "tsv_up");
+        var multiTsvInsertExpr = PostgresSchema.TsvExpression(_options.AsIndexOptions(), "@content", "@text_fields", "tsv");
 
         string insertMultiSql = $"""
             INSERT INTO {_options.QualifiedTableName} (id, content, category, fields, text_fields, {columnList}, tsv)
-            VALUES (@id, @content, @category, @fields, @text_fields, {parameterList}, {multiTsvInsertExpr})
+            VALUES (@id, @content, @category, @fields, @text_fields, {parameterList}, {multiTsvInsertExpr.Sql})
             ON CONFLICT (id) DO UPDATE
                 SET content = EXCLUDED.content,
                     category = EXCLUDED.category,
                     fields = EXCLUDED.fields,
                     text_fields = EXCLUDED.text_fields,
                     {updateList},
-                    tsv = {multiTsvExpr};
+                    tsv = {multiTsvExpr.Sql};
             """;
 
         // Identifiers only are interpolated (validated [A-Za-z0-9_]+ and quoted); values are parameters.
         command.CommandText = insertMultiSql; // NOSONAR:S2077
+        multiTsvInsertExpr.Bind(command);
+        multiTsvExpr.Bind(command);
         AddCommonParameters(command, document);
 
         for (int i = 0; i < columns.Count; i++)
