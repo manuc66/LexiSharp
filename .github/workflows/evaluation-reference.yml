@@ -17,9 +17,10 @@ name: Pinned reference
 #
 # Scoped rather than on every push, and the difference from the CI matrix is the corpora: they
 # are not in the repository (.gitignore excludes bench/LexiSharp.Eval/data/) and are downloaded and
-# md5-verified per run, so a per-push job would pay a ~100 MB download to re-answer a question that
-# a documentation commit cannot have changed. The push trigger below is scoped to the paths that can
-# move a score, so it fires on the commits where the answer is worth having.
+# md5-verified on a cache miss (about 9 MB compressed, 50 MB extracted for the three below), so a
+# per-push job would pay that download to re-answer a question that a documentation commit cannot
+# have changed. The push trigger below is scoped to the paths that can move a score, so it fires on
+# the commits where the answer is worth having.
 #
 # What is deliberately not here: the allocation job's reasoning for staying off every push was that
 # nothing read its artifact and no baseline was compared. This one is the opposite case - it has
@@ -41,8 +42,8 @@ on:
   # schedule covers the environment. Both were needed, and the incident needed the first.
   #
   # Monday 05:23 UTC. Off the top of the hour, because GitHub delays scheduled runs queued at :00
-  # under load; off the working day, because each run downloads about 100 MB of corpora and two
-  # overlapping runs spend the same runner-hours twice.
+  # under load; off the working day, because a cold run extracts about 50 MB of corpora (the cache
+  # above makes that a one-off) and two overlapping runs spend the same runner-hours twice.
   schedule:
     - cron: '23 5 * * 1'
   workflow_dispatch:
@@ -78,6 +79,29 @@ jobs:
       # No dotnet-version here on purpose: setup-dotnet installs the version it is
       # given *as well as* the one in global.json, so naming one leaves the float.
 
+      # The corpora are the only part of this job that comes from outside the repository, and the
+      # gate must not depend on one fileserver being up. Two things make that true, and they are
+      # not redundant: this cache means a warm run never touches the network at all, and the
+      # harness's own fallback (the Internet Archive's capture of the same URL, checked against the
+      # same md5 in BeirDataset) means a cold run still has a source when the published host is
+      # gone. On 2026-11-21 it was gone for hours and this job went red with no commit to blame.
+      #
+      # The key is a hash of the file that declares the corpus md5s, so bumping a corpus evicts the
+      # cache instead of leaving a run to index the old one, and an unrelated edit to that file only
+      # costs one re-download. The values themselves are not spelled out here because the secret
+      # scanner reads `key: <high-entropy string>` as a leaked credential, and a gate that fails on
+      # its own cache key is the same kind of false alarm this change is about. Caching a directory
+      # the harness writes into is safe because it only reads the parsed files back; a partial
+      # restore fails the presence check in BeirLoader and re-downloads.
+      - name: Restore the downloaded corpora
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            bench/LexiSharp.Eval/data/nfcorpus
+            bench/LexiSharp.Eval/data/scifact
+            bench/LexiSharp.Eval/data/arguana
+          key: beir-corpora-${{ hashFiles('bench/LexiSharp.Eval/BeirCorpus.cs') }}
+
       - name: Record the host these numbers come from
         run: |
           {
@@ -87,7 +111,8 @@ jobs:
           } | tee reference-host.txt
 
       # The corpora are not in the repository. The harness downloads each one and checks its md5
-      # before use, so there is no fetch step here and nothing to keep in sync.
+      # before use, so there is no fetch step here and nothing to keep in sync; the step above is a
+      # cache of that download, not a fetch, and a miss falls through to the downloader.
       #
       # Redirected, then printed, and deliberately not `... 2>&1 | tee file`. GitHub's default shell
       # for run steps is `bash -e` without `pipefail`, so a pipeline reports the status of its last
