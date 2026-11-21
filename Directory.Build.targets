@@ -1,0 +1,56 @@
+<Project>
+
+  <!--
+    Keep a local build from carrying every platform's ONNX Runtime native. The package
+    ships runtimes/<rid>/native for ios, android, osx-arm64, win-x64, win-arm64, linux-x64
+    and linux-arm64 - about 300 MB, of which the host can load one folder. Without a
+    RuntimeIdentifier the SDK copies all of them: 302 MB per bin/ on this machine, and
+    four projects times Debug and Release was ~2.1 GB of a 4 GB checkout.
+
+    A RuntimeIdentifier would trim the copy at the source, but it does more than that: it
+    adds a net10.0/<rid> section to packages.lock.json, so the four lock files would name
+    the machine that generated them and a Windows or macOS checkout would restore a
+    different graph. The lock files are committed; a build setting must not rewrite them.
+    Trimming what the copy left behind keeps restore, the lock files and the publish graph
+    exactly as they were, and only deletes files this host cannot load.
+
+    The host RID comes from the SDK and its family folder stays, because a native library
+    can fall back to it when the RID-specific folder is absent - the same rule the other
+    repositories on this machine use. Publish is untouched: with -r <rid> there is no
+    runtimes/ folder left to trim and the condition is skipped, and CI is skipped too, so
+    a run's artifacts are exactly what a full build produces. Release is included because
+    these four are tests and benchmarks: none is packed or published, and their local
+    Release output is otherwise the same 300 MB again.
+
+    The list names projects rather than trimming every project because a Debug publish of
+    a web or WASM project copies from bin/ and would lose the other families. These four
+    have no publish step. A fifth project that runs ONNX Runtime has to be added here; it
+    only costs disk, not correctness, if it is not.
+  -->
+  <Target Name="TrimForeignNativeAssets"
+          AfterTargets="Build"
+          Condition="'$(RuntimeIdentifier)' == ''
+                     and '$(CI)' != 'true'
+                     and Exists('$(OutDir)runtimes')
+                     and ('$(MSBuildProjectName)' == 'LexiSharp.Tests' or
+                          '$(MSBuildProjectName)' == 'LexiSharp.Onnx.Tests' or
+                          '$(MSBuildProjectName)' == 'LexiSharp.Eval' or
+                          '$(MSBuildProjectName)' == 'LexiSharp.Benchmarks')">
+    <ItemGroup>
+      <!-- Directory.GetDirectories, not an Include glob: MSBuild globs expand to files, and
+           runtimes/ holds only directories, so a glob would match nothing. Comparing the
+           directory name, not a path, keeps this separator-agnostic. -->
+      <_NativeRuntimeDirectory Include="$([System.IO.Directory]::GetDirectories('$(OutDir)runtimes'))" />
+      <!-- The host RID and its family fallback (runtimes/linux, runtimes/osx, runtimes/win)
+           stay; every other RID goes. -->
+      <_ForeignNativeAsset Include="@(_NativeRuntimeDirectory)"
+                           Condition="$([MSBuild]::IsOSPlatform('Linux')) and '%(Filename)' != '$(NETCoreSdkPortableRuntimeIdentifier)' and '%(Filename)' != 'linux'" />
+      <_ForeignNativeAsset Include="@(_NativeRuntimeDirectory)"
+                           Condition="$([MSBuild]::IsOSPlatform('OSX')) and '%(Filename)' != '$(NETCoreSdkPortableRuntimeIdentifier)' and '%(Filename)' != 'osx'" />
+      <_ForeignNativeAsset Include="@(_NativeRuntimeDirectory)"
+                           Condition="$([MSBuild]::IsOSPlatform('Windows')) and '%(Filename)' != '$(NETCoreSdkPortableRuntimeIdentifier)' and '%(Filename)' != 'win'" />
+    </ItemGroup>
+    <RemoveDir Directories="@(_ForeignNativeAsset)" />
+  </Target>
+
+</Project>
