@@ -2,6 +2,17 @@
 
 ### Added
 
+- **`InMemoryTextIndex` answers a prefix as an ordered range.** It now implements the internal
+  `IVocabularyPrefixIndex`: the vocabulary is kept in code-unit order as terms are added and removed,
+  at an `O(log V)` update rather than a rebuild, and a prefix becomes a range plus the matching
+  terms. On a 200,000-term corpus, the first query in the process pays 6.5 ms of JIT, then 36.2 µs
+  for 64 matches and 1.8 µs for one, against 5.1 ms for the whole-vocabulary walk. A write between
+  two queries costs an insertion. Fuzzy atoms are unchanged and still walk the vocabulary.
+
+- **`prefix-expansion` lane in `bench/LexiSharp.Benchmarks`**, measuring the ordered range, the
+  cold sort, and the fallback walk on the same 200,000-term vocabulary. Recorded in
+  `docs/benchmarks.md`.
+
 - **Theoretical query bounds for lexical scores.** `TermFrequencyBound` and
   `IReadOnlyTextIndex.TryGetTermFrequencyBound` expose the largest frequency and the smallest
   document length among the documents carrying a term; `IScoreBoundScorer` turns that pair into a
