@@ -396,7 +396,8 @@ PostgreSQL's analysis is above the reference analysis (0.2378 in memory) and abo
 1,000 → 0.2291, 2,000 → 0.2363, 5,000 → 0.2417, exact → 0.2430; the default is tuned for the two
 scientific corpora. The published 0.2361 remains reproduced by the in-memory `uax29` row under the
 reference's conventions, with an index byte-identical to Lucene 10.5.2's `EnglishAnalyzer`
-(5,288,635 terms), and multi-code-point emoji sequences are the one knowingly unimplemented rule.
+(5,288,635 terms); the rules FiQA does not exercise — Hiragana splitting, multi-code-point emoji
+sequences, marks after a standalone term — are measured against that tokenizer on probe strings.
 
 **What it costs, in time.** The evaluation harness reports quality and not time on purpose; the
 [PostgreSQL lane](benchmarks.md#postgresql-lane-postgres-what-a-search-costs-on-stock-postgresql)

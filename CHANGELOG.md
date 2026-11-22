@@ -298,6 +298,28 @@
 
 ### Fixed
 
+- **The `uax29` analysis now matches the reference on Hiragana, emoji sequences and marks after a
+  standalone term.** Each rule was measured against Lucene 10.5.2's `EnglishAnalyzer` on 84 probe
+  strings; the `uax29` fingerprints and the three pinned nDCG values are unchanged, so FiQA did not
+  exercise these sequences.
+
+  - **Hiragana is one term per character**, as the reference's `<HIRAGANA>` state emits it:
+    `ひらがな` is four terms, `きょう` three. Katakana stays a run (`カタカナ`, `カタカナ` with the
+    prolonged mark U+30FC, halfwidth forms), and a mixed run splits only at the Hiragana. Hiragana
+    and Katakana are not `ALetter`, so a separator that joins two letters does not join them:
+    `q·ひら`, `q·カナ` and `カ·ナ` split.
+  - **An emoji sequence is one term.** A ZWJ family, a flag pair, a skin-tone modifier, a keycap
+    (`#️⃣`) and a tag sequence are one term each; two flags are two terms. A lone regional
+    indicator is not a term at all, and a `ZWJ` that joins nothing stays in the token (`👨‍z`).
+  - **A standalone term absorbs the `Extend`/`Format` characters after it**: `尺̇`, `が` and
+    `尺\uFEFF` are one term each, including a variation selector after an emoji or a symbol.
+  - **A combining mark that lands at the 255-unit chunk boundary is dropped**, because the
+    reference scanner, refilling there, cannot open a token on it. A mark before the boundary
+    survives in the first chunk.
+
+  The changes are scoped to `WordSegmentation.UnicodeWordBoundaries`; the flat, English, Porter and
+  identifier analyses keep their behavior.
+
 - **A `MidLetter` separator no longer joins a letter to a Han ideograph under `uax29`.** The
   ideograph rule split `尺` into its own term, but the join tests still read it as a letter because
   `Rune.IsLetter` answers true. A dot between `a` and `尺` was then consumed as part of the Latin

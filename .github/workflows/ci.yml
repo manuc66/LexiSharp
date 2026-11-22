@@ -59,6 +59,15 @@ jobs:
       # comma-separated with the comma written %2c: MSBuild reads a literal semicolon in a -p:
       # value as a property separator and rejects the switch outright, while a bare comma makes
       # it through this shell but is one quoting change away from failing the step.
+      # Clean up temp directories left by interrupted previous runs before testing. A run that
+      # dies mid-test leaves `lexisharp-*` directories behind (up to ~1 GiB), which has starved
+      # the device of free space and failed ~12 tests with "No space left on device". Removing
+      # them up front is a guard, not a fix: the real fix is that every test disposes the
+      # temporary directory it creates (see the IAsyncLifetime / IDisposable pattern). New tests
+      # that create a temp directory must clean it up in a finally block.
+      - name: Clean leftover test temp directories
+        run: rm -rf "${RUNNER_TEMP}"/lexisharp-* /tmp/lexisharp-* 2>/dev/null || true
+
       - name: Test with coverage (60% total line gate)
         run: >
           dotnet test tests/LexiSharp.Tests -c Release

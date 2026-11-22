@@ -20,7 +20,17 @@ namespace LexiSharp.Core;
 internal interface IVocabularyPrefixIndex
 {
     /// <summary>
-    /// The terms starting with <paramref name="prefix"/>, in code-point order, each once.
+    /// The terms starting with <paramref name="prefix"/>, in UTF-16 code-unit order
+    /// (<see cref="StringComparer.Ordinal"/>), each once.
     /// </summary>
+    /// <remarks>
+    /// The order is <see cref="StringComparer.Ordinal"/> (UTF-16 code units), not Unicode code
+    /// points: a vocabulary containing non-BMP terms (surrogate pairs) is ordered by their
+    /// UTF-16 encoding, which differs from code-point order. This matches
+    /// <see cref="IVocabularyIndex.Vocabulary"/> and the segment side, so no caller observes a
+    /// mismatch; the contract is stated in code-unit terms to avoid implying a stronger guarantee
+    /// than the implementation delivers. Do not "fix" the ordering to code points without updating
+    /// every reader (segment chain, prefix range, expansion resolver) consistently.
+    /// </remarks>
     IEnumerable<string> TermsWithPrefix(string prefix);
 }

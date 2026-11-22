@@ -70,6 +70,35 @@ public class LongTokenTests
     }
 
     /// <summary>
+    /// A chunk that begins with a combining mark drops it: the reference scanner, refilling at that
+    /// point, cannot open a token on a character that never opens one. The word continues at the
+    /// next starter, so the mark is lost rather than becoming a one-character term.
+    /// </summary>
+    [Fact]
+    public void ACombiningMarkAtAChunkBoundaryIsDropped()
+    {
+        string word = new string('a', 255) + "\u0307" + new string('b', 10);
+
+        IReadOnlyList<string> terms = Segmenter().Tokenize(word);
+
+        Assert.Equal([new string('a', 255), new string('b', 10)], terms);
+    }
+
+    /// <summary>
+    /// The same mark one position earlier belongs to the first chunk and survives, because the
+    /// boundary falls after it.
+    /// </summary>
+    [Fact]
+    public void ACombiningMarkInsideTheFirstChunkSurvives()
+    {
+        string word = new string('a', 254) + "\u0307" + new string('b', 10);
+
+        IReadOnlyList<string> terms = Segmenter().Tokenize(word);
+
+        Assert.Equal([new string('a', 254) + "\u0307", new string('b', 10)], terms);
+    }
+
+    /// <summary>
     /// Each chunk is a token in its own right, so the single-character rule applies to the tail: a
     /// 256-character token keeps a one-character tail only when single-character terms are kept.
     /// </summary>
