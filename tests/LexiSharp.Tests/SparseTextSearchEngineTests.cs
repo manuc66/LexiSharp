@@ -304,6 +304,28 @@ public class SparseTextSearchEngineTests
         Assert.Equal(1, engine.VocabularySize); // only "good" survived
     }
 
+    /// <summary>
+    /// Import takes a copy of the vector, so a caller that keeps and mutates its dictionary after
+    /// the call cannot change what the engine scores or exports.
+    /// </summary>
+    [Fact]
+    public void Import_CopiesTheVectorSoLaterMutationDoesNotReachTheEngine()
+    {
+        var weights = new Dictionary<string, float> { ["apple"] = 1f };
+        var engine = new SparseTextSearchEngine(new StubSparseProvider(_ => Empty));
+
+        engine.Import([new SparseIndexEntry(Doc("1", "doc"), weights)]);
+
+        weights["apple"] = 9f;
+        weights["pear"] = 1f;
+
+        IReadOnlyDictionary<string, float> exported = Assert.Single(engine.Export()).Weights;
+
+        Assert.Equal(1f, exported["apple"]);
+        Assert.False(exported.ContainsKey("pear"));
+        Assert.Equal(1, engine.VocabularySize);
+    }
+
     [Fact]
     public async Task SearchAsync_MatchesSyncSearch()
     {
