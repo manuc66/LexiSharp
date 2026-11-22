@@ -74,4 +74,19 @@ public class IdeographicTokenTests
     {
         Assert.Equal(["カタカナ"], Segmenter().Tokenize("カタカナ"));
     }
+
+    /// <summary>
+    /// An ideograph is not an <c>ALetter</c> in the reference's word-break data, so a separator that
+    /// requires a letter on both sides does not join it. Before the ideograph rule the two were in
+    /// one word; after it, reading the ideograph as a letter left the separator attached to the
+    /// Latin side (<c>a.</c>) instead of dropping it.
+    /// </summary>
+    [Fact]
+    public void ASeparatorDoesNotJoinALetterToAnIdeograph()
+    {
+        Assert.Equal(["a", "尺"], Segmenter().Tokenize("a.尺"));
+        Assert.Equal(["a", "尺"], Segmenter().Tokenize("a·尺"));
+        Assert.Equal(["a", "尺"], Segmenter().Tokenize("a:尺"));
+        Assert.Equal(["尺", "财"], Segmenter().Tokenize("尺.财"));
+    }
 }
