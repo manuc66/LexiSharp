@@ -112,19 +112,7 @@ public class InMemoryVocabularyPrefixTests
         index.AddExpansionTerms("a", ["epsilon", "zeta"]);
         index.Add(new SearchDocument("c", "eta"));
 
-        // Vocabulary and postings agree on count.
-        Assert.Equal(index.VocabularySize, index.Vocabulary.Count());
-
-        // Every vocabulary term is posted (has a non-empty posting list).
-        foreach (var term in index.Vocabulary)
-            Assert.True(index.DocumentFrequency(term) > 0, $"vocabulary term '{term}' has no posting list");
-
-        // Every posted term is in the vocabulary.
-        foreach (var term in new[] { "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta" })
-        {
-            if (index.DocumentFrequency(term) > 0)
-                Assert.Contains(term, index.Vocabulary);
-        }
+        AssertSynced(index, new[] { "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta" });
 
         // Remove a document and re-check the invariant.
         index.Remove("a");
@@ -137,5 +125,90 @@ public class InMemoryVocabularyPrefixTests
         index.Clear();
         Assert.Equal(0, index.VocabularySize);
         Assert.Empty(index.Vocabulary);
+    }
+
+    /// <summary>
+    /// Property-style guard: a deterministic pseudo-random sequence of Add / Remove /
+    /// AddExpansionTerms / Clear must keep the vocabulary in sync with the postings after every
+    /// single step. This is stronger than the fixed scenario above because it exercises
+    /// interleavings (remove a document, re-add it, inject terms, remove again) that a hand-written
+    /// test would not think of. The seed is fixed so a failure reproduces locally.
+    /// </summary>
+    [Fact]
+    public void Vocabulary_StaysInSyncWithPostings_UnderRandomOperationSequences()
+    {
+        var rng = new Random(20261122);
+        var terms = new[] { "alpha", "beta", "gamma", "delta", "eps" };
+
+        for (int trial = 0; trial < 200; trial++)
+        {
+            var index = new InMemoryTextIndex();
+            var liveDocs = new List<string>();
+
+            for (int step = 0; step < 40; step++)
+            {
+                int op = rng.Next(4);
+                try
+                {
+                    switch (op)
+                    {
+                        case 0: // Add
+                            {
+                                string id = "d" + rng.Next(6);
+                                string text = terms[rng.Next(terms.Length)] + " " + terms[rng.Next(terms.Length)];
+                                index.Add(new SearchDocument(id, text));
+                                if (!liveDocs.Contains(id)) liveDocs.Add(id);
+                                break;
+                            }
+                        case 1: // Remove
+                            {
+                                if (liveDocs.Count == 0) break;
+                                string id = liveDocs[rng.Next(liveDocs.Count)];
+                                index.Remove(id);
+                                liveDocs.Remove(id);
+                                break;
+                            }
+                        case 2: // AddExpansionTerms (only if the doc exists)
+                            {
+                                if (liveDocs.Count == 0) break;
+                                string id = liveDocs[rng.Next(liveDocs.Count)];
+                                string injected = "zzz" + rng.Next(100);
+                                try { index.AddExpansionTerms(id, new[] { injected }); }
+                                catch (KeyNotFoundException) { /* doc may have been removed concurrently in the model; ignore */ }
+                                break;
+                            }
+                        case 3: // Clear
+                            {
+                                index.Clear();
+                                liveDocs.Clear();
+                                break;
+                            }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException($"trial {trial}, step {step}, op {op}: {ex.Message}", ex);
+                }
+
+                // Invariant after every step.
+                Assert.Equal(index.VocabularySize, index.Vocabulary.Count());
+                foreach (var t in index.Vocabulary)
+                    Assert.True(index.DocumentFrequency(t) > 0,
+                        $"trial {trial} step {step}: vocabulary term '{t}' has no posting list");
+            }
+        }
+    }
+
+    private static void AssertSynced(InMemoryTextIndex index, IEnumerable<string> expectedTerms)
+    {
+        Assert.Equal(index.VocabularySize, index.Vocabulary.Count());
+        foreach (var term in index.Vocabulary)
+            Assert.True(index.DocumentFrequency(term) > 0,
+                $"vocabulary term '{term}' has no posting list");
+        foreach (var term in expectedTerms)
+        {
+            if (index.DocumentFrequency(term) > 0)
+                Assert.Contains(term, index.Vocabulary);
+        }
     }
 }

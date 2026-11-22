@@ -68,6 +68,19 @@ jobs:
       - name: Clean leftover test temp directories
         run: rm -rf "${RUNNER_TEMP}"/lexisharp-* /tmp/lexisharp-* 2>/dev/null || true
 
+      # Guard against monolithic files creeping back in. A file above the limit is not
+      # automatically wrong, but it has to be split or justified in a review before merging.
+      # Raise the limit deliberately (with a reason in this comment) rather than silently.
+      - name: Check source file size (max 2500 lines)
+        run: |
+          offenders=$(find src -name '*.cs' -not -path '*/obj/*' -not -path '*/bin/*' -print0 \
+            | xargs -0 wc -l | awk '$1 > 2500 && $2 != "total" {print}' )
+          if [ -n "$offenders" ]; then
+            echo "::error::Source files above 2500 lines:"
+            echo "$offenders"
+            exit 1
+          fi
+
       - name: Test with coverage (60% total line gate)
         run: >
           dotnet test tests/LexiSharp.Tests -c Release
