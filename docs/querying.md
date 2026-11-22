@@ -371,9 +371,21 @@ during indexing, and a write between two queries costs an insertion rather than 
 high-fanout B+tree would reduce the pointer chasing inside the ordered set further; the point here
 is that the vocabulary walk is gone.
 
-The fuzzy case is unchanged: `catt~` still compares its base against every term. The bound above is
-on the multiplier, not on the walk; making one fuzzy atom sub-linear needs an index ordered for edit
-distance, which this library does not have.
+Fuzzy atoms get the same treatment on the in-memory index: the first one builds a trie over the
+vocabulary, and a Levenshtein row per visited prefix prunes a subtree once every cell is above the
+budget. On the same 200,000-term corpus:
+
+| Atom | Matches | First query in the process | Warm query | Whole-vocabulary walk |
+|---|---:|---:|---:|---:|
+| `term199999~` | 47 | 115 ms (the build) | 57.5 µs | 17–88 ms |
+| `term19999~` | 47 | 0.15 ms | 71.3 µs | 17.3 ms |
+
+The build was measured at **110 ms and 46 MiB allocated** for 200,000 terms. A single fuzzy atom
+therefore pays more than the walk once; a query with several atoms, or a process that serves more
+than one fuzzy query, amortizes it. The tree is kept current by `Add`/`Remove` after it exists (a
+removal clears the terminal flag and keeps the path). An index that does not implement
+`IVocabularyFuzzyIndex` — the PostgreSQL backends, a segment, a decorator — still compares its base
+against every term, which is the cost the 32-atom cap bounds.
 
 
 ## Synonyms

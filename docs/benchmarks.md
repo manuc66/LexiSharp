@@ -1843,9 +1843,20 @@ dotnet run --project bench/LexiSharp.Benchmarks -c Release -- prefix-expansion 2
 The first row is JIT, not a data-structure build: the ordered set is maintained during indexing, so
 a write between two queries costs an insertion, not a re-sort. A high-fanout B+tree would reduce the
 pointer chasing inside the ordered set; the measurable change here is that the vocabulary walk is
-gone. Fuzzy atoms still walk every term — and they now walk the ordered set rather than the posting
-map's keys, which the `walk` column does not price: its baseline is an array snapshot, so read that
-column as the shape of the walk, not as what a fuzzy atom costs today.
+gone.
+
+**Fuzzy atoms use a trie**, built on the first fuzzy query and kept current by add/remove. The same
+run, with the trie's build included:
+
+| Atom | Matches | First query (build + query) | Warm query | Whole-vocabulary walk |
+|---|---:|---:|---:|---:|
+| `term199999~` | 47 | 115 ms | 57.5 µs | 17–88 ms |
+| `term19999~` | 47 | 0.15 ms | 71.3 µs | 17.3 ms |
+
+The build was about **110 ms and 46 MiB allocated** for 200,000 terms. A single fuzzy atom pays
+that once and is slower than the walk on that first query; several atoms, or a process that serves
+more than one fuzzy query, amortize it. The trie's row prunes a subtree when every cell is above the
+budget, which is why the warm query follows the matches rather than the vocabulary.
 
 **What it does not measure.** Ingestion, concurrent writes, or the resolver's per-atom cap. It is a
 `Stopwatch` in a plain process, not a BenchmarkDotNet report; read the direction and the cold/warm
