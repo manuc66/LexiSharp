@@ -61,6 +61,35 @@ internal static class VocabularyLane
 
         foreach (string prefix in Prefixes)
             Measure(index, fallback, prefix);
+
+        foreach (string term in new[] { "term199999", "term19999" })
+            MeasureFuzzy(index, fallback, term);
+    }
+
+    /// <summary>
+    /// One fuzzy atom through the index's trie and through a vocabulary with no fuzzy structure.
+    /// The cold column is the first query, which builds the trie.
+    /// </summary>
+    private static void MeasureFuzzy(InMemoryTextIndex index, VocabularyOnly fallback, string term)
+    {
+        var atom = new QueryExpansion(term, QueryExpansionKind.Fuzzy);
+
+        long coldStarted = Stopwatch.GetTimestamp();
+        int matches = new QueryExpansionResolver(index, fuzzyOnlyOutOfVocabulary: false).Resolve(atom).Length;
+        double cold = Stopwatch.GetElapsedTime(coldStarted).TotalMicroseconds;
+
+        double ordered = Median(
+            () => new QueryExpansionResolver(index, fuzzyOnlyOutOfVocabulary: false).Resolve(atom).Length,
+            iterations: 5);
+
+        double walk = Median(
+            () => new QueryExpansionResolver(fallback, fuzzyOnlyOutOfVocabulary: false).Resolve(atom).Length,
+            iterations: 3);
+
+        Console.WriteLine(
+            $"  {term + "~",-12} matches {Number(matches),5}  cold {Time(cold),9}  " +
+            $"trie {Time(ordered),9}  walk {Time(walk),9}  " +
+            $"speedup {Fixed(walk / Math.Max(ordered, 0.01), 6, 1)}×");
     }
 
     private static void Measure(InMemoryTextIndex index, VocabularyOnly fallback, string prefix)
@@ -87,11 +116,11 @@ internal static class VocabularyLane
             $"speedup {Fixed(walking / Math.Max(ordered, 0.01), 6, 1)}×");
     }
 
-    private static double Median(Func<int> run)
+    private static double Median(Func<int> run, int iterations = Iterations)
     {
-        var samples = new double[Iterations];
+        var samples = new double[iterations];
 
-        for (int i = 0; i < Iterations; i++)
+        for (int i = 0; i < iterations; i++)
         {
             long started = Stopwatch.GetTimestamp();
             _sink += run();
@@ -100,7 +129,7 @@ internal static class VocabularyLane
 
         Array.Sort(samples);
 
-        return samples[Iterations / 2];
+        return samples[iterations / 2];
     }
 
     private static string Term(int index) => "term" + index.ToString("D6", CultureInfo.InvariantCulture);

@@ -36,6 +36,7 @@ internal sealed class QueryExpansionResolver
 {
     private readonly IVocabularyIndex? _vocabulary;
     private readonly IVocabularyPrefixIndex? _prefixIndex;
+    private readonly IVocabularyFuzzyIndex? _fuzzyIndex;
     private readonly bool _fuzzyOnlyOutOfVocabulary;
     private readonly Dictionary<QueryExpansion, string[]> _resolved = [];
 
@@ -53,6 +54,7 @@ internal sealed class QueryExpansionResolver
     {
         _vocabulary = vocabulary;
         _prefixIndex = vocabulary as IVocabularyPrefixIndex;
+        _fuzzyIndex = vocabulary as IVocabularyFuzzyIndex;
         _fuzzyOnlyOutOfVocabulary = fuzzyOnlyOutOfVocabulary;
     }
 
@@ -192,16 +194,24 @@ internal sealed class QueryExpansionResolver
     {
         var candidates = new List<(string Term, int Distance, int Frequency)>();
 
-        foreach (string term in _vocabulary!.Vocabulary)
+        if (_fuzzyIndex is not null)
         {
-            // Cheap length gate before the O(m·n) distance: |len difference| ≤ budget.
-            if (Math.Abs(term.Length - expansion.BaseTerm.Length) > expansion.MaxEdits)
-                continue;
+            foreach (var match in _fuzzyIndex.TermsWithinEdits(expansion.BaseTerm, expansion.MaxEdits))
+                candidates.Add((match.Term, match.Distance, _vocabulary!.DocumentFrequency(match.Term)));
+        }
+        else
+        {
+            foreach (string term in _vocabulary!.Vocabulary)
+            {
+                // Cheap length gate before the O(m·n) distance: |len difference| ≤ budget.
+                if (Math.Abs(term.Length - expansion.BaseTerm.Length) > expansion.MaxEdits)
+                    continue;
 
-            int distance = LevenshteinDistance.Distance(expansion.BaseTerm, term);
+                int distance = LevenshteinDistance.Distance(expansion.BaseTerm, term);
 
-            if (distance <= expansion.MaxEdits)
-                candidates.Add((term, distance, _vocabulary.DocumentFrequency(term)));
+                if (distance <= expansion.MaxEdits)
+                    candidates.Add((term, distance, _vocabulary.DocumentFrequency(term)));
+            }
         }
 
         // Frequency travels with the candidate instead of being fetched twice per comparison: the
