@@ -143,7 +143,7 @@ internal static class SparseEngineLane
 
         for (int i = 0; i < remove; i++)
         {
-            string id = ((long)i * step % documents).ToString(CultureInfo.InvariantCulture);
+            string id = (((long)i * step) % documents).ToString(CultureInfo.InvariantCulture);
 
             long started = Stopwatch.GetTimestamp();
             if (engine.Remove(id))
