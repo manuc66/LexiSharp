@@ -124,4 +124,23 @@ public class InMemoryVocabularyFuzzyTests
             ["catt", "cat", "cats"],
             Within(index, "catt", 1).Select(match => match.Term));
     }
+
+    /// <summary>
+    /// The trie is kept current by <c>Add</c>/<c>Remove</c>, and the expansion terms the semantic
+    /// lexical index injects are vocabulary the same way. A term injected after the build has to
+    /// reach the trie, or a fuzzy atom stops seeing a term that <c>Vocabulary</c>, an exact match
+    /// and a prefix atom all see.
+    /// </summary>
+    [Fact]
+    public void ATrieBuiltBelowTheLimit_KeepsServingExpansionTermsAddedLater()
+    {
+        var index = IndexOf("oauth", "token");
+
+        // Builds the trie over the two-term vocabulary.
+        Assert.Equal(["oauth"], Within(index, "oauth", 1).Select(match => match.Term));
+
+        index.AddExpansionTerms("oauth", ["refreshment"]);
+
+        Assert.Equal(["refreshment"], Within(index, "refreshmen", 1).Select(match => match.Term));
+    }
 }
