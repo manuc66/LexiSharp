@@ -1863,6 +1863,12 @@ grows with the vocabulary rather than with the matches. The index therefore **de
 250,000 terms** and the resolver falls back to the walk. That threshold is the measured 200,000-term
 cost with headroom, not a memory measurement at the cap.
 
+The same lane at **1,000,000 terms** fills that gap from the other side. The index builds in 3.1 s;
+no trie is built, and an atom costs **87–89 ms** through the walk, against 57–71 µs for a warm trie
+at 200,000. So a million-term vocabulary keeps the bounded fallback rather than a structure whose
+build and memory were never measured at that size. The prefix range still answers in **3.9–44.7 µs**,
+against **27.4–28.3 ms** for the walk.
+
 **What it does not measure.** Ingestion, concurrent writes, or the resolver's per-atom cap. It is a
 `Stopwatch` in a plain process, not a BenchmarkDotNet report; read the direction and the cold/warm
 split, not the last digit.

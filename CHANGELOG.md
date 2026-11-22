@@ -9,9 +9,10 @@
   slower than the walk on its first query; repeated atoms amortize the build. The trie stays current
   through `Add`/`Remove` (a removal clears the terminal flag and keeps the path). Because the node
   count follows the vocabulary rather than the matches, the trie is **not built above 250,000
-  terms**; the resolver then uses the bounded walk. An index without the capability — a segment, a
-  PostgreSQL backend, a decorator, or an in-memory index above the cap — keeps the walk, bounded by
-  the 32-atom cap.
+  terms**; the resolver then uses the bounded walk. At 1,000,000 terms the lane measures that walk
+  at **87–89 ms** per atom and no build. An index without the capability — a segment, a PostgreSQL
+  backend, a decorator, or an in-memory index above the cap — keeps the walk, bounded by the 32-atom
+  cap.
 
 - **The learned channels' own criteria are measured, and the French stemmer's effect is measured as
   a mechanism.**
