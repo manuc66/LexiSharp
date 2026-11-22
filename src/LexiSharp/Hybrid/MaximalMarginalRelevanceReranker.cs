@@ -30,7 +30,7 @@ namespace LexiSharp.Hybrid;
 /// quadratic work in the worst case, which is fine for the shortlists reranking is meant for.
 /// </para>
 /// </remarks>
-public sealed class MaximalMarginalRelevanceReranker : IReranker
+public sealed class MaximalMarginalRelevanceReranker : IReranker, IRerankerExplainer
 {
     private readonly IReadOnlyDictionary<string, ReadOnlyMemory<float>> _vectors;
     private readonly double _lambda;
@@ -65,12 +65,22 @@ public sealed class MaximalMarginalRelevanceReranker : IReranker
 
     /// <inheritdoc />
     public IReadOnlyList<SearchResult> Rerank(string query, IReadOnlyList<SearchResult> candidates)
+        => RerankCore(query, candidates, null).Results;
+
+    /// <summary>
+    /// Re-runs the selection while capturing, for every selected document, the relevance,
+    /// redundancy and MMR values that led to its pick. Used by <see cref="ExplainRerank"/>.
+    /// </summary>
+    private (IReadOnlyList<SearchResult> Results, Dictionary<string, (double Relevance, double Redundancy, double Mmr)> Signals) RerankCore(
+        string query,
+        IReadOnlyList<SearchResult> candidates,
+        Dictionary<string, (double Relevance, double Redundancy, double Mmr)>? signals)
     {
         ArgumentNullException.ThrowIfNull(candidates);
         _ = query;
 
         if (candidates.Count == 0)
-            return Array.Empty<SearchResult>();
+            return (Array.Empty<SearchResult>(), signals ?? new Dictionary<string, (double, double, double)>());
 
         double maxScore = candidates
             .Where(c => double.IsFinite(c.Score))
@@ -86,11 +96,6 @@ public sealed class MaximalMarginalRelevanceReranker : IReranker
         var selectedVectors = new List<ReadOnlyMemory<float>>();
         var selectedNorms = new List<float>();
 
-        // Every candidate's vector and norm resolved once, before the selection starts: both are
-        // loop-invariant across the whole greedy pass, and the inner loop is quadratic in the pool.
-        // A candidate with no vector stays `Present == false`, which is what keeps it out of the
-        // selected set and gives it a redundancy of 0 — the same two behaviours the dictionary
-        // lookups used to produce one pair at a time.
         var poolVectors = new List<CandidateVector>(pool.Count);
 
         foreach (var candidate in pool)
@@ -102,7 +107,28 @@ public sealed class MaximalMarginalRelevanceReranker : IReranker
 
         while (pool.Count > 0 && (_limit is null || selected.Count < _limit))
         {
-            int bestIndex = SelectBestIndex(pool, poolVectors, selectedVectors, selectedNorms, maxScore);
+            int bestIndex = 0;
+            double bestMmr = double.NegativeInfinity;
+            double bestRel = 0;
+            double bestRed = 0;
+
+            for (int i = 0; i < pool.Count; i++)
+            {
+                double relevance = maxScore > 0 ? pool[i].Score / maxScore : 0;
+                double redundancy = selectedVectors.Count == 0
+                    ? 0
+                    : MaxSimilarity(poolVectors[i], selectedVectors, selectedNorms);
+
+                double mmr = (_lambda * relevance) - ((1 - _lambda) * redundancy);
+
+                if (mmr > bestMmr)
+                {
+                    bestMmr = mmr;
+                    bestIndex = i;
+                    bestRel = relevance;
+                    bestRed = redundancy;
+                }
+            }
 
             var pick = pool[bestIndex];
             var pickVector = poolVectors[bestIndex];
@@ -111,6 +137,8 @@ public sealed class MaximalMarginalRelevanceReranker : IReranker
             poolVectors.RemoveAt(bestIndex);
             selected.Add(pick);
 
+            signals?.Add(pick.DocumentId, (bestRel, bestRed, bestMmr));
+
             if (pickVector.Present)
             {
                 selectedVectors.Add(pickVector.Vector);
@@ -118,7 +146,35 @@ public sealed class MaximalMarginalRelevanceReranker : IReranker
             }
         }
 
-        return selected;
+        return (selected, signals ?? new Dictionary<string, (double, double, double)>());
+    }
+
+    /// <inheritdoc />
+    public RerankExplanation? ExplainRerank(string query, IReadOnlyList<SearchResult> candidates, string documentId)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
+        _ = query;
+
+        var signals = new Dictionary<string, (double Relevance, double Redundancy, double Mmr)>();
+        var (results, _) = RerankCore(query, candidates, signals);
+
+        if (!signals.TryGetValue(documentId, out var s))
+            return null;
+
+        var signals2 = new List<RerankSignal>
+        {
+            new("relevance", _lambda, s.Relevance, _lambda * s.Relevance),
+            new("redundancy", 1 - _lambda, s.Redundancy, -(1 - _lambda) * s.Redundancy),
+        };
+
+        var picked = results.FirstOrDefault(r => r.DocumentId == documentId);
+        double finalScore = results.Any(r => r.DocumentId == documentId) ? picked.Score : 0;
+
+        string summary = string.Create(
+            System.Globalization.CultureInfo.InvariantCulture,
+            $"MMR selected '{documentId}' (MMR={s.Mmr:0.0000}): relevance={s.Relevance:0.0000} (λ={_lambda:0.00}), redundancy={s.Redundancy:0.0000} (1-λ={1 - _lambda:0.00}).");
+
+        return new RerankExplanation(documentId, finalScore, signals2, summary);
     }
 
     private int SelectBestIndex(
