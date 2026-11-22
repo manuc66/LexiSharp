@@ -2026,11 +2026,36 @@ avoids: **371.6 → 200.4 MB** and **2.9–3.9 → 2.6–2.7 s** CPU. What remai
 this host, wall time on a shared one, so read the ranges and the deterministic byte counts, not the
 last digit.
 
+**Removal at the same size (`--remove`).** The old removal scanned each posting list to close the
+gap: O(df) per term, and df is what the vocabulary density decides. On 1,000,000 documents × 50
+terms (50,000,000 postings), removing evenly spaced documents:
+
+| Vocabulary | Mean df | Before | After |
+|---:|---:|---:|---:|
+| 30,000 | 1,667 | 324 µs/doc | **40 µs/doc** |
+| 1,000 | 50,000 | 2.09 ms/doc | **62 µs/doc** |
+| 100 | 500,000 | 16.07 ms/doc | **40 µs/doc** |
+| 100, 10% of the corpus | 500,000 | ~27 min (extrapolated) | **100,000 docs in 0.98 s** (9.8 µs/doc) |
+
+The larger the lists, the larger the win, which is the point: the old cost grew with df and the new
+one does not. Removal now:
+
+- **binary-searches** the ordinal, because import appends ascending ordinals and keeps the list
+  sorted (O(log df));
+- **tombstones** the weight instead of moving the tail; search skips a non-positive weight, and only
+  a list that has tombstones takes that branch — a query over an untouched corpus runs the old loop;
+- **compacts** a list once fewer than half its entries are live, into arrays sized exactly to the
+  survivors, so tombstones do not accumulate and the amortized cost stays constant;
+- falls back to the linear scan for a list whose freed ordinal was reused by `Add` and appended out
+  of order. That is correct, rare, and no slower than the old behavior.
+
+Search after removing 10% of 50,000 documents is unchanged within noise: head-40 604 µs against
+641 µs, head-100 1.25 ms against 1.31 ms — with 10% fewer postings to visit.
+
 **What it does not measure.** The provider (ONNX inference is outside the engine), a real SPLADE
-distribution, concurrent searches, or rebuilds under mutation. Nor the cost of removing a document:
-the posting arrays close their gap when an entry leaves, which is linear in the list it leaves and
-was a constant-time delete per term in the document-id dictionary. The allocation figure is managed heap
-on the calling thread, not RSS.
+distribution, concurrent searches, or rebuilds under mutation. Removal is measured on one thread;
+`Import` and `Remove` are documented as not thread-safe. The allocation figure is managed heap on
+the calling thread, not RSS.
 
 
 ## Similarity (`LevenshteinBenchmarks`)
