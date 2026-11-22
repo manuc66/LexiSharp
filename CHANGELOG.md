@@ -7,9 +7,11 @@
   edit budget. On 200,000 terms the build costs **~110 ms and 46 MiB allocated**, and a warm atom
   costs **~57–71 µs** against **17–88 ms** for the whole-vocabulary walk. A single fuzzy atom is
   slower than the walk on its first query; repeated atoms amortize the build. The trie stays current
-  through `Add`/`Remove` (a removal clears the terminal flag and keeps the path). An index without
-  the capability — a segment, a PostgreSQL backend, a decorator — keeps the walk, bounded by the
-  32-atom cap.
+  through `Add`/`Remove` (a removal clears the terminal flag and keeps the path). Because the node
+  count follows the vocabulary rather than the matches, the trie is **not built above 250,000
+  terms**; the resolver then uses the bounded walk. An index without the capability — a segment, a
+  PostgreSQL backend, a decorator, or an in-memory index above the cap — keeps the walk, bounded by
+  the 32-atom cap.
 
 - **The learned channels' own criteria are measured, and the French stemmer's effect is measured as
   a mechanism.**
