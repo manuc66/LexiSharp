@@ -256,6 +256,11 @@
 
 ### Changed
 
+- **Fuzzy expansion fetches a candidate's document frequency once per resolver pass.** The sort
+  comparer previously called `DocumentFrequency` twice per comparison, so a term's constant
+  frequency was probed O(candidates log candidates) times; the frequency now travels with the
+  candidate. The order is unchanged, and a candidate still costs one distance.
+
 - **`TieBreak.InsertionOrder` is refused by every SQL engine.** Insertion order is the document's
   position in the in-memory index's ordinal space, and a SQL table has no such position for the
   engine to read: ordering by the heap's physical order would stop being true after an update, a
