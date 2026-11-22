@@ -86,6 +86,62 @@ internal static class WordBreakClasses
     ];
 
     /// <summary>
+    /// Whether <paramref name="rune"/> is a Hiragana code point: a character whose
+    /// <c>Word_Break</c> class is <c>Hiragana</c>, which the reference grammar emits one code point
+    /// at a time, unlike <c>Katakana</c>, which it keeps in a run.
+    /// </summary>
+    /// <remarks>
+    /// Measured against the reference: <c>ひらがな</c> is four tokens and <c>カタカナ</c> is one.
+    /// The small kana and the iteration marks are Hiragana too, so <c>きょう</c> is three tokens and
+    /// <c>ゝゞ</c> is two. The prolonged sound mark U+30FC is Katakana, not Hiragana, which is why
+    /// <c>ひらがなー</c> ends in a token of its own.
+    /// </remarks>
+    public static bool IsHiragana(Rune rune)
+    {
+        if (rune.Value < 0x3041)
+            return false;
+
+        return InRanges(rune.Value, HiraganaRanges);
+    }
+
+    /// <summary>
+    /// The <c>Script=Hiragana</c> code points of Unicode 12.1, as adjacent
+    /// <c>[start, end]</c> pairs sorted ascending.
+    /// </summary>
+    private static readonly int[] HiraganaRanges =
+    [
+        0x3041, 0x3096, 0x309D, 0x309F, 0x1B001, 0x1B11E, 0x1B150, 0x1B152, 0x1F200, 0x1F200,
+    ];
+
+    /// <summary>
+    /// Whether <paramref name="rune"/> is a Katakana code point, whose <c>Word_Break</c> class is
+    /// <c>Katakana</c> rather than <c>ALetter</c>.
+    /// </summary>
+    /// <remarks>
+    /// The reference keeps a Katakana run together — <c>カタカナ</c> is one token — but its
+    /// MidLetter and MidNumLet rules do not join a Katakana character to a letter, so
+    /// <c>カ·ナ</c> and <c>q·カナ</c> are two tokens. A separator's join test reads this class.
+    /// </remarks>
+    public static bool IsKatakana(Rune rune)
+    {
+        if (rune.Value < 0x30A1)
+            return false;
+
+        return InRanges(rune.Value, KatakanaRanges);
+    }
+
+    /// <summary>
+    /// The <c>Word_Break=Katakana</c> code points of Unicode 12.1, as adjacent
+    /// <c>[start, end]</c> pairs sorted ascending.
+    /// </summary>
+    private static readonly int[] KatakanaRanges =
+    [
+        0x3031, 0x3035, 0x309B, 0x309C, 0x30A0, 0x30FA, 0x30FC, 0x30FF, 0x31F0, 0x31FF,
+        0x32D0, 0x32FE, 0x3300, 0x3357, 0xFF66, 0xFF70, 0xFF71, 0xFF9D,
+        0x1B000, 0x1B000, 0x1B164, 0x1B167,
+    ];
+
+    /// <summary>
     /// Whether <paramref name="rune"/> is a format character the reference's word-break data lets a
     /// word continue through: a soft hyphen, a byte-order mark, a left-to-right mark, and the other
     /// <c>Word_Break=Format</c> code points.

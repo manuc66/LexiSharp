@@ -14,8 +14,10 @@ namespace LexiSharp.Tests;
 /// 143 terms the reference does not have.
 /// <para>
 /// The code point is emitted whole, so a supplementary-plane emoji is one term rather than two
-/// surrogate halves. Multi-code-point emoji sequences — a ZWJ family, a flag pair — are not
-/// reproduced; see the remark on <c>WordBreakClasses</c> and the plan's residual note.
+/// surrogate halves, and a sequence is one term too: a ZWJ family, a flag pair, a skin-tone
+/// modifier, a keycap and a tag sequence were each measured against the reference's tokenizer.
+/// A sequence's token absorbs the <c>Extend</c>/<c>Format</c> characters after it, including a
+/// <c>ZWJ</c> that joins nothing.
 /// </para>
 /// </remarks>
 public class EmojiTokenTests
@@ -48,9 +50,50 @@ public class EmojiTokenTests
     {
         IReadOnlyList<string> terms = Segmenter().Tokenize("👨‍👩‍👧‍👦 🤔");
 
-        // The ZWJ family is four emoji code points plus three joiners and becomes four terms; the
-        // point of the assertion is that the surrogate pairs are not split.
-        Assert.Equal(["👨", "👩", "👧", "👦", "🤔"], terms);
+        // The family is one term: the surrogate pairs are not split, and neither are the ZWJ
+        // elements. Measured against the reference tokenizer, which emits the whole sequence.
+        Assert.Equal(["👨‍👩‍👧‍👦", "🤔"], terms);
+    }
+
+    [Theory]
+    [InlineData("👨‍👩‍👧‍👦")]
+    [InlineData("🇫🇷")]
+    [InlineData("👍🏽")]
+    [InlineData("1️⃣")]
+    [InlineData("#️⃣")]
+    [InlineData("🏳️‍🌈")]
+    [InlineData("🏴\U000E0067\U000E0062\U000E0073\U000E0063\U000E0074\U000E007F")]
+    public void AnEmojiSequenceIsOneTerm(string sequence)
+    {
+        Assert.Equal([sequence], Segmenter().Tokenize(sequence));
+    }
+
+    [Fact]
+    public void TwoSequencesAreTwoTerms()
+    {
+        Assert.Equal(["🇫🇷", "🇩🇪"], Segmenter().Tokenize("🇫🇷🇩🇪"));
+        Assert.Equal(["#️⃣", "*️⃣"], Segmenter().Tokenize("#️⃣*️⃣"));
+        Assert.Equal(["👍🏽", "👍🏿"], Segmenter().Tokenize("👍🏽👍🏿"));
+    }
+
+    [Fact]
+    public void ALoneRegionalIndicatorIsNotATerm()
+    {
+        Assert.Empty(Segmenter().Tokenize("🇫"));
+        Assert.Equal(["z"], Segmenter().Tokenize("🇫z"));
+    }
+
+    [Fact]
+    public void AZwjThatJoinsNothingStaysInTheToken()
+    {
+        Assert.Equal(["👨‍", "z"], Segmenter().Tokenize("👨‍z"));
+    }
+
+    [Fact]
+    public void AnEmojiSequenceAbsorbsTheVariationSelector()
+    {
+        Assert.Equal(["©️"], Segmenter().Tokenize("©️"));
+        Assert.Equal(["❤️"], Segmenter().Tokenize("❤️"));
     }
 
     [Fact]
