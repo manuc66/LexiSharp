@@ -1925,6 +1925,39 @@ search over every matching document, which is why this is a lane: the real searc
 candidates. The lane reports no quality metric — the hybrid normalizer comparison in
 [pipelines.md](pipelines.md) is where the +0.0130 SciFact figure comes from.
 
+## Vocabulary memory lane (`vocabulary-memory`): index, ordered set and trie bytes at scale
+
+Three structures were measured at 200,000 but not at the million terms the deployment question
+names: the index itself, the ordered vocabulary set, and the fuzzy trie that is deliberately not
+built above 250,000. This lane measures all three with `GC.GetTotalMemory(true)`, one size per
+process, and forces the trie build so the ceiling can be read rather than guessed.
+
+```bash
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- vocabulary-memory 200000 1000000
+```
+
+| Terms | Index build | Index heap | Per term | Ordered set | Per term | Trie build | Trie | Per term |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 200,000 | 791 ms | 206.9 MiB | 1,085 B | 9.1 MiB | 48 B | 80 ms | 36.2 MiB | 190 B |
+| 1,000,000 | 2.30 s | 999.2 MiB | 1,048 B | 45.6 MiB | 48 B | 373 ms | 180.8 MiB | 190 B |
+
+Both structures are linear, which is the useful part: the ordered set is **48 B/term** at both
+sizes, and the trie is **190 B/term**. There is no hidden superlinear growth to design around.
+
+- **The ordered set needs no replacement.** 45.6 MiB of nodes at a million terms, over strings the
+  index already owns. The B+tree idea was a hypothesis about node overhead; it is 48 bytes.
+- **The 250,000 cap holds the trie at ~46 MiB.** At a million terms the trie would cost 181 MiB and
+  373 ms to build. A warm atom is ~57 µs against 87–89 ms for the walk, so the build pays back after
+  about five fuzzy atoms — but the 181 MiB is paid by every process, including the many that never
+  send a fuzzy query. The cap stays; a host that knows it will serve many fuzzy atoms can raise
+  `FuzzyTrieTermLimit` explicitly, and now knows what it buys.
+
+**What it does not measure.** The corpus is one term per document, which keeps the vocabulary exact
+but makes the index's per-term figure a per-document overhead as much as a vocabulary one; the
+ordered-set and trie columns are the clean ones. `GC.GetTotalMemory(true)` includes everything the
+process retains, and the collector is concurrent, so read bytes per term and the direction between
+sizes, not the last digit.
+
 ## Sparse engine lane (`sparse-engine`): where a learned-sparse query spends its time
 
 The `sparse-wand` lane measures a contiguous layout and says the shipped engine's
@@ -1975,7 +2008,8 @@ the import's wall time, its process CPU and its managed allocation. At 50,000 do
 | bookkeeping only | 9.2 MB | 183 B | 0.04–0.14 s wall |
 | postings only (vector not copied) | 266.2 MB | 5,324 B | 1.7–3.8 s wall |
 | dictionary copy + postings (before) | 775.8 MB | 15,516 B | 3.3–5.0 s CPU |
-| aligned arrays + postings (after) | **371.6 MB** | **7,431 B** | **2.9–3.9 s CPU** |
+| aligned arrays, doubling postings | 371.6 MB | 7,431 B | 2.9–3.9 s CPU |
+| aligned arrays, exact posting sizing | **200.4 MB** | **4,008 B** | **2.6–2.7 s CPU** |
 
 The per-document dictionary copy was a second `Dictionary<string,float>` per document, re-hashing
 all 173 terms only to filter invalid weights and to own the vector. The engine now stores each
@@ -1983,11 +2017,14 @@ vector as two aligned arrays (`string[]` / `float[]`), filtering during that cop
 materializes the dictionaries on demand. The public `SparseIndexEntry` shape is unchanged, and the
 copy still means a caller's dictionary cannot alias the engine.
 
-The postings are the remaining allocation (~257 MB, and ~105 MB for the arrays): each list grows by
-doubling from four entries, so it copies its contents on the way to its final size. Sizing them
-exactly first needs a counting pass over the same 8.65 M terms; that trade was not taken. CPU is
-process CPU on this host, wall time on a shared one, so read the ranges and the deterministic byte
-counts, not the last digit.
+The postings were the remaining allocation (~257 MB, plus ~105 MB for the arrays): each list grew
+by doubling from four entries and copied its contents on the way to its final size. `Import` now
+counts the valid postings per term in a first pass and allocates each list once at that size. The
+counting pass is a second walk over the same 8.65 M terms, and it is cheaper than the copies it
+avoids: **371.6 → 200.4 MB** and **2.9–3.9 → 2.6–2.7 s** CPU. What remains is the vectors
+(~104 MB), the exact postings (~69 MB) and the index's bookkeeping (~9 MB). CPU is process CPU on
+this host, wall time on a shared one, so read the ranges and the deterministic byte counts, not the
+last digit.
 
 **What it does not measure.** The provider (ONNX inference is outside the engine), a real SPLADE
 distribution, concurrent searches, or rebuilds under mutation. Nor the cost of removing a document:

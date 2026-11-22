@@ -2,6 +2,14 @@
 
 ### Added
 
+- **A `vocabulary-memory` lane measures the index, the ordered set and the fuzzy trie at scale.** At
+  1,000,000 terms the ordered vocabulary set costs **48 B/term** (45.6 MiB of nodes) and the trie
+  **190 B/term** (180.8 MiB, 373 ms to build); both are linear between 200,000 and 1,000,000. The
+  250,000 cap therefore holds the trie at ~46 MiB, and a million-term host now knows that lifting it
+  buys a ~57 µs warm atom against 87–89 ms for the walk, for 181 MiB and 373 ms of build. The lane
+  and its caveats are in
+  [benchmarks.md](docs/benchmarks.md#vocabulary-memory-lane-vocabulary-memory-index-ordered-set-and-trie-bytes-at-scale).
+
 - **A bound-tightness lane measures how much of the theoretical upper bound a query reaches.** The
   bound is valid but not necessarily tight; `bound-tightness` reports `oracleMax / UpperBound` for
   the judged queries of the BEIR corpora, where `oracleMax` is the highest score over every matching
@@ -285,6 +293,14 @@
   ownership guarantee (a caller's dictionary cannot alias the engine) are unchanged. The
   `sparse-engine` lane gains `--import-only`, allocation and process-CPU columns, and the
   measurements are in [benchmarks.md](docs/benchmarks.md#sparse-engine-lane-sparse-engine-where-a-learned-sparse-query-spends-its-time).
+
+- **Sparse import sizes each posting list once instead of doubling it.** `Import` counts the valid
+  postings per term in a first pass and allocates the aligned `(ordinal, weight)` arrays at their
+  final size. On 50,000 documents / 8,650,000 postings the second walk over the terms is cheaper
+  than the copies it avoids: **371.6 → 200.4 MB** allocated (7,431 → 4,008 B/document) and
+  **2.9–3.9 → 2.6–2.7 s** process CPU. A lazy `Import` source is materialized for the count; a
+  source that throws leaves the previous corpus in place instead of a cleared engine. `Add` keeps
+  the doubling list because it has no count to size from.
 
 - **Fuzzy expansion fetches a candidate's document frequency once per resolver pass.** The sort
   comparer previously called `DocumentFrequency` twice per comparison, so a term's constant

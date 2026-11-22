@@ -305,6 +305,27 @@ public class SparseTextSearchEngineTests
     }
 
     /// <summary>
+    /// Import counts the postings in a first pass to size each list once, and accepts a lazy
+    /// source by materializing it rather than requiring a list.
+    /// </summary>
+    [Fact]
+    public void Import_AcceptsALazySequenceAndStillScores()
+    {
+        var engine = new SparseTextSearchEngine(new StubSparseProvider(Embed));
+
+        engine.Import(new[]
+        {
+            new SparseIndexEntry(Doc("c1", "c1"), new Dictionary<string, float> { ["cat"] = 1f }),
+            new SparseIndexEntry(Doc("c2", "c2"), new Dictionary<string, float> { ["cat"] = 2f }),
+        }.Select(entry => entry));
+
+        var results = engine.Search("q-cat");
+
+        Assert.Equal(["c2", "c1"], results.Select(result => result.DocumentId));
+        Assert.Equal(1, engine.VocabularySize);
+    }
+
+    /// <summary>
     /// Import takes a copy of the vector, so a caller that keeps and mutates its dictionary after
     /// the call cannot change what the engine scores or exports.
     /// </summary>

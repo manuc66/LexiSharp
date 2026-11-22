@@ -52,6 +52,13 @@ public static class Program
             return;
         }
 
+        // Index, ordered-set and fuzzy-trie bytes at scale. See VocabularyMemoryLane.
+        if (args.Length > 0 && args[0] == "vocabulary-memory")
+        {
+            VocabularyMemoryLane.Run(args[1..]);
+            return;
+        }
+
         // What the shipped sparse engine costs per query, on the same shape. See SparseEngineLane.
         if (args.Length > 0 && args[0] == "sparse-engine")
         {
