@@ -48,7 +48,8 @@ public sealed record PriorLane(ITextPriorSource Source, double Weight);
 /// lane on one materialized copy of the corpus.
 /// </para>
 /// </remarks>
-public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClassifier, IContextualTextClassifier
+public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClassifier, IContextualTextClassifier,
+    IExplainableTextClassifier
 {
     private readonly IReadOnlyList<TextClassifierLane> _lanes;
     private readonly IReadOnlyList<CandidateLane> _candidates;
@@ -437,6 +438,30 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
     {
         var results = Predict(text, limit: 1, excludedCategories);
         return results.Count > 0 ? results[0].Category : null;
+    }
+
+    /// <inheritdoc />
+    public ClassificationExplanation? Explain(
+        string text,
+        int limit = 3,
+        IReadOnlySet<string>? excludedCategories = null)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        IReadOnlyList<ClassificationResult> results = Predict(text, limit, excludedCategories);
+
+        var laneContributions = new List<LaneContribution>(_lanes.Count);
+
+        foreach (TextClassifierLane lane in _lanes)
+        {
+            IReadOnlyList<ClassificationResult> laneResults = lane.Classifier.Predict(text, limit, excludedCategories);
+            laneContributions.Add(new LaneContribution(lane.Classifier.GetType().Name, lane.Weight, laneResults));
+        }
+
+        return new ClassificationExplanation(
+            results,
+            laneContributions,
+            Array.Empty<TermContribution>());
     }
 
     /// <summary>Predicts the single best category with request-scoped evidence.</summary>

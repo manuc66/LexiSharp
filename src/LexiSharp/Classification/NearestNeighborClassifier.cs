@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.IO;
 using System.Runtime.InteropServices;
 
 using LexiSharp.Core;
@@ -48,7 +49,8 @@ namespace LexiSharp.Classification;
 /// </para>
 /// </remarks>
 public sealed class NearestNeighborClassifier
-    : ITextClassifier, IIncrementalTextClassifier, IIncrementalAsyncTextClassifier
+    : ITextClassifier, IIncrementalTextClassifier, IIncrementalAsyncTextClassifier,
+      IExplainableTextClassifier
 {
     private readonly ITokenizer? _tokenizer;
     private readonly IEmbeddingProvider? _embeddings;
@@ -340,6 +342,143 @@ public sealed class NearestNeighborClassifier
         IReadOnlyList<ClassificationResult> results = Predict(text, limit: 1, excludedCategories);
         return results.Count > 0 ? results[0].Category : null;
     }
+
+    /// <inheritdoc />
+    public ClassificationExplanation? Explain(
+        string text,
+        int limit = 3,
+        IReadOnlySet<string>? excludedCategories = null)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        IReadOnlyList<ClassificationResult> results = Predict(text, limit, excludedCategories);
+
+        if (results.Count == 0 && Count == 0)
+            return null;
+
+        ITokenizer tokenizer = _tokenizer ?? Tokenizer.Default;
+        IReadOnlyList<string> tokens = tokenizer.Tokenize(text);
+        var termContributions = new List<TermContribution>();
+
+        foreach (string token in tokens.Distinct(StringComparer.Ordinal))
+        {
+            termContributions.Add(new TermContribution(
+                token,
+                TermFrequency: 0,
+                DocumentFrequency: 0,
+                InverseDocumentFrequency: 0,
+                Score: 0));
+        }
+
+        return new ClassificationExplanation(
+            results,
+            new[] { new LaneContribution(IsDense ? "NearestNeighborDense" : "NearestNeighbor", 1.0, results) },
+            termContributions);
+    }
+
+    /// <summary>Writes the trained state; the caller writes the envelope.</summary>
+    internal void WriteState(BinaryWriter writer)
+    {
+        // Mode: 0 = lexical, 1 = dense.
+        writer.Write(_embeddings is not null ? (byte)1 : (byte)0);
+
+        // Options.
+        writer.Write(_options.K);
+        writer.Write((int)_options.Vote);
+        writer.Write(_options.Temperature);
+        writer.Write(_options.MinProbability);
+        writer.Write(_options.Bm25.K1);
+        writer.Write(_options.Bm25.B);
+        writer.Write((byte)_options.TrainingUse);
+        writer.Write((byte)_options.PredictionUse);
+
+        if (_embeddings is null)
+        {
+            if (_bm25 is null || _bm25.Count == 0)
+            {
+                writer.Write(0);
+                return;
+            }
+
+            writer.Write(_bm25.Count);
+            _bm25.WriteState(writer);
+        }
+        else
+        {
+            if (_dense is null || _dense.Count == 0)
+            {
+                writer.Write(0);
+                return;
+            }
+
+            writer.Write(_dense.Count);
+            _dense.WriteState(writer);
+        }
+    }
+
+    /// <summary>Reads a trained state, pairing it with the caller's dependencies.</summary>
+    internal static NearestNeighborClassifier ReadState(
+        BinaryReader reader,
+        ITokenizer? tokenizer,
+        IEmbeddingProvider? embeddings)
+    {
+        byte mode = reader.ReadByte();
+
+        int k = reader.ReadInt32();
+        var vote = (NeighborVote)reader.ReadInt32();
+        double temperature = reader.ReadDouble();
+        double minProb = reader.ReadDouble();
+        double k1 = reader.ReadDouble();
+        double b = reader.ReadDouble();
+        var trainingUse = (EmbeddingUse)reader.ReadByte();
+        var predictionUse = (EmbeddingUse)reader.ReadByte();
+
+        var options = new NearestNeighborOptions
+        {
+            K = k,
+            Vote = vote,
+            Temperature = temperature,
+            MinProbability = minProb,
+            Bm25 = new Bm25Parameters(k1, b),
+            TrainingUse = trainingUse,
+            PredictionUse = predictionUse,
+        };
+
+        if (mode == 0)
+        {
+            var model = new NearestNeighborClassifier(tokenizer ?? Tokenizer.Default, options);
+            int count = reader.ReadInt32();
+
+            if (count == 0)
+                return model;
+
+            // Rebuild the BM25 store from its serialized state.
+            var store = new Bm25Store(tokenizer ?? Tokenizer.Default, options);
+            store.ReadState(reader);
+            model.SetBm25Store(store);
+            return model;
+        }
+        else
+        {
+            if (embeddings is null)
+                throw new InvalidOperationException("A dense nearest-neighbour model needs an embedding provider to load.");
+
+            var model = new NearestNeighborClassifier(embeddings, options);
+            int count = reader.ReadInt32();
+
+            if (count == 0)
+                return model;
+
+            var store = new DenseStore();
+            store.ReadState(reader, embeddings.Dimension);
+            model.SetDenseStore(store);
+            return model;
+        }
+    }
+
+    private void SetBm25Store(Bm25Store store) => _bm25 = store;
+
+    private void SetDenseStore(DenseStore store) => _dense = store;
 
     private IReadOnlyList<ClassificationResult> BuildResults(TopK<Neighbor> neighbors, int limit)
     {
@@ -761,6 +900,162 @@ public sealed class NearestNeighborClassifier
             }
         }
 
+        internal void WriteState(BinaryWriter writer)
+        {
+            // _termText
+            writer.Write(_termText.Count);
+            foreach (string? term in _termText)
+                ModelFormat.WriteString(writer, term);
+
+            // _documents
+            writer.Write(_documents.Count);
+            foreach (Document document in _documents)
+            {
+                if (document.Id is null)
+                {
+                    writer.Write(false);
+                    continue;
+                }
+
+                writer.Write(true);
+                ModelFormat.WriteString(writer, document.Id);
+                ModelFormat.WriteString(writer, document.Category);
+                writer.Write(document.Length);
+                writer.Write(document.Terms.Length);
+
+                foreach (TermFrequency tf in document.Terms)
+                {
+                    writer.Write(tf.TermId);
+                    writer.Write(tf.Count);
+                }
+            }
+
+            // _freeOrdinals
+            writer.Write(_freeOrdinals.Count);
+            foreach (int ordinal in _freeOrdinals)
+                writer.Write(ordinal);
+
+            // _indexById
+            writer.Write(_indexById.Count);
+            foreach (var (id, ordinal) in _indexById)
+            {
+                ModelFormat.WriteString(writer, id);
+                writer.Write(ordinal);
+            }
+
+            // _postings
+            writer.Write(_postings.Count);
+            foreach (var (termId, postings) in _postings)
+            {
+                writer.Write(termId);
+                writer.Write(postings.Count);
+
+                foreach (Posting posting in postings)
+                {
+                    writer.Write(posting.Ordinal);
+                    writer.Write(posting.Frequency);
+                }
+            }
+
+            writer.Write(_totalLength);
+        }
+
+        internal void ReadState(BinaryReader reader)
+        {
+            // _termText
+            int termTextCount = ModelFormat.ReadCount(reader);
+            _termText.Clear();
+            _termText.Capacity = Math.Max(_termText.Capacity, termTextCount);
+
+            for (int i = 0; i < termTextCount; i++)
+                _termText.Add(ModelFormat.ReadString(reader));
+
+            // rebuild _termIds
+            _termIds.Clear();
+
+            for (int i = 0; i < _termText.Count; i++)
+            {
+                string? term = _termText[i];
+
+                if (term is not null)
+                    _termIds[term] = i;
+            }
+
+            // _documents
+            int documentCount = ModelFormat.ReadCount(reader);
+            _documents.Clear();
+            _documents.Capacity = Math.Max(_documents.Capacity, documentCount);
+
+            for (int i = 0; i < documentCount; i++)
+            {
+                bool present = reader.ReadBoolean();
+
+                if (!present)
+                {
+                    _documents.Add(default);
+                    continue;
+                }
+
+                string id = ModelFormat.ReadString(reader)
+                    ?? throw new InvalidDataException("A nearest-neighbour document id is null.");
+                string category = ModelFormat.ReadString(reader)
+                    ?? throw new InvalidDataException("A nearest-neighbour category is null.");
+                int length = reader.ReadInt32();
+                int termCount = ModelFormat.ReadCount(reader);
+                var terms = new TermFrequency[termCount];
+
+                for (int t = 0; t < termCount; t++)
+                {
+                    int termId = reader.ReadInt32();
+                    int count = reader.ReadInt32();
+                    terms[t] = new TermFrequency(termId, count);
+                }
+
+                _documents.Add(new Document(id, category, length, terms));
+            }
+
+            // _freeOrdinals
+            int freeCount = ModelFormat.ReadCount(reader);
+            _freeOrdinals.Clear();
+
+            for (int i = 0; i < freeCount; i++)
+                _freeOrdinals.Add(reader.ReadInt32());
+
+            // _indexById
+            int indexCount = ModelFormat.ReadCount(reader);
+            _indexById.Clear();
+
+            for (int i = 0; i < indexCount; i++)
+            {
+                string id = ModelFormat.ReadString(reader)
+                    ?? throw new InvalidDataException("A nearest-neighbour id is null.");
+                int ordinal = reader.ReadInt32();
+                _indexById[id] = ordinal;
+            }
+
+            // _postings
+            int postingsCount = ModelFormat.ReadCount(reader);
+            _postings.Clear();
+
+            for (int i = 0; i < postingsCount; i++)
+            {
+                int termId = reader.ReadInt32();
+                int count = ModelFormat.ReadCount(reader);
+                var postings = new List<Posting>(count);
+
+                for (int p = 0; p < count; p++)
+                {
+                    int ordinal = reader.ReadInt32();
+                    int frequency = reader.ReadInt32();
+                    postings.Add(new Posting(ordinal, frequency));
+                }
+
+                _postings[termId] = postings;
+            }
+
+            _totalLength = reader.ReadInt64();
+        }
+
         private int GetOrAddTerm(string term)
         {
             ref int termId = ref CollectionsMarshal.GetValueRefOrAddDefault(_termIds, term, out bool exists);
@@ -898,6 +1193,73 @@ public sealed class NearestNeighborClassifier
             }
 
             return top;
+        }
+
+        internal void WriteState(BinaryWriter writer)
+        {
+            writer.Write(_count);
+            writer.Write(_dimension);
+
+            // entries
+            writer.Write(_count);
+            for (int i = 0; i < _count; i++)
+            {
+                ModelFormat.WriteString(writer, _entries[i].Id);
+                ModelFormat.WriteString(writer, _entries[i].Category);
+                writer.Write(_entries[i].Norm);
+            }
+
+            // vectors
+            writer.Write(_count * _dimension);
+            for (int i = 0; i < _count * _dimension; i++)
+                writer.Write(_vectors[i]);
+        }
+
+        internal void ReadState(BinaryReader reader, int expectedDimension)
+        {
+            int count = reader.ReadInt32();
+            int dimension = reader.ReadInt32();
+
+            if (expectedDimension > 0 && dimension != expectedDimension)
+                throw new InvalidDataException("Dense nearest-neighbour dimension mismatch.");
+
+            _dimension = dimension;
+            _count = 0;
+
+            if (_entries.Length < count && count > 0)
+                Array.Resize(ref _entries, count);
+
+            int required = count * dimension;
+
+            if (_vectors.Length < required)
+                Array.Resize(ref _vectors, Math.Max(_vectors.Length, required));
+
+            // entries
+            int entryCount = reader.ReadInt32();
+
+            if (entryCount != count)
+                throw new InvalidDataException("Dense nearest-neighbour entry count mismatch.");
+
+            for (int i = 0; i < count; i++)
+            {
+                string id = ModelFormat.ReadString(reader)
+                    ?? throw new InvalidDataException("A dense nearest-neighbour id is null.");
+                string category = ModelFormat.ReadString(reader)
+                    ?? throw new InvalidDataException("A dense nearest-neighbour category is null.");
+                float norm = reader.ReadSingle();
+
+                _entries[i] = new Entry(id, category, norm);
+            }
+
+            int vectorCount = reader.ReadInt32();
+
+            if (vectorCount != count * dimension)
+                throw new InvalidDataException("Dense nearest-neighbour vector count mismatch.");
+
+            for (int i = 0; i < vectorCount; i++)
+                _vectors[i] = reader.ReadSingle();
+
+            _count = count;
         }
 
         private void EnsureCapacity(int count)

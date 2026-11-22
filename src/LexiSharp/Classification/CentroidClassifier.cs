@@ -684,7 +684,8 @@ public sealed class CentroidClassifier<TItem>
 /// </para>
 /// </remarks>
 public sealed class CentroidClassifier
-    : ITextClassifier, IIncrementalTextClassifier, IIncrementalAsyncTextClassifier
+    : ITextClassifier, IIncrementalTextClassifier, IIncrementalAsyncTextClassifier,
+      IExplainableTextClassifier
 {
     private readonly IEmbeddingProvider _embeddings;
     private readonly CentroidClassifierOptions _options;
@@ -927,6 +928,25 @@ public sealed class CentroidClassifier
     {
         var results = Predict(text, limit: 1, excludedCategories);
         return results.Count > 0 ? results[0].Category : null;
+    }
+
+    /// <inheritdoc />
+    public ClassificationExplanation? Explain(
+        string text,
+        int limit = 3,
+        IReadOnlySet<string>? excludedCategories = null)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        IReadOnlyList<ClassificationResult> results = Predict(text, limit, excludedCategories);
+
+        if (results.Count == 0 && _inner.CategoryCount == 0)
+            return null;
+
+        return new ClassificationExplanation(
+            results,
+            new[] { new LaneContribution("Centroid", 1.0, results) },
+            Array.Empty<TermContribution>());
     }
 
     /// <summary>Writes the options and the corpus state; the caller writes the envelope.</summary>

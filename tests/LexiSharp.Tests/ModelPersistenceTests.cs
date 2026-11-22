@@ -286,18 +286,12 @@ public class ModelPersistenceTests
     }
 
     [Fact]
-    public void BlendedAndNearestNeighbourModelsAreRefused()
+    public void BlendedModelsAreRefused()
     {
         var fused = new FusedTextClassifier(new NaiveBayesClassifier(), new NaiveBayesClassifier());
 
         Assert.Throws<NotSupportedException>(() =>
             ClassificationModelSerializer.Save(fused, new MemoryStream()));
-
-        var neighbours = new NearestNeighborClassifier();
-        neighbours.Train(Corpus);
-
-        Assert.Throws<NotSupportedException>(() =>
-            ClassificationModelSerializer.Save(neighbours, new MemoryStream()));
     }
 
     [Fact]
