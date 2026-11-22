@@ -41,12 +41,15 @@ internal static class SegmentFile
     /// The tokenizer the segment was written with; the dictionary holds normalized terms, so a lookup is
     /// by the normalized form.
     /// </param>
+    /// <param name="log">
+    /// Optional sink for the warning emitted when the segment is a v5 (degraded) one.
+    /// </param>
     /// <exception cref="InvalidDataException">The file is not a segment this reader knows.</exception>
-    public static SegmentTextIndex Open(string path, ITokenizer? tokenizer = null)
+    public static SegmentTextIndex Open(string path, ITokenizer? tokenizer = null, RetrievalLog? log = null)
     {
         ArgumentNullException.ThrowIfNull(path);
         PathSafety.ThrowIfUnsafe(path, nameof(path));
 
-        return new SegmentTextIndex(File.ReadAllBytes(path), tokenizer);
+        return new SegmentTextIndex(File.ReadAllBytes(path), tokenizer, log);
     }
 }

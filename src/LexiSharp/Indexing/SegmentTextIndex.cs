@@ -86,6 +86,7 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
 
     private readonly int[] _lengths;
     private readonly DecodedPostingsCache? _decoded;
+    private readonly RetrievalLog? _log;
     private SearchDocument?[]? _documents;
     private bool _documentsComplete;
 
@@ -94,8 +95,12 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     /// The tokenizer the segment was written with. Defaults to <see cref="Tokenizer.Default"/>, which
     /// is what an index built without one uses.
     /// </param>
-    public SegmentTextIndex(byte[] bytes, ITokenizer? tokenizer = null)
-        : this(new ArraySegmentSource(bytes), tokenizer)
+    /// <param name="log">
+    /// Optional sink for the warning emitted when the segment is a v5 (degraded) one. Defaults to
+    /// <c>null</c>, in which case only <see cref="System.Diagnostics.Trace"/> receives it.
+    /// </param>
+    public SegmentTextIndex(byte[] bytes, ITokenizer? tokenizer = null, RetrievalLog? log = null)
+        : this(new ArraySegmentSource(bytes), tokenizer, null, log)
     {
     }
 
@@ -104,11 +109,23 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
     /// Internal because the public story is a byte array or a file; a mapped file reaches this through
     /// <see cref="MappedSegment"/>.
     /// </remarks>
-    internal SegmentTextIndex(SegmentSource source, ITokenizer? tokenizer = null, DecodedPostingsCache? decoded = null)
+    internal SegmentTextIndex(SegmentSource source, ITokenizer? tokenizer = null, DecodedPostingsCache? decoded = null, RetrievalLog? log = null)
     {
         _reader = new SegmentReader(source);
         _tokenizer = tokenizer ?? Tokenizer.Default;
         _decoded = decoded;
+        _log = log;
+
+        if (!_reader.HasTermFrequencyBounds)
+        {
+            _log?.Invoke(new RetrievalLogEvent(
+                RetrievalLogLevel.Warning,
+                "SegmentTextIndex",
+                RetrievalLogEvents.Index,
+                $"segment declares version {_reader.Version}; score bounds unavailable until the index is rebuilt",
+                0,
+                _reader.DocumentCount));
+        }
         _ordinals = new Dictionary<string, int>(_reader.DocumentCount, StringComparer.Ordinal);
         _ids = new string[_reader.DocumentCount];
         _lengths = new int[_reader.DocumentCount];
@@ -227,6 +244,12 @@ internal sealed class SegmentTextIndex : IReadOnlyTextIndex, IAccumulatingIndex,
 
     /// <inheritdoc />
     public long CorpusTokenCount { get; }
+
+    /// <summary>The format version of the underlying segment.</summary>
+    public int Version => _reader.Version;
+
+    /// <summary>Whether the segment carries per-term frequency bounds.</summary>
+    public bool HasTermFrequencyBounds => _reader.HasTermFrequencyBounds;
 
     /// <inheritdoc />
     public double AverageDocumentLength => Count == 0 ? 0 : (double)CorpusTokenCount / Count;

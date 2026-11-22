@@ -1,6 +1,23 @@
-## [Unreleased]
+## [1.1.0] — 2026-11-22
+
+### Breaking changes & migration
+
+- **Segment format v6** is still the write format, but a **v5 segment is now read in degraded mode**
+  instead of being refused: term postings, documents and lengths are read as before, and
+  `TryGetTermFrequencyBound` returns `false`, so `IScoreBoundScorer` declines and
+  `UpperBoundScoreNormalizer` falls back to `MaxScoreNormalizer` until the index is rebuilt.
+  A `Trace.TraceWarning` is emitted on open. Versions older than 5 are still refused.
+  See [docs/migration.md](docs/migration.md).
+- **PostgreSQL `TieBreak.InsertionOrder`** still throws `NotSupportedException` (unchanged);
+  use `TieBreak.DocumentId` (the default). See [docs/migration.md](docs/migration.md).
+- **TF-IDF** scores on repeated query terms were corrected (see Fixed); rankings may move.
 
 ### Added
+
+- **`SegmentTextIndex`, `SegmentFile.Open` and `MappedSegment.Open` accept an optional `RetrievalLog?`.**
+  A v5 (degraded) segment now reports its warning through the same dependency-free sink the rest of
+  the engine uses, instead of only through `Trace`; pass `null` (the default) to keep the previous
+  behaviour. No new dependency is introduced.
 
 - **A `vocabulary-memory` lane measures the index, the ordered set and the fuzzy trie at scale.** At
   1,000,000 terms the ordered vocabulary set costs **48 B/term** (45.6 MiB of nodes) and the trie
