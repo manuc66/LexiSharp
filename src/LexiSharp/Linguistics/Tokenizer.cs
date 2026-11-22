@@ -555,21 +555,10 @@ public sealed class Tokenizer : ISpanTokenizer
         if (c is not '#' and not '*')
             return 0;
 
-        int end = position + 1;
+        int end = SkipKeycapBaseExtenders(text, position + 1);
 
-        while (end < text.Length)
-        {
-            if (Rune.DecodeFromUtf16(text[end..], out Rune next, out int nextLength) != OperationStatus.Done)
-                return 0;
-
-            if (next.Value is 0xFE0E or 0xFE0F or 0x20E3)
-                break;
-
-            if (!IsCombiningMark(next) && !WordBreakClasses.IsFormatExtend(next))
-                return 0;
-
-            end += nextLength;
-        }
+        if (end < 0)
+            return 0;
 
         if (end < text.Length && text[end] == '\uFE0F')
             end++;
@@ -577,20 +566,53 @@ public sealed class Tokenizer : ISpanTokenizer
         if (end >= text.Length || text[end] != '\u20E3')
             return 0;
 
-        end++;
+        return SkipKeycapTailExtenders(text, end + 1) - position;
+    }
 
-        while (end < text.Length)
+    /// <summary>
+    /// Skips the extenders between a keycap's base and its presentation selector, returning the
+    /// position of the first character that cannot continue the base, or -1 when that character is
+    /// neither a selector nor the keycap mark.
+    /// </summary>
+    /// <remarks>
+    /// The run stops at the selectors and at U+20E3 because the keycap grammar gives each of them
+    /// its own position; anything else that is not an <c>Extend</c>/<c>Format</c> character means
+    /// this was never a keycap.
+    /// </remarks>
+    private static int SkipKeycapBaseExtenders(ReadOnlySpan<char> text, int position)
+    {
+        while (position < text.Length)
         {
-            if (Rune.DecodeFromUtf16(text[end..], out Rune next, out int nextLength) != OperationStatus.Done
+            if (Rune.DecodeFromUtf16(text[position..], out Rune next, out int length) != OperationStatus.Done)
+                return -1;
+
+            if (next.Value is 0xFE0E or 0xFE0F or 0x20E3)
+                return position;
+
+            if (!IsCombiningMark(next) && !WordBreakClasses.IsFormatExtend(next))
+                return -1;
+
+            position += length;
+        }
+
+        return position;
+    }
+
+    /// <summary>Skips the <c>Extend</c>/<c>Format</c> run after a keycap.</summary>
+    private static int SkipKeycapTailExtenders(ReadOnlySpan<char> text, int position)
+    {
+        while (position < text.Length)
+        {
+            if (Rune.DecodeFromUtf16(text[position..], out Rune next, out int length) != OperationStatus.Done
                 || !ContinuesEmojiElement(next))
             {
                 break;
             }
 
-            end += nextLength;
+            position += length;
         }
 
-        return end - position;
+        return position;
     }
 
     /// <summary>
