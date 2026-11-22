@@ -70,10 +70,12 @@ aligned to the published figures:
 | SciFact | 0.6789 | 0.6789 |
 | ArguAna | 0.3970 | 0.3970 |
 
-Point estimates; the harness also reports paired-bootstrap 95 % CIs. Under the library's own
-default analysis and parameters the same scorer reads 0.308 / 0.662 / 0.320 — the difference is
-configuration, not ranking. Corpora are md5-verified; numbers are pinned and re-checked by the
-`Pinned reference` workflow.
+Point estimates; the harness also reports paired-bootstrap 95 % CIs (`--bootstrap`, 10 000
+resamples, Holm correction) so a reader can tell whether a gap is real or noise — on a
+323/300/1 406-query corpus the IC of the difference between two systems typically spans
+±0.005 to ±0.01. Under the library's own default analysis and parameters the same scorer reads
+0.308 / 0.662 / 0.320 — the difference is configuration, not ranking. Corpora are
+md5-verified; numbers are pinned and re-checked by the `Pinned reference` workflow.
 
 Full tables, CIs, backends and reproducibility:
 [evaluation →](docs/evaluation.md).
