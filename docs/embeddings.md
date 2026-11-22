@@ -21,6 +21,10 @@ testable offline with no model at all.
   only the scoring function with a dot product over learned `term → weight` pairs, the shape
   SPLADE and uniCOIL produce. See the
   [consumer-side SPLADE guide](SPLADE.md) for writing the provider.
+- **Model-free sparse** — `SparseSemanticEncoder` implements `ISparseEmbeddingProvider` with
+  no model at all: it augments a text with its n-gram phrases (bigrams, trigrams) as weighted
+  virtual terms, so a lexical engine can match multi-word concepts without a learned model.
+  Drop-in replacement for a real SPLADE provider behind the same seam.
 - **Corpus-derived expansion** — `LexiSharp.Expansion` widens a **document** at index time or
   a **query** at search time with terms learned from your own documents
   (`PmiTermExpander`): pure .NET, no new dependency, no model.

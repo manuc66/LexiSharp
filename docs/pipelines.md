@@ -107,6 +107,28 @@ with the `Query` role per search) — drops `0`/NaN/infinity scores
 and ranks by total. It is the middle ground between whole-document cosine and the full
 pairwise pass of a cross-encoder.
 
+## Explainable reranking (`IRerankerExplainer`)
+
+Several built-in rerankers implement `IRerankerExplainer`, an opt-in capability that produces
+a `RerankExplanation` decomposing the rerank decision into per-signal contributions:
+
+- **MMR** — relevance (`λ · rel`) and redundancy (`-(1-λ) · max sim`).
+- **MaxSim** (ColBERT) — one signal per query token: the best-matching document token and
+  its cosine.
+- **Cross-encoder** — the model's raw score plus the rank change (before → after).
+- **Cascade** — one signal per stage: the score at each stage of the pipeline.
+
+The explanation is computed lazily (only when `ExplainRerank` is called), so the hot path of
+`Rerank` stays allocation-free. Use pattern matching or the `RerankerExtensions.ExplainRerank`
+helper, which returns `null` when the reranker cannot explain itself:
+
+```csharp
+var explanation = reranker.ExplainRerank(query, candidates, documentId);
+if (explanation is not null)
+    foreach (var signal in explanation.Signals)
+        Console.WriteLine($"{signal.Name}: {signal.Contribution:0.0000}");
+```
+
 ## Hybrid engine
 
 Federate a **hot** in-memory index and a **cold** persistent backend, and produce one
@@ -136,6 +158,7 @@ Writes fan out to every engine. Three merge strategies are available:
 | `RerankingResultMerger` (default) | re-scores the union with one `ITextScorer` | comparable stats, identical score scale wanted |
 | `ReciprocalRankFusionMerger` | `Σ 1/(k + rank)` (k=60), rank-only | engines with **incomparable scales** — lexical + vector, ts_rank_cd vs BM25 (Postgres vs ParadeDB vs in-memory) |
 | `WeightedScoreResultMerger` | normalized per-engine score blend | native scores trusted, per-engine weights wanted |
+| `LearnedFusionMerger` | learned per-engine weight blend (min-max normalized) | weights fitted on a validation set via `FusionWeightTuner`; reports gain vs equal weights with significance |
 | `CombSumResultMerger` | sum of normalized per-engine scores | scores (not just ranks) are meaningful and should add up |
 | `CombMNZResultMerger` | CombSUM × number of engines that returned the doc | reward cross-engine **agreement** |
 
