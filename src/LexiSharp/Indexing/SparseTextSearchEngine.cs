@@ -76,8 +76,18 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
     /// <summary>Slots freed by a removal, reused before the ordinal space grows.</summary>
     private readonly List<int> _freeOrdinals = [];
 
-    private readonly Dictionary<string, IReadOnlyDictionary<string, float>> _vectorsByDocument =
+    private readonly Dictionary<string, SparseVector> _vectorsByDocument =
         new(StringComparer.Ordinal);
+
+    /// <summary>A stored vector as aligned arrays: the terms in the order the provider produced them.</summary>
+    private sealed class SparseVector(string[] terms, float[] weights)
+    {
+        public string[] Terms { get; } = terms;
+
+        public float[] Weights { get; } = weights;
+    }
+
+    private static readonly SparseVector EmptyVector = new([], []);
 
     private readonly Dictionary<string, PostingList> _postings = new(StringComparer.Ordinal);
 
@@ -142,7 +152,7 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
 
         if (_vectorsByDocument.Remove(documentId, out var vector))
         {
-            foreach (var term in vector.Keys)
+            foreach (string term in vector.Terms)
             {
                 if (!_postings.TryGetValue(term, out var postings))
                     continue;
@@ -181,7 +191,7 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
         var entries = new List<SparseIndexEntry>(_documents.Count);
 
         foreach (var (documentId, document) in _documents)
-            entries.Add(new SparseIndexEntry(document, _vectorsByDocument[documentId]));
+            entries.Add(new SparseIndexEntry(document, Materialize(_vectorsByDocument[documentId])));
 
         return entries;
     }
@@ -327,31 +337,47 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
         _documents[document.Id] = document;
         _ordinals[document.Id] = ordinal;
 
-        // Build the stored vector first: a term repeated in the input must reach the posting list
-        // once, with its last weight, not once per occurrence. The old dictionary write happened to
-        // collapse a duplicate; contiguous arrays would append it.
-        var weights = new Dictionary<string, float>(StringComparer.Ordinal);
+        // A dictionary cannot repeat a key, so the stored vector needs no deduplication; it does
+        // need the invalid weights dropped and a copy the caller cannot mutate afterwards. Two
+        // aligned arrays do that without re-hashing every term into a second dictionary.
+        string[] terms = Array.Empty<string>();
+        float[] weights = Array.Empty<float>();
 
-        foreach (var (term, weight) in vector ?? EmptyVector)
+        if (vector is { Count: > 0 })
         {
-            if (string.IsNullOrEmpty(term) || !float.IsFinite(weight) || weight <= 0)
-                continue;
+            terms = new string[vector.Count];
+            weights = new float[vector.Count];
+            int kept = 0;
 
-            weights[term] = weight;
-        }
-
-        foreach (var (term, weight) in weights)
-        {
-            if (!_postings.TryGetValue(term, out var postings))
+            foreach (var (term, weight) in vector)
             {
-                postings = new PostingList();
-                _postings[term] = postings;
+                if (string.IsNullOrEmpty(term) || !float.IsFinite(weight) || weight <= 0)
+                    continue;
+
+                terms[kept] = term;
+                weights[kept] = weight;
+                kept++;
             }
 
-            postings.Add(ordinal, weight);
+            if (kept != terms.Length)
+            {
+                Array.Resize(ref terms, kept);
+                Array.Resize(ref weights, kept);
+            }
         }
 
-        _vectorsByDocument[document.Id] = weights;
+        for (int i = 0; i < terms.Length; i++)
+        {
+            if (!_postings.TryGetValue(terms[i], out var postings))
+            {
+                postings = new PostingList();
+                _postings[terms[i]] = postings;
+            }
+
+            postings.Add(ordinal, weights[i]);
+        }
+
+        _vectorsByDocument[document.Id] = terms.Length == 0 ? EmptyVector : new SparseVector(terms, weights);
     }
 
     private SearchDocument? DocumentAt(int ordinal) =>
@@ -359,8 +385,15 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
 
     private string? IdAt(int ordinal) => DocumentAt(ordinal)?.Id;
 
-    private static IReadOnlyDictionary<string, float> EmptyVector { get; } =
-        new Dictionary<string, float>();
+    private static IReadOnlyDictionary<string, float> Materialize(SparseVector vector)
+    {
+        var weights = new Dictionary<string, float>(vector.Terms.Length, StringComparer.Ordinal);
+
+        for (int i = 0; i < vector.Terms.Length; i++)
+            weights[vector.Terms[i]] = vector.Weights[i];
+
+        return weights;
+    }
 
     /// <summary>
     /// One term's postings as contiguous arrays: ordinals and weights aligned. There is no sort

@@ -371,7 +371,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `AsyncCrossEncoderReranker` | class | `IAsyncReranker` | Asynchronous counterpart of CrossEncoderReranker: re-scores every candidate with a pairwise (cross-encoder) model via IAsyncCrossEncoderScorer and reorders the… |
 | `BayesianFusionMerger` | class | `IMergeExplainer`, `IResultMerger` | Merges per-engine results by calibrating each engine's native score to a probability of relevance and combining them with the naive Bayes rule, instead of… |
 | `CascadeRerankOptions` | record | — | Controls how a CascadeRerankPipeline passes candidates from stage to stage. |
-| `CascadeRerankPipeline` | class | `IReranker` | Chains rerankers in cascade: each stage re-ranks the output of the previous one, and the shortlist may be trimmed between stages so only the strongest… |
+| `CascadeRerankPipeline` | class | `IReranker`, `IRerankerExplainer` | Chains rerankers in cascade: each stage re-ranks the output of the previous one, and the shortlist may be trimmed between stages so only the strongest… |
 | `CombMNZResultMerger` | class | `IContextualResultMerger`, `IResultMerger` | Blend strategy that multiplies each document's CombSUM score by the number of engines that retrieved it — the classic CombMNZ. |
 | `CombSumResultMerger` | class | `IContextualResultMerger`, `IResultMerger` | Blend strategy that sums the normalized per-engine scores of every document — the classic CombSUM of score-based fusion. |
 | `ContextualTermOverlapScorer` | class | `IContextualEvidenceScorer` | A model-free IContextualEvidenceScorer used to exercise the multi-hop expansion stack with no external dependency: it scores a candidate by the fraction of… |
