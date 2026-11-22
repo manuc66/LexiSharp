@@ -190,7 +190,7 @@ internal sealed class QueryExpansionResolver
     /// </summary>
     private void ExpandFuzzy(List<string> terms, QueryExpansion expansion)
     {
-        var candidates = new List<(string Term, int Distance)>();
+        var candidates = new List<(string Term, int Distance, int Frequency)>();
 
         foreach (string term in _vocabulary!.Vocabulary)
         {
@@ -201,16 +201,19 @@ internal sealed class QueryExpansionResolver
             int distance = LevenshteinDistance.Distance(expansion.BaseTerm, term);
 
             if (distance <= expansion.MaxEdits)
-                candidates.Add((term, distance));
+                candidates.Add((term, distance, _vocabulary.DocumentFrequency(term)));
         }
 
+        // Frequency travels with the candidate instead of being fetched twice per comparison: the
+        // comparer would otherwise probe the term dictionary O(candidates log candidates) times for
+        // a value that is constant for a term.
         candidates.Sort((a, b) =>
         {
             int byDistance = a.Distance.CompareTo(b.Distance);
             if (byDistance != 0)
                 return byDistance;
 
-            int byFrequency = _vocabulary.DocumentFrequency(b.Term).CompareTo(_vocabulary.DocumentFrequency(a.Term));
+            int byFrequency = b.Frequency.CompareTo(a.Frequency);
             return byFrequency != 0 ? byFrequency : string.CompareOrdinal(a.Term, b.Term);
         });
 
