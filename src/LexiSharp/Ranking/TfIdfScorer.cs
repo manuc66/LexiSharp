@@ -191,14 +191,23 @@ public sealed class TfIdfScorer : ITermOverlapScorer, IQueryPlannableScorer, ISc
         public TfIdfQueryPlan(IReadOnlyList<string> queryTerms, IReadOnlyTextIndex index)
         {
             _index = index;
-            _terms = new string[queryTerms.Count];
-            _idf = new double[queryTerms.Count];
+
+            // TF-IDF has no query-frequency weighting: Score deduplicates the terms, so the plan
+            // must too, or a clean query and the same query with a word repeated score differently
+            // through the engine. The engine hands plans the raw list so a scorer that does count
+            // occurrences (BM25's QueryTermWeighting.QueryFrequency) can; this scorer does not.
+            IReadOnlyList<string> terms = queryTerms is DistinctTermList
+                ? queryTerms
+                : TermDeduplicator.Distinct(queryTerms);
+
+            _terms = new string[terms.Count];
+            _idf = new double[terms.Count];
 
             int documentCount = index.StatisticDocumentCount;
 
-            for (int i = 0; i < queryTerms.Count; i++)
+            for (int i = 0; i < terms.Count; i++)
             {
-                string term = queryTerms[i];
+                string term = terms[i];
                 _terms[i] = term;
 
                 if (documentCount == 0)
