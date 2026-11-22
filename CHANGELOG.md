@@ -289,6 +289,15 @@
 
 ### Fixed
 
+- **A `MidLetter` separator no longer joins a letter to a Han ideograph under `uax29`.** The
+  ideograph rule split `尺` into its own term, but the join tests still read it as a letter because
+  `Rune.IsLetter` answers true. A dot between `a` and `尺` was then consumed as part of the Latin
+  word, producing `a.` and `尺`; the reference's word-break data gives Han the `Ideographic` class,
+  which does not satisfy the `ALetter` rule, so the result is `a` and `尺`. `StartsWordAt`,
+  `LeadsWordAt`, `ContinuesWord` and `ClassAt` now treat an ideograph as `Other` for the conditional
+  join tests when the measured boundaries are in effect; the flat, English, Porter and identifier
+  analyses are unchanged.
+
 - **A text field's name is a bound parameter, so `standard_conforming_strings` no longer matters.**
   The `tsv` expression the lexical, vector and sparse writers use turned each `FieldWeights` key into
   a quoted literal, doubling the quote — complete only while `standard_conforming_strings` was on.

@@ -579,14 +579,14 @@ public sealed class Tokenizer : ISpanTokenizer
     /// Whether the word continues at <paramref name="position"/>: either a character that can be part of
     /// a word, or an unconditional joiner — the run of leading underscores needs the second case.
     /// </summary>
-    private static bool ContinuesWord(ReadOnlySpan<char> text, int position) =>
+    private bool ContinuesWord(ReadOnlySpan<char> text, int position) =>
         StartsWordAt(text, position) || RuleFor(text[position]) == JoinRule.Always;
 
     /// <summary>
     /// Whether a token that has opened on joiners reaches a word character: one immediately, or past a
     /// further run of joiners. Measured: `__alpha` is a token, `___` alone is not.
     /// </summary>
-    private static bool LeadsWordAt(ReadOnlySpan<char> text, int position)
+    private bool LeadsWordAt(ReadOnlySpan<char> text, int position)
     {
         while (position < text.Length)
         {
@@ -679,7 +679,7 @@ public sealed class Tokenizer : ISpanTokenizer
             or UnicodeCategory.EnclosingMark;
 
     /// <summary>Whether a word starts at <paramref name="position"/>. A joiner never starts one.</summary>
-    private static bool StartsWordAt(ReadOnlySpan<char> text, int position)
+    private bool StartsWordAt(ReadOnlySpan<char> text, int position)
     {
         char c = text[position];
 
@@ -688,7 +688,10 @@ public sealed class Tokenizer : ISpanTokenizer
 
         var status = Rune.DecodeFromUtf16(text[position..], out var rune, out int length);
 
-        return status == OperationStatus.Done && Rune.IsLetterOrDigit(rune) && length > 0;
+        return status == OperationStatus.Done
+            && Rune.IsLetterOrDigit(rune)
+            && length > 0
+            && !(_conditionalJoins && WordBreakClasses.IsIdeographic(rune));
     }
 
     /// <summary>
@@ -777,7 +780,7 @@ public sealed class Tokenizer : ISpanTokenizer
     };
 
     /// <summary>Evaluates <see cref="RuleFor"/> for the separator at <paramref name="position"/>.</summary>
-    private static bool JoinsUnderCondition(ReadOnlySpan<char> text, int position)
+    private bool JoinsUnderCondition(ReadOnlySpan<char> text, int position)
     {
         JoinRule rule = RuleFor(text[position]);
 
@@ -789,7 +792,7 @@ public sealed class Tokenizer : ISpanTokenizer
 
         // Both sides must be word characters, and both are inside the current word or immediately
         // after it, so the left one is the character the separator interrupts.
-        if (position + 1 >= text.Length || !StartsWordAtStatic(text, position + 1))
+        if (position + 1 >= text.Length || !StartsWordAt(text, position + 1))
             return false;
 
         if (position == 0)
@@ -809,7 +812,7 @@ public sealed class Tokenizer : ISpanTokenizer
         };
     }
 
-    private static CharClass ClassAt(ReadOnlySpan<char> text, int index)
+    private CharClass ClassAt(ReadOnlySpan<char> text, int index)
     {
         // A combining mark takes its class from the character it modifies. The stop in `tɕɛ̝.bʌl`
         // sits between two letters, but the character immediately before it is U+031D, a mark; the
@@ -849,18 +852,14 @@ public sealed class Tokenizer : ISpanTokenizer
         if (Rune.IsDigit(rune))
             return CharClass.Digit;
 
+        // Han is its own word-break class in the reference's data, not ALetter: a MidLetter
+        // separator between a letter and an ideograph does not join them. The line that splits the
+        // ideograph into its own term is not a license to treat it as a word letter for the join
+        // tests around it.
+        if (_conditionalJoins && WordBreakClasses.IsIdeographic(rune))
+            return CharClass.Other;
+
         return Rune.IsLetter(rune) ? CharClass.Letter : CharClass.Other;
-    }
-
-    private static bool StartsWordAtStatic(ReadOnlySpan<char> text, int position)
-    {
-        char c = text[position];
-
-        if (c < 128)
-            return AsciiWordChars.Contains(c);
-
-        return Rune.DecodeFromUtf16(text[position..], out var rune, out _) == OperationStatus.Done
-            && Rune.IsLetterOrDigit(rune);
     }
 
     /// <summary>Normalizes, filters and stores one word range, honoring single-char/stop-word/stemming options.</summary>
