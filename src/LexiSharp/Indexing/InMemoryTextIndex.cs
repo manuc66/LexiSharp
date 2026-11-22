@@ -59,7 +59,12 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// built below the limit keeps serving the terms added later. Internal so a test can lower the
     /// limit without building a quarter-million-term corpus.
     /// </remarks>
-    internal int FuzzyTrieTermLimit { get; init; } = 250_000;
+    /// <summary>
+    /// The largest vocabulary for which the fuzzy trie is built. Exposed (and init-only) so a
+    /// caller can lower it for testing or for a memory-constrained host without rebuilding the
+    /// corpus; raising it above the measured limit is not recommended.
+    /// </summary>
+    public int FuzzyTrieTermLimit { get; init; } = 250_000;
 
     /// <summary>
     /// <see cref="_postings"/> seen through <see cref="ReadOnlySpan{T}"/>, so a query term that is
