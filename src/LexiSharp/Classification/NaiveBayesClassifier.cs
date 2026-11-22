@@ -617,6 +617,48 @@ public sealed class NaiveBayesClassifier
         return false;
     }
 
+    /// <summary>
+    /// Whether <paramref name="text"/> shares at least one token with the vocabulary learned for
+    /// <paramref name="category"/>.
+    /// </summary>
+    public bool HasVocabularyOverlap(string text, string category)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        ArgumentNullException.ThrowIfNull(category);
+
+        if (!_termCountsByClass.TryGetValue(category, out Dictionary<string, int>? classTerms))
+            return false;
+
+        foreach (string token in _tokenizer.Tokenize(text))
+        {
+            if (classTerms.ContainsKey(token))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Returns the categories, among those learned, that share at least one token with
+    /// <paramref name="text"/>.
+    /// </summary>
+    public IReadOnlyList<string> CategoriesWithVocabularyOverlap(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        var tokens = new HashSet<string>(_tokenizer.Tokenize(text), StringComparer.Ordinal);
+        var result = new List<string>();
+
+        foreach (var (category, classTerms) in _termCountsByClass)
+        {
+            if (classTerms.Keys.Any(tokens.Contains))
+                result.Add(category);
+        }
+
+        result.Sort(StringComparer.Ordinal);
+        return result;
+    }
+
     /// <summary>Writes the trained state; the caller writes the envelope.</summary>
     internal void WriteState(BinaryWriter writer)
     {
