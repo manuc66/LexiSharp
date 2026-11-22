@@ -94,6 +94,53 @@ public class EmojiTokenTests
     {
         Assert.Equal(["©️"], Segmenter().Tokenize("©️"));
         Assert.Equal(["❤️"], Segmenter().Tokenize("❤️"));
+        Assert.Equal(["🇫🇷️"], Segmenter().Tokenize("🇫🇷️"));
+    }
+
+    [Fact]
+    public void AModifierWithoutABaseIsItsOwnTerm()
+    {
+        Assert.Equal(["🏽"], Segmenter().Tokenize("🏽"));
+    }
+
+    [Fact]
+    public void AZwjSequenceKeepsTheModifierWithItsBase()
+    {
+        Assert.Equal(["👩🏽‍🚀"], Segmenter().Tokenize("👩🏽‍🚀"));
+    }
+
+    [Fact]
+    public void AKeycapWithoutTheSelectorIsStillOneTerm()
+    {
+        Assert.Equal(["#⃣"], Segmenter().Tokenize("#⃣"));
+    }
+
+    [Fact]
+    public void AHashAloneOrWithOnlyASelectorIsNotATerm()
+    {
+        Assert.Empty(Segmenter().Tokenize("#"));
+        Assert.Empty(Segmenter().Tokenize("#️"));
+        Assert.Equal(["z"], Segmenter().Tokenize("#z"));
+    }
+
+    [Fact]
+    public void AnEmojiBesideAWordDoesNotJoinIt()
+    {
+        Assert.Equal(["a", "👨‍👩", "z"], Segmenter().Tokenize("a👨‍👩z"));
+    }
+
+    [Fact]
+    public void AConfiguredSymbolAbsorbsTheSelectorAfterIt()
+    {
+        var tokenizer = new Tokenizer(new TokenizerOptions
+        {
+            KeepSingleCharTerms = true,
+            FoldDiacritics = false,
+            WordSegmentation = WordSegmentation.UnicodeWordBoundaries,
+            SymbolTerms = "©®™↔",
+        });
+
+        Assert.Equal(["↔️"], tokenizer.Tokenize("↔️"));
     }
 
     [Fact]
