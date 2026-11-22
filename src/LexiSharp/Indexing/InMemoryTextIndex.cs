@@ -49,6 +49,19 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     private readonly object _fuzzyTrieLock = new();
 
     /// <summary>
+    /// The largest vocabulary for which the fuzzy trie is built.
+    /// </summary>
+    /// <remarks>
+    /// The trie holds a node per character, so its cost grows with the vocabulary and not with the
+    /// number of matches. Measured at 200,000 terms: ~110 ms to build and 46 MiB allocated. Above this
+    /// limit a trie that does not exist yet is not built and the resolver walks the vocabulary
+    /// instead; the walk is slower per atom, but it is bounded and allocates almost nothing. A trie
+    /// built below the limit keeps serving the terms added later. Internal so a test can lower the
+    /// limit without building a quarter-million-term corpus.
+    /// </remarks>
+    internal int FuzzyTrieTermLimit { get; init; } = 250_000;
+
+    /// <summary>
     /// <see cref="_postings"/> seen through <see cref="ReadOnlySpan{T}"/>, so a query term that is
     /// its own normalized form is resolved without being materialized as a string first.
     /// </summary>
@@ -718,14 +731,32 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
     /// Every term within <paramref name="maxEdits"/> of <paramref name="term"/>, using the trie
     /// built on the first such query.
     /// </summary>
-    IEnumerable<FuzzyVocabularyMatch> IVocabularyFuzzyIndex.TermsWithinEdits(string term, int maxEdits)
+    bool IVocabularyFuzzyIndex.TryGetTermsWithinEdits(
+        string term,
+        int maxEdits,
+        out IReadOnlyList<FuzzyVocabularyMatch> matches)
     {
         ArgumentNullException.ThrowIfNull(term);
 
         if (maxEdits < 0 || _sortedTerms.Count == 0)
-            return Array.Empty<FuzzyVocabularyMatch>();
+        {
+            matches = Array.Empty<FuzzyVocabularyMatch>();
 
-        return FuzzyTrieFor().Within(term, maxEdits);
+            return false;
+        }
+
+        // A trie built while the vocabulary was small keeps serving: additions are what it is kept
+        // current for, so the cap only stops a build that has not happened yet.
+        if (Volatile.Read(ref _fuzzyTrie) is null && _sortedTerms.Count > FuzzyTrieTermLimit)
+        {
+            matches = Array.Empty<FuzzyVocabularyMatch>();
+
+            return false;
+        }
+
+        matches = FuzzyTrieFor().Within(term, maxEdits);
+
+        return true;
     }
 
     /// <summary>The trie for the current vocabulary, built once and then kept current by add/remove.</summary>

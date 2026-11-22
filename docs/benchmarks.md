@@ -1858,6 +1858,11 @@ that once and is slower than the walk on that first query; several atoms, or a p
 more than one fuzzy query, amortize it. The trie's row prunes a subtree when every cell is above the
 budget, which is why the warm query follows the matches rather than the vocabulary.
 
+The cost above is extrapolated, not measured: the trie holds a node per character, so the ceiling
+grows with the vocabulary rather than with the matches. The index therefore **declines the trie above
+250,000 terms** and the resolver falls back to the walk. That threshold is the measured 200,000-term
+cost with headroom, not a memory measurement at the cap.
+
 **What it does not measure.** Ingestion, concurrent writes, or the resolver's per-atom cap. It is a
 `Stopwatch` in a plain process, not a BenchmarkDotNet report; read the direction and the cold/warm
 split, not the last digit.
