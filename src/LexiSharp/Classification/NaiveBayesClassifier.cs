@@ -1,3 +1,5 @@
+using System.IO;
+
 using LexiSharp.Core;
 using LexiSharp.Linguistics;
 
@@ -59,7 +61,8 @@ namespace LexiSharp.Classification;
 /// </para>
 /// </remarks>
 public sealed class NaiveBayesClassifier
-    : IWeightedPredictor, IIncrementalTextClassifier, IReinforceableTextClassifier
+    : IWeightedPredictor, IIncrementalTextClassifier, IReinforceableTextClassifier,
+      IExplainableTextClassifier
 {
     private readonly ITokenizer _tokenizer;
     private readonly NaiveBayesOptions _options;
@@ -518,6 +521,38 @@ public sealed class NaiveBayesClassifier
         return results.Count > 0 ? results[0].Category : null;
     }
 
+    /// <inheritdoc />
+    public ClassificationExplanation? Explain(
+        string text,
+        int limit = 3,
+        IReadOnlySet<string>? excludedCategories = null)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        IReadOnlyList<ClassificationResult> results = Predict(text, limit, excludedCategories);
+
+        if (results.Count == 0 && _classCount == 0)
+            return null;
+
+        IReadOnlyList<string> tokens = _tokenizer.Tokenize(text);
+        var termContributions = new List<TermContribution>(tokens.Count);
+
+        foreach (string token in tokens.Distinct(StringComparer.Ordinal))
+        {
+            termContributions.Add(new TermContribution(
+                token,
+                TermFrequency: 0,
+                DocumentFrequency: _termDocumentFrequencies.TryGetValue(token, out int df) ? df : 0,
+                InverseDocumentFrequency: 0,
+                Score: 0));
+        }
+
+        return new ClassificationExplanation(
+            results,
+            new[] { new LaneContribution("NaiveBayes", 1.0, results) },
+            termContributions);
+    }
+
     /// <summary>
     /// Whether <paramref name="text"/> shares at least one token with the vocabulary this model
     /// was trained on.
@@ -580,6 +615,247 @@ public sealed class NaiveBayesClassifier
         }
 
         return false;
+    }
+
+    /// <summary>Writes the trained state; the caller writes the envelope.</summary>
+    internal void WriteState(BinaryWriter writer)
+    {
+        // Options.
+        writer.Write(_options.Temperature);
+        writer.Write((int)_options.IdfMode);
+        writer.Write(_options.Alpha);
+        writer.Write(_options.SmoothPriors);
+        writer.Write(_options.SkipOutOfVocabularyTokens);
+        writer.Write(_options.AbstainWithoutVocabularyOverlap);
+        writer.Write(_options.Complement);
+        writer.Write(_options.ClassSpecific);
+        writer.Write(_options.ClassSpecificThreshold);
+
+        writer.Write(_documentCount);
+        writer.Write(_totalTokenCount);
+        writer.Write(_classCount);
+        writer.Write(_vocabularySize);
+
+        // _classDocumentCounts
+        WriteStringIntDict(writer, _classDocumentCounts);
+        // _classTokenCounts
+        WriteStringIntDict(writer, _classTokenCounts);
+        // _globalTermCounts
+        WriteStringIntDict(writer, _globalTermCounts);
+        // _termDocumentFrequencies
+        WriteStringIntDict(writer, _termDocumentFrequencies);
+
+        // _termCountsByClass
+        writer.Write(_termCountsByClass.Count);
+        foreach (var (cls, dict) in _termCountsByClass.OrderBy(p => p.Key, StringComparer.Ordinal))
+        {
+            ModelFormat.WriteString(writer, cls);
+            WriteStringIntDict(writer, dict);
+        }
+
+        // _termDocumentCountsByClass
+        writer.Write(_termDocumentCountsByClass.Count);
+        foreach (var (cls, dict) in _termDocumentCountsByClass.OrderBy(p => p.Key, StringComparer.Ordinal))
+        {
+            ModelFormat.WriteString(writer, cls);
+            WriteStringIntDict(writer, dict);
+        }
+
+        // _selectedTermsByClass
+        writer.Write(_selectedTermsByClass.Count);
+        foreach (var (cls, set) in _selectedTermsByClass.OrderBy(p => p.Key, StringComparer.Ordinal))
+        {
+            ModelFormat.WriteString(writer, cls);
+            ModelFormat.WriteStrings(writer, set.OrderBy(s => s, StringComparer.Ordinal).ToArray());
+        }
+
+        // _reinforcementByClass
+        writer.Write(_reinforcementByClass.Count);
+        foreach (var (cls, dict) in _reinforcementByClass.OrderBy(p => p.Key, StringComparer.Ordinal))
+        {
+            ModelFormat.WriteString(writer, cls);
+            writer.Write(dict.Count);
+            foreach (var (term, mass) in dict.OrderBy(p => p.Key, StringComparer.Ordinal))
+            {
+                ModelFormat.WriteString(writer, term);
+                writer.Write(mass);
+            }
+        }
+    }
+
+    /// <summary>Reads the trained state into a new model.</summary>
+    internal static NaiveBayesClassifier ReadState(BinaryReader reader, ITokenizer? tokenizer)
+    {
+        double temperature = reader.ReadDouble();
+        var idfMode = (IdfMode)reader.ReadInt32();
+        double alpha = reader.ReadDouble();
+        bool smoothPriors = reader.ReadBoolean();
+        bool skipOov = reader.ReadBoolean();
+        bool abstain = reader.ReadBoolean();
+        bool complement = reader.ReadBoolean();
+        bool classSpecific = reader.ReadBoolean();
+        double threshold = reader.ReadDouble();
+
+        var options = new NaiveBayesOptions
+        {
+            Temperature = temperature,
+            IdfMode = idfMode,
+            Alpha = alpha,
+            SmoothPriors = smoothPriors,
+            SkipOutOfVocabularyTokens = skipOov,
+            AbstainWithoutVocabularyOverlap = abstain,
+            Complement = complement,
+            ClassSpecific = classSpecific,
+            ClassSpecificThreshold = threshold,
+        };
+
+        if (!options.IsValid)
+            throw new InvalidDataException("The stored Naive Bayes options are not valid.");
+
+        int documentCount = reader.ReadInt32();
+        int totalTokenCount = reader.ReadInt32();
+        int classCount = reader.ReadInt32();
+        int vocabularySize = reader.ReadInt32();
+
+        var model = new NaiveBayesClassifier(tokenizer, options);
+
+        // Use reflection? Fields are private. We'll set via a helper that populates through public? 
+        // NaiveBayesClassifier has no bulk load; instead reconstruct by re-training is not possible without corpus.
+        // Therefore add an internal loader method.
+        model.LoadState(
+            documentCount, totalTokenCount, classCount, vocabularySize,
+            ReadStringIntDict(reader),
+            ReadStringIntDict(reader),
+            ReadStringIntDict(reader),
+            ReadStringIntDict(reader),
+            ReadNestedStringIntDict(reader),
+            ReadNestedStringIntDict(reader),
+            ReadSelectedTerms(reader),
+            ReadReinforcement(reader));
+
+        return model;
+    }
+
+    private static void WriteStringIntDict(BinaryWriter writer, Dictionary<string, int> dict)
+    {
+        writer.Write(dict.Count);
+        foreach (var (key, value) in dict.OrderBy(p => p.Key, StringComparer.Ordinal))
+        {
+            ModelFormat.WriteString(writer, key);
+            writer.Write(value);
+        }
+    }
+
+    private static Dictionary<string, int> ReadStringIntDict(BinaryReader reader)
+    {
+        int count = ModelFormat.ReadCount(reader);
+        var dict = new Dictionary<string, int>(count, StringComparer.Ordinal);
+
+        for (int i = 0; i < count; i++)
+        {
+            string key = ModelFormat.ReadString(reader) ?? throw new InvalidDataException("A Naive Bayes key is null.");
+            int value = reader.ReadInt32();
+            dict[key] = value;
+        }
+
+        return dict;
+    }
+
+    private static Dictionary<string, Dictionary<string, int>> ReadNestedStringIntDict(BinaryReader reader)
+    {
+        int count = ModelFormat.ReadCount(reader);
+        var outer = new Dictionary<string, Dictionary<string, int>>(count, StringComparer.Ordinal);
+
+        for (int i = 0; i < count; i++)
+        {
+            string key = ModelFormat.ReadString(reader) ?? throw new InvalidDataException("A Naive Bayes key is null.");
+            outer[key] = ReadStringIntDict(reader);
+        }
+
+        return outer;
+    }
+
+    private static Dictionary<string, HashSet<string>> ReadSelectedTerms(BinaryReader reader)
+    {
+        int count = ModelFormat.ReadCount(reader);
+        var outer = new Dictionary<string, HashSet<string>>(count, StringComparer.Ordinal);
+
+        for (int i = 0; i < count; i++)
+        {
+            string key = ModelFormat.ReadString(reader) ?? throw new InvalidDataException("A Naive Bayes key is null.");
+            string[] values = ModelFormat.ReadStrings(reader);
+            outer[key] = new HashSet<string>(values, StringComparer.Ordinal);
+        }
+
+        return outer;
+    }
+
+    private static Dictionary<string, Dictionary<string, double>> ReadReinforcement(BinaryReader reader)
+    {
+        int count = ModelFormat.ReadCount(reader);
+        var outer = new Dictionary<string, Dictionary<string, double>>(count, StringComparer.Ordinal);
+
+        for (int i = 0; i < count; i++)
+        {
+            string key = ModelFormat.ReadString(reader) ?? throw new InvalidDataException("A Naive Bayes key is null.");
+            int innerCount = ModelFormat.ReadCount(reader);
+            var inner = new Dictionary<string, double>(innerCount, StringComparer.Ordinal);
+
+            for (int j = 0; j < innerCount; j++)
+            {
+                string term = ModelFormat.ReadString(reader) ?? throw new InvalidDataException("A Naive Bayes term is null.");
+                double mass = reader.ReadDouble();
+                inner[term] = mass;
+            }
+
+            outer[key] = inner;
+        }
+
+        return outer;
+    }
+
+    internal void LoadState(
+        int documentCount,
+        int totalTokenCount,
+        int classCount,
+        int vocabularySize,
+        Dictionary<string, int> classDocumentCounts,
+        Dictionary<string, int> classTokenCounts,
+        Dictionary<string, int> globalTermCounts,
+        Dictionary<string, int> termDocumentFrequencies,
+        Dictionary<string, Dictionary<string, int>> termCountsByClass,
+        Dictionary<string, Dictionary<string, int>> termDocumentCountsByClass,
+        Dictionary<string, HashSet<string>> selectedTermsByClass,
+        Dictionary<string, Dictionary<string, double>> reinforcementByClass)
+    {
+        _classDocumentCounts.Clear();
+        foreach (var (k, v) in classDocumentCounts) _classDocumentCounts[k] = v;
+
+        _classTokenCounts.Clear();
+        foreach (var (k, v) in classTokenCounts) _classTokenCounts[k] = v;
+
+        _globalTermCounts.Clear();
+        foreach (var (k, v) in globalTermCounts) _globalTermCounts[k] = v;
+
+        _termDocumentFrequencies.Clear();
+        foreach (var (k, v) in termDocumentFrequencies) _termDocumentFrequencies[k] = v;
+
+        _termCountsByClass.Clear();
+        foreach (var (k, v) in termCountsByClass) _termCountsByClass[k] = new Dictionary<string, int>(v, StringComparer.Ordinal);
+
+        _termDocumentCountsByClass.Clear();
+        foreach (var (k, v) in termDocumentCountsByClass) _termDocumentCountsByClass[k] = new Dictionary<string, int>(v, StringComparer.Ordinal);
+
+        _selectedTermsByClass.Clear();
+        foreach (var (k, v) in selectedTermsByClass) _selectedTermsByClass[k] = new HashSet<string>(v, StringComparer.Ordinal);
+
+        _reinforcementByClass.Clear();
+        foreach (var (k, v) in reinforcementByClass) _reinforcementByClass[k] = new Dictionary<string, double>(v, StringComparer.Ordinal);
+
+        _documentCount = documentCount;
+        _totalTokenCount = totalTokenCount;
+        _classCount = classCount;
+        _vocabularySize = vocabularySize;
     }
 
     /// <summary>

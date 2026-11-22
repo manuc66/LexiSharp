@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
+
 using LexiSharp.Core;
+using LexiSharp.Linguistics;
 
 namespace LexiSharp.Classification;
 
@@ -39,6 +41,8 @@ public static class ClassificationModelSerializer
         Linear = 3,
         Calibrated = 4,
         Centroid = 5,
+        NaiveBayes = 6,
+        NearestNeighbor = 7,
     }
 
     /// <summary>Saves a trained model.</summary>
@@ -83,6 +87,18 @@ public static class ClassificationModelSerializer
     public static void Save(CentroidClassifier model, Stream destination) =>
         Save((ITextClassifier)model, destination);
 
+    /// <summary>Saves a Naive Bayes model.</summary>
+    /// <param name="model">The model to save.</param>
+    /// <param name="destination">The stream to write to; it is left open.</param>
+    public static void Save(NaiveBayesClassifier model, Stream destination) =>
+        Save((ITextClassifier)model, destination);
+
+    /// <summary>Saves a nearest-neighbour model.</summary>
+    /// <param name="model">The model to save.</param>
+    /// <param name="destination">The stream to write to; it is left open.</param>
+    public static void Save(NearestNeighborClassifier model, Stream destination) =>
+        Save((ITextClassifier)model, destination);
+
     /// <summary>Loads a model, dispatching on the stored kind.</summary>
     /// <param name="source">The stream to read; it is left open.</param>
     /// <param name="features">The feature source to pair with the loaded state; null means a default <see cref="TextFeatureSource"/>.</param>
@@ -114,6 +130,40 @@ public static class ClassificationModelSerializer
         using var reader = new BinaryReader(source, Encoding.UTF8, leaveOpen: true);
         ReadHeader(reader, ModelKind.Centroid, out _);
         return CentroidClassifier.ReadState(reader, embeddings);
+    }
+
+    /// <summary>Loads a Naive Bayes model, pairing its state with the caller's tokenizer.</summary>
+    /// <param name="source">The stream to read; it is left open.</param>
+    /// <param name="tokenizer">The tokenizer to pair with the loaded model; null means <see cref="Tokenizer.Default"/>.</param>
+    /// <returns>The loaded Naive Bayes model.</returns>
+    public static NaiveBayesClassifier LoadNaiveBayes(
+        Stream source,
+        ITokenizer? tokenizer = null)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        using var reader = new BinaryReader(source, Encoding.UTF8, leaveOpen: true);
+        ReadHeader(reader, ModelKind.NaiveBayes, out _);
+        return NaiveBayesClassifier.ReadState(reader, tokenizer);
+    }
+
+    /// <summary>Loads a nearest-neighbour model, pairing its state with the caller's dependencies.</summary>
+    /// <param name="source">The stream to read; it is left open.</param>
+    /// <param name="tokenizer">The tokenizer to pair with a stored lexical model.</param>
+    /// <param name="embeddings">The embedding provider to pair with a stored dense model.</param>
+    /// <returns>The loaded nearest-neighbour model.</returns>
+    public static NearestNeighborClassifier LoadNearestNeighbor(
+        Stream source,
+        ITokenizer? tokenizer = null,
+        IEmbeddingProvider? embeddings = null)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        using var reader = new BinaryReader(source, Encoding.UTF8, leaveOpen: true);
+        ReadHeader(reader, ModelKind.NearestNeighbor, out _);
+        var nnType = Type.GetType("LexiSharp.Classification.NearestNeighborClassifier, LexiSharp");
+        var readMethod = nnType!.GetMethod("ReadState", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+        return (NearestNeighborClassifier)readMethod!.Invoke(null, new object?[] { reader, tokenizer, embeddings })!;
     }
 
     /// <summary>Loads a decision tree.</summary>
@@ -220,14 +270,24 @@ public static class ClassificationModelSerializer
                 centroid.WriteState(writer);
                 break;
 
+            case NaiveBayesClassifier naiveBayes:
+                WriteHeader(writer, ModelKind.NaiveBayes, string.Empty);
+                naiveBayes.WriteState(writer);
+                break;
+
             case FusedTextClassifier:
             case BlendTextClassifier:
                 throw new NotSupportedException(
                     "A blended classifier is a graph of models and evidence sources; save the lanes individually.");
 
-            case NearestNeighborClassifier:
-                throw new NotSupportedException(
-                    "A nearest-neighbour model stores its corpus; persistence is not implemented in v1.");
+            case { } _ when model.GetType().FullName == "LexiSharp.Classification.NearestNeighborClassifier":
+                WriteHeader(writer, ModelKind.NearestNeighbor, string.Empty);
+                {
+                    var nnType = Type.GetType("LexiSharp.Classification.NearestNeighborClassifier, LexiSharp");
+                    var writeMethod = nnType!.GetMethod("WriteState", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                    writeMethod!.Invoke(model, new object[] { writer });
+                }
+                break;
 
             default:
                 throw new NotSupportedException(
@@ -276,6 +336,20 @@ public static class ClassificationModelSerializer
 
                 model = CentroidClassifier.ReadState(reader, embeddings);
                 actual = string.Empty;
+                break;
+
+            case ModelKind.NaiveBayes:
+                model = NaiveBayesClassifier.ReadState(reader, null);
+                actual = string.Empty;
+                break;
+
+            case ModelKind.NearestNeighbor:
+                {
+                    var nnType = Type.GetType("LexiSharp.Classification.NearestNeighborClassifier, LexiSharp");
+                    var readMethod = nnType!.GetMethod("ReadState", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+                    model = (ITextClassifier)readMethod!.Invoke(null, new object?[] { reader, null, embeddings })!;
+                    actual = string.Empty;
+                }
                 break;
 
             default:

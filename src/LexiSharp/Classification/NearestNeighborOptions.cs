@@ -17,7 +17,7 @@ public enum NeighborVote
 }
 
 /// <summary>
-/// Tunable knobs for <see cref="NearestNeighborClassifier"/>: how many neighbours vote, how their
+/// Tunable knobs for <c>NearestNeighborClassifier</c>: how many neighbours vote, how their
 /// scores become weights, the BM25 parameters of the lexical path, and the embedding role of the
 /// dense path.
 /// </summary>
