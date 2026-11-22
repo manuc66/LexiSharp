@@ -28,7 +28,7 @@ namespace LexiSharp.Hybrid;
 /// query yields no tokens, the incoming order is kept untouched.
 /// </para>
 /// </remarks>
-public sealed class MaxSimReranker : IReranker
+public sealed class MaxSimReranker : IReranker, IRerankerExplainer
 {
     private readonly ITokenEmbeddingProvider _model;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<ReadOnlyMemory<float>>> _documentVectors;
@@ -180,5 +180,77 @@ public sealed class MaxSimReranker : IReranker
         }
 
         return total;
+    }
+
+    /// <inheritdoc />
+    public RerankExplanation? ExplainRerank(string query, IReadOnlyList<SearchResult> candidates, string documentId)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(candidates);
+
+        var candidate = candidates.FirstOrDefault(c => c.DocumentId == documentId);
+        if (candidate.Equals(default(SearchResult)) && !candidates.Any(c => c.DocumentId == documentId))
+            return null;
+
+        if (!_documentVectors.TryGetValue(documentId, out var documentTokens) || documentTokens.Count == 0)
+            return null;
+
+        var queryTokens = _model.GetTokenEmbeddings(query, EmbeddingUse.Query);
+        if (queryTokens.Count == 0)
+            return null;
+
+        if (!AllSameDimension(queryTokens, documentTokens))
+            return null;
+
+        var queryNorms = new float[queryTokens.Count];
+        for (int i = 0; i < queryNorms.Length; i++)
+            queryNorms[i] = VectorSimilarity.Norm(queryTokens[i].Span);
+
+        var documentNorms = new float[documentTokens.Count];
+        for (int i = 0; i < documentNorms.Length; i++)
+            documentNorms[i] = VectorSimilarity.Norm(documentTokens[i].Span);
+
+        var signals = new List<RerankSignal>(queryTokens.Count);
+        double total = 0;
+
+        for (int q = 0; q < queryTokens.Count; q++)
+        {
+            ReadOnlySpan<float> queryToken = queryTokens[q].Span;
+            float queryNorm = queryNorms[q];
+            float best = float.MinValue;
+            int bestToken = -1;
+
+            for (int t = 0; t < documentTokens.Count; t++)
+            {
+                float similarity = VectorSimilarity.CosineSimilarity(
+                    queryToken, documentTokens[t].Span, queryNorm, documentNorms[t]);
+
+                if (similarity > best)
+                {
+                    best = similarity;
+                    bestToken = t;
+                }
+            }
+
+            if (bestToken >= 0)
+            {
+                signals.Add(new RerankSignal(
+                    $"query-token-{q}-to-doc-token-{bestToken}",
+                    1.0,
+                    best,
+                    best));
+                total += best;
+            }
+        }
+
+        if (signals.Count == 0)
+            return null;
+
+        string summary = string.Create(
+            System.Globalization.CultureInfo.InvariantCulture,
+            $"MaxSim selected '{documentId}' (score={total:0.0000}): {signals.Count} query tokens matched, " +
+            $"best match per token shown.");
+
+        return new RerankExplanation(documentId, total, signals, summary);
     }
 }
