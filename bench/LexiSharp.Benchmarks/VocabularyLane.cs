@@ -25,9 +25,10 @@ namespace LexiSharp.Benchmarks;
 /// read-only corpus pays the sort once while a corpus that writes between queries pays it again.
 /// </para>
 /// <para>
-/// Fuzzy atoms are unchanged: they still walk the vocabulary. Making edit-distance search sub-linear
-/// needs a different index (a trie with a Levenshtein automaton, or a BK-tree), and this lane does not
-/// claim one.
+/// Fuzzy atoms <c>term~</c> are measured separately: the first one builds a trie over the vocabulary
+/// and later ones walk it with a Levenshtein row, against the same vocabulary without that structure.
+/// Above <see cref="InMemoryTextIndex.FuzzyTrieTermLimit"/> the trie is declined and only the walk
+/// remains, so this lane can also report what a vocabulary too large for the trie costs.
 /// </para>
 /// </remarks>
 internal static class VocabularyLane
@@ -73,6 +74,20 @@ internal static class VocabularyLane
     private static void MeasureFuzzy(InMemoryTextIndex index, VocabularyOnly fallback, string term)
     {
         var atom = new QueryExpansion(term, QueryExpansionKind.Fuzzy);
+
+        // No fuzzy query has run yet, so the trie is absent and the cap decides.
+        if (index.VocabularySize > index.FuzzyTrieTermLimit)
+        {
+            double declinedWalk = Median(
+                () => new QueryExpansionResolver(fallback, fuzzyOnlyOutOfVocabulary: false).Resolve(atom).Length,
+                iterations: 3);
+
+            Console.WriteLine(
+                $"  {term + "~",-12} trie declined above {Number(index.FuzzyTrieTermLimit)} terms    " +
+                $"walk {Time(declinedWalk),9}");
+
+            return;
+        }
 
         long coldStarted = Stopwatch.GetTimestamp();
         int matches = new QueryExpansionResolver(index, fuzzyOnlyOutOfVocabulary: false).Resolve(atom).Length;

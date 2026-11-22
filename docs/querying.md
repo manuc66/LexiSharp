@@ -383,9 +383,11 @@ budget. On the same 200,000-term corpus:
 The build was measured at **110 ms and 46 MiB allocated** for 200,000 terms. A single fuzzy atom
 therefore pays more than the walk once; a query with several atoms, or a process that serves more
 than one fuzzy query, amortizes it. The tree is kept current by `Add`/`Remove` after it exists (a
-removal clears the terminal flag and keeps the path). An index that does not implement
-`IVocabularyFuzzyIndex` — the PostgreSQL backends, a segment, a decorator — still compares its base
-against every term, which is the cost the 32-atom cap bounds.
+removal clears the terminal flag and keeps the path). **Above 250,000 terms the trie is not built**:
+the node-per-character cost grows with the vocabulary rather than with the matches, so the resolver
+uses the bounded walk instead. An index that does not implement `IVocabularyFuzzyIndex` — the
+PostgreSQL backends, a segment, a decorator, or an in-memory index above the cap — still compares its
+base against every term, which is the cost the 32-atom cap bounds.
 
 
 ## Synonyms
