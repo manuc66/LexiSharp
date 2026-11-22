@@ -89,6 +89,9 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
 
     private static readonly SparseVector EmptyVector = new([], []);
 
+    /// <summary>First capacity of a posting list created by <see cref="Add"/>, which has no count to size from.</summary>
+    private const int ExpectedPostingCapacity = 4;
+
     private readonly Dictionary<string, PostingList> _postings = new(StringComparer.Ordinal);
 
     /// <param name="embeddings">External sparse embedding producer; never implemented inside LexiSharp.</param>
@@ -206,16 +209,33 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
     {
         ArgumentNullException.ThrowIfNull(entries);
 
-        Clear();
+        // Counted before anything is stored, so each posting list can be allocated once at its
+        // final size instead of doubling from four entries and copying its contents on the way.
+        // The list is materialized because that count is a second enumeration; the entries array
+        // the callers pass is already one, and a lazy source is cheaper to hold than to re-read.
+        IReadOnlyList<SparseIndexEntry> list = entries as IReadOnlyList<SparseIndexEntry> ?? [.. entries];
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
 
-        foreach (var entry in entries)
+        foreach (var entry in list)
         {
             ArgumentNullException.ThrowIfNull(entry);
             ArgumentNullException.ThrowIfNull(entry.Document);
             ArgumentNullException.ThrowIfNull(entry.Weights);
 
-            AddVector(entry.Document, entry.Weights);
+            foreach (var (term, weight) in entry.Weights)
+            {
+                if (IsStorable(term, weight))
+                    counts[term] = counts.TryGetValue(term, out int count) ? count + 1 : 1;
+            }
         }
+
+        Clear();
+
+        foreach (var (term, count) in counts)
+            _postings[term] = new PostingList(count);
+
+        foreach (var entry in list)
+            AddVector(entry.Document, entry.Weights);
     }
 
     /// <inheritdoc />
@@ -351,7 +371,7 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
 
             foreach (var (term, weight) in vector)
             {
-                if (string.IsNullOrEmpty(term) || !float.IsFinite(weight) || weight <= 0)
+                if (!IsStorable(term, weight))
                     continue;
 
                 terms[kept] = term;
@@ -370,7 +390,7 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
         {
             if (!_postings.TryGetValue(terms[i], out var postings))
             {
-                postings = new PostingList();
+                postings = new PostingList(ExpectedPostingCapacity);
                 _postings[terms[i]] = postings;
             }
 
@@ -384,6 +404,9 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
         ordinal >= 0 && ordinal < _byOrdinal.Count ? _byOrdinal[ordinal] : null;
 
     private string? IdAt(int ordinal) => DocumentAt(ordinal)?.Id;
+
+    private static bool IsStorable(string term, float weight) =>
+        !string.IsNullOrEmpty(term) && float.IsFinite(weight) && weight > 0;
 
     private static IReadOnlyDictionary<string, float> Materialize(SparseVector vector)
     {
@@ -404,8 +427,14 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
     /// </summary>
     private sealed class PostingList
     {
-        private int[] _ordinals = new int[4];
-        private float[] _weights = new float[4];
+        private int[] _ordinals;
+        private float[] _weights;
+
+        public PostingList(int capacity)
+        {
+            _ordinals = new int[capacity];
+            _weights = new float[capacity];
+        }
 
         public int Count { get; private set; }
 
