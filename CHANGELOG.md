@@ -276,6 +276,16 @@
 
 ### Changed
 
+- **The sparse engine stores a document's vector as two aligned arrays instead of a dictionary.**
+  Importing 50,000 documents / 8,650,000 postings allocated **775.8 MB** (15,516 B/document), half
+  of it a second `Dictionary<string,float>` per document that re-hashed every term only to filter
+  invalid weights and take ownership. Aligned `string[]` / `float[]` arrays cut that to
+  **371.6 MB** (7,431 B/document) and process CPU from 3.3–5.0 s to 2.9–3.9 s on the same corpus.
+  `Export` materializes the dictionaries on demand; `SparseIndexEntry`, the public API and the
+  ownership guarantee (a caller's dictionary cannot alias the engine) are unchanged. The
+  `sparse-engine` lane gains `--import-only`, allocation and process-CPU columns, and the
+  measurements are in [benchmarks.md](docs/benchmarks.md#sparse-engine-lane-sparse-engine-where-a-learned-sparse-query-spends-its-time).
+
 - **Fuzzy expansion fetches a candidate's document frequency once per resolver pass.** The sort
   comparer previously called `DocumentFrequency` twice per comparison, so a term's constant
   frequency was probed O(candidates log candidates) times; the frequency now travels with the

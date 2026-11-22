@@ -1966,6 +1966,29 @@ contiguous postings and an ordinal accumulator — about **8× faster and 280× 
 0.53–0.65 ms and 1.4 KB for the fixed head-40 shape above; the two query draws are not identical, so
 read that row as a direction, not a ratio. Import at 50,000 documents falls from ~4.0 s to ~2.4 s.
 
+**Where the import's bytes went (`--import-only`).** The lane can stop after the build and report
+the import's wall time, its process CPU and its managed allocation. At 50,000 documents /
+8,650,000 postings, two ablations put the cost in one place:
+
+| Import does | Allocated | Per document | Cost |
+|---|---:|---:|---:|
+| bookkeeping only | 9.2 MB | 183 B | 0.04–0.14 s wall |
+| postings only (vector not copied) | 266.2 MB | 5,324 B | 1.7–3.8 s wall |
+| dictionary copy + postings (before) | 775.8 MB | 15,516 B | 3.3–5.0 s CPU |
+| aligned arrays + postings (after) | **371.6 MB** | **7,431 B** | **2.9–3.9 s CPU** |
+
+The per-document dictionary copy was a second `Dictionary<string,float>` per document, re-hashing
+all 173 terms only to filter invalid weights and to own the vector. The engine now stores each
+vector as two aligned arrays (`string[]` / `float[]`), filtering during that copy; `Export`
+materializes the dictionaries on demand. The public `SparseIndexEntry` shape is unchanged, and the
+copy still means a caller's dictionary cannot alias the engine.
+
+The postings are the remaining allocation (~257 MB, and ~105 MB for the arrays): each list grows by
+doubling from four entries, so it copies its contents on the way to its final size. Sizing them
+exactly first needs a counting pass over the same 8.65 M terms; that trade was not taken. CPU is
+process CPU on this host, wall time on a shared one, so read the ranges and the deterministic byte
+counts, not the last digit.
+
 **What it does not measure.** The provider (ONNX inference is outside the engine), a real SPLADE
 distribution, concurrent searches, or rebuilds under mutation. Nor the cost of removing a document:
 the posting arrays close their gap when an entry leaves, which is linear in the list it leaves and

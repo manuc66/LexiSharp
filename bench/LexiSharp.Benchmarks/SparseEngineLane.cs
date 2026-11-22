@@ -38,8 +38,14 @@ internal static class SparseEngineLane
 
     public static void Run(string[] args)
     {
-        int documents = args.Length > 0 ? ParsePositive(args[0], "documents") : DefaultDocuments;
-        int termsPerDocument = args.Length > 1 ? ParsePositive(args[1], "terms per document") : DefaultTermsPerDocument;
+        // The import profile is the half of this lane that does not need the query shapes: a
+        // layout change is decided on the build, and running the searches only adds noise to a
+        // sampling profile or to a wall-clock comparison of two imports.
+        bool importOnly = args.Contains("--import-only", StringComparer.Ordinal);
+        string[] positional = [.. args.Where(argument => !argument.StartsWith("--", StringComparison.Ordinal))];
+
+        int documents = positional.Length > 0 ? ParsePositive(positional[0], "documents") : DefaultDocuments;
+        int termsPerDocument = positional.Length > 1 ? ParsePositive(positional[1], "terms per document") : DefaultTermsPerDocument;
 
         // Each document draws its terms from the same fixed vocabulary, so asking for more distinct
         // terms than the vocabulary holds would never fill the vector and would hang the lane.
@@ -56,16 +62,29 @@ internal static class SparseEngineLane
         generation.Stop();
 
         var engine = new SparseTextSearchEngine(new FixedProvider(corpus.Queries));
+        long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        var process = Process.GetCurrentProcess();
+        process.Refresh();
+        TimeSpan cpuBefore = process.TotalProcessorTime;
         var build = Stopwatch.StartNew();
         engine.Import(corpus.Entries);
         build.Stop();
+        process.Refresh();
+        TimeSpan cpu = process.TotalProcessorTime - cpuBefore;
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
 
         Console.WriteLine(
             $"corpus          {Number(corpus.Entries.Count)} documents, {Number(corpus.Postings)} postings " +
             $"({Number(corpus.Postings / Math.Max(corpus.Entries.Count, 1))} per document), " +
             $"generated in {generation.Elapsed.TotalSeconds.ToString("0.00", CultureInfo.InvariantCulture)} s");
         Console.WriteLine($"index build     {Time(build.Elapsed.TotalMilliseconds * 1_000)}  (Import, one pass)");
+        Console.WriteLine(
+            $"import alloc    {Number(allocated)} B total, {Number(allocated / Math.Max(corpus.Entries.Count, 1))} B/document");
+        Console.WriteLine($"import cpu      {Time(cpu.TotalMilliseconds * 1_000)}  (process CPU, all threads)");
         Console.WriteLine($"engine          {Number(engine.Count)} documents, {Number(engine.VocabularySize)} terms");
+
+        if (importOnly)
+            return;
 
         foreach (var query in corpus.Queries)
             Measure(engine, query);
