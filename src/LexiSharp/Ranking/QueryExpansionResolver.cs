@@ -194,9 +194,10 @@ internal sealed class QueryExpansionResolver
     {
         var candidates = new List<(string Term, int Distance, int Frequency)>();
 
-        if (_fuzzyIndex is not null)
+        if (_fuzzyIndex is not null &&
+            _fuzzyIndex.TryGetTermsWithinEdits(expansion.BaseTerm, expansion.MaxEdits, out var matches))
         {
-            foreach (var match in _fuzzyIndex.TermsWithinEdits(expansion.BaseTerm, expansion.MaxEdits))
+            foreach (var match in matches)
                 candidates.Add((match.Term, match.Distance, _vocabulary!.DocumentFrequency(match.Term)));
         }
         else
