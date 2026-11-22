@@ -162,7 +162,7 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
 
                 postings.Remove(ordinal);
 
-                if (postings.Count == 0)
+                if (postings.LiveCount == 0)
                     _postings.Remove(term);
             }
         }
@@ -290,8 +290,21 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
             if (!_postings.TryGetValue(term, out var postings))
                 continue;
 
-            for (int i = 0; i < postings.Count; i++)
-                scores.Record(postings.OrdinalAt(i), (double)queryWeight * postings.WeightAt(i));
+            if (postings.HasTombstones)
+            {
+                for (int i = 0; i < postings.Count; i++)
+                {
+                    float weight = postings.WeightAt(i);
+
+                    if (weight > 0)
+                        scores.Record(postings.OrdinalAt(i), (double)queryWeight * weight);
+                }
+            }
+            else
+            {
+                for (int i = 0; i < postings.Count; i++)
+                    scores.Record(postings.OrdinalAt(i), (double)queryWeight * postings.WeightAt(i));
+            }
         }
 
         // The window is sized to the page the caller asked for, never to the candidate set. A
@@ -429,6 +442,9 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
     {
         private int[] _ordinals;
         private float[] _weights;
+        private int _liveCount;
+        private bool _sorted = true;
+        private bool _hasTombstones;
 
         public PostingList(int capacity)
         {
@@ -438,6 +454,12 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
 
         public int Count { get; private set; }
 
+        /// <summary>Entries that still belong to a document; the rest are removal tombstones.</summary>
+        public int LiveCount => _liveCount;
+
+        /// <summary>Whether any entry has been tombstoned and not yet compacted away.</summary>
+        public bool HasTombstones => _hasTombstones;
+
         public int OrdinalAt(int index) => _ordinals[index];
 
         public float WeightAt(int index) => _weights[index];
@@ -446,35 +468,123 @@ public sealed class SparseTextSearchEngine : ITextSearchEngine, IQuerySyntaxSupp
         {
             if (Count == _ordinals.Length)
             {
-                Array.Resize(ref _ordinals, _ordinals.Length * 2);
-                Array.Resize(ref _weights, _weights.Length * 2);
+                int capacity = Math.Max(_ordinals.Length * 2, 4);
+                Array.Resize(ref _ordinals, capacity);
+                Array.Resize(ref _weights, capacity);
             }
+
+            // Import and ordinary appends grow the ordinal, so the array is ascending and a removal
+            // can binary-search it. A reused freed ordinal is smaller and drops that property; the
+            // list then falls back to a linear scan, which is what it had before.
+            if (_sorted && Count > 0 && _ordinals[Count - 1] >= ordinal)
+                _sorted = false;
 
             _ordinals[Count] = ordinal;
             _weights[Count] = weight;
             Count++;
+            _liveCount++;
         }
 
+        /// <summary>
+        /// Tombstones every live entry for <paramref name="ordinal"/>, then compacts when half the
+        /// array is dead. This is what makes a removal independent of the list's length.
+        /// </summary>
+        /// <remarks>
+        /// The arrays are append-only between compactions, so a search still visits the tombstone:
+        /// the engine's loop skips a non-positive weight, and only the lists that have any pay that
+        /// branch. Order is preserved, so two searches over an unchanged corpus still visit the same
+        /// entries in the same sequence.
+        /// </remarks>
         public bool Remove(int ordinal)
         {
-            for (int i = 0; i < Count; i++)
+            bool removed = _sorted ? TombstoneSorted(ordinal) : TombstoneLinear(ordinal);
+
+            if (!removed)
+                return false;
+
+            _hasTombstones = true;
+
+            if (_liveCount * 2 < Count)
+                Compact();
+
+            return true;
+        }
+
+        private bool TombstoneSorted(int ordinal)
+        {
+            int low = 0;
+            int high = Count;
+
+            while (low < high)
             {
-                if (_ordinals[i] != ordinal)
-                    continue;
+                int middle = low + ((high - low) >> 1);
 
-                int move = Count - i - 1;
-
-                if (move > 0)
-                {
-                    Array.Copy(_ordinals, i + 1, _ordinals, i, move);
-                    Array.Copy(_weights, i + 1, _weights, i, move);
-                }
-
-                Count--;
-                return true;
+                if (_ordinals[middle] < ordinal)
+                    low = middle + 1;
+                else
+                    high = middle;
             }
 
-            return false;
+            bool removed = false;
+
+            for (int i = low; i < Count && _ordinals[i] == ordinal; i++)
+            {
+                if (_weights[i] <= 0)
+                    continue;
+
+                _weights[i] = 0;
+                _liveCount--;
+                removed = true;
+            }
+
+            return removed;
+        }
+
+        private bool TombstoneLinear(int ordinal)
+        {
+            bool removed = false;
+
+            for (int i = 0; i < Count; i++)
+            {
+                if (_ordinals[i] != ordinal || _weights[i] <= 0)
+                    continue;
+
+                _weights[i] = 0;
+                _liveCount--;
+                removed = true;
+            }
+
+            return removed;
+        }
+
+        private void Compact()
+        {
+            if (_liveCount == 0)
+            {
+                Count = 0;
+                _hasTombstones = false;
+
+                return;
+            }
+
+            var ordinals = new int[_liveCount];
+            var weights = new float[_liveCount];
+            int kept = 0;
+
+            for (int i = 0; i < Count; i++)
+            {
+                if (_weights[i] <= 0)
+                    continue;
+
+                ordinals[kept] = _ordinals[i];
+                weights[kept] = _weights[i];
+                kept++;
+            }
+
+            _ordinals = ordinals;
+            _weights = weights;
+            Count = kept;
+            _hasTombstones = false;
         }
     }
 }
