@@ -69,6 +69,7 @@ are listed first.
 | `IReadOnlyTextIndex` | — | The read-only view of an ITextIndex: the corpus statistics and per-document lookups a scorer, a reranker or an extractor needs, with none of the mutation… | [guide](reference.md) |
 | `IReinforceableTextClassifier` | `ITextClassifier` | Optional capability of an ITextClassifier: adjust a trained model from user feedback, one text-to-category association at a time, without a retraining pass over… | [guide](reference.md) |
 | `IReranker` | — | Contract for re-ordering a list of candidate results after retrieval — the seam for second-stage ranking strategies (diversity preservation, cross-encoders,… | [guide](reference.md) |
+| `IRerankerExplainer` | `IReranker` | Optional capability of an IReranker that can justify its re-ordering: it produces a RerankExplanation decomposing the contribution of every signal it used. | [guide](reference.md) |
 | `IRetrievalMetrics` | — | Receives the measurements a RetrievalTelemetry takes. Implement it to ship numbers to a metrics backend (OpenTelemetry, Prometheus, StatsD, ...). | [guide](reference.md) |
 | `IScoreBoundScorer` | `ITextScorer` | Optional capability of an ITextScorer that can state a query's theoretical upper bound from corpus statistics alone, without scoring a document. | [guide](reference.md) |
 | `IScoreBoundSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that can report the theoretical upper bound of the ranking it would produce for a query. | [guide](reference.md) |
@@ -282,7 +283,10 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `QueryTermOperator` | enum | — | What a query atom asks of the documents that contain it. |
 | `QueryTermStatistic` | record | — | What the corpus says about one query term: how many documents carry it, and how rare the active scorer considers it. |
 | `RawQuerySegments` | record | — | The raw, un-tokenized quote-level split of a query: text outside quotes and the literal interior of each quoted segment. SQL backends forward these strings to… |
+| `RerankExplanation` | record | — | Decomposition of a rerank decision: the signals that contributed to a candidate's final score, each with its weight and value, plus a human-readable summary. |
+| `RerankSignal` | record | — | A single signal's contribution to a reranked score. |
 | `RerankedTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that re-ranks the matches of an inner engine before they are returned. |
+| `RerankerExtensions` | class | — | Convenience extensions for IRerankerExplainer. |
 | `RetrievalAgreement` | enum | — | How much the sources of a federated search agree about one document. |
 | `RetrievalAgreementAnalyzer` | class | — | Classifies each document of a federated page by how much its sources agree, from the per-source scores in Contributions. |
 | `RetrievalAgreementReport` | record | — | One document's agreement across the sources that produced the page, with the per-source strengths it was derived from. |
@@ -371,17 +375,22 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `CombMNZResultMerger` | class | `IContextualResultMerger`, `IResultMerger` | Blend strategy that multiplies each document's CombSUM score by the number of engines that retrieved it — the classic CombMNZ. |
 | `CombSumResultMerger` | class | `IContextualResultMerger`, `IResultMerger` | Blend strategy that sums the normalized per-engine scores of every document — the classic CombSUM of score-based fusion. |
 | `ContextualTermOverlapScorer` | class | `IContextualEvidenceScorer` | A model-free IContextualEvidenceScorer used to exercise the multi-hop expansion stack with no external dependency: it scores a candidate by the fraction of… |
-| `CrossEncoderReranker` | class | `IReranker` | Precision-oriented reranker: re-scores every candidate with a pairwise (cross-encoder) model and reorders the list by the model's judgment. |
+| `CrossEncoderReranker` | class | `IReranker`, `IRerankerExplainer` | Precision-oriented reranker: re-scores every candidate with a pairwise (cross-encoder) model and reorders the list by the model's judgment. |
+| `FusionWeightTuner` | class | — | Learns fusion weights for LearnedFusionMerger by grid search on a validation set of (per-engine results, graded relevance) pairs. |
+| `FusionWeightTuner.TuningPoint` | record | — | A single fusion-weight tuning point. |
+| `FusionWeightTuner.TuningResult` | record | — | Result of a Tune call. |
 | `HybridTextSearchEngine` | class | `IDetailedSearchEngine`, `ITextSearchEngine` | A federated search engine: queries a list of delegate engines, then merges their results into one coherent ordering through an IResultMerger. |
+| `LearnedFusionMerger` | class | `IResultMerger` | Fusion merger that blends per-engine scores with learned weights instead of the fixed weights of WeightedScoreResultMerger or the rank-based heuristic of… |
 | `MaxScoreNormalizer` | class | `IScoreNormalizer` | Divides each engine's scores by that engine's largest finite score — the mapping both score mergers applied before IScoreNormalizer existed, and the default. |
-| `MaxSimReranker` | class | `IReranker` | Late-interaction reranker (ColBERT-style): scores each candidate with MaxSim between the token-level embeddings of the query and of the document, then reorders… |
-| `MaximalMarginalRelevanceReranker` | class | `IReranker` | Diversity-preserving reranker: greedily re-orders candidates so that each next pick is both relevant to the query and different from what has already been… |
+| `MaxSimReranker` | class | `IReranker`, `IRerankerExplainer` | Late-interaction reranker (ColBERT-style): scores each candidate with MaxSim between the token-level embeddings of the query and of the document, then reorders… |
+| `MaximalMarginalRelevanceReranker` | class | `IReranker`, `IRerankerExplainer` | Diversity-preserving reranker: greedily re-orders candidates so that each next pick is both relevant to the query and different from what has already been… |
 | `MergeExplanation` | record | — | The arithmetic a weighted merge applied: one weight and one normalisation per source engine. |
 | `MinMaxScoreNormalizer` | class | `IScoreNormalizer` | Stretches each engine's scores across [0, 1]: subtract that engine's smallest positive score, divide by the distance to its largest. |
 | `ReciprocalRankFusionMerger` | class | `IResultMerger` | Merges ranked lists with Reciprocal Rank Fusion: each document accumulates the reciprocal of its rank (plus a constant k) across every engine that returned it. |
 | `RerankingResultMerger` | class | `IResultMerger` | Default merger: rebuilds a single temporary index from the union of candidate documents returned by every engine, then re-scores every candidate with one shared… |
 | `ScoreNormalization` | record struct | — | One engine's scores mapped onto a comparable scale: subtract Offset, then divide by Scale — (s − offset) / scale. |
 | `ScoreNormalizationContext` | record | — | What a hybrid knows about one source engine's scores beyond the result list itself: the query's theoretical upper bound, when the engine can report one. |
+| `SparseSemanticEncoder` | class | `ISparseEmbeddingProvider` | A model-free sparse encoder that augments a text with its n-gram phrases (bigrams and trigrams) as weighted virtual terms, so that a lexical engine can match… |
 | `SumScoreNormalizer` | class | `IScoreNormalizer` | Divides each engine's scores by their sum, so each engine contributes one unit of mass in total however many documents it returned. |
 | `UpperBoundBayesianFusionMerger` | class | `IContextualResultMerger`, `IResultMerger` | Merges per-engine results by normalizing each engine's scores by its query upper bound and combining them with the naive Bayes rule — the same combination as… |
 | `UpperBoundScoreNormalizer` | class | `IContextualScoreNormalizer`, `IScoreNormalizer` | Divides a lexical engine's scores by the theoretical upper bound for the query, when the engine can report it, so a score becomes a fraction of what the query… |
@@ -453,6 +462,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `Bm25PlusScorer` | class | `IQueryTermStatistics`, `IScoreBoundScorer`, `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | BM25+ relevance: Okapi BM25 with the hard term-presence cut replaced by a lower-bounded one, so a document that matches more distinct query terms is rewarded… |
 | `Bm25PlusTuningResult` | record | — | The outcome of a Tune run: the best configuration found, the quality it achieved, and the full evaluation grid for inspection. |
 | `Bm25Scorer` | class | `IQueryTermStatistics`, `IScoreBoundScorer`, `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer`, `IWeightedQueryScorer` | Okapi BM25 relevance — the standard non-semantic ranking model for full-text search. It blends term saturation (k1) with document-length normalization (b). |
+| `Bm25Tuner` | class | — | Auto-tunes the BM25 parameters (k1, b) of a corpus by grid search on a validation set of (query, graded-relevance) pairs, and reports the best configuration… |
 | `Bm25TuningResult` | record | — | The outcome of a Tune run: the best parameter pair found, the quality it achieved and the full evaluation grid for inspection. |
 | `Bm25VaGridPoint` | record | — | One evaluated (k1, b) combination of a Bm25VaParameterTuner. |
 | `Bm25VaParameterTuner` | class | — | Finds the (k1, b) of Bm25VaScorer that best satisfy a set of labeled validation queries, by the same brute-force grid search as Bm25ParameterTuner. |
@@ -461,8 +471,11 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `Bm25ValidationQuery` | record | — | One labeled validation query of a Bm25ParameterTuner: a raw query together with the ids of the documents a good ranking should surface. |
 | `BooleanMatch` | enum | — | How the modifiers of a BooleanScorer are combined. |
 | `BooleanScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | Pure boolean filter. A matching document gets a score of 1, a non-matching one 0. Because the RankedTextSearchEngine discards scores below MinimumScore, this… |
+| `CalibratedBm25Scorer` | class | `IScoreExplainer`, `ITextScorer` | A BM25 scorer whose raw scores are mapped to calibrated probabilities via Platt scaling (logistic regression on the raw score), fitted on a labelled validation… |
 | `CalibratedScoreConfidence` | class | — | A learned confidence calibrator that maps raw scores to calibrated probabilities using isotonic regression or Platt scaling, with an optional Youden-derived… |
 | `CalibrationMethod` | enum | — | The calibration method used by CalibratedScoreConfidence. |
+| `CalibrationMetrics` | class | — | Calibration metrics for a classifier or scorer whose outputs are interpreted as probabilities: Expected Calibration Error (ECE), Maximum Calibration Error (MCE)… |
+| `CalibrationReport` | record | — | Result of a Evaluate call. |
 | `DocumentLengthRatioScorer` | class | `ITextScorer` | A document's length relative to the corpus average: \|D\| / avgdl, where both figures come from the index. One for an average document, above one for a long… |
 | `FeedbackAwareTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that augments a primary search engine with a learned query → document feedback channel — one history for every search. |
 | `FeedbackAwareTextSearchEngine<TPayload>` | class | `IContextualSearchEngine`, `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that augments a primary search engine with a learned query → document feedback channel, choosing the history per search from the caller's… |
@@ -474,6 +487,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `QueryLikelihoodScorer` | class | `IScoreExplainer`, `ITermOverlapScorer`, `ITextScorer` | Query likelihood retrieval model with Jelinek-Mercer smoothing, a probabilistic language-model alternative to BM25. |
 | `QueryTermWeighting` | enum | — | How a scorer treats a term that occurs more than once in a query. |
 | `RankedTextSearchEngine` | class | `IExplainableSearchEngine`, `IFacetedSearchEngine`, `IQueryCostProbe`, `IQuerySyntaxSupport`, `IScoreBoundSearchEngine`, `ITextSearchEngine` | The stock search engine: delegates the corpus storage to an IReadOnlyTextIndex, delegates the relevance math to an ITextScorer, and takes care of query… |
+| `ReliabilityBin` | record | — | Per-bin statistics for a reliability diagram. |
 | `RetrievalMetrics` | class | — | Standard top-k retrieval metrics over a ranked list of document ids, used to evaluate (and tune) ranking quality against a validation set. |
 | `SaturatingQueryTermWeighter` | class | `IQueryTermWeighter` | Weights a query's terms by a saturating function of how many times each one was written: w(t) = (k3 + 1) · qtf(t) / (k3 + qtf(t)), normalized so the heaviest… |
 | `ScoreConfidence` | class | — | Maps an ordered result set's raw scores into calibrated confidences in [0,1] — the "is this really the answer?" gauge that raw lexical scores (BM25, TF-IDF,… |
@@ -483,6 +497,8 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `TieAwareMetric` | record struct | — | A metric's value over every ordering the scores leave admissible: the expectation under uniform random tie-breaking, and the exact best and worst case. |
 | `TieBreak` | enum | — | How the engines order candidates whose scores are exactly equal. |
 | `TuningMetric` | enum | — | The quality metric a Bm25ParameterTuner maximizes over its validation set. |
+| `TuningPoint` | record | — | A single point in the (k1, b) tuning grid. |
+| `TuningResult` | record | — | The result of a Tune call. |
 | `WeightedCompositeScorer` | class | `ITextScorer` | A scorer built from other scorers: the weighted sum of their scores, Σ wᵢ · componentᵢ, computed in one pass over one candidate set. |
 | `WindowBm25Scorer` | class | `ITermOverlapScorer`, `ITextScorer` | Scores a document by its best window rather than by its whole text: BM25's saturation computed over term frequencies counted inside a sliding window, and the… |
 
