@@ -40,7 +40,7 @@ public sealed record CascadeRerankOptions(
 /// infinite scores are dropped. The input list is never mutated.
 /// </para>
 /// </remarks>
-public sealed class CascadeRerankPipeline : IReranker
+public sealed class CascadeRerankPipeline : IReranker, IRerankerExplainer
 {
     private readonly IReadOnlyList<IReranker> _stages;
     private readonly CascadeRerankOptions _options;
@@ -77,11 +77,27 @@ public sealed class CascadeRerankPipeline : IReranker
 
     /// <inheritdoc />
     public IReadOnlyList<SearchResult> Rerank(string query, IReadOnlyList<SearchResult> candidates)
+        => RerankCore(query, candidates, null).Results;
+
+    private (IReadOnlyList<SearchResult> Results, Dictionary<string, List<(string Stage, double Score)>> StageScores) RerankCore(
+        string query,
+        IReadOnlyList<SearchResult> candidates,
+        Dictionary<string, List<(string Stage, double Score)>>? stageScores)
     {
         ArgumentNullException.ThrowIfNull(candidates);
 
         if (candidates.Count == 0)
-            return Array.Empty<SearchResult>();
+            return (Array.Empty<SearchResult>(), stageScores ?? new Dictionary<string, List<(string, double)>>());
+
+        var captured = stageScores ?? new Dictionary<string, List<(string, double)>>();
+
+        // Seed every candidate with its incoming score as stage "input".
+        foreach (var c in candidates)
+        {
+            if (!captured.ContainsKey(c.DocumentId))
+                captured[c.DocumentId] = new List<(string, double)>();
+            captured[c.DocumentId].Add(("input", c.Score));
+        }
 
         IReadOnlyList<SearchResult> current = candidates;
 
@@ -89,14 +105,53 @@ public sealed class CascadeRerankPipeline : IReranker
         {
             current = stage.Rerank(query, current);
 
+            foreach (var r in current)
+            {
+                if (captured.TryGetValue(r.DocumentId, out var list))
+                    list.Add((stage.Name, r.Score));
+            }
+
             if (_options.StageLimit is int stageLimit && stageLimit < current.Count)
                 current = current.Take(stageLimit).ToList();
         }
 
-        return current
+        var results = current
             .Where(x => !double.IsNaN(x.Score) && !double.IsInfinity(x.Score)
                         && x.Score != 0 && x.Score >= _options.MinimumScore)
             .Take(_options.FinalLimit ?? int.MaxValue)
             .ToList();
+
+        return (results, captured);
+    }
+
+    /// <inheritdoc />
+    public RerankExplanation? ExplainRerank(string query, IReadOnlyList<SearchResult> candidates, string documentId)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(candidates);
+
+        if (!candidates.Any(c => c.DocumentId == documentId))
+            return null;
+
+        var stageScores = new Dictionary<string, List<(string Stage, double Score)>>();
+        var (results, _) = RerankCore(query, candidates, stageScores);
+
+        if (!stageScores.TryGetValue(documentId, out var stages))
+            return null;
+
+        var signals = stages
+            .Select(s => new RerankSignal(s.Stage, 1.0, s.Score, s.Score))
+            .ToList();
+
+        var picked = results.FirstOrDefault(r => r.DocumentId == documentId);
+        double finalScore = results.Any(r => r.DocumentId == documentId) ? picked.Score : 0;
+        // results is IReadOnlyList<SearchResult> (struct); use Any to check presence.
+        bool present = results.Any(r => r.DocumentId == documentId);
+        if (!present) finalScore = 0;
+
+        string summary = "Cascade: " + documentId + " went through " + stages.Count + " stage(s): " +
+            string.Join(" -> ", stages.Select(s => s.Stage + "=" + s.Score.ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture)).ToArray()) + ".";
+
+        return new RerankExplanation(documentId, finalScore, signals, summary);
     }
 }
