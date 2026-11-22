@@ -188,6 +188,7 @@ C|LexiSharp.Hybrid.ReciprocalRankFusionMerger|Void .ctor(Double, Double[])
 C|LexiSharp.Hybrid.RerankingResultMerger|Void .ctor(LexiSharp.Core.ITextScorer, LexiSharp.Linguistics.ITokenizer)
 C|LexiSharp.Hybrid.ScoreNormalizationContext|Void .ctor(System.Nullable`1[System.Double], System.String)
 C|LexiSharp.Hybrid.ScoreNormalization|Void .ctor(Double, Double)
+C|LexiSharp.Hybrid.SparseSemanticEncoder|Void .ctor(LexiSharp.Linguistics.ITokenizer, Int32, Int32)
 C|LexiSharp.Hybrid.SumScoreNormalizer|Void .ctor()
 C|LexiSharp.Hybrid.UpperBoundBayesianFusionMerger|Void .ctor()
 C|LexiSharp.Hybrid.UpperBoundScoreNormalizer|Void .ctor()
@@ -274,6 +275,7 @@ C|LexiSharp.Ranking.Bm25VaScorer|Void .ctor(Double, Double, LexiSharp.Ranking.Qu
 C|LexiSharp.Ranking.Bm25VaTuningResult|Void .ctor(Double, Double, Double, LexiSharp.Ranking.TuningMetric, Int32, Int32, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Ranking.Bm25VaGridPoint])
 C|LexiSharp.Ranking.Bm25ValidationQuery|Void .ctor(System.String, System.Collections.Generic.IReadOnlyCollection`1[System.String], System.Collections.Generic.IReadOnlySet`1[System.String])
 C|LexiSharp.Ranking.BooleanScorer|Void .ctor(LexiSharp.Ranking.BooleanMatch)
+C|LexiSharp.Ranking.CalibratedBm25Scorer|Void .ctor(LexiSharp.Ranking.Bm25Scorer, Double, Double)
 C|LexiSharp.Ranking.CalibratedScoreConfidence|Void .ctor()
 C|LexiSharp.Ranking.CalibrationReport|Void .ctor(Double, Double, Double, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Ranking.ReliabilityBin], Double, Double, Int32)
 C|LexiSharp.Ranking.DocumentLengthRatioScorer|Void .ctor()
@@ -1455,12 +1457,14 @@ M|LexiSharp.Hybrid.CascadeRerankOptions|Boolean Equals(System.Object)
 M|LexiSharp.Hybrid.CascadeRerankOptions|Int32 GetHashCode()
 M|LexiSharp.Hybrid.CascadeRerankOptions|System.String ToString()
 M|LexiSharp.Hybrid.CascadeRerankOptions|Void Deconstruct(System.Nullable`1[System.Int32] ByRef, System.Nullable`1[System.Int32] ByRef, Double ByRef)
+M|LexiSharp.Hybrid.CascadeRerankPipeline|LexiSharp.Core.RerankExplanation ExplainRerank(System.String, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult], System.String)
 M|LexiSharp.Hybrid.CascadeRerankPipeline|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult] Rerank(System.String, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult])
 M|LexiSharp.Hybrid.CombMNZResultMerger|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult] Merge(System.Collections.Generic.IReadOnlyList`1[System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult]], System.String)
 M|LexiSharp.Hybrid.CombMNZResultMerger|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult] Merge(System.Collections.Generic.IReadOnlyList`1[System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult]], System.String, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Hybrid.ScoreNormalizationContext])
 M|LexiSharp.Hybrid.CombSumResultMerger|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult] Merge(System.Collections.Generic.IReadOnlyList`1[System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult]], System.String)
 M|LexiSharp.Hybrid.CombSumResultMerger|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult] Merge(System.Collections.Generic.IReadOnlyList`1[System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult]], System.String, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Hybrid.ScoreNormalizationContext])
 M|LexiSharp.Hybrid.ContextualTermOverlapScorer|Double Score(System.String, LexiSharp.Core.SearchDocument, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult])
+M|LexiSharp.Hybrid.CrossEncoderReranker|LexiSharp.Core.RerankExplanation ExplainRerank(System.String, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult], System.String)
 M|LexiSharp.Hybrid.CrossEncoderReranker|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult] Rerank(System.String, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult])
 M|LexiSharp.Hybrid.FusionWeightTuner+TuningPoint|Boolean Equals(System.Object)
 M|LexiSharp.Hybrid.FusionWeightTuner+TuningPoint|Boolean Equals(TuningPoint)
@@ -1510,6 +1514,7 @@ M|LexiSharp.Hybrid.ScoreNormalization|Double Apply(Double)
 M|LexiSharp.Hybrid.ScoreNormalization|Int32 GetHashCode()
 M|LexiSharp.Hybrid.ScoreNormalization|System.String ToString()
 M|LexiSharp.Hybrid.ScoreNormalization|Void Deconstruct(Double ByRef, Double ByRef)
+M|LexiSharp.Hybrid.SparseSemanticEncoder|System.Threading.Tasks.Task`1[System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Single]] GetSparseEmbeddingAsync(System.String, LexiSharp.Core.EmbeddingUse, System.Threading.CancellationToken)
 M|LexiSharp.Hybrid.SumScoreNormalizer|LexiSharp.Hybrid.ScoreNormalization Measure(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult])
 M|LexiSharp.Hybrid.UpperBoundBayesianFusionMerger|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult] Merge(System.Collections.Generic.IReadOnlyList`1[System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult]], System.String)
 M|LexiSharp.Hybrid.UpperBoundBayesianFusionMerger|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult] Merge(System.Collections.Generic.IReadOnlyList`1[System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult]], System.String, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Hybrid.ScoreNormalizationContext])
@@ -1953,6 +1958,9 @@ M|LexiSharp.Ranking.Bm25ValidationQuery|System.String ToString()
 M|LexiSharp.Ranking.Bm25ValidationQuery|Void Deconstruct(System.String ByRef, System.Collections.Generic.IReadOnlyCollection`1[System.String] ByRef, System.Collections.Generic.IReadOnlySet`1[System.String] ByRef)
 M|LexiSharp.Ranking.BooleanScorer|Double Score(System.String, System.Collections.Generic.IReadOnlyList`1[System.String], LexiSharp.Core.IReadOnlyTextIndex)
 M|LexiSharp.Ranking.BooleanScorer|LexiSharp.Core.ScoreExplanation Explain(System.String, System.Collections.Generic.IReadOnlyList`1[System.String], LexiSharp.Core.IReadOnlyTextIndex)
+M|LexiSharp.Ranking.CalibratedBm25Scorer|Double Score(System.String, System.Collections.Generic.IReadOnlyList`1[System.String], LexiSharp.Core.IReadOnlyTextIndex)
+M|LexiSharp.Ranking.CalibratedBm25Scorer|LexiSharp.Core.ScoreExplanation Explain(System.String, System.Collections.Generic.IReadOnlyList`1[System.String], LexiSharp.Core.IReadOnlyTextIndex)
+M|LexiSharp.Ranking.CalibratedBm25Scorer|LexiSharp.Ranking.CalibratedBm25Scorer Fit(LexiSharp.Ranking.Bm25Scorer, System.Collections.Generic.IEnumerable`1[System.ValueTuple`3[System.String,System.String,System.Int32]], LexiSharp.Core.IReadOnlyTextIndex, Int32, Double)
 M|LexiSharp.Ranking.CalibratedScoreConfidence|Boolean ShouldAbstain(Double)
 M|LexiSharp.Ranking.CalibratedScoreConfidence|Double PredictProba(Double)
 M|LexiSharp.Ranking.CalibratedScoreConfidence|LexiSharp.Ranking.CalibratedScoreConfidence Fit(System.Collections.Generic.IReadOnlyList`1[System.ValueTuple`2[System.Double,System.Boolean]], LexiSharp.Ranking.CalibrationMethod)
@@ -2727,6 +2735,7 @@ P|LexiSharp.Hybrid.ScoreNormalizationContext|QueryUpperBound|System.Nullable<Sys
 P|LexiSharp.Hybrid.ScoreNormalizationContext|ScorerName|System.String|getset
 P|LexiSharp.Hybrid.ScoreNormalization|Offset|System.Double|getset
 P|LexiSharp.Hybrid.ScoreNormalization|Scale|System.Double|getset
+P|LexiSharp.Hybrid.SparseSemanticEncoder|MaxTerms|System.Int32|get
 P|LexiSharp.Hybrid.SumScoreNormalizer|Name|System.String|get
 P|LexiSharp.Hybrid.UpperBoundBayesianFusionMerger|Name|System.String|get
 P|LexiSharp.Hybrid.UpperBoundBayesianFusionMerger|UsesContexts|System.Boolean|get
@@ -3099,6 +3108,7 @@ P|LexiSharp.Ranking.Bm25ValidationQuery|ExcludedDocumentIds|System.Collections.G
 P|LexiSharp.Ranking.Bm25ValidationQuery|Query|System.String|getset
 P|LexiSharp.Ranking.Bm25ValidationQuery|RelevantDocumentIds|System.Collections.Generic.IReadOnlyCollection<System.String>|getset
 P|LexiSharp.Ranking.BooleanScorer|Name|System.String|get
+P|LexiSharp.Ranking.CalibratedBm25Scorer|Name|System.String|get
 P|LexiSharp.Ranking.CalibratedScoreConfidence|AbstainScore|System.Double|get
 P|LexiSharp.Ranking.CalibratedScoreConfidence|AbstainThreshold|System.Double|get
 P|LexiSharp.Ranking.CalibratedScoreConfidence|IsTrained|System.Boolean|get
@@ -3432,11 +3442,11 @@ T|LexiSharp.Highlighting.TextHighlighter|class||
 T|LexiSharp.Hybrid.AsyncCrossEncoderReranker|class||LexiSharp.Core.IAsyncReranker
 T|LexiSharp.Hybrid.BayesianFusionMerger|class||LexiSharp.Hybrid.IMergeExplainer,LexiSharp.Hybrid.IResultMerger
 T|LexiSharp.Hybrid.CascadeRerankOptions|class||System.IEquatable<LexiSharp.Hybrid.CascadeRerankOptions>
-T|LexiSharp.Hybrid.CascadeRerankPipeline|class||LexiSharp.Core.IReranker
+T|LexiSharp.Hybrid.CascadeRerankPipeline|class||LexiSharp.Core.IReranker,LexiSharp.Core.IRerankerExplainer
 T|LexiSharp.Hybrid.CombMNZResultMerger|class||LexiSharp.Hybrid.IContextualResultMerger,LexiSharp.Hybrid.IResultMerger
 T|LexiSharp.Hybrid.CombSumResultMerger|class||LexiSharp.Hybrid.IContextualResultMerger,LexiSharp.Hybrid.IResultMerger
 T|LexiSharp.Hybrid.ContextualTermOverlapScorer|class||LexiSharp.Core.IContextualEvidenceScorer
-T|LexiSharp.Hybrid.CrossEncoderReranker|class||LexiSharp.Core.IReranker
+T|LexiSharp.Hybrid.CrossEncoderReranker|class||LexiSharp.Core.IReranker,LexiSharp.Core.IRerankerExplainer
 T|LexiSharp.Hybrid.FusionWeightTuner+TuningPoint|class||System.IEquatable<LexiSharp.Hybrid.FusionWeightTuner+TuningPoint>
 T|LexiSharp.Hybrid.FusionWeightTuner+TuningResult|class||System.IEquatable<LexiSharp.Hybrid.FusionWeightTuner+TuningResult>
 T|LexiSharp.Hybrid.FusionWeightTuner|class||
@@ -3457,6 +3467,7 @@ T|LexiSharp.Hybrid.ReciprocalRankFusionMerger|class||LexiSharp.Hybrid.IResultMer
 T|LexiSharp.Hybrid.RerankingResultMerger|class||LexiSharp.Hybrid.IResultMerger
 T|LexiSharp.Hybrid.ScoreNormalizationContext|class||System.IEquatable<LexiSharp.Hybrid.ScoreNormalizationContext>
 T|LexiSharp.Hybrid.ScoreNormalization|struct||System.IEquatable<LexiSharp.Hybrid.ScoreNormalization>
+T|LexiSharp.Hybrid.SparseSemanticEncoder|class||LexiSharp.Core.ISparseEmbeddingProvider
 T|LexiSharp.Hybrid.SumScoreNormalizer|class||LexiSharp.Hybrid.IScoreNormalizer
 T|LexiSharp.Hybrid.UpperBoundBayesianFusionMerger|class||LexiSharp.Hybrid.IContextualResultMerger,LexiSharp.Hybrid.IResultMerger
 T|LexiSharp.Hybrid.UpperBoundScoreNormalizer|class||LexiSharp.Hybrid.IContextualScoreNormalizer,LexiSharp.Hybrid.IScoreNormalizer
@@ -3566,6 +3577,7 @@ T|LexiSharp.Ranking.Bm25VaTuningResult|class||System.IEquatable<LexiSharp.Rankin
 T|LexiSharp.Ranking.Bm25ValidationQuery|class||System.IEquatable<LexiSharp.Ranking.Bm25ValidationQuery>
 T|LexiSharp.Ranking.BooleanMatch|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
 T|LexiSharp.Ranking.BooleanScorer|class||LexiSharp.Core.IScoreExplainer,LexiSharp.Core.ITermOverlapScorer,LexiSharp.Core.ITextScorer
+T|LexiSharp.Ranking.CalibratedBm25Scorer|class||LexiSharp.Core.IScoreExplainer,LexiSharp.Core.ITextScorer
 T|LexiSharp.Ranking.CalibratedScoreConfidence|class||
 T|LexiSharp.Ranking.CalibrationMethod|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
 T|LexiSharp.Ranking.CalibrationMetrics|class||
