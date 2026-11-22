@@ -367,33 +367,268 @@ public sealed class Tokenizer : ISpanTokenizer
     /// <remarks>
     /// A configured symbol is a term of its own and does not extend the word beside it:
     /// <c>Aspirin®</c> is <c>aspirin</c> and <c>®</c>, not <c>aspirin®</c>. Under the measured
-    /// boundaries an emoji or an ideograph is the same kind of term: the reference's grammar starts
-    /// an emoji token on every <c>Extended_Pictographic</c> code point and on nothing else, and
-    /// emits each Han ideograph alone (<c>理财</c> is <c>理</c> and <c>财</c>). Both are checked
-    /// before the word logic because neither may open a run.
+    /// boundaries an emoji, an ideograph, a Hiragana character and a complete emoji sequence are
+    /// the same kind of term. Each starts before the word logic because none may open a run.
+    /// <para>
+    /// The length is the grammar's, not one code point's. The reference appends <c>Format</c>,
+    /// <c>Extend</c> and <c>ZWJ</c> characters to the token they follow, so <c>尺̇</c> and
+    /// <c>ひ̇</c> are one term each, and it keeps an emoji sequence together: a ZWJ family, a flag
+    /// pair, a skin-tone modifier, a keycap. Both were measured against the reference tokenizer.
+    /// </para>
     /// </remarks>
     private bool EmitStandaloneAt(
         ReadOnlySpan<char> text, ref int position, List<string>? terms, List<TokenSpan>? spans)
     {
         if (_symbolTerms is not null && text[position] >= 128 && _symbolTerms.Contains(text[position]))
         {
-            EmitStandalone(text, position, 1, terms, spans);
-            position++;
+            int symbolLength = _conditionalJoins ? ExtendedLengthAt(text, position) : 1;
+
+            EmitStandalone(text, position, symbolLength, terms, spans);
+            position += symbolLength;
             return true;
         }
 
-        if (_conditionalJoins
-            && text[position] >= 128
-            && Rune.DecodeFromUtf16(text[position..], out Rune standalone, out int standaloneLength) == OperationStatus.Done
-            && (WordBreakClasses.IsEmoji(standalone) || WordBreakClasses.IsIdeographic(standalone)))
+        if (!_conditionalJoins)
+            return false;
+
+        // The keycap bases are ASCII, so this runs before the non-ASCII gate below.
+        int keycapLength = KeycapLengthAt(text, position);
+
+        if (keycapLength > 0)
         {
-            EmitStandalone(text, position, standaloneLength, terms, spans);
-            position += standaloneLength;
+            EmitStandalone(text, position, keycapLength, terms, spans);
+            position += keycapLength;
             return true;
         }
 
-        return false;
+        if (text[position] < 128)
+            return false;
+
+        int standaloneLength = StandaloneLengthAt(text, position);
+
+        if (standaloneLength == 0)
+            return false;
+
+        EmitStandalone(text, position, standaloneLength, terms, spans);
+        position += standaloneLength;
+        return true;
     }
+
+    /// <summary>
+    /// The length of the standalone token at <paramref name="position"/>, or zero when the
+    /// character there does not open one.
+    /// </summary>
+    private static int StandaloneLengthAt(ReadOnlySpan<char> text, int position)
+    {
+        if (Rune.DecodeFromUtf16(text[position..], out Rune rune, out _) != OperationStatus.Done)
+            return 0;
+
+        if (IsRegionalIndicator(rune))
+            return RegionalIndicatorLengthAt(text, position);
+
+        if (WordBreakClasses.IsEmoji(rune) || IsEmojiModifier(rune))
+            return EmojiLengthAt(text, position);
+
+        if (WordBreakClasses.IsIdeographic(rune) || WordBreakClasses.IsHiragana(rune))
+            return ExtendedLengthAt(text, position);
+
+        return 0;
+    }
+
+    /// <summary>
+    /// The length of the emoji token at <paramref name="position"/>: one emoji element, then any
+    /// number of <c>ZWJ</c>-joined elements.
+    /// </summary>
+    /// <remarks>
+    /// The reference's grammar treats <c>ZWJ</c> as a joiner only when an emoji element follows it;
+    /// a trailing <c>ZWJ</c> stays in the token it could not join. Measured: <c>👨‍👩</c> is one
+    /// term, <c>👨‍👩</c> with a letter after it is the same term plus the letter, and a lone
+    /// <c>👨‍</c> keeps its joiner.
+    /// </remarks>
+    private static int EmojiLengthAt(ReadOnlySpan<char> text, int position)
+    {
+        int length = EmojiElementLengthAt(text, position);
+
+        if (length == 0)
+            return 0;
+
+        int end = position + length;
+
+        while (end < text.Length)
+        {
+            int probe = end;
+
+            while (probe < text.Length && text[probe] == '\u200D')
+                probe++;
+
+            if (probe == end)
+                break;
+
+            int joined = EmojiElementLengthAt(text, probe);
+
+            if (joined == 0)
+            {
+                // The joiners belong to the token even though nothing follows them.
+                end = probe;
+                break;
+            }
+
+            end = probe + joined;
+        }
+
+        return end - position;
+    }
+
+    /// <summary>
+    /// The length of one emoji element at <paramref name="position"/>, with the
+    /// <c>Extend</c>/<c>Format</c> characters that continue it, or zero when none starts there.
+    /// </summary>
+    private static int EmojiElementLengthAt(ReadOnlySpan<char> text, int position)
+    {
+        if (Rune.DecodeFromUtf16(text[position..], out Rune rune, out int length) != OperationStatus.Done)
+            return 0;
+
+        // Skin-tone modifiers are Emoji but not Extended_Pictographic: they attach to a base, and
+        // a bare one is a token of its own in the reference.
+        if (!WordBreakClasses.IsEmoji(rune) && !IsEmojiModifier(rune))
+            return 0;
+
+        int end = position + length;
+
+        while (end < text.Length)
+        {
+            if (Rune.DecodeFromUtf16(text[end..], out Rune next, out int nextLength) != OperationStatus.Done)
+                break;
+
+            // ZWJ is left to the caller: it either joins the next element or ends the token.
+            if (next.Value == 0x200D || !ContinuesEmojiElement(next))
+                break;
+
+            end += nextLength;
+        }
+
+        return end - position;
+    }
+
+    /// <summary>Whether <paramref name="rune"/> continues the emoji element before it.</summary>
+    private static bool ContinuesEmojiElement(Rune rune) =>
+        IsCombiningMark(rune) || IsEmojiModifier(rune) || WordBreakClasses.IsFormatExtend(rune);
+
+    /// <summary>
+    /// The length of the regional-indicator pair at <paramref name="position"/>, or zero for a lone
+    /// indicator.
+    /// </summary>
+    /// <remarks>
+    /// The reference emits a flag as two regional indicators and the extenders after each; a single
+    /// indicator is not a token at all. Measured: <c>🇫🇷</c> is one term, <c>🇫</c> is none.
+    /// </remarks>
+    private static int RegionalIndicatorLengthAt(ReadOnlySpan<char> text, int position)
+    {
+        int first = ExtendedLengthAt(text, position);
+        int second = position + first;
+
+        if (second >= text.Length
+            || Rune.DecodeFromUtf16(text[second..], out Rune secondRune, out _) != OperationStatus.Done
+            || !IsRegionalIndicator(secondRune))
+        {
+            return 0;
+        }
+
+        return first + ExtendedLengthAt(text, second);
+    }
+
+    /// <summary>
+    /// The length of the keycap sequence at <paramref name="position"/>, or zero when the character
+    /// there does not open one.
+    /// </summary>
+    /// <remarks>
+    /// Only <c>#</c> and <c>*</c> are handled here; a digit keycap is a word and stays one. The
+    /// reference's numeric and word rules match a longer run than its keycap rule — <c>1️⃣2️⃣</c> is
+    /// one numeric token and <c>1️⃣a</c> one word — while <c>#️⃣</c> has no longer rule to lose to and
+    /// would otherwise be dropped. Measured: <c>#️⃣</c> and <c>#⃣</c> are terms, <c>#</c> alone is
+    /// not, and <c>#️⃣*️⃣</c> is two.
+    /// </remarks>
+    private static int KeycapLengthAt(ReadOnlySpan<char> text, int position)
+    {
+        char c = text[position];
+
+        if (c is not '#' and not '*')
+            return 0;
+
+        int end = position + 1;
+
+        while (end < text.Length)
+        {
+            if (Rune.DecodeFromUtf16(text[end..], out Rune next, out int nextLength) != OperationStatus.Done)
+                return 0;
+
+            if (next.Value is 0xFE0E or 0xFE0F or 0x20E3)
+                break;
+
+            if (!IsCombiningMark(next) && !WordBreakClasses.IsFormatExtend(next))
+                return 0;
+
+            end += nextLength;
+        }
+
+        if (end < text.Length && text[end] == '\uFE0F')
+            end++;
+
+        if (end >= text.Length || text[end] != '\u20E3')
+            return 0;
+
+        end++;
+
+        while (end < text.Length)
+        {
+            if (Rune.DecodeFromUtf16(text[end..], out Rune next, out int nextLength) != OperationStatus.Done
+                || !ContinuesEmojiElement(next))
+            {
+                break;
+            }
+
+            end += nextLength;
+        }
+
+        return end - position;
+    }
+
+    /// <summary>
+    /// The length of the character at <paramref name="position"/> and the
+    /// <c>Extend</c>/<c>Format</c> characters that follow it.
+    /// </summary>
+    /// <remarks>
+    /// This is UAX#29's "X (Extend | Format | ZWJ)* → X", which the reference applies to an
+    /// ideograph, a Hiragana character and a configured symbol as well. Measured: <c>尺̇</c>,
+    /// <c>が</c> and <c>尺\uFEFF</c> are one term each, and the character after the last one
+    /// starts a new token.
+    /// </remarks>
+    private static int ExtendedLengthAt(ReadOnlySpan<char> text, int position)
+    {
+        if (Rune.DecodeFromUtf16(text[position..], out _, out int length) != OperationStatus.Done)
+            return 0;
+
+        int end = position + length;
+
+        while (end < text.Length)
+        {
+            if (Rune.DecodeFromUtf16(text[end..], out Rune next, out int nextLength) != OperationStatus.Done
+                || !(IsCombiningMark(next) || WordBreakClasses.IsFormatExtend(next)))
+            {
+                break;
+            }
+
+            end += nextLength;
+        }
+
+        return end - position;
+    }
+
+    private static bool IsRegionalIndicator(Rune rune) =>
+        rune.Value is >= 0x1F1E6 and <= 0x1F1FF;
+
+    private static bool IsEmojiModifier(Rune rune) =>
+        rune.Value is >= 0x1F3FB and <= 0x1F3FF;
 
     /// <summary>Whether a token starts at <paramref name="position"/>.</summary>
     /// <remarks>
@@ -460,7 +695,7 @@ public sealed class Tokenizer : ISpanTokenizer
     {
         while (position < text.Length)
         {
-            if (_conditionalJoins && IsIdeographicAt(text, position))
+            if (_conditionalJoins && (IsIdeographicAt(text, position) || IsHiraganaAt(text, position)))
                 break;
 
             if (text[position] < 128)
@@ -507,6 +742,10 @@ public sealed class Tokenizer : ISpanTokenizer
     /// <para>
     /// A boundary that would land inside a surrogate pair moves back one unit, because the reference
     /// scanner holds a trailing high surrogate over to the next refill rather than splitting it.
+    /// A chunk that begins with a mark or a format character drops it: the scanner that refilled
+    /// there cannot open a token on a character that never opens one, so the mark at the boundary
+    /// of a 255-unit word disappears while the word continues. Measured: 255 <c>a</c>s, a combining
+    /// mark and ten <c>b</c>s index as 255 <c>a</c>s and ten <c>b</c>s.
     /// </para>
     /// </remarks>
     private void EmitWordRun(
@@ -525,7 +764,12 @@ public sealed class Tokenizer : ISpanTokenizer
             if (chunkEnd < end && chunkEnd - start > 1 && char.IsHighSurrogate(text[chunkEnd - 1]))
                 chunkEnd--;
 
-            EmitWord(text, start, chunkEnd, terms, spans, ref none);
+            while (start < chunkEnd && !BeginsWordAt(text, start))
+                start++;
+
+            if (start < chunkEnd)
+                EmitWord(text, start, chunkEnd, terms, spans, ref none);
+
             start = chunkEnd;
         }
         while (start < end);
@@ -649,6 +893,16 @@ public sealed class Tokenizer : ISpanTokenizer
                && WordBreakClasses.IsIdeographic(rune);
     }
 
+    /// <summary>Whether a Hiragana character starts at <paramref name="position"/>.</summary>
+    private static bool IsHiraganaAt(ReadOnlySpan<char> text, int position)
+    {
+        if (text[position] < 0x3041)
+            return false;
+
+        return Rune.DecodeFromUtf16(text[position..], out Rune rune, out _) == OperationStatus.Done
+               && WordBreakClasses.IsHiragana(rune);
+    }
+
     /// <summary>
     /// Whether the character at <paramref name="position"/> is U+202F, the narrow no-break space,
     /// which the reference's word-break data classes as <c>ExtendNumLet</c> instead of a separator.
@@ -691,7 +945,8 @@ public sealed class Tokenizer : ISpanTokenizer
         return status == OperationStatus.Done
             && Rune.IsLetterOrDigit(rune)
             && length > 0
-            && !(_conditionalJoins && WordBreakClasses.IsIdeographic(rune));
+            && !(_conditionalJoins
+                && (WordBreakClasses.IsIdeographic(rune) || WordBreakClasses.IsHiragana(rune)));
     }
 
     /// <summary>
@@ -852,12 +1107,17 @@ public sealed class Tokenizer : ISpanTokenizer
         if (Rune.IsDigit(rune))
             return CharClass.Digit;
 
-        // Han is its own word-break class in the reference's data, not ALetter: a MidLetter
-        // separator between a letter and an ideograph does not join them. The line that splits the
-        // ideograph into its own term is not a license to treat it as a word letter for the join
-        // tests around it.
-        if (_conditionalJoins && WordBreakClasses.IsIdeographic(rune))
+        // Han, Hiragana and Katakana are their own word-break classes in the reference's data, not
+        // ALetter: a MidLetter separator between a letter and one of them does not join them. The
+        // lines that split the ideograph and the Hiragana into their own terms are not a license to
+        // treat them as word letters for the join tests around them.
+        if (_conditionalJoins
+            && (WordBreakClasses.IsIdeographic(rune)
+                || WordBreakClasses.IsHiragana(rune)
+                || WordBreakClasses.IsKatakana(rune)))
+        {
             return CharClass.Other;
+        }
 
         return Rune.IsLetter(rune) ? CharClass.Letter : CharClass.Other;
     }

@@ -532,8 +532,9 @@ same qrels (harness defaults, exponential gains, 10 retrieved at 10):
   `--backend-gate-budget` is the knob. The stop list is not behind the difference either: at the
   same gate budget, a PostgreSQL configuration with the reference's 33-word list reads 0.2196, so
   the longer stock list helps. The published 0.2361 remains reproduced by the in-memory `uax29` row
-  under the reference's conventions, with an index byte-identical to Lucene 10.5.2's; multi-code-point
-  emoji sequences are the one knowingly unimplemented rule.
+  under the reference's conventions, with an index byte-identical to Lucene 10.5.2's; the rule sets
+  FiQA does not exercise — Hiragana splitting, multi-code-point emoji sequences, marks after a
+  standalone term — are measured separately against that tokenizer on probe strings.
 - **`ts_rank_cd`'s and ParadeDB's scores are PostgreSQL-native and not numerically comparable**
   with `Bm25Scorer`; the stock-PostgreSQL BM25 row's are `Bm25Scorer`'s and are. The metric
   columns compare either way. The analysis is PostgreSQL's own, not this library's tokenizer, which
