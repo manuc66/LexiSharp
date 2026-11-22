@@ -1080,6 +1080,11 @@ public sealed class InMemoryTextIndex : ITextIndex, IUnorderedCandidateIndex, IV
                 // the same place. Skipping it leaves Vocabulary short and the term unreachable by a
                 // prefix or fuzzy atom, which is how the semantic lexical index stays searchable.
                 _sortedTerms.Add(candidate);
+
+                // Same reason for the fuzzy trie: once built it is kept current by the vocabulary,
+                // and a term injected here is vocabulary. It is a no-op before the first fuzzy
+                // query, because the trie is then built from _sortedTerms and already holds it.
+                AddToFuzzyTrie(candidate);
             }
 
             string term = posting.Term;
