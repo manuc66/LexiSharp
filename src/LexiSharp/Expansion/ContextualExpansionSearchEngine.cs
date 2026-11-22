@@ -289,6 +289,15 @@ public sealed class ContextualExpansionSearchEngine : ITextSearchEngine
             }
             catch
             {
+                // The scorer is a seam implemented by the consumer (or by LexiSharp.Onnx behind
+                // the same seam): an exception there must not abort the whole rerank, so the
+                // candidate is treated as score 0. This is the same policy as RankedTextSearchEngine
+                // for a failing reranker. A bare catch is deliberate here because the scorer's
+                // contract (ICrossEncoderScorer/IScoreExplainer) does not declare a specific
+                // exception type; narrowing it would re-throw on a new failure mode and break
+                // callers that never saw the exception before. If a logger is wired in later, emit
+                // the exception there rather than swallowing it silently — see the gap tracked in
+                // the craftsmanship notes.
                 s = 0;
             }
             if (double.IsNaN(s) || double.IsInfinity(s)) s = 0;
