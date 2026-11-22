@@ -18,10 +18,21 @@ internal readonly record struct FuzzyVocabularyMatch(string Term, int Distance);
 internal interface IVocabularyFuzzyIndex
 {
     /// <summary>
-    /// Every indexed term within <paramref name="maxEdits"/> edits of <paramref name="term"/>, with
-    /// its distance. Terms are yielded in no guaranteed order; the caller orders them.
+    /// Tries to return every indexed term within <paramref name="maxEdits"/> edits of
+    /// <paramref name="term"/>, with its distance.
     /// </summary>
+    /// <remarks>
+    /// <c>false</c> means this index cannot serve the query with its fuzzy structure — an empty
+    /// vocabulary, a negative budget, or a vocabulary large enough that building the structure would
+    /// cost more than the walk. The caller must then use the vocabulary walk; returning an empty
+    /// list with <c>true</c> would turn a declined structure into “no matches”, which is a different
+    /// answer.
+    /// </remarks>
     /// <param name="term">The normalized base term, operator stripped.</param>
     /// <param name="maxEdits">Non-negative edit budget, clamped by the caller to the query syntax.</param>
-    IEnumerable<FuzzyVocabularyMatch> TermsWithinEdits(string term, int maxEdits);
+    /// <param name="matches">The matches on success; empty otherwise.</param>
+    bool TryGetTermsWithinEdits(
+        string term,
+        int maxEdits,
+        out IReadOnlyList<FuzzyVocabularyMatch> matches);
 }
