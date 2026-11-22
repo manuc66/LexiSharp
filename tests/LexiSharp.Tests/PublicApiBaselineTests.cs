@@ -55,12 +55,9 @@ public class PublicApiBaselineTests
 
         var baseline = File.ReadAllLines(path)
             .Where(line => !line.StartsWith('#'))
-            .ToHashSet(StringComparer.Ordinal);
-
-        var missing = current
-            .Where(line => !baseline.Contains(line))
-            .Order(StringComparer.Ordinal)
             .ToList();
+
+        List<string> missing = RemovedSince(current, baseline);
 
         Assert.True(
             missing.Count == 0,
@@ -68,6 +65,34 @@ public class PublicApiBaselineTests
             string.Join(Environment.NewLine, missing.Select(line => "  - " + line)) +
             $"{Environment.NewLine}Additions are allowed; a removal or signature change is a breaking change." +
             $" For a deliberate major release, re-record with LEXISHARP_WRITE_PUBLIC_API=1.");
+    }
+
+    /// <summary>
+    /// The members the baseline records and the shipped assemblies no longer expose.
+    /// </summary>
+    /// <remarks>
+    /// A member in the assemblies but not in the baseline is an addition, which this gate allows and
+    /// which must not fail it: the baseline is a floor, not a snapshot. The comparison is named and
+    /// internal so the direction can be tested without loading five assemblies.
+    /// </remarks>
+    internal static List<string> RemovedSince(IEnumerable<string> current, IEnumerable<string> baseline)
+    {
+        var present = current.ToHashSet(StringComparer.Ordinal);
+
+        return baseline
+            .Where(line => !present.Contains(line))
+            .Order(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    [Fact]
+    public void AdditionsAreAllowedAndRemovalsAreReported()
+    {
+        string[] baseline = ["T|M1", "T|M2"];
+
+        Assert.Empty(RemovedSince(["T|M1", "T|M2", "T|M3"], baseline));
+        Assert.Equal(["T|M1"], RemovedSince(["T|M2"], baseline));
+        Assert.Equal(["T|M1", "T|M2"], RemovedSince([], baseline));
     }
 
     private static List<string> CurrentApi()

@@ -59,6 +59,13 @@ public static class Program
             return;
         }
 
+        // How much of the theoretical upper bound a real query's best document uses. See BoundTightnessLane.
+        if (args.Length > 0 && args[0] == "bound-tightness")
+        {
+            BoundTightnessLane.Run(args[1..]);
+            return;
+        }
+
         // Tail-query p50/p99 and allocation per corpus size, for the cursor pass's A/B. See CursorLane.
         if (args.Length > 0 && args[0] == "cursor")
         {

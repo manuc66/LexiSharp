@@ -1873,6 +1873,58 @@ against **27.4–28.3 ms** for the walk.
 `Stopwatch` in a plain process, not a BenchmarkDotNet report; read the direction and the cold/warm
 split, not the last digit.
 
+## Bound tightness lane (`bound-tightness`): how much of the upper bound a query reaches
+
+A scorer's theoretical upper bound is valid by construction — it sums each term's independent
+maximum — but it need not be tight. A bound far above every real score is still safe and still
+rescales a query as a whole; it says little about the query's best document. This lane measures
+**`oracleMax / UpperBound`**, where `oracleMax` is the highest score over every matching document.
+
+```bash
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- bound-tightness
+dotnet run --project bench/LexiSharp.Benchmarks -c Release -- bound-tightness nfcorpus scifact --query-limit 100
+```
+
+The queries are the corpora's judged test queries, searched as literal text (`ParseQuerySyntax`
+off), because the engine declines a bound for syntax. The `bounded` column is the number of queries
+whose bound was answered; the rest are queries with no positive term, an absent vocabulary term, or
+an empty result. **No row reported a score above its bound** after the TF-IDF defect below was
+fixed.
+
+| Corpus | Scorer | Queries | p50 | p90 | min | mean | < 0.5 | < 0.8 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| NFCorpus | BM25 | 298 | 72.8% | 100.0% | 21.0% | 69.9% | 83 | 167 |
+| NFCorpus | BM25+ | 298 | 81.4% | 100.0% | 24.5% | 73.8% | 62 | 140 |
+| NFCorpus | BM25L | 298 | 77.4% | 100.0% | 22.8% | 71.8% | 74 | 158 |
+| NFCorpus | TF-IDF | 298 | 61.4% | 100.0% | 22.2% | 67.4% | 102 | 189 |
+| SciFact | BM25 | 300 | 43.2% | 65.2% | 16.6% | 45.0% | 201 | 299 |
+| SciFact | BM25+ | 300 | 49.2% | 70.4% | 18.1% | 50.4% | 157 | 296 |
+| SciFact | BM25L | 300 | 46.6% | 67.7% | 17.3% | 48.0% | 177 | 298 |
+| SciFact | TF-IDF | 300 | 37.1% | 51.1% | 17.7% | 38.0% | 265 | 300 |
+
+The width matters more than the corpus. Deliberately wide queries — the most frequent vocabulary
+terms, one query per width — show a bound that is nearly reached with five terms and mostly slack
+with fifty:
+
+| Terms | NFCorpus | SciFact |
+|---:|---:|---:|
+| 5 | 89.3% | 91.4% |
+| 10 | 74.3% | 76.9% |
+| 25 | 51.9% | 49.7% |
+| 50 | 36.3% | 31.6% |
+
+So the bound is a good divisor on NFCorpus's short queries (the median uses 73% of it) and a weak
+one on SciFact (the median uses 43%, and 201 of 300 queries use less than half). That is the shape
+behind the modest measured gain of `UpperBoundScoreNormalizer`: it moves each query by a different
+factor, but on two thirds of SciFact the factor is largely a rescale. The ranking is unchanged
+either way; only the hybrid's fusion weight sees the difference.
+
+**What it does not measure.** One analyzer (the default, no stemming or stop list) and the BM25
+family; the dense and sparse engines have no query bound, so they are absent. `oracleMax` costs a
+search over every matching document, which is why this is a lane: the real search only touches
+candidates. The lane reports no quality metric — the hybrid normalizer comparison in
+[pipelines.md](pipelines.md) is where the +0.0130 SciFact figure comes from.
+
 ## Sparse engine lane (`sparse-engine`): where a learned-sparse query spends its time
 
 The `sparse-wand` lane measures a contiguous layout and says the shipped engine's
