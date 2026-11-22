@@ -440,6 +440,35 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
         return results.Count > 0 ? results[0].Category : null;
     }
 
+    /// <summary>Predicts with the per-lane contributions and the blend's evidence mass.</summary>
+    public BlendPrediction PredictWithEvidence(
+        string text,
+        int limit = 3,
+        IReadOnlySet<string>? excludedCategories = null)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        IReadOnlyList<ClassificationResult> results = Predict(text, limit, excludedCategories);
+
+        var lanes = new List<LaneContribution>(_lanes.Count);
+        double speakingWeight = 0;
+        double totalWeight = 0;
+
+        foreach (TextClassifierLane lane in _lanes)
+        {
+            totalWeight += lane.Weight;
+            IReadOnlyList<ClassificationResult> laneResults = lane.Classifier.Predict(text, limit, excludedCategories);
+            lanes.Add(new LaneContribution(lane.Classifier.GetType().Name, lane.Weight, laneResults));
+
+            if (laneResults.Count > 0)
+                speakingWeight += lane.Weight;
+        }
+
+        double evidenceMass = totalWeight > 0 ? speakingWeight / totalWeight : 0;
+
+        return new BlendPrediction(results, evidenceMass, lanes);
+    }
+
     /// <inheritdoc />
     public ClassificationExplanation? Explain(
         string text,
