@@ -57,6 +57,7 @@ internal static class SegmentWriter
 
     /// <summary>Format version. A reader refuses anything else rather than guessing.</summary>
     internal const int Version = 6;
+    internal const int OldestReadableVersion = 5;
 
     /// <summary>Fixed header size: everything else in the file is reached through it.</summary>
     internal const int HeaderBytes = 4 + 4 + 4 + 4 + (3 * 8) + 8;

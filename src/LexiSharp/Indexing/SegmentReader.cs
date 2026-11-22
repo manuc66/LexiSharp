@@ -42,6 +42,7 @@ internal sealed class SegmentReader
     private readonly int _documentsTableOffset;
     private readonly int _lengthsOffset;
     private readonly int _termsTableOffset;
+    private readonly int _version;
 
     /// <summary>
     /// The fetch buffer of the calling thread, created on first use and grown when a read is larger
@@ -79,10 +80,15 @@ internal sealed class SegmentReader
 
         int version = source.ReadInt32(4);
 
-        if (version != SegmentWriter.Version)
-            throw new InvalidDataException($"the segment declares version {version}, and this reader reads {SegmentWriter.Version}");
+        if (version < SegmentWriter.OldestReadableVersion || version > SegmentWriter.Version)
+            throw new InvalidDataException($"the segment declares version {version}, and this reader reads versions {SegmentWriter.OldestReadableVersion} to {SegmentWriter.Version}; rebuild the index with a current writer.");
 
+        _version = version;
         _source = source;
+
+        if (version < SegmentWriter.Version)
+            System.Diagnostics.Trace.TraceWarning(
+                "LexiSharp: segment declares version {0}; score bounds are unavailable until the index is rebuilt. Upgrade with 'lexisharp migrate-segment' or rebuild.", version);
 
         DocumentCount = source.ReadInt32(8);
         TermCount = source.ReadInt32(12);
@@ -116,6 +122,12 @@ internal sealed class SegmentReader
 
     /// <summary>Documents the segment holds.</summary>
     public int DocumentCount { get; }
+
+    /// <summary>The format version the segment declares.</summary>
+    public int Version => _version;
+
+    /// <summary>Whether the segment carries per-term frequency bounds (version 6 and later).</summary>
+    public bool HasTermFrequencyBounds => _version >= SegmentWriter.Version;
 
     /// <summary>Terms the segment holds.</summary>
     public int TermCount { get; }
@@ -259,12 +271,13 @@ internal sealed class SegmentReader
     /// </remarks>
     public bool TryGetTermBound(ReadOnlySpan<char> term, out TermFrequencyBound bound)
     {
-        if (!TryFindTermEntry(term, out StoredTermEntry entry))
-        {
-            bound = default;
+        bound = default;
 
+        if (_version < SegmentWriter.Version)
             return false;
-        }
+
+        if (!TryFindTermEntry(term, out StoredTermEntry entry))
+            return false;
 
         bound = new TermFrequencyBound(entry.MaxFrequency, entry.MinDocumentLength);
 
@@ -464,10 +477,19 @@ internal sealed class SegmentReader
     {
         int termLength = ReadInt32(entry, "term length");
 
+        int documentFrequency = ReadInt32(entry + sizeof(int) + termLength, "document frequency");
+        int postingsOffset = ReadInt32(entry + (2 * sizeof(int)) + termLength, "postings offset");
+        int postingsLength = ReadInt32(entry + (3 * sizeof(int)) + termLength, "postings length");
+
+        if (_version < SegmentWriter.Version)
+        {
+            return new StoredTermEntry(documentFrequency, postingsOffset, postingsLength, 0, 0);
+        }
+
         return new StoredTermEntry(
-            ReadInt32(entry + sizeof(int) + termLength, "document frequency"),
-            ReadInt32(entry + (2 * sizeof(int)) + termLength, "postings offset"),
-            ReadInt32(entry + (3 * sizeof(int)) + termLength, "postings length"),
+            documentFrequency,
+            postingsOffset,
+            postingsLength,
             ReadInt32(entry + (4 * sizeof(int)) + termLength, "maximum term frequency"),
             ReadInt32(entry + (5 * sizeof(int)) + termLength, "minimum document length"));
     }
