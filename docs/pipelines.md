@@ -251,6 +251,13 @@ the total and the per-term figures, for a caller that wants to normalise outside
 which term made the bound loose. `UpperBoundScoreNormalizer` and
 `IContextualScoreNormalizer` are covered in the [API reference](api.md).
 
+How tight that bound is, measured rather than assumed: the [bound-tightness
+lane](benchmarks.md#bound-tightness-lane-bound-tightness-how-much-of-the-upper-bound-a-query-reaches)
+reads a median of **72.8%** of the bound on NFCorpus BM25 and **43.2%** on SciFact, and a
+deliberately wide 50-term query reaches only **32–36%**. A loose bound rescales a query as a whole,
+which is why the normalizer's measured SciFact gain is +0.0130 and not more, and why `max` stays
+the default.
+
 For score breakdowns, `SearchWithDetails()` returns `DetailedSearchResult`s where each
 document also carries its raw per-source score (`Contributions`), keyed by the labels passed
 as `sourceNames` to the constructor (`"lexical"`, `"semantic"`, ... — default `"engine-N"`).

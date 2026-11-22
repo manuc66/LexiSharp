@@ -2,6 +2,14 @@
 
 ### Added
 
+- **A bound-tightness lane measures how much of the theoretical upper bound a query reaches.** The
+  bound is valid but not necessarily tight; `bound-tightness` reports `oracleMax / UpperBound` for
+  the judged queries of the BEIR corpora, where `oracleMax` is the highest score over every matching
+  document. Measured: NFCorpus BM25 median **72.8%** (p90 100%), SciFact BM25 median **43.2%**
+  (p90 65.2%), and the bound loosens with query width — 5 frequent terms use 89–91%, 50 use 32–36%.
+  No score exceeded its bound after the TF-IDF defect below was fixed. The lane and the caveats are
+  in [benchmarks.md](docs/benchmarks.md#bound-tightness-lane-bound-tightness-how-much-of-the-upper-bound-a-query-reaches).
+
 - **`InMemoryTextIndex` answers a fuzzy atom from a trie.** The first fuzzy query builds a trie over
   the vocabulary and walks it with a Levenshtein row, pruning a subtree once every cell is above the
   edit budget. On 200,000 terms the build costs **~110 ms and 46 MiB allocated**, and a warm atom
@@ -300,6 +308,14 @@
   and from 63.7 ms to 37.3 ms at the mean.
 
 ### Fixed
+
+- **TF-IDF's query plan counted a repeated query term once per occurrence, while its `Score` counted
+  it once.** The engine hands plans the raw term list so a scorer with `QueryTermWeighting` can
+  count occurrences; TF-IDF has no such setting, so `term term term` tripled a document's score on
+  the accumulating path and left it unchanged on the per-document path. The query bound
+  deduplicates, so the engine could also return a score above the bound it had just published —
+  measured on NFCorpus and SciFact at **134%** and **121%** of the bound. The plan now deduplicates
+  as `Score` does, and a parity test pins it.
 
 - **The `uax29` analysis now matches the reference on Hiragana, emoji sequences and marks after a
   standalone term.** Each rule was measured against Lucene 10.5.2's `EnglishAnalyzer` on 84 probe

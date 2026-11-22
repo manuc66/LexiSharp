@@ -264,12 +264,33 @@ public class QueryPlanParityTests
         ["term", "the quick", "every letter scoring", "zulu missing term"];
 
     /// <summary>
-    /// The same list plus a repeated term. Both sides of the accumulation comparison below are
-    /// <em>plans</em>, and plans do not deduplicate the way <see cref="ITextScorer.Score"/> does,
-    /// so both count the repetition the same number of times and still have to agree exactly.
-    /// The engine itself never hands a plan a duplicated list — it deduplicates once and wraps
-    /// the result in a <c>DistinctTermList</c> — which is why the divergence does not reach it.
+    /// The same list plus a repeated term. The engine hands a plan the raw query terms, so a scorer
+    /// that counts occurrences (BM25's <c>QueryTermWeighting.QueryFrequency</c>) can; a scorer that
+    /// does not (TF-IDF) deduplicates in its plan exactly as its <see cref="ITextScorer.Score"/>
+    /// does. Both sides of the accumulation comparison below are plans, so they must still agree
+    /// with each other, and a plan must agree with its scorer's own <c>Score</c>.
     /// </summary>
     private static IEnumerable<string> Queries() =>
         ["term", "the quick", "every letter scoring", "zulu missing term", "term term term"];
+
+    /// <summary>
+    /// TF-IDF scores a repeated query term once, through the plan as through <c>Score</c>.
+    /// </summary>
+    /// <remarks>
+    /// The plan receives the raw list and used to iterate it as given, so <c>term term term</c>
+    /// tripled a document's score on the accumulating path while the per-document path did not.
+    /// The query bound deduplicates, so the engine could also return a score above the bound it had
+    /// just published — measured on nfcorpus and scifact, at 134% and 121% of the bound.
+    /// </remarks>
+    [Fact]
+    public void TfIdf_PlanScoresARepeatedTermOnceLikeScore()
+    {
+        var scorer = new TfIdfScorer();
+        var index = BuildIndex();
+        var tokens = index.Tokenizer.Tokenize("term term term");
+        var plan = ((IQueryPlannableScorer)scorer).CreatePlan(tokens, index);
+
+        foreach (var documentId in index.Documents.Select(document => document.Id))
+            Assert.Equal(scorer.Score(documentId, tokens, index), plan.Score(documentId));
+    }
 }
