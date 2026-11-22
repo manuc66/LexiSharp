@@ -26,3 +26,11 @@
 [*.cs]
 dotnet_diagnostic.CA1861.severity = none
 dotnet_diagnostic.CA1859.severity = none
+
+# CA1031 -- "Do not catch general exception types." Raised to suggestion (not warning) so it
+# never fails the build, but surfaces every bare `catch` in the IDE and in SonarCloud's
+# imported analyzer output. A bare catch is allowed here only when the justification is written
+# next to it (see AsyncReaderWriterLock, RoutingSearchEngine, MappedSegment,
+# DecisionTreeClassifier, ContextualExpansionSearchEngine). A new bare catch without such a
+# comment is a smell to fix before merging, not a style nit.
+dotnet_diagnostic.CA1031.severity = suggestion

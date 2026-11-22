@@ -89,4 +89,25 @@ public class IdeographicTokenTests
         Assert.Equal(["a", "尺"], Segmenter().Tokenize("a:尺"));
         Assert.Equal(["尺", "财"], Segmenter().Tokenize("尺.财"));
     }
+
+    /// <summary>
+    /// The reference appends <c>Extend</c> and <c>Format</c> characters to the token they follow,
+    /// and the ideograph rule is no exception: a combining mark and a variation selector are part
+    /// of the ideograph's term.
+    /// </summary>
+    [Fact]
+    public void AMarkOrFormatCharacterStaysInTheIdeographTerm()
+    {
+        Assert.Equal(["尺\u0307"], Segmenter().Tokenize("尺\u0307"));
+        Assert.Equal(["尺\u0307\u0308"], Segmenter().Tokenize("尺\u0307\u0308"));
+        Assert.Equal(["尺\uFEFF"], Segmenter().Tokenize("尺\uFEFF"));
+        Assert.Equal(["尺\uFE0F"], Segmenter().Tokenize("尺\uFE0F"));
+    }
+
+    [Fact]
+    public void AMarkAfterAnIdeographDoesNotJoinTheNextWord()
+    {
+        Assert.Equal(["尺\u0307", "财"], Segmenter().Tokenize("尺\u0307.财"));
+        Assert.Equal(["尺\u0307", "z"], Segmenter().Tokenize("尺\u0307z"));
+    }
 }

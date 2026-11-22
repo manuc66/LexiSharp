@@ -95,4 +95,47 @@ public class InMemoryVocabularyPrefixTests
         Assert.Empty(Prefix(index, "refre"));
         Assert.Equal(index.VocabularySize, index.Vocabulary.Count());
     }
+
+    /// <summary>
+    /// Invariant (guard against the AddExpansionTerms desync regression): after any sequence of
+    /// Add / Remove / AddExpansionTerms / Clear, the ordered vocabulary must agree with the posting
+    /// map on both count and membership. A term that is posted must be enumerable as a vocabulary
+    /// term, and a term that is not posted must not be. This test pins the contract so a future
+    /// change that adds a second structure (or a second write path) cannot silently desync them.
+    /// </summary>
+    [Fact]
+    public void Vocabulary_StaysInSyncWithPostings_AcrossMixedOperations()
+    {
+        var index = new InMemoryTextIndex();
+        index.Add(new SearchDocument("a", "alpha beta gamma"));
+        index.Add(new SearchDocument("b", "beta delta"));
+        index.AddExpansionTerms("a", ["epsilon", "zeta"]);
+        index.Add(new SearchDocument("c", "eta"));
+
+        // Vocabulary and postings agree on count.
+        Assert.Equal(index.VocabularySize, index.Vocabulary.Count());
+
+        // Every vocabulary term is posted (has a non-empty posting list).
+        foreach (var term in index.Vocabulary)
+            Assert.True(index.DocumentFrequency(term) > 0, $"vocabulary term '{term}' has no posting list");
+
+        // Every posted term is in the vocabulary.
+        foreach (var term in new[] { "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta" })
+        {
+            if (index.DocumentFrequency(term) > 0)
+                Assert.Contains(term, index.Vocabulary);
+        }
+
+        // Remove a document and re-check the invariant.
+        index.Remove("a");
+        Assert.Equal(index.VocabularySize, index.Vocabulary.Count());
+        Assert.DoesNotContain("epsilon", index.Vocabulary);
+        Assert.DoesNotContain("zeta", index.Vocabulary);
+        Assert.Contains("beta", index.Vocabulary); // still posted by "b"
+
+        // Clear empties everything.
+        index.Clear();
+        Assert.Equal(0, index.VocabularySize);
+        Assert.Empty(index.Vocabulary);
+    }
 }
