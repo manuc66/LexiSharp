@@ -28,6 +28,19 @@ engine does everything else. Swap the scorer, keep the index.
   between document verboseness (`|d| / distinct terms`) and length, with `b = 1` exactly
   BM25 and `b = 0` length-free. Measured at fixed points, it does not beat tuned BM25 on the
   three corpora here and costs far more per query — see the section below.
+
+## Auto-tuning and calibration
+
+- **`Bm25Tuner`** — grid-searches `k1` and `b` on a labelled validation set and reports
+  the best configuration with its mean nDCG@k and a paired-bootstrap 95 % confidence
+  interval. Replaces the hand-tuned defaults with a corpus-specific profile and tells you
+  whether the gain is real (the interval does not contain zero).
+- **`CalibrationMetrics`** — Expected Calibration Error (ECE), Maximum Calibration Error
+  (MCE) and Brier score with reliability bins and bootstrap CI. Measures how well a
+  scorer's outputs match observed frequencies.
+- **`CalibratedBm25Scorer`** — wraps a `Bm25Scorer` and maps raw scores to calibrated
+  probabilities via Platt scaling (logistic regression), fitted with `CalibratedBm25Scorer.Fit`
+  on a labelled validation set. Implements `IScoreExplainer` by delegating to the inner scorer.
 - **`SpreadBm25Scorer`** — BM25 whose term frequency is the number of **distinct windows** holding
   the term (`α` blends it with the raw count; `α = 0` is exactly BM25). Measured as an interaction
   with `b`: it does not replace length normalization and moves nDCG by at most 0.002.
