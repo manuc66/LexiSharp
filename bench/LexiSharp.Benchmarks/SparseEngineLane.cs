@@ -41,24 +41,51 @@ internal static class SparseEngineLane
         // The import profile is the half of this lane that does not need the query shapes: a
         // layout change is decided on the build, and running the searches only adds noise to a
         // sampling profile or to a wall-clock comparison of two imports.
-        bool importOnly = args.Contains("--import-only", StringComparer.Ordinal);
-        string[] positional = [.. args.Where(argument => !argument.StartsWith("--", StringComparison.Ordinal))];
+        bool importOnly = false;
+        int remove = 0;
+        int vocabulary = VocabularySize;
+        var positional = new List<string>(2);
 
-        int documents = positional.Length > 0 ? ParsePositive(positional[0], "documents") : DefaultDocuments;
-        int termsPerDocument = positional.Length > 1 ? ParsePositive(positional[1], "terms per document") : DefaultTermsPerDocument;
+        for (int i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--import-only":
+                    importOnly = true;
+                    break;
+
+                case "--remove" when i + 1 < args.Length:
+                    remove = ParsePositive(args[++i], "removals");
+                    break;
+
+                case "--vocabulary" when i + 1 < args.Length:
+                    vocabulary = ParsePositive(args[++i], "vocabulary");
+                    break;
+
+                default:
+                    positional.Add(args[i]);
+                    break;
+            }
+        }
+
+        int documents = positional.Count > 0 ? ParsePositive(positional[0], "documents") : DefaultDocuments;
+        int termsPerDocument = positional.Count > 1 ? ParsePositive(positional[1], "terms per document") : DefaultTermsPerDocument;
+
+        if (remove > documents)
+            throw new ArgumentException($"sparse-engine cannot remove {Number(remove)} of {Number(documents)} documents.");
 
         // Each document draws its terms from the same fixed vocabulary, so asking for more distinct
         // terms than the vocabulary holds would never fill the vector and would hang the lane.
-        if (termsPerDocument > VocabularySize)
+        if (termsPerDocument > vocabulary)
             throw new ArgumentException(
-                $"sparse-engine needs at most {Number(VocabularySize)} terms per document, got {Number(termsPerDocument)}.");
+                $"sparse-engine needs at most {Number(vocabulary)} terms per document, got {Number(termsPerDocument)}.");
 
         Console.WriteLine(
             $"sparse-engine   {Number(documents)} documents, {Number(termsPerDocument)} terms/document, " +
-            $"vocabulary {Number(VocabularySize)}; absent / rare / head-1 / head-10 / head-40 / head-100 queries");
+            $"vocabulary {Number(vocabulary)}; absent / rare / head-1 / head-10 / head-40 / head-100 queries");
 
         var generation = Stopwatch.StartNew();
-        var corpus = Corpus.Generate(documents, termsPerDocument, seed: 20_261);
+        var corpus = Corpus.Generate(documents, termsPerDocument, vocabulary, seed: 20_261);
         generation.Stop();
 
         var engine = new SparseTextSearchEngine(new FixedProvider(corpus.Queries));
@@ -83,12 +110,70 @@ internal static class SparseEngineLane
         Console.WriteLine($"import cpu      {Time(cpu.TotalMilliseconds * 1_000)}  (process CPU, all threads)");
         Console.WriteLine($"engine          {Number(engine.Count)} documents, {Number(engine.VocabularySize)} terms");
 
+        if (remove > 0)
+            MeasureRemoval(engine, documents, remove);
+
         if (importOnly)
             return;
 
         foreach (var query in corpus.Queries)
             Measure(engine, query);
     }
+
+    /// <summary>
+    /// Removes evenly spaced documents and reports per-removal cost, the worst single removal and
+    /// the memory the engine still holds afterwards.
+    /// </summary>
+    /// <remarks>
+    /// Removal walks each of the document's posting lists to close the gap; this measures what that
+    /// costs when the lists are millions of entries long, which is the shape a re-crawl produces.
+    /// </remarks>
+    private static void MeasureRemoval(SparseTextSearchEngine engine, int documents, int remove)
+    {
+        var process = Process.GetCurrentProcess();
+        process.Refresh();
+        long beforeMemory = GC.GetTotalMemory(forceFullCollection: true);
+        long beforeWorkingSet = process.WorkingSet64;
+        TimeSpan beforeCpu = process.TotalProcessorTime;
+
+        int step = Math.Max(documents / remove, 1);
+        int removed = 0;
+        double worst = 0;
+        var total = Stopwatch.StartNew();
+
+        for (int i = 0; i < remove; i++)
+        {
+            string id = (((long)i * step) % documents).ToString(CultureInfo.InvariantCulture);
+
+            long started = Stopwatch.GetTimestamp();
+            if (engine.Remove(id))
+                removed++;
+
+            double microseconds = Stopwatch.GetElapsedTime(started).TotalMicroseconds;
+
+            if (microseconds > worst)
+                worst = microseconds;
+        }
+
+        total.Stop();
+        process.Refresh();
+        long afterMemory = GC.GetTotalMemory(forceFullCollection: true);
+        long afterWorkingSet = process.WorkingSet64;
+
+        Console.WriteLine(
+            $"remove          {Number(removed)} documents in {Time(total.Elapsed.TotalMilliseconds * 1_000)}, " +
+            $"{Time(total.Elapsed.TotalMilliseconds * 1_000 / Math.Max(removed, 1))}/document, " +
+            $"worst {Time(worst)}");
+        Console.WriteLine(
+            $"remove cpu      {Time((process.TotalProcessorTime - beforeCpu).TotalMilliseconds * 1_000)}, " +
+            $"engine now {Number(engine.Count)} documents");
+        Console.WriteLine(
+            $"remove memory   GC {Megabytes(afterMemory - beforeMemory)}, " +
+            $"working set {Megabytes(beforeWorkingSet)} -> {Megabytes(afterWorkingSet)}");
+    }
+
+    private static string Megabytes(long bytes) =>
+        (bytes / (1024.0 * 1024.0)).ToString("N1", CultureInfo.InvariantCulture) + " MiB";
 
     private static void Measure(SparseTextSearchEngine engine, Query query)
     {
@@ -181,6 +266,7 @@ internal static class SparseEngineLane
         public static Corpus Generate(
             int documents,
             int termsPerDocument,
+            int vocabulary,
             int seed)
         {
             var random = new Random(seed);
@@ -189,11 +275,11 @@ internal static class SparseEngineLane
 
             for (int document = 0; document < documents; document++)
             {
-                var weights = new Dictionary<string, float>(Math.Min(termsPerDocument, VocabularySize), StringComparer.Ordinal);
+                var weights = new Dictionary<string, float>(Math.Min(termsPerDocument, vocabulary), StringComparer.Ordinal);
 
                 while (weights.Count < termsPerDocument)
                 {
-                    int term = Draw(random, VocabularySize);
+                    int term = Draw(random, vocabulary);
 
                     weights[$"t{term}"] = 0.1f + (float)(random.NextDouble() * 3.0);
                 }
@@ -210,7 +296,7 @@ internal static class SparseEngineLane
             var querySet = new List<Query>
             {
                 QueryOf("absent40", Terms("absent", 40)),
-                QueryOf("rare40", Terms("t", 40, start: 29_900)),
+                QueryOf("rare40", Terms("t", 40, start: Math.Max(vocabulary - 100, 0))),
                 QueryOf("head1", Terms("t", 1)),
                 QueryOf("head10", Terms("t", 10)),
                 QueryOf("head40", Terms("t", 40)),

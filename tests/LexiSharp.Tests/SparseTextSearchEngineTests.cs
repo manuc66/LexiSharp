@@ -269,6 +269,37 @@ public class SparseTextSearchEngineTests
         Assert.Equal(2, engine.Count);
     }
 
+    /// <summary>
+    /// Removing most of a posting list compacts it, and a document added afterwards still reaches
+    /// the term: the tombstoned entries are gone, not merely hidden from scoring.
+    /// </summary>
+    [Fact]
+    public void Remove_CompactsAHeavilyTombstonedListAndKeepsAppendsWorking()
+    {
+        var engine = new SparseTextSearchEngine(new StubSparseProvider(text => text switch
+        {
+            "shared" => new Dictionary<string, float> { ["shared"] = 1f },
+            "q" => new Dictionary<string, float> { ["shared"] = 1f },
+            _ => Empty,
+        }));
+
+        foreach (string id in new[] { "d1", "d2", "d3", "d4" })
+            engine.Add(Doc(id, "shared"));
+
+        engine.Remove("d1");
+        engine.Remove("d2");
+        engine.Remove("d3"); // live count is one quarter of the array: compaction
+
+        engine.Add(Doc("n", "shared")); // reuses a freed ordinal, appends after the compacted array
+
+        Assert.Equal(new[] { "d4", "n" }, engine.Search("q").Select(r => r.DocumentId).Order().ToArray());
+
+        engine.Remove("n");
+
+        Assert.Equal(new[] { "d4" }, engine.Search("q").Select(r => r.DocumentId).ToArray());
+        Assert.Equal(1, engine.VocabularySize);
+    }
+
     [Fact]
     public void Clear_RemovesEverything()
     {

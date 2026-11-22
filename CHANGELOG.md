@@ -302,6 +302,15 @@
   source that throws leaves the previous corpus in place instead of a cleared engine. `Add` keeps
   the doubling list because it has no count to size from.
 
+- **Removing a sparse document no longer walks its posting lists.** The old removal scanned each
+  list to close the gap — O(df) per term — which is worst exactly where it matters, in a dense
+  vocabulary. On 1,000,000 documents × 50 terms, removal now binary-searches the ordinal and
+  tombstones the weight: **16.07 ms → 40 µs per document** at df 500,000, **2.09 ms → 62 µs** at df
+  50,000, and 100,000 documents (10% of the corpus) removed in **0.98 s**. A list compacts when
+  fewer than half its entries are live, search skips a tombstone only in a list that has one, and a
+  list whose freed ordinal was reused out of order falls back to the old linear scan. Search over a
+  10%-smaller corpus is unchanged within noise.
+
 - **Fuzzy expansion fetches a candidate's document frequency once per resolver pass.** The sort
   comparer previously called `DocumentFrequency` twice per comparison, so a term's constant
   frequency was probed O(candidates log candidates) times; the frequency now travels with the
