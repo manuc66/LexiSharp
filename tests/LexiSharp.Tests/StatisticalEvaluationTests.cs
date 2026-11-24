@@ -91,6 +91,64 @@ public class StatisticalEvaluationTests
     }
 
     [Fact]
+    public void Conformal_DisjointCalibration_CoverageOnThirdSet()
+    {
+        const double alpha = 0.10;
+        var rng = new Random(11);
+        var distributions = new Dictionary<string, ClassificationResult[]>();
+        var temperature = new List<SearchDocument>();
+        var conformalCalibration = new List<SearchDocument>();
+        var test = new List<SearchDocument>();
+
+        for (int i = 0; i < 2600; i++)
+        {
+            double p = 0.55 + rng.NextDouble() * 0.40;
+            bool isA = rng.NextDouble() < p;
+            string text = "z" + i;
+            distributions[text] = new[]
+            {
+                new ClassificationResult("A", p),
+                new ClassificationResult("B", 1 - p),
+            };
+            var doc = new SearchDocument(text, text, Category: isA ? "A" : "B");
+            if (i < 500) temperature.Add(doc);
+            else if (i < 800) conformalCalibration.Add(doc);
+            else test.Add(doc);
+        }
+
+        var inner = new FixedDistributionClassifier(distributions);
+        var conformal = ConformalClassifier<CalibratedClassifier>.FitCalibrated(
+            inner, temperature, conformalCalibration, alpha: alpha, minCalibrationSize: 100);
+
+        Assert.True(conformal.IsCalibrated);
+
+        int misses = 0;
+        foreach (var doc in test)
+        {
+            var set = conformal.PredictSet(doc.Text);
+            if (!set.Categories.Contains(doc.Category!)) misses++;
+        }
+
+        double miscoverage = misses / (double)test.Count;
+        Assert.InRange(miscoverage, 0, alpha + 0.08);
+    }
+
+    [Fact]
+    public void FitCalibrated_OverlappingSets_Throws()
+    {
+        var inner = new NaiveBayesClassifier();
+        inner.Train(new[] { new SearchDocument("1", "alpha", Category: "A") });
+        var shared = new SearchDocument("shared", "alpha", Category: "A");
+
+        Assert.Throws<ArgumentException>(() =>
+            ConformalClassifier<CalibratedClassifier>.FitCalibrated(
+                inner,
+                new[] { shared },
+                new[] { shared },
+                minCalibrationSize: 1));
+    }
+
+    [Fact]
     public void AccuracyGate_SwapsOnATie_ButSignificanceGateDoesNot()
     {
         var current = new ConstantClassifier("A");
