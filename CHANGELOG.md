@@ -23,7 +23,9 @@
 
 - `Bm25Tuner.TuneWithRefinement` and `FusionWeightTuner.TuneWithRefinement` expose the opt-in
   coordinate-descent refinement; the existing `Tune` signatures are unchanged and grid-only.
-- `Tokenizer.Normalize` folds `œ`, `æ` and `ß` (including uppercase forms) to ASCII.
+- `Tokenizer.Normalize` folds `œ`, `æ` and `ß` (including uppercase forms) to ASCII. Reindex a
+  corpus that contains those ligatures: the normalized term changed, so an index built by an older
+  version no longer matches the new query terms.
 - `TemporalPrior` still implements `ITextPriorSource` for compatibility, but `Prior(string)`
   returns an empty prior unless the prior was constructed with an explicit clock; use
   `Prior(DateTimeOffset)` for session-scoped temporal evidence.
