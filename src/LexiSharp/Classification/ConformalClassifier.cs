@@ -31,6 +31,48 @@ public sealed class ConformalClassifier<TInner> : ITextClassifier, IExplainableT
     private double _quantile = double.NaN;
     private bool _calibrated;
 
+    /// <summary>
+    /// Fits a temperature on <paramref name="calibrationDocuments"/> and then conformal-calibrates
+    /// the calibrated classifier on the same set.
+    /// </summary>
+    /// <remarks>
+    /// Reusing one set for both steps is convenient but not a strict split-conformal guarantee:
+    /// the temperature is part of the model, so the non-conformity scores are not fully held out.
+    /// Use the two-set overload when the data allows it.
+    /// </remarks>
+    public static ConformalClassifier<CalibratedClassifier> FitCalibrated(
+        ITextClassifier inner,
+        IEnumerable<SearchDocument> calibrationDocuments,
+        double alpha = 0.10,
+        int minCalibrationSize = 20)
+    {
+        ArgumentNullException.ThrowIfNull(inner);
+        ArgumentNullException.ThrowIfNull(calibrationDocuments);
+
+        var documents = calibrationDocuments.ToList();
+        var calibrated = CalibratedClassifier.Fit(inner, documents);
+        return new ConformalClassifier<CalibratedClassifier>(calibrated, documents, alpha, minCalibrationSize);
+    }
+
+    /// <summary>
+    /// Fits a temperature on <paramref name="temperatureCalibration"/> and then conformal-calibrates
+    /// on the disjoint <paramref name="conformalCalibration"/> set.
+    /// </summary>
+    public static ConformalClassifier<CalibratedClassifier> FitCalibrated(
+        ITextClassifier inner,
+        IEnumerable<SearchDocument> temperatureCalibration,
+        IEnumerable<SearchDocument> conformalCalibration,
+        double alpha = 0.10,
+        int minCalibrationSize = 20)
+    {
+        ArgumentNullException.ThrowIfNull(inner);
+        ArgumentNullException.ThrowIfNull(temperatureCalibration);
+        ArgumentNullException.ThrowIfNull(conformalCalibration);
+
+        var calibrated = CalibratedClassifier.Fit(inner, temperatureCalibration);
+        return new ConformalClassifier<CalibratedClassifier>(calibrated, conformalCalibration, alpha, minCalibrationSize);
+    }
+
     /// <summary>Wraps <paramref name="inner"/> and calibrates on <paramref name="calibrationDocuments"/>.</summary>
     /// <param name="inner">A trained classifier. Not owned by this wrapper.</param>
     /// <param name="calibrationDocuments">Held-out labelled examples used for calibration; may be null to calibrate later.</param>
