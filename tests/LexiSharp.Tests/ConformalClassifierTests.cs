@@ -74,6 +74,35 @@ public class ConformalClassifierTests
     }
 
     [Fact]
+    public void FitCalibrated_WrapsTemperatureCalibrationBeforeConformal()
+    {
+        var inner = new NaiveBayesClassifier();
+        inner.Train(Training);
+
+        var conformal = ConformalClassifier<CalibratedClassifier>.FitCalibrated(
+            inner, Calibration, alpha: 0.10, minCalibrationSize: 3);
+
+        Assert.IsType<CalibratedClassifier>(conformal.Inner);
+        Assert.True(conformal.IsCalibrated);
+        Assert.NotEmpty(conformal.PredictSet("alpha").Categories);
+    }
+
+    [Fact]
+    public void FitCalibrated_WithDisjointSets_UsesBoth()
+    {
+        var inner = new NaiveBayesClassifier();
+        inner.Train(Training);
+
+        var temperature = Calibration.Take(3).ToArray();
+        var conformalCalibration = Calibration.Skip(3).ToArray();
+
+        var conformal = ConformalClassifier<CalibratedClassifier>.FitCalibrated(
+            inner, temperature, conformalCalibration, alpha: 0.10, minCalibrationSize: 2);
+
+        Assert.True(conformal.IsCalibrated);
+    }
+
+    [Fact]
     public void Calibration_RoundTripsThroughStream()
     {
         var inner = new NaiveBayesClassifier();

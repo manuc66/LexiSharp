@@ -48,6 +48,49 @@ public class StatisticalEvaluationTests
     }
 
     [Fact]
+    public void Conformal_AfterCalibration_CoverageStaysCloseToNominal()
+    {
+        const double alpha = 0.10;
+        var rng = new Random(7);
+        var distributions = new Dictionary<string, ClassificationResult[]>();
+        var calibration = new List<SearchDocument>();
+        var test = new List<SearchDocument>();
+
+        for (int i = 0; i < 2200; i++)
+        {
+            double p = 0.55 + rng.NextDouble() * 0.40;
+            bool isA = rng.NextDouble() < p;
+            string text = "y" + i;
+            distributions[text] = new[]
+            {
+                new ClassificationResult("A", p),
+                new ClassificationResult("B", 1 - p),
+            };
+            var doc = new SearchDocument(text, text, Category: isA ? "A" : "B");
+            if (i < 400) calibration.Add(doc);
+            else test.Add(doc);
+        }
+
+        var inner = new FixedDistributionClassifier(distributions);
+        var conformal = ConformalClassifier<CalibratedClassifier>.FitCalibrated(
+            inner, calibration, alpha: alpha, minCalibrationSize: 100);
+
+        Assert.True(conformal.IsCalibrated);
+
+        int covered = 0;
+        int misses = 0;
+        foreach (var doc in test)
+        {
+            var set = conformal.PredictSet(doc.Text);
+            if (set.Categories.Contains(doc.Category!)) covered++;
+            else misses++;
+        }
+
+        double miscoverage = misses / (double)test.Count;
+        Assert.InRange(miscoverage, 0, alpha + 0.08);
+    }
+
+    [Fact]
     public void AccuracyGate_SwapsOnATie_ButSignificanceGateDoesNot()
     {
         var current = new ConstantClassifier("A");
