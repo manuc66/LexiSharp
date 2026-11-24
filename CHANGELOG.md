@@ -25,9 +25,9 @@
 - `Bm25Tuner.TuneWithRefinement` and `FusionWeightTuner.TuneWithRefinement` expose the opt-in
   coordinate-descent refinement; the existing `Tune` signatures are unchanged and grid-only.
 - `Tokenizer.Normalize` folds `œ`, `æ` and `ß` (including uppercase forms) to ASCII.
-- `TemporalPrior` still implements `ITextPriorSource` for compatibility, but `Prior(string)` throws
-  unless the prior was constructed with an explicit clock; use `Prior(DateTimeOffset)` for
-  session-scoped temporal evidence.
+- `TemporalPrior` still implements `ITextPriorSource` for compatibility, but `Prior(string)`
+  returns an empty prior unless the prior was constructed with an explicit clock; use
+  `Prior(DateTimeOffset)` for session-scoped temporal evidence.
 - `CorrectingSubjectRanker` is an obsolete compatibility wrapper over
   `CorrectingTextClassifier`.
 

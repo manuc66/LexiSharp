@@ -313,11 +313,6 @@ public sealed class ConformalClassifier<TInner> : ITextClassifier, IExplainableT
             return explainable.Explain(text, limit, excludedCategories);
         }
 
-        if (_inner is CalibratedClassifier calibrated)
-        {
-            return calibrated.Explain(text, limit, excludedCategories);
-        }
-
         return null;
     }
 }

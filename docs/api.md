@@ -164,7 +164,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `BlendContext` | record | — | Evidence supplied for one prediction, instead of being configured as a source on the blend. |
 | `BlendPrediction` | record | — | The outcome of a BlendTextClassifier prediction with its evidence mass. |
 | `BlendTextClassifier` | class | `IContextualTextClassifier`, `IExplainableTextClassifier`, `IIncrementalTextClassifier`, `ITextClassifier` | Blends any number of text classifiers, then optionally injects candidate categories and log-prior bonuses. |
-| `CalibratedClassifier` | class | `ITextClassifier` | Wraps an ITextClassifier with a fitted temperature, so Predict returns the calibrated distribution and PredictBest the same top category. |
+| `CalibratedClassifier` | class | `IExplainableTextClassifier`, `ITextClassifier` | Wraps an ITextClassifier with a fitted temperature, so Predict returns the calibrated distribution and PredictBest the same top category. |
 | `CalibrationSample` | record | — | One validation observation for calibration: the distribution a model produced and the category that was actually right. |
 | `CandidateLane` | record | — | One source of categories no model learned, and the weight of its evidence. |
 | `CentroidClassifier` | class | `IAsyncTextClassifier`, `IExplainableTextClassifier`, `IIncrementalAsyncTextClassifier`, `IIncrementalTextClassifier`, `ITextClassifier` | Text wrapper over the generic nearest-centroid model: embeds documents with an IEmbeddingProvider, computes one centroid per Category, and classifies a text by… |
@@ -226,7 +226,6 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `RandomForestClassifier<TItem>` | class | — | A bagged forest of DecisionTreeClassifier trees: each tree sees a bootstrap sample and a random subset of the features, and the forest averages their… |
 | `RandomForestOptions` | record | — | Tunable knobs for RandomForestClassifier: how many trees, how deep, and how much of the feature space each tree is allowed to see. |
 | `RecordingClassifier` | class | `ITextClassifier` | ITextClassifier decorator that remembers the last prediction of the wrapped classifier, so a result can be attributed to its strongest signal. |
-| `SignificanceTests` | class | — | Non-parametric significance tests for paired samples. |
 | `SplitCriterion` | enum | — | How a candidate split is scored when a decision tree chooses its next question. |
 | `SynchronizedTextClassifier` | class | `IAsyncTextClassifier`, `IContextualTextClassifier`, `IDisposable`, `IIncrementalAsyncTextClassifier`, `IIncrementalTextClassifier`,… | Wraps an ITextClassifier so that concurrent prediction and concurrent mutation stop being the caller's problem: any number of Predict and PredictBest calls may… |
 | `SynonymTextClassifier` | class | `ITextClassifier` | ITextClassifier decorator that canonicalizes terms in both training and query text using a SynonymTokenizer, so a wrapped classifier sees one form per synonym… |
