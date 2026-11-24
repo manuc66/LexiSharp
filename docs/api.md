@@ -179,6 +179,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `CorpusDivider<TItem>` | class | — | Divides an unlabelled corpus over any feature space into two recursively: at each node it asks the feature whose presence splits the items into the two most… |
 | `CorpusDividerOptions` | record | — | Tunable knobs for CorpusDivider; the defaults keep the tree shallow enough to read and bound the vocabulary the split search compares. |
 | `CorpusDivision` | class | — | The tree and terminal clusters produced by CorpusDivider. |
+| `CorrectingTextClassifier` | class | `ITextClassifier` | ITextClassifier decorator that corrects selected unknown terms before classifying, predicting on both the original and the corrected text and keeping the… |
 | `DecisionBranch` | record | `DecisionTreeNode` | An internal node: a question, the two subtrees it selects between, and the score the split earned when the tree was built. |
 | `DecisionExplanation` | record | — | The path an item took through a tree, and the leaf it reached. |
 | `DecisionLeaf` | record | `DecisionTreeNode` | A leaf: the category the tree predicts and the smoothed class distribution behind it. |
@@ -230,7 +231,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `SynchronizedTextClassifier` | class | `IAsyncTextClassifier`, `IContextualTextClassifier`, `IDisposable`, `IIncrementalAsyncTextClassifier`, `IIncrementalTextClassifier`,… | Wraps an ITextClassifier so that concurrent prediction and concurrent mutation stop being the caller's problem: any number of Predict and PredictBest calls may… |
 | `SynonymTextClassifier` | class | `ITextClassifier` | ITextClassifier decorator that canonicalizes terms in both training and query text using a SynonymTokenizer, so a wrapped classifier sees one form per synonym… |
 | `TemperatureCalibrator` | class | — | A one-parameter post-hoc calibrator: it divides the log-probabilities by a temperature fitted on a validation set to minimize log-loss. |
-| `TemporalPrior` | class | `ITemporalPriorSource`, `ITextPriorSource` | A temporal prior built from past assignments: how often each category was accepted at a given weekday and block of the day, with Dirichlet smoothing for rare… |
+| `TemporalPrior` | class | `ITemporalPriorSource` | A temporal prior built from past assignments: how often each category was accepted at a given weekday and block of the day, with Dirichlet smoothing for rare… |
 | `TextClassifierLane` | record | — | One trained classifier and the weight its distribution carries in the blend. |
 | `TextFeatureSource` | class | `IFeatureSource` | The text feature space: the normalized terms of Text. |
 | `TimeOfDayPrior` | class | `TemporalPrior` | Alias for TemporalPrior. |
@@ -375,7 +376,6 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | --- | --- | --- | --- |
 | `CoOccurrenceQueryTermWeighter` | class | `IQueryTermWeighter` | Weights the terms of a query by how redundant each one is with the rest of the query in a corpus-derived co-occurrence graph: a term tied to many of the other… |
 | `ContextualExpansionSearchEngine` | class | `ITextSearchEngine` | A decorator that implements multi-hop evidence retrieval in the style of the SAG2 architecture: an initial BM25 pass, then passage-to-term-to-passage expansion,… |
-| `CorrectingSubjectRanker` | class | `ITextClassifier` | ITextClassifier decorator that corrects unknown terms before classifying, predicting on both the original and the corrected text and keeping the best result. |
 | `CorrectingTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that corrects query terms against the index vocabulary before searching — the consuming side of ITermCorrector, proving the seam is usable… |
 | `ExpandedTerm` | record struct | — | A single additional term injected into the index for a document, alongside its source text tokenization. The term is indexed as a regular inverted-list member… |
 | `ExpandingTextSearchEngine` | class | `IDetailedSearchEngine`, `IExplainableSearchEngine`, `IFacetedSearchEngine`, `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that widens the query with related terms before delegating to the inner engine — the query-side counterpart of ExpansionTextIndex, which… |

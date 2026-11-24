@@ -6,7 +6,7 @@ namespace LexiSharp.Classification;
 /// A temporal prior built from past assignments: how often each category was accepted at a given
 /// weekday and block of the day, with Dirichlet smoothing for rare buckets.
 /// </summary>
-public class TemporalPrior : ITextPriorSource, ITemporalPriorSource
+public class TemporalPrior : ITemporalPriorSource
 {
     private readonly Dictionary<(DayOfWeek Weekday, int Block), Dictionary<string, int>> _counts;
     private readonly Dictionary<(DayOfWeek Weekday, int Block), int> _totals;
@@ -14,7 +14,6 @@ public class TemporalPrior : ITextPriorSource, ITemporalPriorSource
     private readonly int _blockHours;
     private readonly int _minSupport;
     private readonly double _alpha;
-    private readonly Func<DateTimeOffset>? _now;
 
     /// <summary>A prior that never proposes anything.</summary>
     public static TemporalPrior Empty { get; } = new(Array.Empty<ObservedAssignment>());
@@ -25,8 +24,7 @@ public class TemporalPrior : ITextPriorSource, ITemporalPriorSource
         HashSet<string> categories,
         int blockHours,
         int minSupport,
-        double alpha,
-        Func<DateTimeOffset>? now)
+        double alpha)
     {
         if (!double.IsFinite(alpha))
         {
@@ -39,7 +37,6 @@ public class TemporalPrior : ITextPriorSource, ITemporalPriorSource
         _blockHours = blockHours <= 0 ? 3 : blockHours;
         _minSupport = minSupport < 0 ? 0 : minSupport;
         _alpha = alpha <= 0 ? 0.5 : alpha;
-        _now = now;
     }
 
     /// <summary>Builds a prior from past assignments.</summary>
@@ -50,8 +47,7 @@ public class TemporalPrior : ITextPriorSource, ITemporalPriorSource
             BuildCategories(history),
             3,
             3,
-            0.5,
-            null)
+            0.5)
     {
     }
 
@@ -63,34 +59,7 @@ public class TemporalPrior : ITextPriorSource, ITemporalPriorSource
             BuildCategories(history),
             blockHours,
             minSupport,
-            alpha,
-            null)
-    {
-    }
-
-    /// <summary>Builds a prior from past assignments, using the supplied clock.</summary>
-    public TemporalPrior(IEnumerable<ObservedAssignment> history, Func<DateTimeOffset> now, int blockHours = 3, int minSupport = 3, double alpha = 0.5)
-        : this(
-            BuildCounts(history, blockHours <= 0 ? 3 : blockHours),
-            BuildTotals(history, blockHours <= 0 ? 3 : blockHours),
-            BuildCategories(history),
-            blockHours,
-            minSupport,
-            alpha,
-            now)
-    {
-    }
-
-    /// <summary>Builds a prior anchored to a fixed instant.</summary>
-    public TemporalPrior(IEnumerable<ObservedAssignment> history, DateTimeOffset now, int blockHours = 3, int minSupport = 3, double alpha = 0.5)
-        : this(
-            BuildCounts(history, blockHours <= 0 ? 3 : blockHours),
-            BuildTotals(history, blockHours <= 0 ? 3 : blockHours),
-            BuildCategories(history),
-            blockHours,
-            minSupport,
-            alpha,
-            () => now)
+            alpha)
     {
     }
 
@@ -101,14 +70,6 @@ public class TemporalPrior : ITextPriorSource, ITemporalPriorSource
     /// <summary>Counts the assignments per weekday and block.</summary>
     public static TemporalPrior Build(IEnumerable<ObservedAssignment> history, int blockHours, int minSupport = 3, double alpha = 0.5) =>
         new(history, blockHours, minSupport, alpha);
-
-    /// <summary>Counts the assignments per weekday and block, anchored to a fixed instant.</summary>
-    public static TemporalPrior Build(IEnumerable<ObservedAssignment> history, DateTimeOffset now, int blockHours = 3, int minSupport = 3, double alpha = 0.5) =>
-        new(history, now, blockHours, minSupport, alpha);
-
-    /// <summary>Counts the assignments per weekday and block, using the supplied clock.</summary>
-    public static TemporalPrior Build(IEnumerable<ObservedAssignment> history, Func<DateTimeOffset> now, int blockHours = 3, int minSupport = 3, double alpha = 0.5) =>
-        new(history, now, blockHours, minSupport, alpha);
 
     /// <summary>Hours per block.</summary>
     public int BlockHours => _blockHours;
@@ -141,14 +102,6 @@ public class TemporalPrior : ITextPriorSource, ITemporalPriorSource
         }
 
         return probabilities;
-    }
-
-    /// <inheritdoc />
-    public IReadOnlyList<TextEvidence> Prior(string text)
-    {
-        ArgumentNullException.ThrowIfNull(text);
-        DateTimeOffset now = _now is null ? DateTimeOffset.Now : _now();
-        return Prior(now);
     }
 
     /// <inheritdoc />
@@ -231,18 +184,6 @@ public class TimeOfDayPrior : TemporalPrior
     {
     }
 
-    /// <summary>Builds a prior from past assignments, using the supplied clock.</summary>
-    public TimeOfDayPrior(IEnumerable<ObservedAssignment> history, Func<DateTimeOffset> now, int blockHours = 3, int minSupport = 3, double alpha = 0.5)
-        : base(history, now, blockHours, minSupport, alpha)
-    {
-    }
-
-    /// <summary>Builds a prior from past assignments anchored to a fixed instant.</summary>
-    public TimeOfDayPrior(IEnumerable<ObservedAssignment> history, DateTimeOffset now, int blockHours = 3, int minSupport = 3, double alpha = 0.5)
-        : base(history, now, blockHours, minSupport, alpha)
-    {
-    }
-
     /// <summary>A prior that never proposes anything.</summary>
     public new static TimeOfDayPrior Empty { get; } = new(Array.Empty<ObservedAssignment>());
 
@@ -254,13 +195,6 @@ public class TimeOfDayPrior : TemporalPrior
     public new static TimeOfDayPrior Build(IEnumerable<ObservedAssignment> history, int blockHours, int minSupport = 3, double alpha = 0.5) =>
         new(history, blockHours, minSupport, alpha);
 
-    /// <summary>Counts the assignments per weekday and block, anchored to a fixed instant.</summary>
-    public new static TimeOfDayPrior Build(IEnumerable<ObservedAssignment> history, DateTimeOffset now, int blockHours = 3, int minSupport = 3, double alpha = 0.5) =>
-        new(history, now, blockHours, minSupport, alpha);
-
-    /// <summary>Counts the assignments per weekday and block, using the supplied clock.</summary>
-    public new static TimeOfDayPrior Build(IEnumerable<ObservedAssignment> history, Func<DateTimeOffset> now, int blockHours = 3, int minSupport = 3, double alpha = 0.5) =>
-        new(history, now, blockHours, minSupport, alpha);
 }
 
 /// <summary>

@@ -45,12 +45,12 @@ public class ReviewFixesTests
     }
 
     [Fact]
-    public void CorrectingSubjectRanker_NoChange_PredictsOnce()
+    public void CorrectingTextClassifier_NoChange_PredictsOnce()
     {
         var counting = new CountingClassifier();
         counting.Train(new[] { new SearchDocument("1", "hello", Category: "A") });
         var corrector = new PassthroughTermCorrector();
-        var ranker = new CorrectingSubjectRanker(counting, corrector, new[] { "hello" });
+        var ranker = new CorrectingTextClassifier(counting, corrector, new[] { "hello" });
 
         _ = ranker.Predict("hello", limit: 1);
         Assert.Equal(1, counting.Calls);

@@ -39,11 +39,11 @@ public class TemporalPriorTests
     }
 
     [Fact]
-    public void Prior_ImplementsInterface()
+    public void Prior_ImplementsTemporalInterfaceOnly()
     {
-        ITextPriorSource source = new TemporalPrior(History, blockHours: 3, minSupport: 1);
-        var evidence = source.Prior("text");
-        Assert.NotNull(evidence);
+        var prior = new TemporalPrior(History, blockHours: 3, minSupport: 1);
+        Assert.IsAssignableFrom<ITemporalPriorSource>(prior);
+        Assert.IsNotAssignableFrom<ITextPriorSource>(prior);
     }
 
     [Fact]
