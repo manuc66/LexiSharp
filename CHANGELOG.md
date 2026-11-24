@@ -22,11 +22,14 @@
 ### Changed
 
 - `TemperatureCalibrator.Fit` uses a coarse grid plus golden-section refinement.
-- `Bm25Tuner` and `FusionWeightTuner` expose an opt-in coordinate-descent refinement
-  (`refine: true`); the default remains the grid.
+- `Bm25Tuner.TuneWithRefinement` and `FusionWeightTuner.TuneWithRefinement` expose the opt-in
+  coordinate-descent refinement; the existing `Tune` signatures are unchanged and grid-only.
 - `Tokenizer.Normalize` folds `œ`, `æ` and `ß` (including uppercase forms) to ASCII.
-- `TemporalPrior` implements only `ITemporalPriorSource`; the implicit wall-clock `Prior(string)`
-  path is removed, so a caller must pass the instant explicitly.
+- `TemporalPrior` still implements `ITextPriorSource` for compatibility, but `Prior(string)` throws
+  unless the prior was constructed with an explicit clock; use `Prior(DateTimeOffset)` for
+  session-scoped temporal evidence.
+- `CorrectingSubjectRanker` is an obsolete compatibility wrapper over
+  `CorrectingTextClassifier`.
 
 ### Fixed
 

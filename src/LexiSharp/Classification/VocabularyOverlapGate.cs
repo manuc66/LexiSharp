@@ -28,6 +28,15 @@ public class VocabularyOverlapGate : ITextClassifier
     public VocabularyOverlapGate(
         ITextClassifier inner,
         ITokenizer tokenizer,
+        IDictionary<string, HashSet<string>> vocabulary)
+        : this(inner, tokenizer, ToDictionary(vocabulary))
+    {
+    }
+
+    /// <summary>Wraps <paramref name="inner"/> and filters its predictions by vocabulary overlap.</summary>
+    public VocabularyOverlapGate(
+        ITextClassifier inner,
+        ITokenizer tokenizer,
         IReadOnlyDictionary<string, IReadOnlySet<string>> vocabulary)
         : this(inner, tokenizer, ToDictionary(vocabulary.ToDictionary(kv => kv.Key, kv => (IEnumerable<string>)kv.Value)))
     {
@@ -42,7 +51,8 @@ public class VocabularyOverlapGate : ITextClassifier
     {
     }
 
-    private VocabularyOverlapGate(
+    /// <summary>Wraps <paramref name="inner"/> and filters its predictions by vocabulary overlap.</summary>
+    public VocabularyOverlapGate(
         ITextClassifier inner,
         ITokenizer tokenizer,
         Dictionary<string, HashSet<string>> vocabulary)
@@ -118,6 +128,18 @@ public sealed class VocabularyGate : VocabularyOverlapGate
     {
     }
 
+
+    /// <summary>Wraps <paramref name="inner"/> and filters its predictions by vocabulary overlap.</summary>
+    public VocabularyGate(ITextClassifier inner, ITokenizer tokenizer, IDictionary<string, HashSet<string>> vocabulary)
+        : base(inner, tokenizer, vocabulary)
+    {
+    }
+
+    /// <summary>Wraps <paramref name="inner"/> and filters its predictions by vocabulary overlap.</summary>
+    public VocabularyGate(ITextClassifier inner, ITokenizer tokenizer, Dictionary<string, HashSet<string>> vocabulary)
+        : base(inner, tokenizer, vocabulary)
+    {
+    }
 
     /// <summary>Wraps <paramref name="inner"/> and filters its predictions by vocabulary overlap.</summary>
     public VocabularyGate(ITextClassifier inner, ITokenizer tokenizer, IReadOnlyDictionary<string, IEnumerable<string>> vocabulary)
