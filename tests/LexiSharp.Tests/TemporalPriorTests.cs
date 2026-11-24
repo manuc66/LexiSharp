@@ -39,13 +39,13 @@ public class TemporalPriorTests
     }
 
     [Fact]
-    public void Prior_ImplementsTemporalInterface_ButWallClockPathThrows()
+    public void Prior_WithoutClock_WallClockPathIsNeutral()
     {
         var prior = new TemporalPrior(History, blockHours: 3, minSupport: 1);
         Assert.IsAssignableFrom<ITemporalPriorSource>(prior);
 
         ITextPriorSource textPrior = prior;
-        Assert.Throws<NotSupportedException>(() => textPrior.Prior("text"));
+        Assert.Empty(textPrior.Prior("text"));
     }
 
     [Fact]

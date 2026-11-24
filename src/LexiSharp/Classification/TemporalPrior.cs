@@ -144,23 +144,18 @@ public class TemporalPrior : ITemporalPriorSource, ITextPriorSource
     }
 
     /// <summary>
-    /// Returns the prior for the clock supplied at construction, or throws when no clock was given.
+    /// Returns the prior for the clock supplied at construction, or nothing when no clock was given.
     /// </summary>
     /// <remarks>
     /// A temporal prior must not silently apply the current time to a past session. Construct the
     /// prior with a clock to use this overload, or call <see cref="Prior(DateTimeOffset)"/> with the
-    /// instant that belongs to the document.
+    /// instant that belongs to the document. Returning an empty prior (rather than the current
+    /// time) keeps a misconfigured blend neutral.
     /// </remarks>
     public IReadOnlyList<TextEvidence> Prior(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
-        if (_now is null)
-        {
-            throw new NotSupportedException(
-                "TemporalPrior has no clock: pass the instant explicitly through Prior(DateTimeOffset).");
-        }
-
-        return Prior(_now());
+        return _now is null ? Array.Empty<TextEvidence>() : Prior(_now());
     }
 
     /// <inheritdoc />

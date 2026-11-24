@@ -18,6 +18,7 @@ C|LexiSharp.Benchmarking.BenchmarkQuery|Void .ctor(System.String, System.String,
 C|LexiSharp.Benchmarking.PanelEvaluationResult|Void .ctor(Int32, LexiSharp.Benchmarking.BenchmarkMetrics, Double, Double, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Benchmarking.BenchmarkQueryResult], Boolean)
 C|LexiSharp.Benchmarking.RetrievalEvaluator|Void .ctor(System.Collections.Generic.IEnumerable`1[LexiSharp.Benchmarking.BenchmarkQuery], Int32, LexiSharp.Ranking.NdcgGain)
 C|LexiSharp.Benchmarking.TieAwareSummary|Void .ctor(Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Double, Double, Double, Double)
+C|LexiSharp.Classification.AdaptiveClassifier|Void .ctor(LexiSharp.Core.ITextClassifier)
 C|LexiSharp.Classification.BlendContext|Void .ctor()
 C|LexiSharp.Classification.BlendPrediction|Void .ctor(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.ClassificationResult], Double, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.LaneContribution])
 C|LexiSharp.Classification.BlendTextClassifier|Void .ctor(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Classification.TextClassifierLane], System.Collections.Generic.IReadOnlyList`1[LexiSharp.Classification.CandidateLane], System.Collections.Generic.IReadOnlyList`1[LexiSharp.Classification.PriorLane], LexiSharp.Linguistics.ITokenizer)
@@ -35,6 +36,7 @@ C|LexiSharp.Classification.CorpusDivider<TItem>|Void .ctor(LexiSharp.Classificat
 C|LexiSharp.Classification.CorpusDividerOptions|Void .ctor()
 C|LexiSharp.Classification.CorpusDivider|Void .ctor(LexiSharp.Classification.IFeatureSource`1[LexiSharp.Core.SearchDocument], LexiSharp.Classification.CorpusDividerOptions)
 C|LexiSharp.Classification.CorpusDivider|Void .ctor(LexiSharp.Linguistics.ITokenizer, LexiSharp.Classification.CorpusDividerOptions)
+C|LexiSharp.Classification.CorrectingTextClassifier|Void .ctor(LexiSharp.Core.ITextClassifier, LexiSharp.Core.ITermCorrector, System.Collections.Generic.IEnumerable`1[System.String], LexiSharp.Linguistics.ISpanTokenizer, Int32, Double, System.Func`2[System.String,System.Boolean], Boolean)
 C|LexiSharp.Classification.DecisionBranch|Void .ctor(LexiSharp.Classification.FeatureQuestion, LexiSharp.Classification.DecisionTreeNode, LexiSharp.Classification.DecisionTreeNode, LexiSharp.Classification.DecisionSplitMetrics)
 C|LexiSharp.Classification.DecisionExplanation|Void .ctor(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Classification.QuestionAnswer], LexiSharp.Classification.DecisionLeaf)
 C|LexiSharp.Classification.DecisionLeaf|Void .ctor(System.String, System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Double], Int32, Double)
@@ -97,9 +99,11 @@ C|LexiSharp.Classification.TimeOfDayPrior|Void .ctor(System.Collections.Generic.
 C|LexiSharp.Classification.TimeOfDayPrior|Void .ctor(System.Collections.Generic.IEnumerable`1[LexiSharp.Classification.ObservedAssignment], System.Func`1[System.DateTimeOffset], Int32, Int32, Double)
 C|LexiSharp.Classification.TimeSeriesSplit|Void .ctor(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Classification.OnlineEvaluationExample], System.Collections.Generic.IReadOnlyList`1[LexiSharp.Classification.OnlineEvaluationExample])
 C|LexiSharp.Classification.UnknownIndicatorSource<TItem>|Void .ctor(LexiSharp.Classification.IFeatureSource`1[TItem], System.String)
+C|LexiSharp.Classification.VocabularyGate|Void .ctor(LexiSharp.Core.ITextClassifier, LexiSharp.Linguistics.ITokenizer, System.Collections.Generic.Dictionary`2[System.String,System.Collections.Generic.HashSet`1[System.String]])
 C|LexiSharp.Classification.VocabularyGate|Void .ctor(LexiSharp.Core.ITextClassifier, LexiSharp.Linguistics.ITokenizer, System.Collections.Generic.IDictionary`2[System.String,System.Collections.Generic.HashSet`1[System.String]])
 C|LexiSharp.Classification.VocabularyGate|Void .ctor(LexiSharp.Core.ITextClassifier, LexiSharp.Linguistics.ITokenizer, System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Collections.Generic.HashSet`1[System.String]])
 C|LexiSharp.Classification.VocabularyGate|Void .ctor(LexiSharp.Core.ITextClassifier, LexiSharp.Linguistics.ITokenizer, System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Collections.Generic.IEnumerable`1[System.String]])
+C|LexiSharp.Classification.VocabularyOverlapGate|Void .ctor(LexiSharp.Core.ITextClassifier, LexiSharp.Linguistics.ITokenizer, System.Collections.Generic.Dictionary`2[System.String,System.Collections.Generic.HashSet`1[System.String]])
 C|LexiSharp.Classification.VocabularyOverlapGate|Void .ctor(LexiSharp.Core.ITextClassifier, LexiSharp.Linguistics.ITokenizer, System.Collections.Generic.IDictionary`2[System.String,System.Collections.Generic.HashSet`1[System.String]])
 C|LexiSharp.Classification.VocabularyOverlapGate|Void .ctor(LexiSharp.Core.ITextClassifier, LexiSharp.Linguistics.ITokenizer, System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Collections.Generic.HashSet`1[System.String]])
 C|LexiSharp.Classification.VocabularyOverlapGate|Void .ctor(LexiSharp.Core.ITextClassifier, LexiSharp.Linguistics.ITokenizer, System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Collections.Generic.IEnumerable`1[System.String]])
@@ -120,7 +124,11 @@ C|LexiSharp.Core.DamerauLevenshteinTermCorrector|Void .ctor(System.Collections.G
 C|LexiSharp.Core.DetailedSearchResult|Void .ctor(System.String, Double, LexiSharp.Core.SearchDocument, System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Double])
 C|LexiSharp.Core.DiscriminationProfile|Void .ctor(Int32, Int32, Int32, Int32, Boolean, Boolean, Boolean, Double, LexiSharp.Core.DiscriminationVerdict)
 C|LexiSharp.Core.EngineRetrievalMetrics|Void .ctor(System.String, Int64, Double, Double, Double, Int32)
+C|LexiSharp.Core.EntityExtractionRequest|Void .ctor(System.String)
+C|LexiSharp.Core.EntityExtractionResult|Void .ctor(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.ExtractedEntity])
+C|LexiSharp.Core.EntityExtractor|Void .ctor(System.Collections.Generic.IEnumerable`1[LexiSharp.Core.IEntityPattern], LexiSharp.Core.INamedEntityRecognizer)
 C|LexiSharp.Core.EntityTriplet|Void .ctor(System.String, System.String, System.String)
+C|LexiSharp.Core.ExtractedEntity|Void .ctor(System.String, System.String, Int32, Int32)
 C|LexiSharp.Core.FacetBucket|Void .ctor(System.String, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.FacetValue])
 C|LexiSharp.Core.FacetValue|Void .ctor(System.String, Int32)
 C|LexiSharp.Core.FacetedSearchResult|Void .ctor(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult], System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.FacetBucket])
@@ -146,6 +154,7 @@ C|LexiSharp.Core.QueryRoute|Void .ctor(System.String, Double)
 C|LexiSharp.Core.QueryScoreBound|Void .ctor(System.String, Double, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.TermScoreBound])
 C|LexiSharp.Core.QueryTermStatistic|Void .ctor(System.String, Int32, Int32, System.Nullable`1[System.Double])
 C|LexiSharp.Core.RawQuerySegments|Void .ctor(System.String, System.Collections.Generic.IReadOnlyList`1[System.String])
+C|LexiSharp.Core.RegexEntityPattern|Void .ctor(System.String, System.String, System.Text.RegularExpressions.RegexOptions)
 C|LexiSharp.Core.RerankExplanation|Void .ctor(System.String, Double, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.RerankSignal], System.String)
 C|LexiSharp.Core.RerankSignal|Void .ctor(System.String, Double, Double, Double)
 C|LexiSharp.Core.RerankedTextSearchEngine|Void .ctor(LexiSharp.Core.ITextSearchEngine, LexiSharp.Core.IReranker, Int32, LexiSharp.Core.RetrievalTelemetry)
@@ -336,6 +345,7 @@ C|LexiSharp.Sources.JsonDocumentLoadOptions|Void .ctor()
 C|LexiSharp.Sources.LoadedDocument|Void .ctor(System.String, System.String, System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.String], System.String, System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.String])
 C|LexiSharp.Sources.MarkdownLoadOptions|Void .ctor()
 C|LexiSharp.Sources.TextFileLoadOptions|Void .ctor()
+E|LexiSharp.Classification.AdaptiveClassifier|Swapped|System.Action<LexiSharp.Core.ITextClassifier,LexiSharp.Core.ITextClassifier>
 F|LexiSharp.AspNetCore.LexiSharpSearchEndpoint|MaxFacetFields|System.Int32|static|8
 F|LexiSharp.AspNetCore.LexiSharpSearchEndpoint|MaxLimit|System.Int32|static|100
 F|LexiSharp.AspNetCore.LexiSharpSearchEndpoint|MaxOffset|System.Int32|static|10000
@@ -638,6 +648,13 @@ M|LexiSharp.Benchmarking.TieAwareSummary|Int32 GetHashCode()
 M|LexiSharp.Benchmarking.TieAwareSummary|LexiSharp.Benchmarking.TieAwareSummary Of(System.Collections.Generic.IEnumerable`1[LexiSharp.Benchmarking.BenchmarkQueryResult])
 M|LexiSharp.Benchmarking.TieAwareSummary|System.String ToString()
 M|LexiSharp.Benchmarking.TieAwareSummary|Void Deconstruct(Int32 ByRef, Int32 ByRef, Int32 ByRef, Int32 ByRef, Int32 ByRef, Int32 ByRef, Int32 ByRef, Int32 ByRef, Int32 ByRef, Double ByRef, Double ByRef, Double ByRef, Double ByRef)
+M|LexiSharp.Classification.AdaptiveClassifier|Boolean Learn(LexiSharp.Core.SearchDocument)
+M|LexiSharp.Classification.AdaptiveClassifier|Boolean TrySwap(LexiSharp.Core.ITextClassifier, System.Collections.Generic.IEnumerable`1[LexiSharp.Core.SearchDocument], Double)
+M|LexiSharp.Classification.AdaptiveClassifier|Boolean TrySwapSignificant(LexiSharp.Core.ITextClassifier, System.Collections.Generic.IEnumerable`1[LexiSharp.Core.SearchDocument], Double)
+M|LexiSharp.Classification.AdaptiveClassifier|Boolean Unlearn(LexiSharp.Core.SearchDocument)
+M|LexiSharp.Classification.AdaptiveClassifier|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.ClassificationResult] Predict(System.String, Int32, System.Collections.Generic.IReadOnlySet`1[System.String])
+M|LexiSharp.Classification.AdaptiveClassifier|System.String PredictBest(System.String, System.Collections.Generic.IReadOnlySet`1[System.String])
+M|LexiSharp.Classification.AdaptiveClassifier|Void Train(System.Collections.Generic.IEnumerable`1[LexiSharp.Core.SearchDocument])
 M|LexiSharp.Classification.BlendContext|Boolean Equals(LexiSharp.Classification.BlendContext)
 M|LexiSharp.Classification.BlendContext|Boolean Equals(System.Object)
 M|LexiSharp.Classification.BlendContext|Int32 GetHashCode()
@@ -657,6 +674,7 @@ M|LexiSharp.Classification.BlendTextClassifier|Void Learn(LexiSharp.Core.SearchD
 M|LexiSharp.Classification.BlendTextClassifier|Void Train(System.Collections.Generic.IEnumerable`1[LexiSharp.Core.SearchDocument])
 M|LexiSharp.Classification.BlendTextClassifier|Void Unlearn(LexiSharp.Core.SearchDocument)
 M|LexiSharp.Classification.CalibratedClassifier|LexiSharp.Classification.CalibratedClassifier Fit(LexiSharp.Core.ITextClassifier, System.Collections.Generic.IEnumerable`1[LexiSharp.Core.SearchDocument])
+M|LexiSharp.Classification.CalibratedClassifier|LexiSharp.Core.ClassificationExplanation Explain(System.String, Int32, System.Collections.Generic.IReadOnlySet`1[System.String])
 M|LexiSharp.Classification.CalibratedClassifier|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.ClassificationResult] Predict(System.String, Int32, System.Collections.Generic.IReadOnlySet`1[System.String])
 M|LexiSharp.Classification.CalibratedClassifier|System.String PredictBest(System.String, System.Collections.Generic.IReadOnlySet`1[System.String])
 M|LexiSharp.Classification.CalibratedClassifier|Void Train(System.Collections.Generic.IEnumerable`1[LexiSharp.Core.SearchDocument])
@@ -711,11 +729,15 @@ M|LexiSharp.Classification.ClassificationModelSerializer|Void Save(LexiSharp.Cla
 M|LexiSharp.Classification.ClassificationModelSerializer|Void Save(LexiSharp.Classification.RandomForestClassifier, System.IO.Stream)
 M|LexiSharp.Classification.ClassificationModelSerializer|Void Save(LexiSharp.Core.ITextClassifier, System.IO.Stream)
 M|LexiSharp.Classification.CompositeFeatureSource<TItem>|LexiSharp.Classification.IFeatureSet FeaturesOf(TItem)
+M|LexiSharp.Classification.ConformalClassifier<TInner>|LexiSharp.Classification.ConformalClassifier`1[LexiSharp.Classification.CalibratedClassifier] FitCalibrated(LexiSharp.Core.ITextClassifier, System.Collections.Generic.IEnumerable`1[LexiSharp.Core.SearchDocument], Double, Int32)
+M|LexiSharp.Classification.ConformalClassifier<TInner>|LexiSharp.Classification.ConformalClassifier`1[LexiSharp.Classification.CalibratedClassifier] FitCalibrated(LexiSharp.Core.ITextClassifier, System.Collections.Generic.IEnumerable`1[LexiSharp.Core.SearchDocument], System.Collections.Generic.IEnumerable`1[LexiSharp.Core.SearchDocument], Double, Int32)
 M|LexiSharp.Classification.ConformalClassifier<TInner>|LexiSharp.Core.ClassificationExplanation Explain(System.String, Int32, System.Collections.Generic.IReadOnlySet`1[System.String])
 M|LexiSharp.Classification.ConformalClassifier<TInner>|LexiSharp.Core.PredictionSet PredictSet(System.String, System.Nullable`1[System.Int32])
 M|LexiSharp.Classification.ConformalClassifier<TInner>|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.ClassificationResult] Predict(System.String, Int32, System.Collections.Generic.IReadOnlySet`1[System.String])
 M|LexiSharp.Classification.ConformalClassifier<TInner>|System.String PredictBest(System.String, System.Collections.Generic.IReadOnlySet`1[System.String])
 M|LexiSharp.Classification.ConformalClassifier<TInner>|Void Calibrate(System.Collections.Generic.IEnumerable`1[LexiSharp.Core.SearchDocument])
+M|LexiSharp.Classification.ConformalClassifier<TInner>|Void LoadCalibration(System.IO.Stream)
+M|LexiSharp.Classification.ConformalClassifier<TInner>|Void SaveCalibration(System.IO.Stream)
 M|LexiSharp.Classification.ConformalClassifier<TInner>|Void Train(System.Collections.Generic.IEnumerable`1[LexiSharp.Core.SearchDocument])
 M|LexiSharp.Classification.CorpusCluster|Boolean Equals(LexiSharp.Classification.CorpusCluster)
 M|LexiSharp.Classification.CorpusCluster|Boolean Equals(System.Object)
@@ -729,6 +751,9 @@ M|LexiSharp.Classification.CorpusDividerOptions|Int32 GetHashCode()
 M|LexiSharp.Classification.CorpusDividerOptions|System.String ToString()
 M|LexiSharp.Classification.CorpusDivider|LexiSharp.Classification.CorpusDivision Divide(System.Collections.Generic.IEnumerable`1[LexiSharp.Core.SearchDocument])
 M|LexiSharp.Classification.CorpusDivision|System.String Describe()
+M|LexiSharp.Classification.CorrectingTextClassifier|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.ClassificationResult] Predict(System.String, Int32, System.Collections.Generic.IReadOnlySet`1[System.String])
+M|LexiSharp.Classification.CorrectingTextClassifier|System.String PredictBest(System.String, System.Collections.Generic.IReadOnlySet`1[System.String])
+M|LexiSharp.Classification.CorrectingTextClassifier|Void Train(System.Collections.Generic.IEnumerable`1[LexiSharp.Core.SearchDocument])
 M|LexiSharp.Classification.DecisionBranch|Boolean Equals(LexiSharp.Classification.DecisionBranch)
 M|LexiSharp.Classification.DecisionBranch|Boolean Equals(LexiSharp.Classification.DecisionTreeNode)
 M|LexiSharp.Classification.DecisionBranch|Boolean Equals(System.Object)
@@ -832,6 +857,7 @@ M|LexiSharp.Classification.IFeatureSet|LexiSharp.Classification.FeatureState Sta
 M|LexiSharp.Classification.IFeatureSet|System.Nullable`1[System.Double] NumericValue(System.String)
 M|LexiSharp.Classification.IFeatureSource<TItem>|LexiSharp.Classification.IFeatureSet FeaturesOf(TItem)
 M|LexiSharp.Classification.LinearClassifier<TItem>|Boolean Unlearn(Int64)
+M|LexiSharp.Classification.LinearClassifier<TItem>|Double TermWeight(System.String, System.String)
 M|LexiSharp.Classification.LinearClassifier<TItem>|Int64 Learn(TItem)
 M|LexiSharp.Classification.LinearClassifier<TItem>|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Classification.LinearFeatureWeight] TopFeatures(System.String, Int32)
 M|LexiSharp.Classification.LinearClassifier<TItem>|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.ClassificationResult] Predict(TItem, Int32, System.Collections.Generic.IReadOnlySet`1[System.String])
@@ -966,8 +992,6 @@ M|LexiSharp.Classification.RandomForestOptions|System.String ToString()
 M|LexiSharp.Classification.RecordingClassifier|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.ClassificationResult] Predict(System.String, Int32, System.Collections.Generic.IReadOnlySet`1[System.String])
 M|LexiSharp.Classification.RecordingClassifier|System.String PredictBest(System.String, System.Collections.Generic.IReadOnlySet`1[System.String])
 M|LexiSharp.Classification.RecordingClassifier|Void Train(System.Collections.Generic.IEnumerable`1[LexiSharp.Core.SearchDocument])
-M|LexiSharp.Classification.SignificanceTests|Double PairedBootstrap(System.Collections.Generic.IReadOnlyList`1[System.Double], System.Collections.Generic.IReadOnlyList`1[System.Double], Int32)
-M|LexiSharp.Classification.SignificanceTests|Double WilcoxonSignedRank(System.Collections.Generic.IReadOnlyList`1[System.Double], System.Collections.Generic.IReadOnlyList`1[System.Double])
 M|LexiSharp.Classification.SynchronizedTextClassifier|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.ClassificationResult] Predict(System.Collections.Generic.IEnumerable`1[LexiSharp.Core.WeightedToken], Int32, System.Collections.Generic.IReadOnlySet`1[System.String])
 M|LexiSharp.Classification.SynchronizedTextClassifier|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.ClassificationResult] Predict(System.String, Int32, System.Collections.Generic.IReadOnlySet`1[System.String])
 M|LexiSharp.Classification.SynchronizedTextClassifier|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.ClassificationResult] Predict(System.String, LexiSharp.Classification.BlendContext, Int32, System.Collections.Generic.IReadOnlySet`1[System.String])
@@ -1092,10 +1116,27 @@ M|LexiSharp.Core.EngineRetrievalMetrics|Boolean Equals(System.Object)
 M|LexiSharp.Core.EngineRetrievalMetrics|Int32 GetHashCode()
 M|LexiSharp.Core.EngineRetrievalMetrics|System.String ToString()
 M|LexiSharp.Core.EngineRetrievalMetrics|Void Deconstruct(System.String ByRef, Int64 ByRef, Double ByRef, Double ByRef, Double ByRef, Int32 ByRef)
+M|LexiSharp.Core.EntityExtractionRequest|Boolean Equals(LexiSharp.Core.EntityExtractionRequest)
+M|LexiSharp.Core.EntityExtractionRequest|Boolean Equals(System.Object)
+M|LexiSharp.Core.EntityExtractionRequest|Int32 GetHashCode()
+M|LexiSharp.Core.EntityExtractionRequest|System.String ToString()
+M|LexiSharp.Core.EntityExtractionRequest|Void Deconstruct(System.String ByRef)
+M|LexiSharp.Core.EntityExtractionResult|Boolean Equals(LexiSharp.Core.EntityExtractionResult)
+M|LexiSharp.Core.EntityExtractionResult|Boolean Equals(System.Object)
+M|LexiSharp.Core.EntityExtractionResult|Int32 GetHashCode()
+M|LexiSharp.Core.EntityExtractionResult|System.String ToString()
+M|LexiSharp.Core.EntityExtractionResult|Void Deconstruct(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.ExtractedEntity] ByRef)
+M|LexiSharp.Core.EntityExtractor|LexiSharp.Core.EntityExtractionResult Extract(LexiSharp.Core.EntityExtractionRequest)
+M|LexiSharp.Core.EntityExtractor|LexiSharp.Core.EntityExtractionResult Extract(System.String)
 M|LexiSharp.Core.EntityTriplet|Boolean Equals(LexiSharp.Core.EntityTriplet)
 M|LexiSharp.Core.EntityTriplet|Boolean Equals(System.Object)
 M|LexiSharp.Core.EntityTriplet|Int32 GetHashCode()
 M|LexiSharp.Core.EntityTriplet|System.String ToString()
+M|LexiSharp.Core.ExtractedEntity|Boolean Equals(LexiSharp.Core.ExtractedEntity)
+M|LexiSharp.Core.ExtractedEntity|Boolean Equals(System.Object)
+M|LexiSharp.Core.ExtractedEntity|Int32 GetHashCode()
+M|LexiSharp.Core.ExtractedEntity|System.String ToString()
+M|LexiSharp.Core.ExtractedEntity|Void Deconstruct(System.String ByRef, System.String ByRef, Int32 ByRef, Int32 ByRef)
 M|LexiSharp.Core.FacetBucket|Boolean Equals(LexiSharp.Core.FacetBucket)
 M|LexiSharp.Core.FacetBucket|Boolean Equals(System.Object)
 M|LexiSharp.Core.FacetBucket|Int32 GetHashCode()
@@ -1163,6 +1204,7 @@ M|LexiSharp.Core.IContextualSearchEngine<TPayload>|System.Collections.Generic.IR
 M|LexiSharp.Core.ICrossEncoderScorer|Double Score(System.String, LexiSharp.Core.SearchDocument)
 M|LexiSharp.Core.IDetailedSearchEngine|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.DetailedSearchResult] SearchWithDetails(System.String, LexiSharp.Core.SearchOptions, System.Threading.CancellationToken)
 M|LexiSharp.Core.IEmbeddingProvider|System.Threading.Tasks.Task`1[System.ReadOnlyMemory`1[System.Single]] GetTextEmbeddingAsync(System.String, LexiSharp.Core.EmbeddingUse, System.Threading.CancellationToken)
+M|LexiSharp.Core.IEntityPattern|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.ExtractedEntity] Match(LexiSharp.Core.EntityExtractionRequest)
 M|LexiSharp.Core.IExplainableSearchEngine|LexiSharp.Core.ScoreExplanation Explain(System.String, System.ReadOnlySpan`1[System.Char])
 M|LexiSharp.Core.IExplainableSearchEngine|LexiSharp.Core.ScoreExplanation Explain(System.String, System.String)
 M|LexiSharp.Core.IExplainableTextClassifier|LexiSharp.Core.ClassificationExplanation Explain(System.String, Int32, System.Collections.Generic.IReadOnlySet`1[System.String])
@@ -1187,6 +1229,7 @@ M|LexiSharp.Core.IKnowledgeGraphBridge|System.Threading.Tasks.Task`1[LexiSharp.C
 M|LexiSharp.Core.IKnowledgeGraphBridge|System.Threading.Tasks.Task`1[System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.EntityTriplet]] ExtractRelationsAsync(System.String, System.Threading.CancellationToken)
 M|LexiSharp.Core.IListableSearchEngine|System.Collections.Generic.IAsyncEnumerable`1[System.String] ListDocumentIdsAsync(Int32, System.Threading.CancellationToken)
 M|LexiSharp.Core.IListableSearchEngine|System.Collections.Generic.IReadOnlyList`1[System.String] ListDocumentIds(Int32)
+M|LexiSharp.Core.INamedEntityRecognizer|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.ExtractedEntity] Recognize(System.String)
 M|LexiSharp.Core.IQueryCostEstimator|Int32 Select(System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.RoutedEngine], System.ReadOnlySpan`1[System.Char], LexiSharp.Core.SearchOptions)
 M|LexiSharp.Core.IQueryCostProbe|Int64 EstimateCandidateCount(System.ReadOnlySpan`1[System.Char], LexiSharp.Core.SearchOptions)
 M|LexiSharp.Core.IQueryRouter|System.Threading.Tasks.ValueTask`1[LexiSharp.Core.QueryRoute] RouteAsync(System.String, System.Collections.Generic.IReadOnlyList`1[System.String], System.Threading.CancellationToken)
@@ -1321,6 +1364,7 @@ M|LexiSharp.Core.RawQuerySegments|Boolean Equals(System.Object)
 M|LexiSharp.Core.RawQuerySegments|Int32 GetHashCode()
 M|LexiSharp.Core.RawQuerySegments|System.String ToString()
 M|LexiSharp.Core.RawQuerySegments|Void Deconstruct(System.String ByRef, System.Collections.Generic.IReadOnlyList`1[System.String] ByRef)
+M|LexiSharp.Core.RegexEntityPattern|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.ExtractedEntity] Match(LexiSharp.Core.EntityExtractionRequest)
 M|LexiSharp.Core.RerankExplanation|Boolean Equals(LexiSharp.Core.RerankExplanation)
 M|LexiSharp.Core.RerankExplanation|Boolean Equals(System.Object)
 M|LexiSharp.Core.RerankExplanation|Int32 GetHashCode()
@@ -1609,6 +1653,7 @@ M|LexiSharp.Hybrid.FusionWeightTuner+TuningResult|Int32 GetHashCode()
 M|LexiSharp.Hybrid.FusionWeightTuner+TuningResult|System.String ToString()
 M|LexiSharp.Hybrid.FusionWeightTuner+TuningResult|Void Deconstruct(System.Collections.Generic.IReadOnlyList`1[System.Double] ByRef, Double ByRef, Double ByRef, Double ByRef, Boolean ByRef, System.Collections.Generic.IReadOnlyList`1[LexiSharp.Hybrid.FusionWeightTuner+TuningPoint] ByRef)
 M|LexiSharp.Hybrid.FusionWeightTuner|TuningResult Tune(System.Collections.Generic.IEnumerable`1[System.ValueTuple`2[System.Collections.Generic.IReadOnlyList`1[System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult]],System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Double]]], Double[], Int32, Int32)
+M|LexiSharp.Hybrid.FusionWeightTuner|TuningResult TuneWithRefinement(System.Collections.Generic.IEnumerable`1[System.ValueTuple`2[System.Collections.Generic.IReadOnlyList`1[System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult]],System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Double]]], Double[], Int32, Int32, Boolean)
 M|LexiSharp.Hybrid.HybridTextSearchEngine|Boolean Remove(System.String)
 M|LexiSharp.Hybrid.HybridTextSearchEngine|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.DetailedSearchResult] SearchWithDetails(System.String, LexiSharp.Core.SearchOptions, System.Threading.CancellationToken)
 M|LexiSharp.Hybrid.HybridTextSearchEngine|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.SearchResult] Search(System.String, LexiSharp.Core.SearchOptions, System.Threading.CancellationToken)
@@ -2077,6 +2122,7 @@ M|LexiSharp.Ranking.Bm25Scorer|LexiSharp.Core.ITextScorer WithTermWeights(System
 M|LexiSharp.Ranking.Bm25Scorer|LexiSharp.Core.ScoreExplanation Explain(System.String, System.Collections.Generic.IReadOnlyList`1[System.String], LexiSharp.Core.IReadOnlyTextIndex)
 M|LexiSharp.Ranking.Bm25Scorer|System.Collections.Generic.IReadOnlyList`1[LexiSharp.Core.QueryTermStatistic] DescribeTerms(System.Collections.Generic.IReadOnlyList`1[System.String], LexiSharp.Core.IReadOnlyTextIndex)
 M|LexiSharp.Ranking.Bm25Tuner|LexiSharp.Ranking.TuningResult Tune(LexiSharp.Core.IReadOnlyTextIndex, System.Collections.Generic.IEnumerable`1[System.ValueTuple`2[System.String,System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Double]]], Int32, Double[], Double[], Int32)
+M|LexiSharp.Ranking.Bm25Tuner|LexiSharp.Ranking.TuningResult TuneWithRefinement(LexiSharp.Core.IReadOnlyTextIndex, System.Collections.Generic.IEnumerable`1[System.ValueTuple`2[System.String,System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Double]]], Int32, Double[], Double[], Int32, Boolean)
 M|LexiSharp.Ranking.Bm25TuningResult|Boolean Equals(LexiSharp.Ranking.Bm25TuningResult)
 M|LexiSharp.Ranking.Bm25TuningResult|Boolean Equals(System.Object)
 M|LexiSharp.Ranking.Bm25TuningResult|Int32 GetHashCode()
@@ -2338,6 +2384,7 @@ P|LexiSharp.Benchmarking.TieAwareSummary|Queries|System.Int32|getset
 P|LexiSharp.Benchmarking.TieAwareSummary|SingleResult|System.Int32|getset
 P|LexiSharp.Benchmarking.TieAwareSummary|TiedAtCut|System.Int32|getset
 P|LexiSharp.Benchmarking.TieAwareSummary|TiedWithinPage|System.Int32|getset
+P|LexiSharp.Classification.AdaptiveClassifier|Current|LexiSharp.Core.ITextClassifier|get
 P|LexiSharp.Classification.BlendContext|CandidateWeight|System.Double|getset
 P|LexiSharp.Classification.BlendContext|Candidates|System.Collections.Generic.IReadOnlyList<LexiSharp.Core.TextEvidence>|getset
 P|LexiSharp.Classification.BlendContext|PriorWeight|System.Double|getset
@@ -2616,9 +2663,16 @@ P|LexiSharp.Core.EngineRetrievalMetrics|MaxElapsedMs|System.Double|getset
 P|LexiSharp.Core.EngineRetrievalMetrics|MinElapsedMs|System.Double|getset
 P|LexiSharp.Core.EngineRetrievalMetrics|SearchCount|System.Int64|getset
 P|LexiSharp.Core.EngineRetrievalMetrics|TotalElapsedMs|System.Double|getset
+P|LexiSharp.Core.EntityExtractionRequest|Text|System.String|getset
+P|LexiSharp.Core.EntityExtractionResult|Entities|System.Collections.Generic.IReadOnlyList<LexiSharp.Core.ExtractedEntity>|getset
+P|LexiSharp.Core.EntityExtractor|Patterns|System.Collections.Generic.IReadOnlyList<LexiSharp.Core.IEntityPattern>|get
 P|LexiSharp.Core.EntityTriplet|Object|System.String|get
 P|LexiSharp.Core.EntityTriplet|Predicate|System.String|get
 P|LexiSharp.Core.EntityTriplet|Subject|System.String|get
+P|LexiSharp.Core.ExtractedEntity|Length|System.Int32|getset
+P|LexiSharp.Core.ExtractedEntity|Start|System.Int32|getset
+P|LexiSharp.Core.ExtractedEntity|Type|System.String|getset
+P|LexiSharp.Core.ExtractedEntity|Value|System.String|getset
 P|LexiSharp.Core.FacetBucket|Field|System.String|getset
 P|LexiSharp.Core.FacetBucket|Values|System.Collections.Generic.IReadOnlyList<LexiSharp.Core.FacetValue>|getset
 P|LexiSharp.Core.FacetValue|Count|System.Int32|getset
@@ -2631,6 +2685,9 @@ P|LexiSharp.Core.FieldScopedPhrase|Operator|LexiSharp.Core.QueryTermOperator|get
 P|LexiSharp.Core.FieldScopedPhrase|Terms|System.Collections.Generic.IReadOnlyList<System.String>|getset
 P|LexiSharp.Core.FieldScopedTerm|Field|System.String|getset
 P|LexiSharp.Core.FieldScopedTerm|Term|System.String|getset
+P|LexiSharp.Core.GenericEntityPatterns|Domain|LexiSharp.Core.IEntityPattern|get
+P|LexiSharp.Core.GenericEntityPatterns|FilePath|LexiSharp.Core.IEntityPattern|get
+P|LexiSharp.Core.GenericEntityPatterns|Url|LexiSharp.Core.IEntityPattern|get
 P|LexiSharp.Core.GraphAwareSearchEngine|Bridge|LexiSharp.Core.IKnowledgeGraphBridge|get
 P|LexiSharp.Core.GraphContext|CommunitySummaries|System.Collections.Generic.IReadOnlyList<System.String>|getset
 P|LexiSharp.Core.GraphContext|MatchedTriplets|System.Collections.Generic.IReadOnlyList<LexiSharp.Core.EntityTriplet>|getset
@@ -2734,6 +2791,7 @@ P|LexiSharp.Core.QueryTermStatistic|IsAbsent|System.Boolean|get
 P|LexiSharp.Core.QueryTermStatistic|Term|System.String|getset
 P|LexiSharp.Core.RawQuerySegments|FreeText|System.String|getset
 P|LexiSharp.Core.RawQuerySegments|Phrases|System.Collections.Generic.IReadOnlyList<System.String>|getset
+P|LexiSharp.Core.RegexEntityPattern|Type|System.String|get
 P|LexiSharp.Core.RerankExplanation|DocumentId|System.String|getset
 P|LexiSharp.Core.RerankExplanation|FinalScore|System.Double|getset
 P|LexiSharp.Core.RerankExplanation|Signals|System.Collections.Generic.IReadOnlyList<LexiSharp.Core.RerankSignal>|getset
@@ -2828,6 +2886,7 @@ P|LexiSharp.Core.SyncCrossEncoderScorerAdapter|Name|System.String|get
 P|LexiSharp.Core.SyncRerankerAdapter|Name|System.String|get
 P|LexiSharp.Core.TermContribution|DocumentFrequency|System.Double|getset
 P|LexiSharp.Core.TermContribution|InverseDocumentFrequency|System.Double|getset
+P|LexiSharp.Core.TermContribution|Lane|System.String|getset
 P|LexiSharp.Core.TermContribution|Score|System.Double|getset
 P|LexiSharp.Core.TermContribution|TermFrequency|System.Double|getset
 P|LexiSharp.Core.TermContribution|Term|System.String|getset
@@ -3395,10 +3454,11 @@ T|LexiSharp.Benchmarking.CorpusBenchmark|class||
 T|LexiSharp.Benchmarking.PanelEvaluationResult|class||System.IEquatable<LexiSharp.Benchmarking.PanelEvaluationResult>
 T|LexiSharp.Benchmarking.RetrievalEvaluator|class||
 T|LexiSharp.Benchmarking.TieAwareSummary|class||System.IEquatable<LexiSharp.Benchmarking.TieAwareSummary>
+T|LexiSharp.Classification.AdaptiveClassifier|class||LexiSharp.Core.ITextClassifier
 T|LexiSharp.Classification.BlendContext|class||System.IEquatable<LexiSharp.Classification.BlendContext>
 T|LexiSharp.Classification.BlendPrediction|class||System.IEquatable<LexiSharp.Classification.BlendPrediction>
 T|LexiSharp.Classification.BlendTextClassifier|class||LexiSharp.Classification.IContextualTextClassifier,LexiSharp.Core.IExplainableTextClassifier,LexiSharp.Core.IIncrementalTextClassifier,LexiSharp.Core.ITextClassifier
-T|LexiSharp.Classification.CalibratedClassifier|class||LexiSharp.Core.ITextClassifier
+T|LexiSharp.Classification.CalibratedClassifier|class||LexiSharp.Core.IExplainableTextClassifier,LexiSharp.Core.ITextClassifier
 T|LexiSharp.Classification.CalibrationSample|class||System.IEquatable<LexiSharp.Classification.CalibrationSample>
 T|LexiSharp.Classification.CandidateLane|class||System.IEquatable<LexiSharp.Classification.CandidateLane>
 T|LexiSharp.Classification.CentroidClassifier<TItem>|class||
@@ -3413,6 +3473,7 @@ T|LexiSharp.Classification.CorpusDivider<TItem>|class||
 T|LexiSharp.Classification.CorpusDividerOptions|class||System.IEquatable<LexiSharp.Classification.CorpusDividerOptions>
 T|LexiSharp.Classification.CorpusDivider|class||
 T|LexiSharp.Classification.CorpusDivision|class||
+T|LexiSharp.Classification.CorrectingTextClassifier|class||LexiSharp.Core.ITextClassifier
 T|LexiSharp.Classification.DecisionBranch|class|LexiSharp.Classification.DecisionTreeNode|System.IEquatable<LexiSharp.Classification.DecisionBranch>,System.IEquatable<LexiSharp.Classification.DecisionTreeNode>
 T|LexiSharp.Classification.DecisionExplanation|class||System.IEquatable<LexiSharp.Classification.DecisionExplanation>
 T|LexiSharp.Classification.DecisionLeaf|class|LexiSharp.Classification.DecisionTreeNode|System.IEquatable<LexiSharp.Classification.DecisionLeaf>,System.IEquatable<LexiSharp.Classification.DecisionTreeNode>
@@ -3462,7 +3523,6 @@ T|LexiSharp.Classification.RandomForestClassifier<TItem>|class||
 T|LexiSharp.Classification.RandomForestClassifier|class||LexiSharp.Core.ITextClassifier
 T|LexiSharp.Classification.RandomForestOptions|class||System.IEquatable<LexiSharp.Classification.RandomForestOptions>
 T|LexiSharp.Classification.RecordingClassifier|class||LexiSharp.Core.ITextClassifier
-T|LexiSharp.Classification.SignificanceTests|class||
 T|LexiSharp.Classification.SplitCriterion|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
 T|LexiSharp.Classification.SynchronizedTextClassifier|class||LexiSharp.Classification.IContextualTextClassifier,LexiSharp.Core.IAsyncTextClassifier,LexiSharp.Core.IIncrementalAsyncTextClassifier,LexiSharp.Core.IIncrementalTextClassifier,LexiSharp.Core.IReinforceableTextClassifier,LexiSharp.Core.ITextClassifier,LexiSharp.Core.IWeightedPredictor,System.IDisposable
 T|LexiSharp.Classification.SynonymTextClassifier|class||LexiSharp.Core.ITextClassifier
@@ -3498,13 +3558,18 @@ T|LexiSharp.Core.EmbeddingProviderExtensions|class||
 T|LexiSharp.Core.EmbeddingProviderSyncExtensions|class||
 T|LexiSharp.Core.EmbeddingUse|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
 T|LexiSharp.Core.EngineRetrievalMetrics|class||System.IEquatable<LexiSharp.Core.EngineRetrievalMetrics>
+T|LexiSharp.Core.EntityExtractionRequest|class||System.IEquatable<LexiSharp.Core.EntityExtractionRequest>
+T|LexiSharp.Core.EntityExtractionResult|class||System.IEquatable<LexiSharp.Core.EntityExtractionResult>
+T|LexiSharp.Core.EntityExtractor|class||
 T|LexiSharp.Core.EntityTriplet|class||System.IEquatable<LexiSharp.Core.EntityTriplet>
+T|LexiSharp.Core.ExtractedEntity|class||System.IEquatable<LexiSharp.Core.ExtractedEntity>
 T|LexiSharp.Core.FacetBucket|class||System.IEquatable<LexiSharp.Core.FacetBucket>
 T|LexiSharp.Core.FacetValue|class||System.IEquatable<LexiSharp.Core.FacetValue>
 T|LexiSharp.Core.FacetedSearchResult|class||System.IEquatable<LexiSharp.Core.FacetedSearchResult>
 T|LexiSharp.Core.FieldScopedPhrase|class||System.IEquatable<LexiSharp.Core.FieldScopedPhrase>
 T|LexiSharp.Core.FieldScopedTerm|class||System.IEquatable<LexiSharp.Core.FieldScopedTerm>
 T|LexiSharp.Core.FieldType|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
+T|LexiSharp.Core.GenericEntityPatterns|class||
 T|LexiSharp.Core.GraphAwareSearchEngine|class||LexiSharp.Core.IGraphSearchEngine,LexiSharp.Core.ITextSearchEngine
 T|LexiSharp.Core.GraphContext|class||System.IEquatable<LexiSharp.Core.GraphContext>
 T|LexiSharp.Core.GraphHydratedResults|class||System.IEquatable<LexiSharp.Core.GraphHydratedResults>
@@ -3526,6 +3591,7 @@ T|LexiSharp.Core.ICrossEncoderScorer|interface||
 T|LexiSharp.Core.IDetailedSearchEngine|interface||
 T|LexiSharp.Core.IEmbeddingProvider|interface||
 T|LexiSharp.Core.IEmbeddingSignatureProvider|interface||
+T|LexiSharp.Core.IEntityPattern|interface||
 T|LexiSharp.Core.IExplainableSearchEngine|interface||
 T|LexiSharp.Core.IExplainableTextClassifier|interface||LexiSharp.Core.ITextClassifier
 T|LexiSharp.Core.IFacetedSearchEngine|interface||LexiSharp.Core.ITextSearchEngine
@@ -3536,6 +3602,7 @@ T|LexiSharp.Core.IIncrementalAsyncTextClassifier|interface||LexiSharp.Core.IAsyn
 T|LexiSharp.Core.IIncrementalTextClassifier|interface||LexiSharp.Core.ITextClassifier
 T|LexiSharp.Core.IKnowledgeGraphBridge|interface||
 T|LexiSharp.Core.IListableSearchEngine|interface||
+T|LexiSharp.Core.INamedEntityRecognizer|interface||
 T|LexiSharp.Core.IQueryCostEstimator|interface||
 T|LexiSharp.Core.IQueryCostProbe|interface||
 T|LexiSharp.Core.IQueryRouter|interface||
@@ -3592,6 +3659,7 @@ T|LexiSharp.Core.QuerySyntax|class||
 T|LexiSharp.Core.QueryTermOperator|enum||System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable
 T|LexiSharp.Core.QueryTermStatistic|class||System.IEquatable<LexiSharp.Core.QueryTermStatistic>
 T|LexiSharp.Core.RawQuerySegments|class||System.IEquatable<LexiSharp.Core.RawQuerySegments>
+T|LexiSharp.Core.RegexEntityPattern|class||LexiSharp.Core.IEntityPattern
 T|LexiSharp.Core.RerankExplanation|class||System.IEquatable<LexiSharp.Core.RerankExplanation>
 T|LexiSharp.Core.RerankSignal|class||System.IEquatable<LexiSharp.Core.RerankSignal>
 T|LexiSharp.Core.RerankedTextSearchEngine|class||LexiSharp.Core.IQueryCostProbe,LexiSharp.Core.ITextSearchEngine

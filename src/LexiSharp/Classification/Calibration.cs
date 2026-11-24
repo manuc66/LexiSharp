@@ -238,7 +238,7 @@ public sealed class TemperatureCalibrator
 /// the model did not see, and retraining the inner model does not refit it. Fit it again with
 /// <see cref="Fit(ITextClassifier, IEnumerable{SearchDocument})"/> after a retrain.
 /// </remarks>
-public sealed class CalibratedClassifier : ITextClassifier
+public sealed class CalibratedClassifier : ITextClassifier, IExplainableTextClassifier
 {
     private readonly ITextClassifier _inner;
     private readonly TemperatureCalibrator _calibrator;
