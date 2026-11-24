@@ -238,7 +238,7 @@ public sealed class TemperatureCalibrator
 /// the model did not see, and retraining the inner model does not refit it. Fit it again with
 /// <see cref="Fit(ITextClassifier, IEnumerable{SearchDocument})"/> after a retrain.
 /// </remarks>
-public sealed class CalibratedClassifier : ITextClassifier, IExplainableTextClassifier
+public sealed class CalibratedClassifier : ITextClassifier
 {
     private readonly ITextClassifier _inner;
     private readonly TemperatureCalibrator _calibrator;
@@ -322,7 +322,10 @@ public sealed class CalibratedClassifier : ITextClassifier, IExplainableTextClas
         return results.Count > 0 ? results[0].Category : null;
     }
 
-    /// <inheritdoc />
+    /// <summary>Delegates an explanation to the wrapped classifier when it supports one.</summary>
+    /// <param name="text">The text being classified.</param>
+    /// <param name="limit">Maximum number of categories to return.</param>
+    /// <param name="excludedCategories">Optional categories to hide.</param>
     public ClassificationExplanation? Explain(
         string text,
         int limit = 3,

@@ -39,11 +39,22 @@ public class TemporalPriorTests
     }
 
     [Fact]
-    public void Prior_ImplementsTemporalInterfaceOnly()
+    public void Prior_ImplementsTemporalInterface_ButWallClockPathThrows()
     {
         var prior = new TemporalPrior(History, blockHours: 3, minSupport: 1);
         Assert.IsAssignableFrom<ITemporalPriorSource>(prior);
-        Assert.IsNotAssignableFrom<ITextPriorSource>(prior);
+
+        ITextPriorSource textPrior = prior;
+        Assert.Throws<NotSupportedException>(() => textPrior.Prior("text"));
+    }
+
+    [Fact]
+    public void Prior_WithExplicitClock_UsesIt()
+    {
+        var instant = new DateTimeOffset(2026, 11, 23, 9, 0, 0, TimeSpan.Zero);
+        var prior = new TemporalPrior(History, instant, blockHours: 3, minSupport: 1);
+        ITextPriorSource textPrior = prior;
+        Assert.NotEmpty(textPrior.Prior("text"));
     }
 
     [Fact]

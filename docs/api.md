@@ -164,7 +164,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `BlendContext` | record | — | Evidence supplied for one prediction, instead of being configured as a source on the blend. |
 | `BlendPrediction` | record | — | The outcome of a BlendTextClassifier prediction with its evidence mass. |
 | `BlendTextClassifier` | class | `IContextualTextClassifier`, `IExplainableTextClassifier`, `IIncrementalTextClassifier`, `ITextClassifier` | Blends any number of text classifiers, then optionally injects candidate categories and log-prior bonuses. |
-| `CalibratedClassifier` | class | `IExplainableTextClassifier`, `ITextClassifier` | Wraps an ITextClassifier with a fitted temperature, so Predict returns the calibrated distribution and PredictBest the same top category. |
+| `CalibratedClassifier` | class | `ITextClassifier` | Wraps an ITextClassifier with a fitted temperature, so Predict returns the calibrated distribution and PredictBest the same top category. |
 | `CalibrationSample` | record | — | One validation observation for calibration: the distribution a model produced and the category that was actually right. |
 | `CandidateLane` | record | — | One source of categories no model learned, and the weight of its evidence. |
 | `CentroidClassifier` | class | `IAsyncTextClassifier`, `IExplainableTextClassifier`, `IIncrementalAsyncTextClassifier`, `IIncrementalTextClassifier`, `ITextClassifier` | Text wrapper over the generic nearest-centroid model: embeds documents with an IEmbeddingProvider, computes one centroid per Category, and classifies a text by… |
@@ -231,7 +231,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `SynchronizedTextClassifier` | class | `IAsyncTextClassifier`, `IContextualTextClassifier`, `IDisposable`, `IIncrementalAsyncTextClassifier`, `IIncrementalTextClassifier`,… | Wraps an ITextClassifier so that concurrent prediction and concurrent mutation stop being the caller's problem: any number of Predict and PredictBest calls may… |
 | `SynonymTextClassifier` | class | `ITextClassifier` | ITextClassifier decorator that canonicalizes terms in both training and query text using a SynonymTokenizer, so a wrapped classifier sees one form per synonym… |
 | `TemperatureCalibrator` | class | — | A one-parameter post-hoc calibrator: it divides the log-probabilities by a temperature fitted on a validation set to minimize log-loss. |
-| `TemporalPrior` | class | `ITemporalPriorSource` | A temporal prior built from past assignments: how often each category was accepted at a given weekday and block of the day, with Dirichlet smoothing for rare… |
+| `TemporalPrior` | class | `ITemporalPriorSource`, `ITextPriorSource` | A temporal prior built from past assignments: how often each category was accepted at a given weekday and block of the day, with Dirichlet smoothing for rare… |
 | `TextClassifierLane` | record | — | One trained classifier and the weight its distribution carries in the blend. |
 | `TextFeatureSource` | class | `IFeatureSource` | The text feature space: the normalized terms of Text. |
 | `TimeOfDayPrior` | class | `TemporalPrior` | Alias for TemporalPrior. |
@@ -376,6 +376,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | --- | --- | --- | --- |
 | `CoOccurrenceQueryTermWeighter` | class | `IQueryTermWeighter` | Weights the terms of a query by how redundant each one is with the rest of the query in a corpus-derived co-occurrence graph: a term tied to many of the other… |
 | `ContextualExpansionSearchEngine` | class | `ITextSearchEngine` | A decorator that implements multi-hop evidence retrieval in the style of the SAG2 architecture: an initial BM25 pass, then passage-to-term-to-passage expansion,… |
+| `CorrectingSubjectRanker` | class | `ITextClassifier` | Obsolete alias for CorrectingTextClassifier. |
 | `CorrectingTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that corrects query terms against the index vocabulary before searching — the consuming side of ITermCorrector, proving the seam is usable… |
 | `ExpandedTerm` | record struct | — | A single additional term injected into the index for a document, alongside its source text tokenization. The term is indexed as a regular inverted-list member… |
 | `ExpandingTextSearchEngine` | class | `IDetailedSearchEngine`, `IExplainableSearchEngine`, `IFacetedSearchEngine`, `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that widens the query with related terms before delegating to the inner engine — the query-side counterpart of ExpansionTextIndex, which… |

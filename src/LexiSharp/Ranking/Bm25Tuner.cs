@@ -35,7 +35,26 @@ public static class Bm25Tuner
     public static readonly double[] DefaultBGrid = [0.0, 0.25, 0.5, 0.75, 1.0];
 
     /// <summary>
-    /// Tunes BM25 on the given validation set.
+    /// Tunes BM25 on the given validation set with the original grid-only search.
+    /// </summary>
+    /// <param name="index">The index the queries are scored against (read-only view is enough).</param>
+    /// <param name="validationSet">Pairs of (query text, graded relevance: document id → gain).</param>
+    /// <param name="k">Cut-off for nDCG (default 10).</param>
+    /// <param name="k1Grid">k1 values to explore (default <see cref="DefaultK1Grid"/>).</param>
+    /// <param name="bGrid">b values to explore (default <see cref="DefaultBGrid"/>).</param>
+    /// <param name="resamples">Bootstrap resamples for the confidence interval (default 1000).</param>
+    public static TuningResult Tune(
+        IReadOnlyTextIndex index,
+        IEnumerable<(string Query, IReadOnlyDictionary<string, double> Relevance)> validationSet,
+        int k = 10,
+        double[]? k1Grid = null,
+        double[]? bGrid = null,
+        int resamples = 1000) =>
+        TuneWithRefinement(index, validationSet, k, k1Grid, bGrid, resamples, refine: false);
+
+    /// <summary>
+    /// Tunes BM25 on the given validation set, optionally refining the grid winner by coordinate
+    /// descent.
     /// </summary>
     /// <param name="index">The index the queries are scored against (read-only view is enough).</param>
     /// <param name="validationSet">Pairs of (query text, graded relevance: document id → gain).</param>
@@ -44,7 +63,7 @@ public static class Bm25Tuner
     /// <param name="bGrid">b values to explore (default <see cref="DefaultBGrid"/>).</param>
     /// <param name="resamples">Bootstrap resamples for the confidence interval (default 1000).</param>
     /// <param name="refine">Whether to refine the grid winner by coordinate descent (default false).</param>
-    public static TuningResult Tune(
+    public static TuningResult TuneWithRefinement(
         IReadOnlyTextIndex index,
         IEnumerable<(string Query, IReadOnlyDictionary<string, double> Relevance)> validationSet,
         int k = 10,

@@ -45,7 +45,24 @@ public static class FusionWeightTuner
         IReadOnlyList<TuningPoint> Grid);
 
     /// <summary>
-    /// Tunes fusion weights on the validation set.
+    /// Tunes fusion weights on the validation set with the original grid-only search.
+    /// </summary>
+    /// <param name="validationSet">
+    /// Pairs of (per-engine results, graded relevance: document id → gain).
+    /// </param>
+    /// <param name="weightGrid">Grid for each non-reference engine's weight.</param>
+    /// <param name="k">Cut-off for nDCG (default 10).</param>
+    /// <param name="resamples">Bootstrap resamples for the significance test (default 1000).</param>
+    public static TuningResult Tune(
+        IEnumerable<(IReadOnlyList<IReadOnlyList<SearchResult>> PerEngineResults, IReadOnlyDictionary<string, double> Relevance)> validationSet,
+        double[]? weightGrid = null,
+        int k = 10,
+        int resamples = 1000) =>
+        TuneWithRefinement(validationSet, weightGrid, k, resamples, refine: false);
+
+    /// <summary>
+    /// Tunes fusion weights on the validation set, optionally refining the grid winner by
+    /// coordinate descent.
     /// </summary>
     /// <param name="validationSet">
     /// Pairs of (per-engine results, graded relevance: document id → gain).
@@ -54,7 +71,7 @@ public static class FusionWeightTuner
     /// <param name="k">Cut-off for nDCG (default 10).</param>
     /// <param name="resamples">Bootstrap resamples for the significance test (default 1000).</param>
     /// <param name="refine">Whether to refine the grid winner by coordinate descent (default false).</param>
-    public static TuningResult Tune(
+    public static TuningResult TuneWithRefinement(
         IEnumerable<(IReadOnlyList<IReadOnlyList<SearchResult>> PerEngineResults, IReadOnlyDictionary<string, double> Relevance)> validationSet,
         double[]? weightGrid = null,
         int k = 10,
