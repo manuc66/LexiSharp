@@ -57,6 +57,19 @@ public class CorrectingTextClassifierTests
     }
 
     [Fact]
+    public void IdentifierExclusion_CanBeDisabled()
+    {
+        var inner = new RecordingClassifier(new NaiveBayesClassifier());
+        inner.Train(new[] { new SearchDocument("1", "hello", Category: "A") });
+        var corrector = new DamerauLevenshteinTermCorrector(new[] { "hello" });
+        var ranker = new CorrectingTextClassifier(
+            inner, corrector, new[] { "other" }, excludeIdentifiers: false);
+
+        _ = ranker.Predict("~/src/helo", limit: 3);
+        Assert.Contains(inner.Inputs, input => input.Contains("hello", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void CorrectionPreservesRestOfText()
     {
         var inner = new RecordingClassifier(new NaiveBayesClassifier());
@@ -69,7 +82,7 @@ public class CorrectingTextClassifierTests
     }
 
     [Fact]
-    public void NewProjectName_NearAnOldOne_IsCorrectedByDefault()
+    public void OovTokenNearKnownTerm_IsCorrectedByDefault()
     {
         var inner = new RecordingClassifier(new NaiveBayesClassifier());
         inner.Train(new[] { new SearchDocument("1", "windowtracker", Category: "A") });
@@ -81,7 +94,7 @@ public class CorrectingTextClassifierTests
     }
 
     [Fact]
-    public void CustomGate_CanExcludeNewProjectNames()
+    public void CustomGate_CanExcludeOovTokens()
     {
         var inner = new RecordingClassifier(new NaiveBayesClassifier());
         inner.Train(new[] { new SearchDocument("1", "windowtracker", Category: "A") });
