@@ -53,11 +53,13 @@ public static class FusionWeightTuner
     /// <param name="weightGrid">Grid for each non-reference engine's weight.</param>
     /// <param name="k">Cut-off for nDCG (default 10).</param>
     /// <param name="resamples">Bootstrap resamples for the significance test (default 1000).</param>
+    /// <param name="refine">Whether to refine the grid winner by coordinate descent (default false).</param>
     public static TuningResult Tune(
         IEnumerable<(IReadOnlyList<IReadOnlyList<SearchResult>> PerEngineResults, IReadOnlyDictionary<string, double> Relevance)> validationSet,
         double[]? weightGrid = null,
         int k = 10,
-        int resamples = 1000)
+        int resamples = 1000,
+        bool refine = false)
     {
         ArgumentNullException.ThrowIfNull(validationSet);
 
@@ -102,6 +104,49 @@ public static class FusionWeightTuner
 
         TuningPoint best = grid.OrderByDescending(p => p.MeanNdcg).First();
 
+        // Coordinate-descent refinement of the non-reference weights: optimize one weight at a
+        // time (holding the others fixed) with a golden-section search, and keep a step only when
+        // it strictly improves the mean nDCG. This cannot regress below the grid winner.
+        if (refine)
+        {
+            var current = best.Weights.ToArray();
+            for (int iteration = 0; iteration < 3; iteration++)
+            {
+                bool improved = false;
+                for (int engine = 1; engine < engineCount; engine++)
+                {
+                    double original = current[engine];
+                    double candidate = GoldenSection(
+                        value =>
+                        {
+                            current[engine] = value;
+                            return MeanNdcg(queries, k, current);
+                        },
+                        0.0,
+                        2.0);
+                    current[engine] = candidate;
+                    double refinedMean = MeanNdcg(queries, k, current);
+
+                    if (refinedMean > best.MeanNdcg + 1e-12)
+                    {
+                        TuningPoint refined = Evaluate(queries, k, current);
+                        grid.Add(refined);
+                        best = refined;
+                        improved = true;
+                    }
+                    else
+                    {
+                        current[engine] = original;
+                    }
+                }
+
+                if (!improved)
+                {
+                    break;
+                }
+            }
+        }
+
         // Equal weights baseline.
         var equalWeights = Enumerable.Repeat(1.0, engineCount).ToArray();
         var equalMerger = new LearnedFusionMerger(equalWeights);
@@ -127,6 +172,59 @@ public static class FusionWeightTuner
             best.MeanNdcg - equalMean,
             significant,
             grid);
+    }
+
+    private static TuningPoint Evaluate(
+        (IReadOnlyList<IReadOnlyList<SearchResult>> PerEngineResults, IReadOnlyDictionary<string, double> Relevance)[] queries,
+        int k,
+        double[] weights)
+    {
+        var merger = new LearnedFusionMerger((double[])weights.Clone());
+        double[] ndcgs = new double[queries.Length];
+        for (int q = 0; q < queries.Length; q++)
+        {
+            var merged = merger.Merge(queries[q].PerEngineResults, string.Empty);
+            var retrieved = merged.Select(r => r.DocumentId).Take(k).ToList();
+            ndcgs[q] = RetrievalMetrics.NdcgAtK(retrieved, queries[q].Relevance, k);
+        }
+
+        return new TuningPoint((double[])weights.Clone(), ndcgs.Average(), ndcgs);
+    }
+
+    private static double MeanNdcg(
+        (IReadOnlyList<IReadOnlyList<SearchResult>> PerEngineResults, IReadOnlyDictionary<string, double> Relevance)[] queries,
+        int k,
+        double[] weights) => Evaluate(queries, k, weights).MeanNdcg;
+
+    private static double GoldenSection(Func<double, double> f, double lo, double hi)
+    {
+        const double phi = 1.618033988749895;
+        double x1 = hi - (hi - lo) / phi;
+        double x2 = lo + (hi - lo) / phi;
+        double f1 = f(x1);
+        double f2 = f(x2);
+
+        for (int i = 0; i < 60 && hi - lo > 1e-9; i++)
+        {
+            if (f1 > f2)
+            {
+                hi = x2;
+                x2 = x1;
+                f2 = f1;
+                x1 = hi - (hi - lo) / phi;
+                f1 = f(x1);
+            }
+            else
+            {
+                lo = x1;
+                x1 = x2;
+                f1 = f2;
+                x2 = lo + (hi - lo) / phi;
+                f2 = f(x2);
+            }
+        }
+
+        return (lo + hi) / 2.0;
     }
 
     private static IEnumerable<double[]> EnumerateCombinations(int count, double[] grid)

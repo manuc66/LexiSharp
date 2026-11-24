@@ -14,7 +14,14 @@ public sealed record TermContribution(
     double TermFrequency,
     double DocumentFrequency,
     double InverseDocumentFrequency,
-    double Score);
+    double Score)
+{
+    /// <summary>Convenience alias for <see cref="Score"/> (used by classification explainability).</summary>
+    public double Weight => Score;
+
+    /// <summary>The lane that contributed most to this term, when known.</summary>
+    public string? Lane { get; init; }
+}
 
 /// <summary>
 /// A transparent breakdown of why a document received its score for a query: global corpus

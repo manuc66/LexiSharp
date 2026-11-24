@@ -21,7 +21,7 @@ public sealed record CalibrationSample(
 /// Temperature scaling cannot change the ranking — the argmax is the same at every positive
 /// temperature — so it is safe to wrap any classifier. What it changes is the confidence: a
 /// temperature above <c>1</c> softens an overconfident distribution, below <c>1</c> sharpens one.
-/// The temperature is fitted by a grid search over <c>[0.05, 10]</c> with 400 steps, minimizing the
+/// The temperature is fitted by golden-section search over <c>[0.05, 10]</c>, minimizing the
 /// mean log-loss of the actual categories; the fit is deterministic.
 /// </para>
 /// <para>
@@ -69,22 +69,40 @@ public sealed class TemperatureCalibrator
                 nameof(samples));
         }
 
-        // Start at the identity, not at the first grid point: a flat log-loss (a perfectly
-        // predicted single-class sample, say) has no temperature to choose and must leave the
-        // distribution alone rather than pick the most extreme sharpening on the grid.
+        // Start at the identity: a flat log-loss (a perfectly predicted single-class sample, say)
+        // has no temperature to choose and must leave the distribution alone.
+        double originalLoss = MeanLogLoss(valid, 1.0);
         double bestTemperature = 1.0;
-        double bestLoss = MeanLogLoss(valid, 1.0);
+        double bestLoss = originalLoss;
+
+        // A coarse grid covers the whole interval first (so a non-unimodal surface cannot hide an
+        // optimum between two golden-section probes), then golden-section refines the interval
+        // around the grid winner.
+        double step = (MaximumTemperature - MinimumTemperature) / GridSteps;
+        int bestIndex = -1;
 
         for (int i = 0; i <= GridSteps; i++)
         {
-            double temperature = MinimumTemperature
-                + (((MaximumTemperature - MinimumTemperature) * i) / GridSteps);
+            double temperature = MinimumTemperature + (step * i);
             double loss = MeanLogLoss(valid, temperature);
 
             if (loss < bestLoss - 1e-12)
             {
                 bestLoss = loss;
                 bestTemperature = temperature;
+                bestIndex = i;
+            }
+        }
+
+        if (bestIndex >= 0)
+        {
+            double lo = Math.Max(MinimumTemperature, MinimumTemperature + (step * (bestIndex - 1)));
+            double hi = Math.Min(MaximumTemperature, MinimumTemperature + (step * (bestIndex + 1)));
+            double refined = GoldenSection(t => MeanLogLoss(valid, t), lo, hi);
+            double refinedLoss = MeanLogLoss(valid, refined);
+            if (refinedLoss < bestLoss - 1e-12)
+            {
+                bestTemperature = refined;
             }
         }
 
@@ -153,6 +171,37 @@ public sealed class TemperatureCalibrator
         return calibrated;
     }
 
+    private static double GoldenSection(Func<double, double> f, double lo, double hi)
+    {
+        const double phi = 1.618033988749895;
+        double x1 = hi - (hi - lo) / phi;
+        double x2 = lo + (hi - lo) / phi;
+        double f1 = f(x1);
+        double f2 = f(x2);
+
+        for (int i = 0; i < 80 && hi - lo > 1e-9; i++)
+        {
+            if (f1 < f2)
+            {
+                hi = x2;
+                x2 = x1;
+                f2 = f1;
+                x1 = hi - (hi - lo) / phi;
+                f1 = f(x1);
+            }
+            else
+            {
+                lo = x1;
+                x1 = x2;
+                f1 = f2;
+                x2 = lo + (hi - lo) / phi;
+                f2 = f(x2);
+            }
+        }
+
+        return (lo + hi) / 2.0;
+    }
+
     private static double MeanLogLoss(IReadOnlyList<CalibrationSample> samples, double temperature)
     {
         double total = 0;
@@ -189,7 +238,7 @@ public sealed class TemperatureCalibrator
 /// the model did not see, and retraining the inner model does not refit it. Fit it again with
 /// <see cref="Fit(ITextClassifier, IEnumerable{SearchDocument})"/> after a retrain.
 /// </remarks>
-public sealed class CalibratedClassifier : ITextClassifier
+public sealed class CalibratedClassifier : ITextClassifier, IExplainableTextClassifier
 {
     private readonly ITextClassifier _inner;
     private readonly TemperatureCalibrator _calibrator;
@@ -271,5 +320,19 @@ public sealed class CalibratedClassifier : ITextClassifier
         IReadOnlyList<ClassificationResult> results = Predict(text, limit: 1, excludedCategories);
 
         return results.Count > 0 ? results[0].Category : null;
+    }
+
+    /// <inheritdoc />
+    public ClassificationExplanation? Explain(
+        string text,
+        int limit = 3,
+        IReadOnlySet<string>? excludedCategories = null)
+    {
+        if (_inner is IExplainableTextClassifier explainable)
+        {
+            return explainable.Explain(text, limit, excludedCategories);
+        }
+
+        return null;
     }
 }

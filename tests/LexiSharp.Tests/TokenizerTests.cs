@@ -108,7 +108,7 @@ public class TokenizerTests
     {
         Assert.Equal("resume", Tokenizer.Normalize("Résumé"));
         Assert.Equal("e", Tokenizer.Normalize("É"));
-        Assert.Equal("æ", Tokenizer.Normalize("Æ")); // ligature, left as-is by NFKD
+        Assert.Equal("ae", Tokenizer.Normalize("Æ")); // ligature folded to its ASCII spelling
     }
 
     [Fact]

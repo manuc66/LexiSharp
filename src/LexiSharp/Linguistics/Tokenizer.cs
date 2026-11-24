@@ -1333,7 +1333,17 @@ public sealed class Tokenizer : ISpanTokenizer
 
     private static string NormalizeSlow(string term)
     {
-        var decomposed = term.Normalize(NormalizationForm.FormKD);
+        // Fold the Latin ligatures that Unicode normalization does not decompose into their
+        // ASCII spelling, so `cœur`, `æ` and `ß` land on the same term as `coeur`, `ae` and `ss`.
+        string replaced = term
+            .Replace("œ", "oe", StringComparison.OrdinalIgnoreCase)
+            .Replace("Œ", "oe", StringComparison.Ordinal)
+            .Replace("æ", "ae", StringComparison.OrdinalIgnoreCase)
+            .Replace("Æ", "ae", StringComparison.Ordinal)
+            .Replace("ß", "ss", StringComparison.OrdinalIgnoreCase)
+            .Replace("ẞ", "ss", StringComparison.Ordinal);
+
+        var decomposed = replaced.Normalize(NormalizationForm.FormKD);
         var cleaned = new StringBuilder(decomposed.Length);
 
         foreach (var ch in decomposed)

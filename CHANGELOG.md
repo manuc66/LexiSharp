@@ -1,3 +1,31 @@
+## [1.2.0] — 2026-11-24
+
+### Added
+
+- **Conformal abstention** (`ConformalClassifier<TInner>`, `PredictionSet`), with calibration
+  persistence (`SaveCalibration` / `LoadCalibration`).
+- **Continuous adaptation** (`AdaptiveClassifier`) with atomic model swap, incremental
+  `Learn`/`Unlearn`, an accuracy gate (`TrySwap`) and a paired McNemar gate (`TrySwapSignificant`).
+- **Temporal prior** (`TemporalPrior` / `TimeOfDayPrior`) with Dirichlet smoothing and
+  `ITemporalPriorSource`.
+- **Generic entity extraction** (`EntityExtractor`, `IEntityPattern`, `INamedEntityRecognizer`).
+- **Classifier explainability**: `TermContribution.Lane`, `ITermWeightedClassifier`, and
+  `Counterfactuals`.
+- **Significance tests** (`SignificanceTests`) and language detection by character n-grams.
+- **Disk embedding cache** (`PersistentEmbeddingCache` / `EmbeddingCache`).
+
+### Changed
+
+- `TemperatureCalibrator.Fit` uses a coarse grid plus golden-section refinement.
+- `Bm25Tuner` and `FusionWeightTuner` expose an opt-in coordinate-descent refinement
+  (`refine: true`); the default remains the grid.
+- `Tokenizer.Normalize` folds `œ`, `æ` and `ß` (including uppercase forms) to ASCII.
+
+### Fixed
+
+- `SignificanceTests.PairedBootstrap` now tests the centered differences against zero, so a
+  consistent improvement is reported as significant.
+
 ## [1.1.0] — 2026-11-22
 
 ### Breaking changes & migration

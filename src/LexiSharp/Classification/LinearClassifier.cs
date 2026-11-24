@@ -770,6 +770,24 @@ public sealed class LinearClassifier<TItem>
             _reinforcement.Remove(category);
     }
 
+    /// <summary>Returns the weight of one feature for one category, or zero when either is unknown.</summary>
+    /// <param name="category">A category seen during training.</param>
+    /// <param name="term">The feature name.</param>
+    public double TermWeight(string category, string term)
+    {
+        ArgumentNullException.ThrowIfNull(category);
+        ArgumentNullException.ThrowIfNull(term);
+
+        if (!_trained
+            || !_categoryIndex.TryGetValue(category, out int categoryIndex)
+            || !_featureIds.TryGetValue(term, out int featureId))
+        {
+            return 0;
+        }
+
+        return _weights[(featureId * _categories.Count) + categoryIndex];
+    }
+
     /// <summary>
     /// Returns the features with the largest training coefficient for a category. The reinforcement
     /// ledger is not included: this is what the corpus taught the model, not what feedback added.
@@ -1019,7 +1037,7 @@ public sealed class LinearClassifier<TItem>
 /// The text convenience over <see cref="LinearClassifier{TItem}"/>: a
 /// <see cref="SearchDocument"/> model over <see cref="SearchDocument.Text"/>.
 /// </summary>
-public sealed class LinearClassifier : ITextClassifier
+public sealed class LinearClassifier : ITextClassifier, ITermWeightedClassifier
 {
     private readonly LinearClassifier<SearchDocument> _inner;
 
@@ -1118,6 +1136,10 @@ public sealed class LinearClassifier : ITextClassifier
     /// <returns>The features, by decreasing coefficient then ordinal name.</returns>
     public IReadOnlyList<LinearFeatureWeight> TopFeatures(string category, int count = 10) =>
         _inner.TopFeatures(category, count);
+
+    /// <inheritdoc />
+    public double TermWeight(string category, string term) =>
+        _inner.TermWeight(category, term);
 
     internal string FeatureSpaceHash => _inner.FeatureSpaceHash;
 
