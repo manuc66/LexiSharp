@@ -3,7 +3,8 @@
 ### Added
 
 - **Conformal abstention** (`ConformalClassifier<TInner>`, `PredictionSet`), with calibration
-  persistence (`SaveCalibration` / `LoadCalibration`).
+  persistence (`SaveCalibration` / `LoadCalibration`) and `FitCalibrated` factories that compose
+  temperature calibration before conformal calibration (including a disjoint-sets overload).
 - **Continuous adaptation** (`AdaptiveClassifier`) with atomic model swap, incremental
   `Learn`/`Unlearn`, an accuracy gate (`TrySwap`) and a paired McNemar gate (`TrySwapSignificant`).
 - **Temporal prior** (`TemporalPrior` / `TimeOfDayPrior`) with Dirichlet smoothing and

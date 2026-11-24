@@ -50,6 +50,7 @@ are listed first.
 | `IDetailedSearchEngine` | — | Optional capability of an ITextSearchEngine that can return, alongside the merged ranking, the per-source score breakdown that fed it (see Contributions). | [guide](reference.md) |
 | `IEmbeddingProvider` | — | Contract for producing text embeddings. LexiSharp never computes embeddings itself: implementing this interface is up to the consumer — a local ONNX model, an… | [guide](reference.md) |
 | `IEmbeddingSignatureProvider` | — | An IEmbeddingProvider that can identify the model and preprocessing that produce its vectors. The signature is what lets a persisted index refuse to compare… | [guide](reference.md) |
+| `IEntityPattern` | — | Pattern-based entity matcher. | [guide](reference.md) |
 | `IExplainableSearchEngine` | — | Optional capability of an ITextSearchEngine that can explain why a document received the score it did for a query, when its scorer is an IScoreExplainer. | [guide](reference.md) |
 | `IExplainableTextClassifier` | `ITextClassifier` | Optional capability of an ITextClassifier that can explain a prediction: the predicted categories, the contribution of each underlying lane (for blended models)… | [guide](reference.md) |
 | `IFacetedSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that can return, alongside the ranked results, facet counts over Fields. | [guide](reference.md) |
@@ -60,6 +61,7 @@ are listed first.
 | `IIncrementalTextClassifier` | `ITextClassifier` | Optional capability of an ITextClassifier: add or retract single labelled documents without a retraining pass over the whole corpus. Detected with pattern… | [guide](reference.md) |
 | `IKnowledgeGraphBridge` | — | Contracts for connecting the engines to a knowledge graph — the GraphRAG seam. LexiSharp never runs a model or a graph itself: relation extraction is the model… | [guide](reference.md) |
 | `IListableSearchEngine` | — | Optional capability of a ITextSearchEngine that can enumerate the identifiers of the documents it currently holds, without materializing the full documents. | [guide](reference.md) |
+| `INamedEntityRecognizer` | — | Optional ML/NER seam for named entities. | [guide](reference.md) |
 | `IQueryCostEstimator` | — | Picks which of several engines a RoutedSearchEngine should run a query on. | [guide](reference.md) |
 | `IQueryCostProbe` | — | Optional capability of an ITextSearchEngine that can estimate, cheaply and without running a search, how many documents a query is likely to touch — the signal… | [guide](reference.md) |
 | `IQueryRouter` | — | Picks which route (engine + optional filters) a RoutingSearchEngine should run a query on — a semantic/intent decision, as opposed to IQueryCostEstimator which… | [guide](reference.md) |
@@ -77,8 +79,10 @@ are listed first.
 | `IScoreExplainer` | `ITextScorer` | Optional capability of an ITextScorer that can justify its scores: it produces a ScoreExplanation decomposing the contribution of every matched query term. | [guide](reference.md) |
 | `ISparseEmbeddingProvider` | — | Contract for producing sparse text embeddings — e.g. SPLADE/SPLADE-v2, uniCOIL, or any learned sparse model. Sparse embeddings map vocabulary terms to weights,… | [guide](reference.md) |
 | `IStructureAwareSearchEngine` | `ITextSearchEngine` | Optional capability of an ITextSearchEngine that knows the hierarchical structure its documents live in — the « structure-aware retriever » seam. Flat retrieval… | [guide](reference.md) |
+| `ITemporalPriorSource` | — | Produces additive log-prior evidence for categories based on a temporal context. | [guide](reference.md) |
 | `ITermCorrector` | — | Corrects a single query term — the query-side seam for spell correction, typo tolerance and keyboard-aware matching. The vocabulary is a construction concern of… | [guide](reference.md) |
 | `ITermOverlapScorer` | `ITextScorer` | Capability for a scorer whose score is exactly 0 for every document sharing no query term with the query, which lets the search engine skip such documents… | [guide](reference.md) |
+| `ITermWeightedClassifier` | `ITextClassifier` | Optional capability of an ITextClassifier that can report the weight of a single term for a category, used for term-level explainability. | [guide](reference.md) |
 | `ITextClassifier` | — | Supervised text classifier trained on labelled documents. | [guide](reference.md) |
 | `ITextIndex` | `IReadOnlyTextIndex` | A write-capable index: the read surface of IReadOnlyTextIndex plus the mutations a caller that owns the corpus performs (Index/Add/Remove/Clear). | [guide](reference.md) |
 | `ITextPriorSource` | — | Produces additive log-prior evidence for categories a trained model already holds. | [guide](reference.md) |
@@ -156,10 +160,11 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 
 | Type | Kind | Contracts | What it is |
 | --- | --- | --- | --- |
+| `AdaptiveClassifier` | class | `ITextClassifier` | A thread-safe holder for an ITextClassifier that can be swapped atomically after an online update or a retrain. It forwards Predict to the current model and… |
 | `BlendContext` | record | — | Evidence supplied for one prediction, instead of being configured as a source on the blend. |
 | `BlendPrediction` | record | — | The outcome of a BlendTextClassifier prediction with its evidence mass. |
 | `BlendTextClassifier` | class | `IContextualTextClassifier`, `IExplainableTextClassifier`, `IIncrementalTextClassifier`, `ITextClassifier` | Blends any number of text classifiers, then optionally injects candidate categories and log-prior bonuses. |
-| `CalibratedClassifier` | class | `ITextClassifier` | Wraps an ITextClassifier with a fitted temperature, so Predict returns the calibrated distribution and PredictBest the same top category. |
+| `CalibratedClassifier` | class | `IExplainableTextClassifier`, `ITextClassifier` | Wraps an ITextClassifier with a fitted temperature, so Predict returns the calibrated distribution and PredictBest the same top category. |
 | `CalibrationSample` | record | — | One validation observation for calibration: the distribution a model produced and the category that was actually right. |
 | `CandidateLane` | record | — | One source of categories no model learned, and the weight of its evidence. |
 | `CentroidClassifier` | class | `IAsyncTextClassifier`, `IExplainableTextClassifier`, `IIncrementalAsyncTextClassifier`, `IIncrementalTextClassifier`, `ITextClassifier` | Text wrapper over the generic nearest-centroid model: embeds documents with an IEmbeddingProvider, computes one centroid per Category, and classifies a text by… |
@@ -168,6 +173,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `ClassificationInterval` | record struct | — | A percentile confidence interval. |
 | `ClassificationModelSerializer` | class | — | Saves and loads trained text classifiers in a versioned, dependency-free binary format. |
 | `CompositeFeatureSource<TItem>` | class | `IFeatureSource` | Combines several feature sources by union: an item carries every feature any source reports. |
+| `ConformalClassifier<TInner>` | class | `IExplainableTextClassifier`, `ITextClassifier` | Wraps an ITextClassifier with split-conformal calibration: at prediction time it returns the smallest set of categories whose confidence reaches the requested… |
 | `CorpusCluster` | record | — | One terminal region of a corpus division: its document ids, the features that best represent it, and the depth at which it was found. |
 | `CorpusDivider` | class | — | The text convenience over CorpusDivider: divides a SearchDocument corpus by the terms of Text. |
 | `CorpusDivider<TItem>` | class | — | Divides an unlabelled corpus over any feature space into two recursively: at each node it asks the feature whose presence splits the items into the two most… |
@@ -193,18 +199,19 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `FeatureState` | enum | — | What a feature set knows about one feature: it is present, it is known to be absent, or the source could not determine it. A binary question answers no for both… |
 | `FusedTextClassifier` | class | `IIncrementalTextClassifier`, `ITextClassifier` | Blends two text classifiers by probability: (1 - w) · P(first) + w · P(second). |
 | `IdfMode` | enum | — | How term evidence is scaled by corpus rarity during classification. Term frequency is always counted from the training corpus; this knob decides whether (and… |
-| `LinearClassifier` | class | `ITextClassifier` | The text convenience over LinearClassifier: a SearchDocument model over Text. |
+| `LinearClassifier` | class | `ITermWeightedClassifier`, `ITextClassifier` | The text convenience over LinearClassifier: a SearchDocument model over Text. |
 | `LinearClassifier<TItem>` | class | — | A multinomial logistic regression over the same IFeatureSource seam as the question trees, trained with AdaGrad and a deterministic shuffle. |
 | `LinearClassifierOptions` | record | — | Tunable knobs for LinearClassifier: the AdaGrad pass, the vocabulary floor, and the abstention threshold. |
 | `LinearFeatureWeight` | record | — | One feature and the weight the linear model gives it for a category. |
 | `MaskedFeatureSource<TItem>` | class | `IFeatureSource` | Suppresses an inner feature source for the items a mask predicate selects, and reports the mask's own features instead. |
-| `NaiveBayesClassifier` | class | `IExplainableTextClassifier`, `IIncrementalTextClassifier`, `IReinforceableTextClassifier`, `ITextClassifier`, `IWeightedPredictor` | Multinomial Naive Bayes trained on labelled documents. |
+| `NaiveBayesClassifier` | class | `IExplainableTextClassifier`, `IIncrementalTextClassifier`, `IReinforceableTextClassifier`, `ITermWeightedClassifier`, `ITextClassifier`, `IWeightedPredictor` | Multinomial Naive Bayes trained on labelled documents. |
 | `NaiveBayesOptions` | record | — | Tunable knobs for NaiveBayesClassifier; the defaults reproduce the classic Laplace-smoothed, unweighted multinomial Naive Bayes. |
 | `NearestNeighborClassifier` | class | `IAsyncTextClassifier`, `IExplainableTextClassifier`, `IIncrementalAsyncTextClassifier`, `IIncrementalTextClassifier`, `ITextClassifier` | K-nearest-neighbour text classifier: BM25 over terms, or cosine over embeddings, with a configurable vote. |
 | `NearestNeighborClassifier<TItem>` | class | — | K-nearest-neighbour classifier over caller-supplied vectors. |
 | `NearestNeighborOptions` | record | — | Tunable knobs for NearestNeighborClassifier: how many neighbours vote, how their scores become weights, the BM25 parameters of the lexical path, and the… |
 | `NeighborVote` | enum | — | How a neighbour's similarity becomes a vote. |
 | `NumericThresholdQuestion` | record | `FeatureQuestion` | True when a feature's numeric value is at or above the threshold. A missing value — the feature is absent, carries no number, or carries NaN — answers no, which… |
+| `ObservedAssignment` | record struct | — | One past assignment, with the local time it happened at. |
 | `OnlineBucketMetrics` | record | — | Accuracy and macro-F1 for one slice of the stream. |
 | `OnlineClassificationEvaluator` | class | — | Replays a labelled stream through any ITextClassifier: predict first, then learn. |
 | `OnlineCoveragePoint` | record | — | One point of the precision/coverage curve. |
@@ -217,15 +224,21 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `RandomForestClassifier` | class | `ITextClassifier` | The text convenience over RandomForestClassifier: a SearchDocument forest over Text. |
 | `RandomForestClassifier<TItem>` | class | — | A bagged forest of DecisionTreeClassifier trees: each tree sees a bootstrap sample and a random subset of the features, and the forest averages their… |
 | `RandomForestOptions` | record | — | Tunable knobs for RandomForestClassifier: how many trees, how deep, and how much of the feature space each tree is allowed to see. |
+| `RecordingClassifier` | class | `ITextClassifier` | ITextClassifier decorator that remembers the last prediction of the wrapped classifier, so a result can be attributed to its strongest signal. |
+| `SignificanceTests` | class | — | Non-parametric significance tests for paired samples. |
 | `SplitCriterion` | enum | — | How a candidate split is scored when a decision tree chooses its next question. |
 | `SynchronizedTextClassifier` | class | `IAsyncTextClassifier`, `IContextualTextClassifier`, `IDisposable`, `IIncrementalAsyncTextClassifier`, `IIncrementalTextClassifier`,… | Wraps an ITextClassifier so that concurrent prediction and concurrent mutation stop being the caller's problem: any number of Predict and PredictBest calls may… |
 | `SynonymTextClassifier` | class | `ITextClassifier` | ITextClassifier decorator that canonicalizes terms in both training and query text using a SynonymTokenizer, so a wrapped classifier sees one form per synonym… |
 | `TemperatureCalibrator` | class | — | A one-parameter post-hoc calibrator: it divides the log-probabilities by a temperature fitted on a validation set to minimize log-loss. |
+| `TemporalPrior` | class | `ITemporalPriorSource`, `ITextPriorSource` | A temporal prior built from past assignments: how often each category was accepted at a given weekday and block of the day, with Dirichlet smoothing for rare… |
 | `TextClassifierLane` | record | — | One trained classifier and the weight its distribution carries in the blend. |
 | `TextFeatureSource` | class | `IFeatureSource` | The text feature space: the normalized terms of Text. |
+| `TimeOfDayPrior` | class | `TemporalPrior` | Alias for TemporalPrior. |
 | `TimeSeriesSplit` | record | — | A split of a labelled stream into a training prefix and a test suffix. |
 | `TimeSeriesSplitter` | class | — | Helpers for candidate-scoped, time-ordered evaluation. |
 | `UnknownIndicatorSource<TItem>` | class | `IFeatureSource` | Turns every unknown feature into an explicit binary indicator named prefix + feature, so a model that only asks binary questions can learn the difference… |
+| `VocabularyGate` | class | `VocabularyOverlapGate` | Backwards-friendly alias for VocabularyOverlapGate, matching the name used by WindowTracker. |
+| `VocabularyOverlapGate` | class | `ITextClassifier` | ITextClassifier decorator that drops categories sharing no token with the query: a model may still return a distribution for an unseen text, and a strong prior… |
 
 #### `LexiSharp.Compression`
 
@@ -248,6 +261,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `ClassificationResult` | record | — | A category predicted for a piece of text, with its estimated probability. |
 | `CompressedHit` | record | — | One compressed hit of SearchCompressed: the ranked document's id and score, its text reduced to the query-relevant content, and how much of the source that… |
 | `ContextualBoost<TPayload>` | delegate | — | A boost that depends on the search as a whole, not only on the candidate in hand: it sees the query, the pre-boost ranking, and the caller's payload. |
+| `Counterfactual` | record | — | The effect of removing one term from a text on the predicted category. |
 | `DamerauLevenshteinTermCorrector` | class | `ITermCorrector` | A corrector based on Damerau-Levenshtein distance (insertion, deletion, substitution and adjacent transposition), walked over the vocabulary. Distance 1 and 2… |
 | `DetailedSearchResult` | record | — | A ranked document whose final score is broken down by the source signal that produced it. |
 | `DiscriminationProfile` | record | — | One query's score structure, measured once and read by every consumer. |
@@ -257,13 +271,18 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `EmbeddingProviderSyncExtensions` | class | — | Synchronous adapters over IEmbeddingProvider for callers that cannot await. |
 | `EmbeddingUse` | enum | — | The role a piece of text plays when it is embedded. Several models encode queries and documents differently by construction (e.g. E5 prefixes queries with… |
 | `EngineRetrievalMetrics` | record | — | Aggregated measurements for one engine. |
+| `EntityExtractionRequest` | record | — | Input to an extraction pass. |
+| `EntityExtractionResult` | record | — | The result of an extraction pass. |
+| `EntityExtractor` | class | — | Generic entity extractor: runs configurable patterns (and an optional NER), then deduplicates overlapping spans. No business-specific patterns are enabled by… |
 | `EntityTriplet` | record | — | One fact of a knowledge graph: a subject and an object linked by a predicate — the subject-verb-object shape relation extraction produces (« acme » → « supplies… |
+| `ExtractedEntity` | record | — | A candidate entity extracted from text. |
 | `FacetBucket` | record | — | Value counts for one facet field. |
 | `FacetValue` | record | — | A distinct field value and how many counted documents carry it. |
 | `FacetedSearchResult` | record | — | Ranked results plus one bucket per requested facet field. |
 | `FieldScopedPhrase` | record | — | A double-quoted phrase restricted to a single field: title:"ssh tunnel" asks for the phrase at consecutive positions inside that field. |
 | `FieldScopedTerm` | record | — | One query term restricted to a single field: title:ssh is new FieldScopedTerm("title", "ssh"). |
 | `FieldType` | enum | — | The shape of a document field, used by MetadataFilter to interpret the stored string value when no explicit parsing is requested. |
+| `GenericEntityPatterns` | class | — | Generic built-in patterns that are not tied to any business domain. |
 | `GraphAwareSearchEngine` | class | `IGraphSearchEngine`, `ITextSearchEngine` | A decorator that layers a IKnowledgeGraphBridge over an existing engine: searching and writing are forwarded unchanged, and the IGraphSearchEngine surface adds… |
 | `GraphContext` | record | — | The answer a IKnowledgeGraphBridge returns for a sub-graph query around a set of entities: the local facts that touch them, plus the community summaries the… |
 | `GraphHydratedResults` | record | — | The outcome of SearchWithGraphFacts: the ordinary ranked page plus the facts the IKnowledgeGraphBridge returned for the query's entities. |
@@ -282,6 +301,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `NumericFacetRequest` | record | — | One numeric facet over Fields: either explicit boundaries, or a bucket count whose boundaries are derived from the match set — a histogram. |
 | `ParsedQuery` | record | — | The structured form of a raw query: free terms, quoted phrase constraints, expansion atoms, and the combined literal term list a scorer starts from. |
 | `PassthroughTermCorrector` | class | `ITermCorrector` | A corrector that returns the term unchanged — the safe default that never alters a query. |
+| `PredictionSet` | record | — | A set of categories produced by a conformal (or otherwise calibrated) classifier: the smallest set of labels whose combined confidence reaches the requested… |
 | `QueryDiscrimination` | class | — | Measures whether a result list discriminates, from the scores alone. |
 | `QueryExpansion` | record | — | A free-text query atom carrying a search-time expansion operator: the base term (already tokenized to exactly one term) is matched against the index vocabulary… |
 | `QueryExpansionKind` | enum | — | How a query atom expands against the index vocabulary. |
@@ -293,6 +313,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `QueryTermOperator` | enum | — | What a query atom asks of the documents that contain it. |
 | `QueryTermStatistic` | record | — | What the corpus says about one query term: how many documents carry it, and how rare the active scorer considers it. |
 | `RawQuerySegments` | record | — | The raw, un-tokenized quote-level split of a query: text outside quotes and the literal interior of each quoted segment. SQL backends forward these strings to… |
+| `RegexEntityPattern` | class | `IEntityPattern` | Pattern backed by a regular expression. |
 | `RerankExplanation` | record | — | Decomposition of a rerank decision: the signals that contributed to a candidate's final score, each with its weight and value, plus a human-readable summary. |
 | `RerankSignal` | record | — | A single signal's contribution to a reranked score. |
 | `RerankedTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that re-ranks the matches of an inner engine before they are returned. |
@@ -318,6 +339,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `SearchResult` | record struct | — | A document ranked against a query. |
 | `SearchRoute` | record | — | A named route a RoutingSearchEngine can run: an engine plus optional metadata filters AND-ed onto the caller's own filters when this route is selected. |
 | `SearchTrace` | class | — | Collects a TraceStep per document per stage, so a ranking can be explained end to end: which engine scored a document, what each merger contributed, what the… |
+| `SignificanceTests` | class | — | Non-parametric significance tests for paired samples. |
 | `SparseEmbeddingProviderExtensions` | class | — | Backwards-compatible call shape: embeds text as a Passage. |
 | `StageRetrievalMetrics` | record | — | Aggregated measurements for one pipeline stage of one engine. |
 | `SyncContextualEvidenceScorerAdapter` | class | `IAsyncContextualEvidenceScorer` | Adapts a synchronous IContextualEvidenceScorer to IAsyncContextualEvidenceScorer by running it on the calling thread inside a completed task. Useful for reusing… |
@@ -353,6 +375,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | --- | --- | --- | --- |
 | `CoOccurrenceQueryTermWeighter` | class | `IQueryTermWeighter` | Weights the terms of a query by how redundant each one is with the rest of the query in a corpus-derived co-occurrence graph: a term tied to many of the other… |
 | `ContextualExpansionSearchEngine` | class | `ITextSearchEngine` | A decorator that implements multi-hop evidence retrieval in the style of the SAG2 architecture: an initial BM25 pass, then passage-to-term-to-passage expansion,… |
+| `CorrectingSubjectRanker` | class | `ITextClassifier` | ITextClassifier decorator that corrects unknown terms before classifying, predicting on both the original and the corrected text and keeping the best result. |
 | `CorrectingTextSearchEngine` | class | `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that corrects query terms against the index vocabulary before searching — the consuming side of ITermCorrector, proving the seam is usable… |
 | `ExpandedTerm` | record struct | — | A single additional term injected into the index for a document, alongside its source text tokenization. The term is indexed as a regular inverted-list member… |
 | `ExpandingTextSearchEngine` | class | `IDetailedSearchEngine`, `IExplainableSearchEngine`, `IFacetedSearchEngine`, `IQueryCostProbe`, `ITextSearchEngine` | A decorator engine that widens the query with related terms before delegating to the inner engine — the query-side counterpart of ExpansionTextIndex, which… |
@@ -608,6 +631,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `BertWordPieceTokenizer` | class | `IOnnxTokenizer` | A BERT WordPiece tokenizer over a vocab.txt: the tokenizer most BERT-derived encoders and cross-encoders (including the MiniLM family) publish beside their ONNX… |
 | `BpeOnnxTokenizer` | class | `IOnnxTokenizer` | A byte-level BPE tokenizer loaded from a HuggingFace tokenizer.json — the file most modern exports actually ship, where vocab.json and merges.txt are no longer… |
 | `BpeOnnxTokenizerOptions` | class | — | Options for BpeOnnxTokenizer: the file carries the vocabulary and the merges, the caller states the byte-level and special-token conventions. |
+| `EmbeddingCache` | class | `PersistentEmbeddingCache` | Backwards-friendly alias for PersistentEmbeddingCache, matching the name used by WindowTracker's original implementation. |
 | `OnnxCrossEncoderOptions` | class | — | Everything the pairwise scorer needs from the caller. As with the dense encoder, no default guesses a checkpoint: the export states its own tensor names, its… |
 | `OnnxCrossEncoderScorer` | class | `ICrossEncoderScorer`, `IDisposable` | A pairwise relevance model backed by an ONNX Runtime session: the shipped implementation of ICrossEncoderScorer for a local cross-encoder, ready for… |
 | `OnnxPooling` | enum | — | How a token-level model output is reduced to one vector per text. |
@@ -615,6 +639,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `OnnxTextEncoder` | class | `IBatchEmbeddingProvider`, `IDisposable`, `IEmbeddingProvider`, `IEmbeddingSignatureProvider` | A dense text encoder backed by an ONNX Runtime session: the shipped implementation of IEmbeddingProvider when the model runs in-process rather than behind an… |
 | `OnnxTextEncoderOptions` | class | — | Everything the dense encoder needs from the caller: the model file, the tokenizer and the graph's own names. Nothing here has a default that guesses a… |
 | `OnnxTokenizedText` | struct | — | A tokenized text ready to be bound to an ONNX graph: the token ids and the optional segment ids, with no padding applied. Padding and batching are the caller's… |
+| `PersistentEmbeddingCache` | class | `IDisposable`, `IEmbeddingProvider` | Persists text embeddings on disk, keyed by a hash of the text and role, one file per vector space (provider, model, tokenizer version). It wraps an… |
 | `SentencePieceOnnxTokenizer` | class | `IOnnxTokenizer` | A SentencePiece tokenizer over a checkpoint's sentencepiece.bpe.model (or spiece.model): the tokenizer E5, multilingual MiniLM and most non-BERT encoders… |
 | `SentencePieceOnnxTokenizerOptions` | class | — | Options for SentencePieceOnnxTokenizer: the model decides the pieces, the caller decides the special tokens and the id remapping. |
 

@@ -39,6 +39,11 @@ public sealed class ConformalClassifier<TInner> : ITextClassifier, IExplainableT
     /// Reusing one set for both steps is convenient but not a strict split-conformal guarantee:
     /// the temperature is part of the model, so the non-conformity scores are not fully held out.
     /// Use the two-set overload when the data allows it.
+    /// <para>
+    /// Unlike the plain constructor, this factory throws when no calibration document carries a
+    /// category: <see cref="TemperatureCalibrator.Fit"/> cannot fit a temperature without a valid
+    /// sample. The plain constructor instead falls back to the probability threshold.
+    /// </para>
     /// </remarks>
     public static ConformalClassifier<CalibratedClassifier> FitCalibrated(
         ITextClassifier inner,
@@ -69,8 +74,22 @@ public sealed class ConformalClassifier<TInner> : ITextClassifier, IExplainableT
         ArgumentNullException.ThrowIfNull(temperatureCalibration);
         ArgumentNullException.ThrowIfNull(conformalCalibration);
 
-        var calibrated = CalibratedClassifier.Fit(inner, temperatureCalibration);
-        return new ConformalClassifier<CalibratedClassifier>(calibrated, conformalCalibration, alpha, minCalibrationSize);
+        var temperatureDocuments = temperatureCalibration.ToList();
+        var conformalDocuments = conformalCalibration.ToList();
+        var temperatureIds = temperatureDocuments
+            .Where(document => document is not null)
+            .Select(document => document.Id)
+            .ToHashSet(StringComparer.Ordinal);
+
+        if (conformalDocuments.Any(document => document is not null && temperatureIds.Contains(document.Id)))
+        {
+            throw new ArgumentException(
+                "The temperature and conformal calibration sets must be disjoint.",
+                nameof(conformalCalibration));
+        }
+
+        var calibrated = CalibratedClassifier.Fit(inner, temperatureDocuments);
+        return new ConformalClassifier<CalibratedClassifier>(calibrated, conformalDocuments, alpha, minCalibrationSize);
     }
 
     /// <summary>Wraps <paramref name="inner"/> and calibrates on <paramref name="calibrationDocuments"/>.</summary>
