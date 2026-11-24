@@ -32,6 +32,7 @@ public sealed class CorrectingTextClassifier : ITextClassifier
     private readonly IReadOnlySet<string> _vocabulary;
     private readonly Func<string, bool> _correctable;
     private readonly double _minimumGain;
+    private readonly bool _excludeIdentifiers;
 
     /// <summary>Wraps <paramref name="inner"/> with correction over <paramref name="vocabulary"/>.</summary>
     public CorrectingTextClassifier(
@@ -41,7 +42,8 @@ public sealed class CorrectingTextClassifier : ITextClassifier
         ISpanTokenizer? tokenizer = null,
         int minimumLength = 4,
         double minimumGain = 0.05,
-        Func<string, bool>? correctable = null)
+        Func<string, bool>? correctable = null,
+        bool excludeIdentifiers = true)
     {
         ArgumentNullException.ThrowIfNull(inner);
         ArgumentNullException.ThrowIfNull(corrector);
@@ -63,6 +65,7 @@ public sealed class CorrectingTextClassifier : ITextClassifier
         _correctable = correctable ?? (term =>
             term.Length >= minimumLength && term.All(char.IsLetter));
         _minimumGain = minimumGain;
+        _excludeIdentifiers = excludeIdentifiers;
     }
 
     /// <inheritdoc />
@@ -128,7 +131,7 @@ public sealed class CorrectingTextClassifier : ITextClassifier
 
             if (!_vocabulary.Contains(span.Term)
                 && _correctable(span.Term)
-                && !IsEmbeddedInIdentifier(text, span))
+                && (!_excludeIdentifiers || !IsEmbeddedInIdentifier(text, span)))
             {
                 IReadOnlyList<(string Term, double Weight)> candidates = _corrector.Correct(span.Term);
                 if (candidates.Count > 0

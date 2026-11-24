@@ -11,7 +11,7 @@
   `ITemporalPriorSource`.
 - **Generic entity extraction** (`EntityExtractor`, `IEntityPattern`, `INamedEntityRecognizer`).
 - **Strict text correction** (`CorrectingTextClassifier`): alphabetic-only candidates, identifier
-  exclusion, source-span replacement and a minimum confidence gain. It requires an
+  exclusion (configurable), source-span replacement and a minimum confidence gain. It requires an
   `ISpanTokenizer` so a lossy token-join fallback cannot silently rewrite the text; overlapping
   n-gram spans are skipped.
 - **Classifier explainability**: `TermContribution.Lane`, `ITermWeightedClassifier`, and
