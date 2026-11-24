@@ -28,7 +28,7 @@ public sealed class CorrectingTextClassifier : ITextClassifier
 
     private readonly ITextClassifier _inner;
     private readonly ITermCorrector _corrector;
-    private readonly ITokenizer _tokenizer;
+    private readonly ISpanTokenizer _tokenizer;
     private readonly IReadOnlySet<string> _vocabulary;
     private readonly Func<string, bool> _correctable;
     private readonly double _minimumGain;
@@ -38,7 +38,7 @@ public sealed class CorrectingTextClassifier : ITextClassifier
         ITextClassifier inner,
         ITermCorrector corrector,
         IEnumerable<string> vocabulary,
-        ITokenizer? tokenizer = null,
+        ISpanTokenizer? tokenizer = null,
         int minimumLength = 4,
         double minimumGain = 0.05,
         Func<string, bool>? correctable = null)
@@ -109,18 +109,20 @@ public sealed class CorrectingTextClassifier : ITextClassifier
 
     private (string Text, bool Changed) Correct(string text)
     {
-        if (_tokenizer is not ISpanTokenizer spanTokenizer)
-        {
-            return CorrectByTokenization(text);
-        }
-
-        IReadOnlyList<TokenSpan> spans = spanTokenizer.TokenizeWithSpans(text);
+        IReadOnlyList<TokenSpan> spans = _tokenizer.TokenizeWithSpans(text);
         var builder = new StringBuilder(text.Length);
         int cursor = 0;
         bool changed = false;
 
         foreach (TokenSpan span in spans)
         {
+            // N-gram tokenizers emit overlapping spans; only a span that starts at or after the
+            // cursor can be replaced without rewriting text an earlier span already covered.
+            if (span.Start < cursor)
+            {
+                continue;
+            }
+
             builder.Append(text, cursor, span.Start - cursor);
             string replacement = span.Term;
 
@@ -143,29 +145,6 @@ public sealed class CorrectingTextClassifier : ITextClassifier
 
         builder.Append(text, cursor, text.Length - cursor);
         return (builder.ToString(), changed);
-    }
-
-    private (string Text, bool Changed) CorrectByTokenization(string text)
-    {
-        IReadOnlyList<string> tokens = _tokenizer.Tokenize(text);
-        var corrected = new List<string>(tokens.Count);
-        bool changed = false;
-
-        foreach (string token in tokens)
-        {
-            if (_vocabulary.Contains(token) || !_correctable(token))
-            {
-                corrected.Add(token);
-                continue;
-            }
-
-            IReadOnlyList<(string Term, double Weight)> candidates = _corrector.Correct(token);
-            string best = candidates.Count > 0 ? candidates[0].Term : token;
-            changed |= !string.Equals(best, token, StringComparison.Ordinal);
-            corrected.Add(best);
-        }
-
-        return (string.Join(' ', corrected), changed);
     }
 
     private static bool IsEmbeddedInIdentifier(string text, TokenSpan span)

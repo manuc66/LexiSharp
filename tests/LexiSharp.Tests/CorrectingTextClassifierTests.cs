@@ -3,6 +3,7 @@ using LexiSharp.Core;
 using LexiSharp.Linguistics;
 using Xunit;
 
+
 namespace LexiSharp.Tests;
 
 public class CorrectingTextClassifierTests
@@ -65,6 +66,52 @@ public class CorrectingTextClassifierTests
 
         _ = ranker.Predict("Helo!", limit: 3);
         Assert.Contains(inner.Inputs, input => input.Contains("Hello!", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void NewProjectName_NearAnOldOne_IsCorrectedByDefault()
+    {
+        var inner = new RecordingClassifier(new NaiveBayesClassifier());
+        inner.Train(new[] { new SearchDocument("1", "LegacyCaller", Category: "A") });
+        var corrector = new DamerauLevenshteinTermCorrector(new[] { "LegacyCaller" });
+        var ranker = new CorrectingTextClassifier(inner, corrector, new[] { "LegacyCaller" });
+
+        _ = ranker.Predict("windowtracke", limit: 3);
+        Assert.Contains(inner.Inputs, input => input.Contains("LegacyCaller", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void CustomGate_CanExcludeNewProjectNames()
+    {
+        var inner = new RecordingClassifier(new NaiveBayesClassifier());
+        inner.Train(new[] { new SearchDocument("1", "LegacyCaller", Category: "A") });
+        var corrector = new DamerauLevenshteinTermCorrector(new[] { "LegacyCaller" });
+        var ranker = new CorrectingTextClassifier(
+            inner, corrector, new[] { "LegacyCaller" }, correctable: _ => false);
+
+        _ = ranker.Predict("windowtracke", limit: 3);
+        Assert.DoesNotContain(inner.Inputs, input => input.Contains("LegacyCaller", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void OverlappingSpans_DoNotThrow()
+    {
+        var inner = new RecordingClassifier(new NaiveBayesClassifier());
+        inner.Train(new[] { new SearchDocument("1", "hello", Category: "A") });
+        var corrector = new DamerauLevenshteinTermCorrector(new[] { "hello" });
+        var ranker = new CorrectingTextClassifier(inner, corrector, new[] { "hello" }, new OverlappingTokenizer());
+
+        var results = ranker.Predict("helo", limit: 3);
+        Assert.NotNull(results);
+    }
+
+    private sealed class OverlappingTokenizer : ISpanTokenizer
+    {
+        public IReadOnlyList<string> Tokenize(string text) => new[] { "helo" };
+        public IReadOnlyList<TokenSpan> TokenizeWithSpans(string text) =>
+            new[] { new TokenSpan("helo", 0, 4), new TokenSpan("elo", 1, 3) };
+        public IReadOnlyList<TokenSpan> TokenizeWithSpans(ReadOnlySpan<char> text) => TokenizeWithSpans(text.ToString());
+        public void TokenizeInto(ReadOnlySpan<char> text, List<string> destination) => destination.Add("helo");
     }
 
     private sealed class RecordingClassifier : ITextClassifier
