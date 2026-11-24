@@ -62,7 +62,7 @@ namespace LexiSharp.Classification;
 /// </remarks>
 public sealed class NaiveBayesClassifier
     : IWeightedPredictor, IIncrementalTextClassifier, IReinforceableTextClassifier,
-      IExplainableTextClassifier
+      IExplainableTextClassifier, ITermWeightedClassifier
 {
     private readonly ITokenizer _tokenizer;
     private readonly NaiveBayesOptions _options;
@@ -519,6 +519,32 @@ public sealed class NaiveBayesClassifier
     {
         var results = Predict(text, limit: 1, excludedCategories);
         return results.Count > 0 ? results[0].Category : null;
+    }
+
+    /// <inheritdoc />
+    public double TermWeight(string category, string term)
+    {
+        ArgumentNullException.ThrowIfNull(category);
+        ArgumentNullException.ThrowIfNull(term);
+
+        if (!_termCountsByClass.TryGetValue(category, out Dictionary<string, int>? classTerms))
+        {
+            return 0;
+        }
+
+        int count = classTerms.TryGetValue(term, out int value) ? value : 0;
+        int total = 0;
+        foreach (int c in classTerms.Values)
+        {
+            total += c;
+        }
+
+        if (total == 0)
+        {
+            return 0;
+        }
+
+        return count / (double)total;
     }
 
     /// <inheritdoc />

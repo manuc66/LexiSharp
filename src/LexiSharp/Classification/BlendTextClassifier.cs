@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 
 using LexiSharp.Core;
+using LexiSharp.Linguistics;
 
 namespace LexiSharp.Classification;
 
@@ -54,6 +55,7 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
     private readonly IReadOnlyList<TextClassifierLane> _lanes;
     private readonly IReadOnlyList<CandidateLane> _candidates;
     private readonly IReadOnlyList<PriorLane> _priors;
+    private readonly ITokenizer _tokenizer;
     private readonly IReadOnlyList<IIncrementalTextClassifier>? _incrementalLanes;
     private readonly string? _nonIncrementalLane;
 
@@ -107,12 +109,14 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
     /// <param name="lanes">The trained lanes; at least one, each non-null with a finite non-negative weight.</param>
     /// <param name="candidates">Sources that may introduce categories no lane learned; null means none.</param>
     /// <param name="priors">Sources that shift categories already present; null means none.</param>
+    /// <param name="tokenizer">Tokenizer used to split text for term-level explainability; null uses the default.</param>
     /// <exception cref="ArgumentNullException">A list, lane or source is null.</exception>
     /// <exception cref="ArgumentException">A weight is negative or not finite, or there is no lane.</exception>
     public BlendTextClassifier(
         IReadOnlyList<TextClassifierLane> lanes,
         IReadOnlyList<CandidateLane>? candidates = null,
-        IReadOnlyList<PriorLane>? priors = null)
+        IReadOnlyList<PriorLane>? priors = null,
+        ITokenizer? tokenizer = null)
     {
         ArgumentNullException.ThrowIfNull(lanes);
 
@@ -128,6 +132,7 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
 
         _candidates = candidates ?? Array.Empty<CandidateLane>();
         _priors = priors ?? Array.Empty<PriorLane>();
+        _tokenizer = tokenizer ?? Tokenizer.Default;
 
         foreach (CandidateLane lane in _candidates)
         {
@@ -487,10 +492,86 @@ public sealed class BlendTextClassifier : ITextClassifier, IIncrementalTextClass
             laneContributions.Add(new LaneContribution(lane.Classifier.GetType().Name, lane.Weight, laneResults));
         }
 
+        string? bestCategory = results.Count > 0 ? results[0].Category : null;
+        var termWeights = new Dictionary<string, double>(StringComparer.Ordinal);
+        var dominantLanes = new Dictionary<string, string>(StringComparer.Ordinal);
+        double positiveTotal = 0;
+
+        if (bestCategory is not null)
+        {
+            foreach (string token in _tokenizer.Tokenize(text).Distinct(StringComparer.Ordinal))
+            {
+                double aggregate = 0;
+                double strongest = 0;
+                string? strongestLane = null;
+
+                foreach (TextClassifierLane lane in _lanes)
+                {
+                    if (lane.Classifier is ITermWeightedClassifier weighted)
+                    {
+                        double contribution = lane.Weight * weighted.TermWeight(bestCategory, token);
+                        aggregate += contribution;
+
+                        if (Math.Abs(contribution) > Math.Abs(strongest))
+                        {
+                            strongest = contribution;
+                            strongestLane = lane.Classifier.GetType().Name;
+                        }
+                    }
+                }
+
+                if (aggregate != 0)
+                {
+                    termWeights[token] = aggregate;
+                    if (strongestLane is not null)
+                    {
+                        dominantLanes[token] = strongestLane;
+                    }
+
+                    if (aggregate > 0)
+                    {
+                        positiveTotal += aggregate;
+                    }
+                }
+            }
+        }
+
+        var termContributions = new List<TermContribution>();
+        if (positiveTotal > 0)
+        {
+            foreach ((string token, double weight) in termWeights)
+            {
+                termContributions.Add(new TermContribution(
+                    token,
+                    TermFrequency: 0,
+                    DocumentFrequency: 0,
+                    InverseDocumentFrequency: 0,
+                    Score: weight / positiveTotal)
+                {
+                    Lane = dominantLanes.GetValueOrDefault(token),
+                });
+            }
+        }
+        else
+        {
+            foreach ((string token, double weight) in termWeights)
+            {
+                termContributions.Add(new TermContribution(
+                    token,
+                    TermFrequency: 0,
+                    DocumentFrequency: 0,
+                    InverseDocumentFrequency: 0,
+                    Score: weight)
+                {
+                    Lane = dominantLanes.GetValueOrDefault(token),
+                });
+            }
+        }
+
         return new ClassificationExplanation(
             results,
             laneContributions,
-            Array.Empty<TermContribution>());
+            termContributions);
     }
 
     /// <summary>Predicts the single best category with request-scoped evidence.</summary>
