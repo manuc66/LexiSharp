@@ -10,6 +10,8 @@
 - **Temporal prior** (`TemporalPrior` / `TimeOfDayPrior`) with Dirichlet smoothing and
   `ITemporalPriorSource`.
 - **Generic entity extraction** (`EntityExtractor`, `IEntityPattern`, `INamedEntityRecognizer`).
+- **Strict text correction** (`CorrectingTextClassifier`): alphabetic-only candidates, identifier
+  exclusion, source-span replacement and a minimum confidence gain.
 - **Classifier explainability**: `TermContribution.Lane`, `ITermWeightedClassifier`, and
   `Counterfactuals`.
 - **Significance tests** (`SignificanceTests`) and language detection by character n-grams.
@@ -21,6 +23,8 @@
 - `Bm25Tuner` and `FusionWeightTuner` expose an opt-in coordinate-descent refinement
   (`refine: true`); the default remains the grid.
 - `Tokenizer.Normalize` folds `œ`, `æ` and `ß` (including uppercase forms) to ASCII.
+- `TemporalPrior` implements only `ITemporalPriorSource`; the implicit wall-clock `Prior(string)`
+  path is removed, so a caller must pass the instant explicitly.
 
 ### Fixed
 
