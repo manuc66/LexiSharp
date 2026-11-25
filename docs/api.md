@@ -30,6 +30,12 @@ are listed first.
 
 | Contract | Extends | What it is | Guide |
 | --- | --- | --- | --- |
+| `IAdaptiveFeedbackPolicy<TContext>` | — | A policy that predicts and learns from feedback; the seam an evaluator replays. | [guide](adaptive-feedback.md) |
+| `IContextCodec<TContext>` | — | Encodes a context into the stable, opaque key a memory persists. | [guide](adaptive-feedback.md) |
+| `IDecisionPolicy` | — | A policy that turns a calibrated distribution and costs into an action. | [guide](adaptive-feedback.md) |
+| `IExplorationPolicy` | — | Chooses a category to try when the caller allows exploration. | [guide](adaptive-feedback.md) |
+| `IMisclassificationCost` | — | The cost of predicting one category when the truth is another. | [guide](adaptive-feedback.md) |
+| `IPreferencePolicy` | — | A re-ranker learned from relative choices. | [guide](adaptive-feedback.md) |
 | `IContextualTextClassifier` | `ITextClassifier` | A classifier that accepts request-scoped evidence in addition to the text. | [guide](text-analysis.md) |
 | `IFeatureSet` | — | The features of one item, as a question sees them: a set of names, no domain. | [guide](text-analysis.md) |
 | `IFeatureSource<TItem>` | — | Extracts the features of an item — the seam that keeps the question trees domain-agnostic. | [guide](text-analysis.md) |
@@ -136,6 +142,64 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `LexiSharpIndexOptions<TDocument>` | class | — | Configuration of a LexiSharpIndex: how caller documents map to indexable records, and which engine pieces to use. |
 | `LexiSharpQueryOptions` | record | — | Per-search options for LexiSharpIndex and friends. |
 | `PathSafety` | class | — | Guards file paths against traversal sequences such as .., which would let a caller escape an intended base directory. |
+
+#### `LexiSharp.Adaptive`
+
+| Type | Kind | Contracts | What it is |
+| --- | --- | --- | --- |
+| `AdaptiveEvaluationOptions` | record | — | Options of an adaptive replay. |
+| `AdaptiveEvaluator` | class | — | Replays a feedback stream through an adaptive policy: predict first, then observe. |
+| `AdaptiveExplanation` | record | — | A prediction with the contributions that produced it. |
+| `AdaptiveFeedbackRanker<TContext>` | class | `IAdaptiveFeedbackPolicy`, `IDisposable` | Wraps a text classifier with a FeedbackMemory and an optional WeightedConformalCalibrator: the model ranks, the memory reweights by context, the calibrator… |
+| `AdaptiveOptions` | record | — | Tunable weights of the adaptive ranker. |
+| `AdaptiveRanking` | record | — | The outcome of one adaptive prediction. |
+| `AdaptiveReport` | record | — | The outcome of one adaptive replay. |
+| `AdaptiveScore` | record | — | One category's three contributions in an adaptive ranking. |
+| `AdaptiveSnapshot` | record | — | The complete persisted state of an adaptive ranker: options, memory and calibration. |
+| `AdaptiveSnapshotSerializer` | class | — | Reads and writes the versioned LXFA adaptive snapshot. |
+| `CalibrationEntry` | record struct | — | One non-conformity score and the instant it was observed at. |
+| `CategoryFeedbackSnapshot` | record | — | One category's masses in a persisted feedback memory. |
+| `CategoryMisclassificationCost` | class | `IMisclassificationCost` | A cost keyed by the true category, with one fallback for the others. |
+| `CategoryPrior` | record | — | One category's evidence in a context, projected to an instant. |
+| `ContextCodecs` | class | — | The built-in context codecs: a hashed key by default, a raw key for debugging. |
+| `ContextFeedbackSnapshot` | record | — | One context in a persisted feedback memory. |
+| `ContextPrior` | record | — | The evidence a memory holds for one context, projected to an instant. |
+| `CostAwareDecisionPolicy` | class | `IDecisionPolicy` | The default cost-sensitive policy: accepts the category with the lowest expected misclassification cost, asks when the value of information pays for the… |
+| `Decision` | record | — | The recommended action and the options that produced it. |
+| `DecisionCosts` | record | — | The costs the decision layer minimizes. |
+| `DecisionKind` | enum | — | The action the decision layer recommends. |
+| `DecisionOption` | record | — | One considered action and its expected cost. |
+| `DecisionOptions` | record | — | Options of the cost-aware decision policy. |
+| `DriftMonitor` | class | — | A Page–Hinkley detector over a stream of correctness outcomes. It signals a drop in accuracy and suggests a shorter half-life; it never changes a policy by… |
+| `DriftOptions` | record | — | Parameters of the Page–Hinkley drift monitor. |
+| `FeedbackEvent<TContext>` | record | — | One logged interaction with a suggestion, at the instant it happened. |
+| `FeedbackMemory<TContext>` | class | `IDisposable` | A bounded, thread-safe memory of acceptances and refusals per context, decaying with a RecencyPolicy and shrunk towards a global acceptance prior. |
+| `FeedbackMemoryOptions` | record | — | Bounds and smoothing for a FeedbackMemory. |
+| `FeedbackOutcome` | enum | — | What the user did with a suggestion. |
+| `FeedbackSnapshot` | record | — | A versioned, projected view of a FeedbackMemory. |
+| `GlobalFeedbackSnapshot` | record | — | The global acceptance prior in a persisted feedback memory. |
+| `ImportanceReport` | record | — | A self-normalized IPS estimate with its effective sample size. |
+| `PreferenceCategorySnapshot` | record | — | One category's weights in a persisted preference model. |
+| `PreferenceEvaluationOptions` | record | — | Options of a preference replay. |
+| `PreferenceEvaluator` | class | — | Replays logged choices through a fixed preference policy. |
+| `PreferenceEvent` | record | — | One logged choice among ranked candidates. |
+| `PreferenceItem` | record | — | One candidate and the text/context it is scored against. |
+| `PreferenceLearner` | class | `IPreferencePolicy` | A linear pairwise re-ranker trained from logged choices: the chosen category is pushed above each rejected one, with AdaGrad and a seeded shuffle. |
+| `PreferenceOptions` | record | — | Options of the pairwise preference learner. |
+| `PreferenceReport` | record | — | The outcome of one preference replay. |
+| `PreferenceSnapshot` | record | — | A versioned view of a PreferenceLearner. |
+| `PreferenceWeightSnapshot` | record | — | One weight in a persisted preference model. |
+| `RankSlice` | record | — | Agreement metrics for one logged rank. |
+| `RecencyPolicy` | record | — | Describes how quickly a sample loses weight as it ages, and how repeated observations of the same item are damped. |
+| `RepetitionRegretReport` | record | — | How often a corrected bad offer was repeated before it disappeared. |
+| `SampleWeightMode` | enum | — | How a sample weight is applied when a model consumes timed observations. |
+| `SampleWeighting` | class | — | Expands timed documents into the whole copies a model without sample weights can consume. |
+| `TextPreferenceFeatureSource` | class | `IFeatureSource` | The default feature source: text unigrams plus one context feature. |
+| `TimeToRecoveryReport` | record | — | How quickly the policy recovers the accepted category after a correction. |
+| `TimedDocument` | record struct | — | A document with the instant it was observed at, and how many times it was seen. |
+| `UniformMisclassificationCost` | class | `IMisclassificationCost` | A single cost for every wrong prediction. |
+| `WeightedConformalCalibrator` | class | — | Split-conformal calibration whose quantile is weighted by a RecencyPolicy: an old score counts less, so the coverage follows a change in habits instead of… |
+| `WeightedConformalSnapshot` | record | — | A versioned view of a WeightedConformalCalibrator. |
 
 #### `LexiSharp.Benchmarking`
 
