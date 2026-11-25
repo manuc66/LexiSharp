@@ -214,6 +214,37 @@ Labeled accuracy is **conditional on feedback**: it compares the policy with the
 a human label, not with the unlabeled rows. The report always carries the labeled share beside it.
 IPS is a diagnostic, not a deployment gate.
 
+## Benchmark (`adaptive-cost`)
+
+The synthetic benchmark freezes a context-preference drift and replays it through three variants:
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- \
+  adaptive-cost --write bench/LexiSharp.Eval/reference/adaptive-cost.json
+
+dotnet run --project bench/LexiSharp.Eval -c Release -- \
+  adaptive-cost --verify bench/LexiSharp.Eval/reference/adaptive-cost.json
+```
+
+The scenario trains an ambiguous two-category model, flips the preferred category at event 50, and
+logs a user who accepts a correct offer or corrects a wrong one. Default costs are `AskCost = 0.1`
+and `AbstainCost = 2`; `--events`, `--drift-at`, `--seed`, `--ask-cost` and `--abstain-cost` change
+them.
+
+| Variant | Accepted | Asked | Abstained | Precision | Cost / 100 | Recovered | Mean recovery |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `static` | 100 | 0 | 0 | 0.5000 | 50.0000 | 0 | 0 |
+| `adaptive` | 100 | 0 | 0 | 0.9900 | 1.0000 | 49 | 1.0000 |
+| `decision` | 46 | 54 | 0 | 1.0000 | 5.4000 | 0 | 0 |
+
+`static` and `adaptive` always offer, so their `Accepted` column is the number of offers. The
+adaptive row is a hindsight score: it pays `1` for each wrong offer. The decision row pays `0.1` per
+question and asks while the underlying distribution is still 50/50; its cost is higher than the
+adaptive hindsight cost and far below the static one.
+
+The pin is checked by `AdaptiveCostPinTests` and by `--verify`. This is a mechanism check, not a
+production claim: one synthetic corpus, one tokenizer, one scenario.
+
 ## Limits
 
 - **No temporal structure.** The library does not segment a stream, detect a rupture or impose a
