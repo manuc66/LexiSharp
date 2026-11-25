@@ -188,6 +188,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `PreferenceOptions` | record | — | Options of the pairwise preference learner. |
 | `PreferenceReport` | record | — | The outcome of one preference replay. |
 | `PreferenceSnapshot` | record | — | A versioned view of a PreferenceLearner. |
+| `PreferenceSnapshotSerializer` | class | — | Reads and writes the versioned LXPR preference snapshot. |
 | `PreferenceWeightSnapshot` | record | — | One weight in a persisted preference model. |
 | `RankSlice` | record | — | Agreement metrics for one logged rank. |
 | `RecencyPolicy` | record | — | Describes how quickly a sample loses weight as it ages, and how repeated observations of the same item are damped. |

@@ -33,9 +33,10 @@
   logged choices with a pairwise RankNet loss, AdaGrad and a seeded shuffle. `PreferenceEvaluator`
   reports top-1 agreement, MRR, per-logged-rank slices and a self-normalized IPS estimate. Without
   weights, `ReRank` is the identity.
-- **Adaptive snapshot.** `AdaptiveSnapshotSerializer` writes the options, memory and optional
-  calibration as `LXFA` v1 with a trailing SHA-256; an unknown version, a codec mismatch or a
-  tampered byte is refused.
+- **Adaptive and preference snapshots.** `AdaptiveSnapshotSerializer` writes the options, memory and
+  optional calibration as `LXFA` v1, and `PreferenceSnapshotSerializer` writes a preference model
+  as `LXPR` v1; both end with a SHA-256, and an unknown version, a codec mismatch or a tampered byte
+  is refused.
 
 No existing public signature changed; the new surface is additive in `LexiSharp.Adaptive`.
 
