@@ -204,6 +204,25 @@ The snapshot carries the options, the memory and the optional calibration, with 
 A tampered byte, an unknown version or a codec mismatch is refused. The text model and the context
 codec are not in the file, like the tokenizer in `LXCL`: load with the same configuration.
 
+A preference model has its own `LXPR` snapshot:
+
+```csharp
+PreferenceSnapshot preference = learner.Save(now);
+
+using (var file = File.Create("preference.lxpr"))
+    PreferenceSnapshotSerializer.Save(preference, file);
+
+using (var file = File.OpenRead("preference.lxpr"))
+{
+    PreferenceSnapshot loaded = PreferenceSnapshotSerializer.Load(file);
+    var restored = PreferenceLearner.Load(loaded);
+}
+```
+
+`LXPR` carries the vocabulary in vocabulary mode, or the hashed indices in hash mode, plus the
+canonical preference signature and a trailing SHA-256. The feature source is not stored: load with
+the same configuration.
+
 ## Evaluation
 
 `AdaptiveEvaluator.Replay` predicts before observing, then reports:
