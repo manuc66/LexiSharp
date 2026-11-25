@@ -38,6 +38,7 @@ public sealed class AdaptiveFeedbackRanker<TContext> : IAdaptiveFeedbackPolicy<T
     private readonly AdaptiveOptions _options;
     private readonly ReaderWriterLockSlim _lock = new(LockRecursionPolicy.NoRecursion);
 
+    private readonly DriftMonitor? _drift;
     private WeightedConformalCalibrator? _calibrator;
     private long _missingOfferedScores;
     private bool _disposed;
@@ -65,6 +66,7 @@ public sealed class AdaptiveFeedbackRanker<TContext> : IAdaptiveFeedbackPolicy<T
         _memory = memory;
         _options = options;
         _calibrator = calibrator;
+        _drift = options.AutoTuneHalfLife ? new DriftMonitor() : null;
     }
 
     /// <summary>The wrapped text model.</summary>
@@ -171,6 +173,8 @@ public sealed class AdaptiveFeedbackRanker<TContext> : IAdaptiveFeedbackPolicy<T
                     Interlocked.Increment(ref _missingOfferedScores);
                 }
             }
+
+            UpdateDrift(feedback);
         }
         finally
         {
@@ -457,6 +461,55 @@ public sealed class AdaptiveFeedbackRanker<TContext> : IAdaptiveFeedbackPolicy<T
                 prior.Evidence,
                 now),
             prior);
+    }
+
+    private void UpdateDrift(FeedbackEvent<TContext> feedback)
+    {
+        if (_drift is null)
+        {
+            return;
+        }
+
+        bool? correct = feedback.Outcome switch
+        {
+            FeedbackOutcome.Accepted => true,
+            FeedbackOutcome.Corrected or FeedbackOutcome.Rejected => false,
+            _ => null,
+        };
+
+        if (correct is not { } outcome)
+        {
+            return;
+        }
+
+        _drift.Observe(outcome, feedback.At);
+
+        if (!_drift.Drifted)
+        {
+            return;
+        }
+
+        RecencyPolicy policy = _memory.Policy;
+
+        if (policy.HalfLife != Timeout.InfiniteTimeSpan)
+        {
+            TimeSpan suggested = _drift.SuggestedHalfLife(policy.HalfLife);
+
+            if (suggested != policy.HalfLife)
+            {
+                var rebased = new RecencyPolicy(
+                    suggested,
+                    policy.MaxAge,
+                    policy.FrequencySaturation,
+                    policy.Mode,
+                    policy.MaxCopies);
+
+                _memory.Rebase(feedback.At, rebased);
+                _calibrator?.Rebase(rebased);
+            }
+        }
+
+        _drift.Reset();
     }
 
     private static AdaptiveRanking Empty(DateTimeOffset now) =>

@@ -103,6 +103,10 @@ The memory is bounded by `MaxContexts` (least-recently-used eviction), `MaxCateg
 `MaxPairs`. `Purge(now)` drops contexts older than the policy's maximum age. Reads are pure and
 concurrent; `Observe`, `Purge`, `Prune` and `Rebase` take the writer lock.
 
+`AdaptiveOptions.AutoTuneHalfLife` wires a `DriftMonitor` into the ranker: a detected drop halves
+the memory and calibration half-life, and a stable stream can grow it again. It is off by default;
+the monitor only suggests, the ranker applies the suggestion when the option is on.
+
 ## Calibration by recency
 
 `WeightedConformalCalibrator` stores non-conformity scores with their instants and recomputes the

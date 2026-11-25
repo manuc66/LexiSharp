@@ -23,7 +23,8 @@
   effective sample size.
 - **Drift monitor.** `DriftMonitor` detects a drop in accuracy with a Page–Hinkley statistic and
   suggests a halved half-life on drift, or a 5 percent growth after a stable window; it never
-  changes a policy by itself.
+  changes a policy by itself. `AdaptiveOptions.AutoTuneHalfLife` lets the ranker apply the
+  suggestion, default off.
 - **Cost-sensitive decisions.** `CostAwareDecisionPolicy` turns a calibrated distribution and a cost
   matrix into `Accept`, `Ask`, `Abstain` or `Explore`. It asks about the smallest candidate set that
   reaches a mass target when the value of information pays for the question, and never explores

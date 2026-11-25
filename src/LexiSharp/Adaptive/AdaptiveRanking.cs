@@ -16,6 +16,12 @@ public sealed record AdaptiveOptions
 
     /// <summary>A top score below this abstains even without a conformal set. In <c>[0, 1]</c>. Default: <c>0</c>.</summary>
     public double MinScore { get; init; }
+
+    /// <summary>
+    /// Whether the ranker lets a <see cref="DriftMonitor"/> halve the memory's half-life after a
+    /// detected drop in accuracy. Default: <c>false</c>; the monitor is then not consulted.
+    /// </summary>
+    public bool AutoTuneHalfLife { get; init; }
 }
 
 /// <summary>One category's three contributions in an adaptive ranking.</summary>
