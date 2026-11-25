@@ -30,9 +30,10 @@
   reaches a mass target when the value of information pays for the question, and never explores
   without an explicit `IExplorationPolicy`.
 - **Preference re-ranking.** `PreferenceLearner` trains one sparse weight vector per category from
-  logged choices with a pairwise RankNet loss, AdaGrad and a seeded shuffle. `PreferenceEvaluator`
-  reports top-1 agreement, MRR, per-logged-rank slices and a self-normalized IPS estimate. Without
-  weights, `ReRank` is the identity.
+  logged choices with a pairwise RankNet loss, AdaGrad and a seeded shuffle. `PreferenceReranker`
+  applies the same loss to a **shared** query–document scorer and implements `IReranker`, so it
+  generalizes to documents outside the log; `PreferenceEvaluator` reports top-1 agreement, MRR,
+  per-logged-rank slices and a self-normalized IPS estimate. Without weights, both are the identity.
 - **Adaptive and preference snapshots.** `AdaptiveSnapshotSerializer` writes the options, memory and
   optional calibration as `LXFA` v1, and `PreferenceSnapshotSerializer` writes a preference model
   as `LXPR` v1; both end with a SHA-256, and an unknown version, a codec mismatch or a tampered byte

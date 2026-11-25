@@ -187,12 +187,15 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `PreferenceLearner` | class | `IPreferencePolicy` | A linear pairwise re-ranker trained from logged choices: the chosen category is pushed above each rejected one, with AdaGrad and a seeded shuffle. |
 | `PreferenceOptions` | record | — | Options of the pairwise preference learner. |
 | `PreferenceReport` | record | — | The outcome of one preference replay. |
+| `PreferenceReranker` | class | `IDisposable`, `IReranker` | A learned re-ranker over a shortlist: one shared weight vector over query–document features, trained from logged choices with a pairwise loss and exposed as an… |
 | `PreferenceSnapshot` | record | — | A versioned view of a PreferenceLearner. |
 | `PreferenceSnapshotSerializer` | class | — | Reads and writes the versioned LXPR preference snapshot. |
 | `PreferenceWeightSnapshot` | record | — | One weight in a persisted preference model. |
 | `RankSlice` | record | — | Agreement metrics for one logged rank. |
 | `RecencyPolicy` | record | — | Describes how quickly a sample loses weight as it ages, and how repeated observations of the same item are damped. |
 | `RepetitionRegretReport` | record | — | How often a corrected bad offer was repeated before it disappeared. |
+| `RerankFeatureSource` | class | `IFeatureSource` | The default query–document features: query terms, document terms, context and base rank. |
+| `RerankItem` | record | — | One candidate as the reranker sees it: the query, the document and its base rank. |
 | `SampleWeightMode` | enum | — | How a sample weight is applied when a model consumes timed observations. |
 | `SampleWeighting` | class | — | Expands timed documents into the whole copies a model without sample weights can consume. |
 | `TextPreferenceFeatureSource` | class | `IFeatureSource` | The default feature source: text unigrams plus one context feature. |
