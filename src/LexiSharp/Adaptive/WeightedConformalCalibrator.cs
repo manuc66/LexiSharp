@@ -32,7 +32,7 @@ public readonly record struct CalibrationEntry(double Score, DateTimeOffset At);
 public sealed class WeightedConformalCalibrator
 {
     private readonly double _alpha;
-    private readonly RecencyPolicy _policy;
+    private RecencyPolicy _policy;
     private readonly int _minSamples;
     private readonly int _maxSamples;
     private readonly int _refreshEvery;
@@ -119,6 +119,16 @@ public sealed class WeightedConformalCalibrator
 
     /// <summary>How many calibration entries are stored.</summary>
     public int Count => _entries.Count;
+
+    /// <summary>Replaces the recency policy; the next threshold is recomputed with it.</summary>
+    /// <param name="policy">The new policy.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="policy"/> is null.</exception>
+    public void Rebase(RecencyPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        _policy = policy;
+        _dirty = true;
+    }
 
     /// <summary>Records the distribution shown and the category that was actually right.</summary>
     /// <param name="at">The instant the interaction happened.</param>
