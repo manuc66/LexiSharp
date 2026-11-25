@@ -178,6 +178,63 @@ public sealed class AdaptiveFeedbackRanker<TContext> : IAdaptiveFeedbackPolicy<T
         }
     }
 
+    /// <summary>Projects the ranker's memory and calibration into a signed adaptive snapshot.</summary>
+    /// <param name="now">The instant to project to.</param>
+    /// <param name="modelSignature">The caller's signature of the wrapped model.</param>
+    /// <returns>The snapshot, with its signature computed.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="modelSignature"/> is null.</exception>
+    /// <exception cref="ObjectDisposedException">The ranker has been disposed.</exception>
+    public AdaptiveSnapshot Save(DateTimeOffset now, string modelSignature)
+    {
+        ArgumentNullException.ThrowIfNull(modelSignature);
+
+        _lock.EnterReadLock();
+        try
+        {
+            ThrowIfDisposed();
+
+            return AdaptiveSnapshotSerializer.Create(
+                modelSignature,
+                _options,
+                _memory.Save(now),
+                _calibrator?.Save(now));
+        }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
+    }
+
+    /// <summary>Restores a ranker from a snapshot and a trained text model.</summary>
+    /// <param name="snapshot">The snapshot to restore.</param>
+    /// <param name="model">The text model; not owned by the ranker.</param>
+    /// <param name="codec">The context codec; null uses the hashed codec.</param>
+    /// <returns>A ranker with the snapshot's options, memory and calibration.</returns>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
+    /// <exception cref="InvalidDataException">The snapshot version is unknown.</exception>
+    public static AdaptiveFeedbackRanker<TContext> Load(
+        AdaptiveSnapshot snapshot,
+        ITextClassifier model,
+        IContextCodec<TContext>? codec = null)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(model);
+
+        if (snapshot.SchemaVersion != AdaptiveSnapshot.CurrentVersion)
+        {
+            throw new InvalidDataException(
+                $"Unsupported adaptive snapshot version {snapshot.SchemaVersion}; " +
+                $"this build reads {AdaptiveSnapshot.CurrentVersion}.");
+        }
+
+        FeedbackMemory<TContext> memory = FeedbackMemory<TContext>.Load(snapshot.Memory, codec);
+        WeightedConformalCalibrator? calibrator = snapshot.Calibration is null
+            ? null
+            : WeightedConformalCalibrator.Load(snapshot.Calibration);
+
+        return new AdaptiveFeedbackRanker<TContext>(model, memory, snapshot.Options, calibrator);
+    }
+
     /// <summary>Materializes the memory at <paramref name="now"/> and replaces its policy.</summary>
     /// <param name="now">The instant to materialize at.</param>
     /// <param name="policy">The new policy; the calibrator is rebased to it too.</param>
