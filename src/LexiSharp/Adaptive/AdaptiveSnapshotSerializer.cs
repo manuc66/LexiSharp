@@ -312,6 +312,7 @@ public static class AdaptiveSnapshotSerializer
         writer.Write(options.AcceptanceWeight);
         writer.Write(options.RefusalWeight);
         writer.Write(options.MinScore);
+        writer.Write(options.AutoTuneHalfLife);
     }
 
     private static AdaptiveOptions ReadOptions(BinaryReader reader) =>
@@ -320,6 +321,7 @@ public static class AdaptiveSnapshotSerializer
             AcceptanceWeight = reader.ReadDouble(),
             RefusalWeight = reader.ReadDouble(),
             MinScore = reader.ReadDouble(),
+            AutoTuneHalfLife = reader.ReadBoolean(),
         };
 
     private static void WritePolicy(BinaryWriter writer, RecencyPolicy policy)
