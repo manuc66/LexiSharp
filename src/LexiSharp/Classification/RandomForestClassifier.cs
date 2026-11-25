@@ -356,7 +356,19 @@ public sealed class RandomForestClassifier : ITextClassifier
     /// <param name="tokenizer">Tokenizer used both at training and prediction time (default: <see cref="Tokenizer.Default"/>).</param>
     /// <param name="options">Tunable knobs; when null, <see cref="RandomForestOptions.Default"/> applies.</param>
     public RandomForestClassifier(ITokenizer? tokenizer = null, RandomForestOptions? options = null)
-        : this(new TextFeatureSource(tokenizer), options)
+        : this(new TextFeatureSource(tokenizer), options, weightOf: null)
+    {
+    }
+
+    /// <summary>Creates a text forest over <see cref="SearchDocument.Text"/> with a sample weight.</summary>
+    /// <param name="tokenizer">Tokenizer used both at training and prediction time (default: <see cref="Tokenizer.Default"/>).</param>
+    /// <param name="options">Tunable knobs; when null, <see cref="RandomForestOptions.Default"/> applies.</param>
+    /// <param name="weightOf">Returns a document's non-negative sample weight; null means <c>1</c> for every document.</param>
+    public RandomForestClassifier(
+        ITokenizer? tokenizer,
+        RandomForestOptions? options,
+        Func<SearchDocument, double>? weightOf)
+        : this(new TextFeatureSource(tokenizer), options, weightOf)
     {
     }
 
@@ -364,13 +376,25 @@ public sealed class RandomForestClassifier : ITextClassifier
     /// <param name="features">The feature space to read from a document.</param>
     /// <param name="options">Tunable knobs; when null, <see cref="RandomForestOptions.Default"/> applies.</param>
     public RandomForestClassifier(IFeatureSource<SearchDocument> features, RandomForestOptions? options = null)
+        : this(features, options, weightOf: null)
+    {
+    }
+
+    /// <summary>Creates a text forest over a caller-supplied document feature space with a sample weight.</summary>
+    /// <param name="features">The feature space to read from a document.</param>
+    /// <param name="options">Tunable knobs; when null, <see cref="RandomForestOptions.Default"/> applies.</param>
+    /// <param name="weightOf">Returns a document's non-negative sample weight; null means <c>1</c> for every document.</param>
+    public RandomForestClassifier(
+        IFeatureSource<SearchDocument> features,
+        RandomForestOptions? options,
+        Func<SearchDocument, double>? weightOf)
     {
         ArgumentNullException.ThrowIfNull(features);
 
         _inner = new RandomForestClassifier<SearchDocument>(
             features,
             document => document.Category,
-            weightOf: null,
+            weightOf,
             options);
     }
 

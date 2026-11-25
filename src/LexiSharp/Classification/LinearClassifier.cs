@@ -1045,7 +1045,19 @@ public sealed class LinearClassifier : ITextClassifier, ITermWeightedClassifier
     /// <param name="tokenizer">Tokenizer used both at training and prediction time (default: <see cref="Tokenizer.Default"/>).</param>
     /// <param name="options">Tunable knobs; when null, <see cref="LinearClassifierOptions.Default"/> applies.</param>
     public LinearClassifier(ITokenizer? tokenizer = null, LinearClassifierOptions? options = null)
-        : this(new TextFeatureSource(tokenizer), options)
+        : this(new TextFeatureSource(tokenizer), options, weightOf: null)
+    {
+    }
+
+    /// <summary>Creates a text model over <see cref="SearchDocument.Text"/> with a sample weight.</summary>
+    /// <param name="tokenizer">Tokenizer used both at training and prediction time (default: <see cref="Tokenizer.Default"/>).</param>
+    /// <param name="options">Tunable knobs; when null, <see cref="LinearClassifierOptions.Default"/> applies.</param>
+    /// <param name="weightOf">Returns a document's non-negative sample weight; null means <c>1</c> for every document.</param>
+    public LinearClassifier(
+        ITokenizer? tokenizer,
+        LinearClassifierOptions? options,
+        Func<SearchDocument, double>? weightOf)
+        : this(new TextFeatureSource(tokenizer), options, weightOf)
     {
     }
 
@@ -1053,13 +1065,25 @@ public sealed class LinearClassifier : ITextClassifier, ITermWeightedClassifier
     /// <param name="features">The feature space to read from a document.</param>
     /// <param name="options">Tunable knobs; when null, <see cref="LinearClassifierOptions.Default"/> applies.</param>
     public LinearClassifier(IFeatureSource<SearchDocument> features, LinearClassifierOptions? options = null)
+        : this(features, options, weightOf: null)
+    {
+    }
+
+    /// <summary>Creates a text model over a caller-supplied document feature space with a sample weight.</summary>
+    /// <param name="features">The feature space to read from a document.</param>
+    /// <param name="options">Tunable knobs; when null, <see cref="LinearClassifierOptions.Default"/> applies.</param>
+    /// <param name="weightOf">Returns a document's non-negative sample weight; null means <c>1</c> for every document.</param>
+    public LinearClassifier(
+        IFeatureSource<SearchDocument> features,
+        LinearClassifierOptions? options,
+        Func<SearchDocument, double>? weightOf)
     {
         ArgumentNullException.ThrowIfNull(features);
 
         _inner = new LinearClassifier<SearchDocument>(
             features,
             document => document.Category,
-            weightOf: null,
+            weightOf,
             options);
     }
 
