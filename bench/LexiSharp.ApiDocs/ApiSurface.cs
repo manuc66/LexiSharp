@@ -353,6 +353,7 @@ internal static class ApiSurface
     private static string GuideFor(string ns) => ns switch
     {
         "LexiSharp" => "getting-started.md",
+        "LexiSharp.Adaptive" => "adaptive-feedback.md",
         "LexiSharp.Benchmarking" => "benchmarks.md",
         "LexiSharp.Classification" => "text-analysis.md",
         "LexiSharp.Core" => "reference.md",
