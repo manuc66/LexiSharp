@@ -617,7 +617,7 @@ public sealed class PreferenceLearner : IPreferencePolicy
         }
     }
 
-    private static string SignatureOf(
+    internal static string SignatureOf(
         PreferenceOptions options,
         bool hashed,
         IReadOnlyList<string> features,

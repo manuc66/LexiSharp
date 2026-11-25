@@ -182,6 +182,28 @@ learner never introduces a category.
 self-normalized IPS estimate with its effective sample size. IPS needs the logged propensity of the
 chosen category; without it, the report says so. DR needs a reward model and is not implemented.
 
+### Search re-ranking
+
+`PreferenceReranker` is the same pairwise idea over a **shared** query–document scorer, so it
+generalizes to documents the log never contained (the category learner learns one vector per
+category and is the right tool when the label set is closed). It implements `IReranker`:
+
+```csharp
+var reranker = new PreferenceReranker(
+    resolveDocument: id => _documents.GetValueOrDefault(id));
+
+reranker.Train(clickLog); // PreferenceEvent: candidates are document ids
+
+IReranker stage = reranker;
+var engine = new RerankedTextSearchEngine(baseEngine, stage);
+```
+
+The default `RerankFeatureSource` emits query terms (`q:`), document terms (`d:`), the context
+(`c:`) and the base rank (`r:0`..`r:9`), so the model can learn to preserve or overturn the first
+stage. `Rerank` returns a new list, never extends it, leaves the input untouched, and is the
+identity without weights. The model persists through the same `LXPR` snapshot, with one special
+`"*"` category holding the shared vector.
+
 ## Persistence
 
 `AdaptiveFeedbackRanker.Save(now, modelSignature)` returns an `AdaptiveSnapshot`; write it with
