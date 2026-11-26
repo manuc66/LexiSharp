@@ -1422,6 +1422,52 @@ but excluded from the averages; a panel with none reports zeros, not a measureme
 judgments keep the library's exponential nDCG convention by default, with
 `NdcgGain.Linear` available for comparing against a linear-convention figure.
 
+## Query routing: the ceiling, and why this library does not ship a router
+
+A router picks a different scoring pipeline per query. Before building one, it is worth measuring
+the most a perfect router could add, because that ceiling — not the router — decides whether the
+idea is worth any code. `routing-probe` scores seven pipelines over one shared index (BM25 at two
+parameter points, BM25+, BM25L, TF-IDF, query likelihood, BM25F when the corpus has titles) and
+compares the best fixed pipeline with a per-query oracle that may pick a different one each time.
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- routing-probe --dataset nfcorpus
+```
+
+| Corpus | best fixed | oracle | ceiling | per-query regret > 0.05 |
+|---|---:|---:|---:|---:|
+| NFCorpus | 0.3080 (BM25 1.5/0.75) | 0.3324 | **+0.0244** (+7.9 %) | 17 % |
+| SciFact | 0.6653 (BM25F title 2.0) | 0.7133 | **+0.0480** (+7.2 %) | 17 % |
+| ArguAna | 0.3792 (BM25F title 2.0) | 0.4067 | **+0.0275** (+7.2 %) | 16 % |
+
+The ceiling is real and remarkably stable — and it is a **tail** phenomenon: the median query
+loses nothing, while 16–17 % of queries lose more than 0.05 nDCG. That is the shape a gate would
+have to learn, so the probe also cross-validates three of them (a five-feature ridge gate, a
+length rule, and a cost-sensitive directional gate with a shrink-towards-the-route-average guard
+and a minimum-gain threshold, both chosen on inner folds). None of them recovers the gap:
+
+- the ridge gate switches zero times on NFCorpus and ArguAna, and is 0.003 *worse* on SciFact;
+- the length rule is 0.001–0.002 worse on the two corpora where it fires;
+- the guarded directional gate stays at κ = 0 on ArguAna (it declines to move), and is 0.001–0.009
+  worse elsewhere — not significant, but not a gain.
+
+The diagnosis is directional, not statistical. The gates can see that a query is unusual; they
+cannot see **which** pipeline wins it. On SciFact the five-feature ridge gate switches 60 times
+and is right 31 times — a coin flip — while the naive directional gate switches 72 times and is
+right 16 times. That reproduces, on lexical pipelines, the published finding that no single-commit
+router closes a routing floor (arXiv:2607.03436), and it is why `IQueryRouter` exists as a seam but
+no router ships: the seam is for a consumer with a signal this harness does not have.
+
+Two consequences that are not about routing:
+
+- **Field-length normalization is the win, not the title weight.** BM25F's ArguAna 0.379 against
+  BM25's 0.320 comes from normalizing over the fields that contain the term; weighting the title
+  at 2.0 changes SciFact by +0.003 and ArguAna by nothing. That is already documented in
+  [BM25 and ranking functions](ranking.md#bm25f-field-weighted-bm25) — measure the weighting on
+  your own corpus before adopting it.
+- **A negative result is cheaper than a router.** The probe is one command and one file; it rules
+  the idea out on your data instead of on someone else's benchmark.
+
 ## Performance
 
 Latency and allocation numbers live in [Benchmarks](benchmarks.md): BenchmarkDotNet runs on

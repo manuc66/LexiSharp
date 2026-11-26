@@ -99,6 +99,9 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset nfcorpus --no-
 # The gate: replays every pinned configuration, exits 1 on drift.
 dotnet run --project bench/LexiSharp.Eval -c Release -- --verify-reference
 
+# The routing ceiling: how much a per-query router could gain on one corpus.
+dotnet run --project bench/LexiSharp.Eval -c Release -- routing-probe --dataset nfcorpus
+
 # Cheap: what the index holds, against the reference index. No scoring.
 dotnet run --project bench/LexiSharp.Eval -c Release -- --dataset all --fingerprint --analyzer english
 
@@ -129,6 +132,32 @@ dotnet run --project bench/LexiSharp.Eval -c Release -- classification-centroid 
 - `--no-tuned` skips the in-sample k1/b oracle grid: on ArguAna the 1406 long queries make
   the 5×5 grid the dominant cost (the oracle adds ~2 h there on a modest CPU), so the flag is
   the practical default for heavy datasets.
+
+## Routing probe
+
+`routing-probe` answers one question before any router is designed: **is there anything to
+route?** It scores several pipelines over one shared index — BM25 at two parameter points, BM25+,
+BM25L, TF-IDF, query likelihood and, when the corpus has titles, BM25F — and compares the best
+fixed pipeline with a per-query oracle that may pick a different pipeline for each query. The
+difference is the ceiling a gate would have to learn.
+
+It adds no public surface and no library type: it reuses `Evaluation.RunEngine`, so its per-query
+numbers are the harness's own. What it adds is the shape of the gap — unique wins versus ties, the
+regret distribution (median, p90, tail share), pairwise error correlation and top-10 overlap, and
+an in-sample length-bucket table.
+
+```bash
+dotnet run --project bench/LexiSharp.Eval -c Release -- routing-probe --dataset nfcorpus
+dotnet run --project bench/LexiSharp.Eval -c Release -- routing-probe --dataset scifact --limit 100
+```
+
+The length-bucket table is deliberately labelled **in-sample and optimistic**: it shows whether a
+one-feature rule could beat the best fixed pipeline, not whether one does. A learned gate must be
+cross-validated before its figure means anything. The probe also cross-validates a 5-feature ridge
+gate (length, OOV rate, IDF entropy, mean IDF, top-1/top-2 margin) and a length rule, reports how
+much of the oracle gap each recovers, and compares both with the best fixed pipeline using a
+paired bootstrap (`--no-gate` skips that pass). Read the probe's verdict line as a stop rule: a
+gap below one nDCG point means no gate can pay for itself on that corpus.
 
 ## Dense retrieval (optional, pure .NET)
 

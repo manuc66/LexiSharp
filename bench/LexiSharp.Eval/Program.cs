@@ -33,6 +33,9 @@ public static class Program
         if (args.Length > 0 && string.Equals(args[0], "adaptive-cost", StringComparison.Ordinal))
             return AdaptiveCostCommand.Run(args[1..]);
 
+        if (args.Length > 0 && string.Equals(args[0], "routing-probe", StringComparison.Ordinal))
+            return await RoutingProbeCommand.RunAsync(args[1..]);
+
         string dataBaseDir = Path.Combine(AppContext.BaseDirectory, "../../../data");
         string datasetArg = "nfcorpus";
         int topK = 10;
