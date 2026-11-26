@@ -247,6 +247,16 @@ L'apprenant est un **re-ranker linéaire pairwise**, pas un bandit :
   indices (mode haché). La source de features n'est pas dans le fichier, comme le tokenizer de
   `LXCL` : charger avec la même configuration.
 
+#### Re-ranker search
+
+`PreferenceReranker : IReranker` applique la même perte pairwise à un **vecteur partagé** sur les
+features `(query, document, contexte, rang de base)`, donc il généralise aux documents absents du
+log. `IReranker.Rerank` n'a pas de contexte : il délègue à `string.Empty` ; la surcharge additive
+`Rerank(query, contextKey, candidates)` porte le contexte. La source par défaut émet
+`cx:<context>|d:<token>` : un `c:` seul est constant entre candidats et s'annule. Les contextes à
+forte cardinalité sur-apprennent vite ; garder des contextes grossiers (famille, dépôt, dossier) et
+un support minimum par interaction est une extension, pas un défaut.
+
 ### PreferenceEvaluator
 
 ```csharp

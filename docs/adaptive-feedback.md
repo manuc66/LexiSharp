@@ -214,6 +214,12 @@ returns a new list, never extends it, leaves the input untouched, and is the ide
 weights. The model persists through the same `LXPR` snapshot, with one special `"*"` category
 holding the shared vector.
 
+`cx:` features are per context and document token. A high-cardinality context (a query id, a
+session, a fresh folder per request) gives each interaction its own feature and overfits quickly;
+keep contexts coarse — a family, a repository, a folder — or repeat the context enough for the
+interaction to carry evidence. A minimum-support option per interaction is a future extension, not
+a default.
+
 ## Persistence
 
 `AdaptiveFeedbackRanker.Save(now, modelSignature)` returns an `AdaptiveSnapshot`; write it with
@@ -256,8 +262,14 @@ canonical preference signature and a trailing SHA-256. The feature source is not
 the same configuration.
 
 The trailing SHA-256 is an integrity check, not a MAC: it catches corruption, not a malicious file.
-Treat a snapshot that crosses a trust boundary as untrusted input; the loader bounds the counts it
-allocates and reports a malformed body as `InvalidDataException`.
+Treat a snapshot that crosses a trust boundary as untrusted input; the loader validates the options
+before reading counts, applies hard item caps independent of the file, does not preallocate from an
+untrusted count, and reports a malformed body as `InvalidDataException`.
+
+A non-hashed preference snapshot contains feature names — document tokens and `cx:<context>|d:<token>`
+keys — so a context that is a user or project identifier is stored in clear. Use
+`HashFeatures = true` when the snapshot is stored outside the trust boundary; hashed mode trades
+explainability for privacy.
 
 ## Evaluation
 

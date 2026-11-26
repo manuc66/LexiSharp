@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+
 using LexiSharp.Adaptive;
 using LexiSharp.Core;
 using Xunit;
@@ -62,6 +65,37 @@ public class PreferenceSnapshotSerializerTests
         var snapshot = new PreferenceSnapshot(1, options, false, ["known"], categories, signature);
 
         Assert.Throws<InvalidDataException>(() => PreferenceLearner.Load(snapshot));
+    }
+
+    [Fact]
+    public void HostileFeatureCount_IsRejectedBeforeAllocating()
+    {
+        using var body = new MemoryStream();
+
+        using (var writer = new BinaryWriter(body, Encoding.UTF8, leaveOpen: true))
+        {
+            writer.Write("LXPR"u8);
+            writer.Write(1);
+            writer.Write(10);
+            writer.Write(0.1);
+            writer.Write(0.0001);
+            writer.Write(7);
+            writer.Write(int.MaxValue); // MaxFeatures: attacker-controlled
+            writer.Write(100_000);
+            writer.Write(false);
+            writer.Write(65536);
+            writer.Write(false); // hashed
+            writer.Write(int.MaxValue); // featureCount
+        }
+
+        byte[] bytes = body.ToArray();
+
+        using var stream = new MemoryStream();
+        stream.Write(bytes);
+        stream.Write(SHA256.HashData(bytes));
+        stream.Position = 0;
+
+        Assert.Throws<InvalidDataException>(() => PreferenceSnapshotSerializer.Load(stream));
     }
 
     private static PreferenceEvent Event(string text, string chosen) =>

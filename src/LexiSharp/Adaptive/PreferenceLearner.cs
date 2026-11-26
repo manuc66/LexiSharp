@@ -607,7 +607,7 @@ public sealed class PreferenceLearner : IPreferencePolicy
         }
     }
 
-    private static void ValidateOptions(PreferenceOptions options)
+    internal static void ValidateOptions(PreferenceOptions options)
     {
         if (options.Epochs < 1)
         {

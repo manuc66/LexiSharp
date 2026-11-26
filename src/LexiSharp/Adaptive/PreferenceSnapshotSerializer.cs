@@ -12,6 +12,10 @@ namespace LexiSharp.Adaptive;
 /// </remarks>
 public static class PreferenceSnapshotSerializer
 {
+    private const int MaxFeaturesHard = 1_000_000;
+    private const int MaxCategoriesHard = 100_000;
+    private const int MaxStringBytes = 1_048_576;
+
     private static ReadOnlySpan<byte> Magic => "LXPR"u8;
 
     /// <summary>Writes a preference snapshot and its trailing integrity hash.</summary>
@@ -140,28 +144,37 @@ public static class PreferenceSnapshotSerializer
             HashDimension = reader.ReadInt32(),
         };
 
+        try
+        {
+            PreferenceLearner.ValidateOptions(options);
+        }
+        catch (ArgumentOutOfRangeException exception)
+        {
+            throw new InvalidDataException("The preference snapshot carries invalid options.", exception);
+        }
+
         bool hashed = reader.ReadBoolean();
-        int featureCount = ReadCount(reader, hashed ? 0 : options.MaxFeatures);
-        var features = new List<string>(featureCount);
+        int featureCount = ReadCount(reader, hashed ? 0 : Math.Min(options.MaxFeatures, MaxFeaturesHard));
+        var features = new List<string>(Math.Min(featureCount, 1024));
 
         for (int i = 0; i < featureCount; i++)
         {
-            features.Add(reader.ReadString());
+            features.Add(ReadString(reader));
         }
 
-        int categoryCount = ReadCount(reader, 100_000);
-        var categories = new List<PreferenceCategorySnapshot>(categoryCount);
+        int categoryCount = ReadCount(reader, MaxCategoriesHard);
+        var categories = new List<PreferenceCategorySnapshot>(Math.Min(categoryCount, 1024));
 
         for (int i = 0; i < categoryCount; i++)
         {
-            string category = reader.ReadString();
-            int weightCount = ReadCount(reader, options.MaxFeatures);
-            var weights = new List<PreferenceWeightSnapshot>(weightCount);
+            string category = ReadString(reader);
+            int weightCount = ReadCount(reader, Math.Min(options.MaxFeatures, MaxFeaturesHard));
+            var weights = new List<PreferenceWeightSnapshot>(Math.Min(weightCount, 1024));
 
             for (int w = 0; w < weightCount; w++)
             {
                 bool hasFeature = reader.ReadBoolean();
-                string? feature = hasFeature ? reader.ReadString() : null;
+                string? feature = hasFeature ? ReadString(reader) : null;
                 int index = reader.ReadInt32();
                 double weight = reader.ReadDouble();
 
@@ -176,7 +189,7 @@ public static class PreferenceSnapshotSerializer
             categories.Add(new PreferenceCategorySnapshot(category, weights));
         }
 
-        string signature = reader.ReadString();
+        string signature = ReadString(reader);
 
         return new PreferenceSnapshot(
             version,
@@ -197,5 +210,42 @@ public static class PreferenceSnapshotSerializer
         }
 
         return count;
+    }
+
+    private static string ReadString(BinaryReader reader)
+    {
+        int length = 0;
+        int shift = 0;
+
+        while (true)
+        {
+            if (shift > 28)
+            {
+                throw new InvalidDataException("The preference snapshot carries an oversized string.");
+            }
+
+            byte current = reader.ReadByte();
+            length |= (current & 0x7F) << shift;
+            shift += 7;
+
+            if ((current & 0x80) == 0)
+            {
+                break;
+            }
+        }
+
+        if (length < 0 || length > MaxStringBytes)
+        {
+            throw new InvalidDataException($"The preference snapshot carries an oversized string: {length} bytes.");
+        }
+
+        byte[] bytes = reader.ReadBytes(length);
+
+        if (bytes.Length != length)
+        {
+            throw new EndOfStreamException("The preference snapshot is truncated.");
+        }
+
+        return Encoding.UTF8.GetString(bytes);
     }
 }
