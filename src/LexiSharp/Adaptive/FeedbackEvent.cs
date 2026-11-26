@@ -152,7 +152,14 @@ public sealed record CategoryPrior(
     double AcceptanceShare,
     double GlobalShare,
     double AcceptanceMass,
-    double RefusalMass);
+    double RefusalMass)
+{
+    /// <summary>
+    /// Whether the acceptance share comes only from the global prior: the context has no acceptance
+    /// mass of its own. A UI that labels the multiplier as context evidence must check this flag.
+    /// </summary>
+    public bool IsInheritedFromGlobal => AcceptanceMass == 0 && GlobalShare > 0;
+}
 
 /// <summary>The evidence a memory holds for one context, projected to an instant.</summary>
 /// <param name="Categories">Categories with evidence, by decreasing acceptance share then ordinal.</param>

@@ -231,6 +231,11 @@ public sealed class AdaptiveFeedbackRanker<TContext> : IAdaptiveFeedbackPolicy<T
                 $"this build reads {AdaptiveSnapshot.CurrentVersion}.");
         }
 
+        if (snapshot.Memory is null || snapshot.Options is null)
+        {
+            throw new InvalidDataException("The adaptive snapshot is incomplete.");
+        }
+
         FeedbackMemory<TContext> memory = FeedbackMemory<TContext>.Load(snapshot.Memory, codec);
         WeightedConformalCalibrator? calibrator = snapshot.Calibration is null
             ? null

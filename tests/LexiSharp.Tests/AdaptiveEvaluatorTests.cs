@@ -126,6 +126,58 @@ public class AdaptiveEvaluatorTests
         Assert.Empty(report.OrderHash);
     }
 
+    [Fact]
+    public void Replay_CountsOneEpisodePerContextAndBadOffer()
+    {
+        var policy = new SequencePolicy("A", "A", "A", "B");
+
+        AdaptiveReport report = AdaptiveEvaluator.Replay(
+        [
+            Event(FeedbackOutcome.Corrected, "A", "B", 0),
+            Event(FeedbackOutcome.Corrected, "A", "B", 1),
+            Event(FeedbackOutcome.Rejected, "A", null, 2),
+            Event(FeedbackOutcome.Accepted, "B", "B", 3),
+        ],
+            policy,
+            Options());
+
+        Assert.Equal(1, report.Repetition.Episodes);
+        Assert.Equal(2, report.Repetition.RepeatedOffers);
+        Assert.Equal(2, report.Repetition.Mean, precision: 10);
+    }
+
+    [Fact]
+    public void Replay_HonorsTopKBeyondThePolicyDefault()
+    {
+        var report = AdaptiveEvaluator.Replay(
+        [
+            Event(FeedbackOutcome.Corrected, "C1", "C8", 0),
+        ],
+            new WidePolicy(),
+            new AdaptiveEvaluationOptions { TopK = 10, BootstrapResamples = 0 });
+
+        Assert.Equal(1.0, report.LabeledAccuracy, precision: 10);
+    }
+
+    private sealed class WidePolicy : IAdaptiveFeedbackPolicy<string>
+    {
+        public AdaptiveRanking Predict(string text, string context, DateTimeOffset now, int limit = 6)
+        {
+            var results = new List<AdaptiveScore>();
+
+            for (int i = 0; i < Math.Min(10, Math.Max(1, limit)); i++)
+            {
+                results.Add(new AdaptiveScore($"C{i + 1}", 0.1, 0, 0, 1, 0.1, false, false));
+            }
+
+            return new AdaptiveRanking(results, results, null, false, false, 0, now);
+        }
+
+        public void Observe(FeedbackEvent<string> feedback)
+        {
+        }
+    }
+
     private sealed class SequencePolicy(params string[] tops) : IAdaptiveFeedbackPolicy<string>
     {
         private int _index;

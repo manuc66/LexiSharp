@@ -115,22 +115,22 @@ public sealed class PreferenceReranker : IReranker, IDisposable
     {
         ArgumentNullException.ThrowIfNull(events);
 
-        var rows = new List<Row>(Math.Min(_options.MaxEvents, 1024));
-
-        foreach (PreferenceEvent preference in events)
-        {
-            if (rows.Count >= _options.MaxEvents)
-            {
-                break;
-            }
-
-            rows.Add(Materialize(preference));
-        }
-
         _lock.EnterWriteLock();
         try
         {
             ThrowIfDisposed();
+
+            var rows = new List<Row>(Math.Min(_options.MaxEvents, 1024));
+
+            foreach (PreferenceEvent preference in events)
+            {
+                if (rows.Count >= _options.MaxEvents)
+                {
+                    break;
+                }
+
+                rows.Add(Materialize(preference));
+            }
 
             for (int epoch = 0; epoch < _options.Epochs; epoch++)
             {
@@ -161,13 +161,11 @@ public sealed class PreferenceReranker : IReranker, IDisposable
     /// <exception cref="ArgumentException">The event is malformed.</exception>
     public void Observe(PreferenceEvent preference)
     {
-        Row row = Materialize(preference);
-
         _lock.EnterWriteLock();
         try
         {
             ThrowIfDisposed();
-            Update(row);
+            Update(Materialize(preference));
         }
         finally
         {
@@ -223,7 +221,9 @@ public sealed class PreferenceReranker : IReranker, IDisposable
             {
                 SearchResult candidate = candidates[i];
                 double linear = Math.Clamp(
-                    Dot(FeatureIds(new RerankItem(query, contextKey, candidate.DocumentId, candidate.Document.Text, i))),
+                    Dot(FeatureIds(
+                        new RerankItem(query, contextKey, candidate.DocumentId, candidate.Document.Text, i),
+                        add: false)),
                     -50,
                     50);
 
@@ -427,12 +427,14 @@ public sealed class PreferenceReranker : IReranker, IDisposable
         {
             SearchDocument? document = _resolveDocument?.Invoke(categories[i]);
 
-            features.Add(FeatureIds(new RerankItem(
-                preference.Text,
-                preference.ContextKey,
-                categories[i],
-                document?.Text ?? string.Empty,
-                i)));
+            features.Add(FeatureIds(
+                new RerankItem(
+                    preference.Text,
+                    preference.ContextKey,
+                    categories[i],
+                    document?.Text ?? string.Empty,
+                    i),
+                add: true));
         }
 
         int chosenIndex = categories.IndexOf(preference.Chosen);
@@ -497,7 +499,7 @@ public sealed class PreferenceReranker : IReranker, IDisposable
         }
     }
 
-    private IReadOnlyList<int> FeatureIds(RerankItem item)
+    private IReadOnlyList<int> FeatureIds(RerankItem item, bool add)
     {
         IFeatureSet featureSet = _features.FeaturesOf(item);
         var ids = new List<int>(featureSet.Features.Count);
@@ -505,7 +507,7 @@ public sealed class PreferenceReranker : IReranker, IDisposable
 
         foreach (string feature in featureSet.Features)
         {
-            int id = FeatureId(feature);
+            int id = FeatureId(feature, add);
 
             if (id >= 0 && seen.Add(id))
             {
@@ -516,7 +518,7 @@ public sealed class PreferenceReranker : IReranker, IDisposable
         return ids;
     }
 
-    private int FeatureId(string feature)
+    private int FeatureId(string feature, bool add)
     {
         if (_options.HashFeatures)
         {
@@ -528,7 +530,7 @@ public sealed class PreferenceReranker : IReranker, IDisposable
             return existing;
         }
 
-        if (_featureIds.Count >= _options.MaxFeatures)
+        if (!add || _featureIds.Count >= _options.MaxFeatures)
         {
             return -1;
         }

@@ -209,12 +209,7 @@ public sealed class FeedbackMemory<TContext> : IDisposable
 
             return _contexts.TryGetValue(key, out ContextState? state)
                 ? Project(state, now)
-                : new ContextPrior(
-                    Array.Empty<CategoryPrior>(),
-                    0,
-                    0,
-                    0,
-                    DateTimeOffset.MinValue);
+                : Project(new ContextState(now), now);
         }
         finally
         {
@@ -474,6 +469,16 @@ public sealed class FeedbackMemory<TContext> : IDisposable
     {
         ArgumentNullException.ThrowIfNull(snapshot);
 
+        if (snapshot.Policy is null
+            || snapshot.Options is null
+            || snapshot.Global is null
+            || snapshot.Global.Categories is null
+            || snapshot.Contexts is null
+            || snapshot.CodecId is null)
+        {
+            throw new InvalidDataException("The feedback snapshot is incomplete.");
+        }
+
         if (snapshot.SchemaVersion != FeedbackSnapshot.CurrentVersion)
         {
             throw new InvalidDataException(
@@ -508,6 +513,11 @@ public sealed class FeedbackMemory<TContext> : IDisposable
 
         foreach (ContextFeedbackSnapshot context in snapshot.Contexts)
         {
+            if (context is null || context.Categories is null)
+            {
+                throw new InvalidDataException("The feedback snapshot carries an incomplete context.");
+            }
+
             var state = new ContextState(context.LastUpdated)
             {
                 Exposures = context.Exposures,
@@ -580,6 +590,7 @@ public sealed class FeedbackMemory<TContext> : IDisposable
 
         var keys = new HashSet<string>(state.Acceptance.Keys, StringComparer.Ordinal);
         keys.UnionWith(state.Refusal.Keys);
+        keys.UnionWith(_global.Acceptance.Keys);
 
         var categories = new List<CategoryPrior>(keys.Count);
 
@@ -587,11 +598,6 @@ public sealed class FeedbackMemory<TContext> : IDisposable
         {
             double acceptance = Get(state.Acceptance, category) * factor;
             double refusal = Get(state.Refusal, category) * factor;
-
-            if (acceptance < _options.MinMass && refusal < _options.MinMass)
-            {
-                continue;
-            }
 
             double globalShare = 0;
 
@@ -601,6 +607,11 @@ public sealed class FeedbackMemory<TContext> : IDisposable
 
                 globalShare = (globalMass + _options.GlobalSmoothing)
                     / (globalTotal + (globalCount * _options.GlobalSmoothing));
+            }
+
+            if (acceptance < _options.MinMass && refusal < _options.MinMass && globalShare <= 0)
+            {
+                continue;
             }
 
             double share = (acceptance + (_options.Shrinkage * globalShare))

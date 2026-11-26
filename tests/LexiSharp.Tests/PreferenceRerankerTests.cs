@@ -217,6 +217,45 @@ public class PreferenceRerankerTests
         Assert.Throws<InvalidDataException>(() => PreferenceReranker.Load(snapshot));
     }
 
+    [Fact]
+    public void Rerank_DoesNotGrowTheVocabularyAtInference()
+    {
+        var reranker = new PreferenceReranker(Resolve, new DocumentOnlySource());
+        reranker.Train(Enumerable.Range(0, 10).Select(_ => Event()));
+
+        int before = reranker.Save(Now).Features.Count;
+
+        reranker.Rerank(
+            "unseen query",
+            [
+                new SearchResult("d2", 1.0, new SearchDocument("d2", "beta")),
+                new SearchResult("d3", 0.9, new SearchDocument("d3", "alpha")),
+            ]);
+
+        Assert.Equal(before, reranker.Save(Now).Features.Count);
+    }
+
+    [Fact]
+    public void ConcurrentRerankAndObserve_DoNotCorruptTheModel()
+    {
+        var reranker = new PreferenceReranker(Resolve, new DocumentOnlySource());
+        reranker.Train(Enumerable.Range(0, 10).Select(_ => Event()));
+
+        Parallel.For(0, 32, i =>
+        {
+            if (i % 2 == 0)
+            {
+                reranker.Observe(Event());
+            }
+            else
+            {
+                reranker.Rerank($"unseen-{i}", Candidates());
+            }
+        });
+
+        Assert.Equal(2, reranker.Rerank("alpha", Candidates()).Count);
+    }
+
     private sealed class DocumentOnlySource : IFeatureSource<RerankItem>
     {
         public IFeatureSet FeaturesOf(RerankItem item)
