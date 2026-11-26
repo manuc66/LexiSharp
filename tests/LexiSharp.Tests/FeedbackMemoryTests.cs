@@ -171,7 +171,12 @@ public class FeedbackMemoryTests
         memory.Observe(Event(FeedbackOutcome.Accepted, "A", "A", context: "third"));
 
         Assert.Equal(2, memory.ContextCount);
-        Assert.Empty(memory.Prior("first", Now).Categories);
+
+        ContextPrior evicted = memory.Prior("first", Now);
+        Assert.Equal(0, evicted.Observations);
+        Assert.Equal(0, evicted.Evidence, precision: 10);
+        Assert.All(evicted.Categories, category => Assert.True(category.IsInheritedFromGlobal));
+
         Assert.NotEmpty(memory.Prior("second", Now).Categories);
         Assert.NotEmpty(memory.Prior("third", Now).Categories);
     }
@@ -229,6 +234,37 @@ public class FeedbackMemoryTests
             shares[i] = memory.Prior("ctx", Now).Categories.Single(category => category.Category == "A").AcceptanceShare);
 
         Assert.All(shares, share => Assert.Equal(shares[0], share, precision: 12));
+    }
+
+    [Fact]
+    public void NewContext_InheritsTheGlobalPrior()
+    {
+        var memory = Memory();
+
+        memory.Observe(Event(FeedbackOutcome.Accepted, "A", "A", context: "first"));
+
+        ContextPrior inherited = memory.Prior("second", Now);
+
+        Assert.Equal(0, inherited.Observations);
+        Assert.Equal(0, inherited.Evidence, precision: 10);
+
+        CategoryPrior a = inherited.Categories.Single(category => category.Category == "A");
+        Assert.Equal(0, a.AcceptanceMass, precision: 10);
+        Assert.True(a.GlobalShare > 0);
+        Assert.True(a.IsInheritedFromGlobal);
+        Assert.Equal(a.GlobalShare, a.AcceptanceShare, precision: 10);
+    }
+
+    [Fact]
+    public void Load_NullContexts_IsRejected()
+    {
+        var memory = Memory();
+        memory.Observe(Event(FeedbackOutcome.Accepted, "A", "A"));
+
+        FeedbackSnapshot snapshot = memory.Save(Now) with { Contexts = null! };
+
+        Assert.Throws<InvalidDataException>(() =>
+            FeedbackMemory<string>.Load(snapshot, ContextCodecs.Raw<string>()));
     }
 
     [Fact]

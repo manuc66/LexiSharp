@@ -12,6 +12,11 @@ namespace LexiSharp.Adaptive;
 /// </remarks>
 public static class AdaptiveSnapshotSerializer
 {
+    private const int MaxContextsHard = 100_000;
+    private const int MaxCategoriesHard = 100_000;
+    private const int MaxSnapshotItems = 1_000_000;
+    private const int MaxStringBytes = 1_048_576;
+
     private static ReadOnlySpan<byte> Magic => "LXFA"u8;
 
     /// <summary>Builds a snapshot and computes its signature.</summary>
@@ -135,7 +140,7 @@ public static class AdaptiveSnapshotSerializer
                 $"this build reads {AdaptiveSnapshot.CurrentVersion}.");
         }
 
-        string modelSignature = reader.ReadString();
+        string modelSignature = ReadString(reader);
         AdaptiveOptions options = ReadOptions(reader);
         FeedbackSnapshot memory = ReadFeedback(reader);
         bool hasCalibration = reader.ReadBoolean();
@@ -197,32 +202,32 @@ public static class AdaptiveSnapshotSerializer
                 $"this build reads {FeedbackSnapshot.CurrentVersion}.");
         }
 
-        string codecId = reader.ReadString();
+        string codecId = ReadString(reader);
         RecencyPolicy policy = ReadPolicy(reader);
         FeedbackMemoryOptions options = ReadMemoryOptions(reader);
         bool contextsHashed = reader.ReadBoolean();
         DateTimeOffset savedAt = ReadInstant(reader);
         DateTimeOffset globalUpdated = ReadInstant(reader);
-        int globalCount = ReadCount(reader);
-        var globalCategories = new List<CategoryFeedbackSnapshot>(globalCount);
+        int globalCount = ReadCount(reader, MaxCategoriesHard);
+        var globalCategories = new List<CategoryFeedbackSnapshot>(Math.Min(globalCount, 1024));
 
         for (int i = 0; i < globalCount; i++)
         {
             globalCategories.Add(ReadCategory(reader));
         }
 
-        int contextCount = ReadCount(reader);
-        var contexts = new List<ContextFeedbackSnapshot>(contextCount);
+        int contextCount = ReadCount(reader, MaxContextsHard);
+        var contexts = new List<ContextFeedbackSnapshot>(Math.Min(contextCount, 1024));
 
         for (int i = 0; i < contextCount; i++)
         {
-            string key = reader.ReadString();
+            string key = ReadString(reader);
             DateTimeOffset lastUpdated = ReadInstant(reader);
             long exposures = reader.ReadInt64();
             long responses = reader.ReadInt64();
             long observations = reader.ReadInt64();
-            int categoryCount = ReadCount(reader);
-            var categories = new List<CategoryFeedbackSnapshot>(categoryCount);
+            int categoryCount = ReadCount(reader, MaxCategoriesHard);
+            var categories = new List<CategoryFeedbackSnapshot>(Math.Min(categoryCount, 1024));
 
             for (int c = 0; c < categoryCount; c++)
             {
@@ -286,8 +291,8 @@ public static class AdaptiveSnapshotSerializer
         int maxSamples = reader.ReadInt32();
         int refreshEvery = reader.ReadInt32();
         long ageTicks = reader.ReadInt64();
-        int count = ReadCount(reader);
-        var entries = new List<CalibrationEntry>(count);
+        int count = ReadCount(reader, MaxSnapshotItems);
+        var entries = new List<CalibrationEntry>(Math.Min(count, 1024));
 
         for (int i = 0; i < count; i++)
         {
@@ -380,7 +385,7 @@ public static class AdaptiveSnapshotSerializer
     }
 
     private static CategoryFeedbackSnapshot ReadCategory(BinaryReader reader) =>
-        new(reader.ReadString(), reader.ReadDouble(), reader.ReadDouble());
+        new(ReadString(reader), reader.ReadDouble(), reader.ReadDouble());
 
     private static DateTimeOffset ReadInstant(BinaryReader reader)
     {
@@ -396,15 +401,52 @@ public static class AdaptiveSnapshotSerializer
         }
     }
 
-    private static int ReadCount(BinaryReader reader)
+    private static int ReadCount(BinaryReader reader, int maximum)
     {
         int count = reader.ReadInt32();
 
-        if (count is < 0 or > 10_000_000)
+        if (count < 0 || count > maximum)
         {
             throw new InvalidDataException($"The adaptive snapshot carries an invalid count: {count}.");
         }
 
         return count;
+    }
+
+    private static string ReadString(BinaryReader reader)
+    {
+        int length = 0;
+        int shift = 0;
+
+        while (true)
+        {
+            if (shift > 28)
+            {
+                throw new InvalidDataException("The adaptive snapshot carries an oversized string.");
+            }
+
+            byte current = reader.ReadByte();
+            length |= (current & 0x7F) << shift;
+            shift += 7;
+
+            if ((current & 0x80) == 0)
+            {
+                break;
+            }
+        }
+
+        if (length < 0 || length > MaxStringBytes)
+        {
+            throw new InvalidDataException($"The adaptive snapshot carries an oversized string: {length} bytes.");
+        }
+
+        byte[] bytes = reader.ReadBytes(length);
+
+        if (bytes.Length != length)
+        {
+            throw new EndOfStreamException("The adaptive snapshot is truncated.");
+        }
+
+        return Encoding.UTF8.GetString(bytes);
     }
 }

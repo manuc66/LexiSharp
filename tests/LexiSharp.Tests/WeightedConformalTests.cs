@@ -131,6 +131,40 @@ public class WeightedConformalTests
     }
 
     [Fact]
+    public void Load_TooManyEntries_IsRejected()
+    {
+        var snapshot = new WeightedConformalSnapshot(
+            1,
+            Now,
+            0.1,
+            RecencyPolicy.None,
+            0,
+            1,
+            64,
+            TimeSpan.FromMinutes(5),
+            [new CalibrationEntry(0.5, Now), new CalibrationEntry(0.4, Now)]);
+
+        Assert.Throws<InvalidDataException>(() => WeightedConformalCalibrator.Load(snapshot));
+    }
+
+    [Fact]
+    public void Load_NullEntries_IsRejected()
+    {
+        var snapshot = new WeightedConformalSnapshot(
+            1,
+            Now,
+            0.1,
+            RecencyPolicy.None,
+            0,
+            1,
+            64,
+            TimeSpan.FromMinutes(5),
+            null!);
+
+        Assert.Throws<InvalidDataException>(() => WeightedConformalCalibrator.Load(snapshot));
+    }
+
+    [Fact]
     public void Snapshot_RoundTripsTheEntries()
     {
         var calibrator = new WeightedConformalCalibrator(0.2, RecencyPolicy.None, minSamples: 2);

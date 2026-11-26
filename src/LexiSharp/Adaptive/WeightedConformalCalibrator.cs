@@ -295,13 +295,32 @@ public sealed class WeightedConformalCalibrator
                 $"this build reads {WeightedConformalSnapshot.CurrentVersion}.");
         }
 
-        var calibrator = new WeightedConformalCalibrator(
-            snapshot.Alpha,
-            snapshot.Policy,
-            snapshot.MinSamples,
-            snapshot.MaxSamples,
-            snapshot.RefreshEvery,
-            snapshot.MaxThresholdAge);
+        if (snapshot.Policy is null || snapshot.Entries is null)
+        {
+            throw new InvalidDataException("The conformal snapshot is incomplete.");
+        }
+
+        if (snapshot.Entries.Count > snapshot.MaxSamples)
+        {
+            throw new InvalidDataException("The conformal snapshot carries more entries than its cap.");
+        }
+
+        WeightedConformalCalibrator calibrator;
+
+        try
+        {
+            calibrator = new WeightedConformalCalibrator(
+                snapshot.Alpha,
+                snapshot.Policy,
+                snapshot.MinSamples,
+                snapshot.MaxSamples,
+                snapshot.RefreshEvery,
+                snapshot.MaxThresholdAge);
+        }
+        catch (ArgumentOutOfRangeException exception)
+        {
+            throw new InvalidDataException("The conformal snapshot carries invalid parameters.", exception);
+        }
 
         foreach (CalibrationEntry entry in snapshot.Entries)
         {

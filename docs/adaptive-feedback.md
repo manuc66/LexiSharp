@@ -98,9 +98,11 @@ refusals. It stores aggregates, never text, and the context key is hashed by def
 | `Ignored` | counts as an exposure only; **never** a refusal |
 
 `Prior(context, now)` projects the masses to `now` and shrinks the context's acceptance share
-towards the global prior. `Vetoed(context, now)` returns the categories whose refusal mass reaches
-`FeedbackMemoryOptions.VetoAfter`. A veto removes an offer, not the memory: it decays, and an
-acceptance can clear it.
+towards the global prior. A context seen for the first time inherits that prior with `Evidence = 0`;
+`CategoryPrior.IsInheritedFromGlobal` is true when the share comes only from the global prior, so an
+explanation can label it as global rather than context evidence. `Vetoed(context, now)` returns the
+categories whose refusal mass reaches `FeedbackMemoryOptions.VetoAfter`. A veto removes an offer,
+not the memory: it decays, and an acceptance can clear it.
 
 The memory is bounded by `MaxContexts` (least-recently-used eviction), `MaxCategoriesPerContext` and
 `MaxPairs`. `Purge(now)` drops contexts older than the policy's maximum age. Reads are pure and

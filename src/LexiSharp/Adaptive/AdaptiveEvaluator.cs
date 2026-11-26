@@ -206,7 +206,8 @@ public static class AdaptiveEvaluator
             AdaptiveRanking ranking = policy.Predict(
                 feedback.Text,
                 feedback.Context,
-                feedback.At);
+                feedback.At,
+                limit: Math.Max(1, options.TopK));
 
             top1[i] = ranking.Results.Count > 0 ? ranking.Results[0].Category : null;
 
@@ -445,6 +446,7 @@ public static class AdaptiveEvaluator
         int horizon)
         where TContext : notnull
     {
+        var active = new Dictionary<(string Context, string Offered), Episode>();
         var repeats = new List<double>();
         int episodes = 0;
         int repeated = 0;
@@ -454,6 +456,31 @@ public static class AdaptiveEvaluator
         for (int i = 0; i < events.Count; i++)
         {
             FeedbackEvent<TContext> feedback = events[i];
+            string context = contexts[i];
+
+            foreach ((string Context, string Offered) key in active.Keys
+                         .Where(key => string.Equals(key.Context, context, StringComparison.Ordinal))
+                         .ToList())
+            {
+                Episode episode = active[key];
+                episode.Seen++;
+
+                if (string.Equals(top1[i], key.Offered, StringComparison.Ordinal))
+                {
+                    episode.Repeats++;
+
+                    if (episode.Seen >= horizon)
+                    {
+                        Close(episode, isCensored: true);
+                        active.Remove(key);
+                    }
+                }
+                else
+                {
+                    Close(episode, isCensored: false);
+                    active.Remove(key);
+                }
+            }
 
             if (feedback.Outcome != FeedbackOutcome.Corrected
                 || feedback.OfferedCategory is null
@@ -462,39 +489,18 @@ public static class AdaptiveEvaluator
                 continue;
             }
 
-            episodes++;
-            int count = 0;
-            bool closed = false;
-            int seen = 0;
+            var newKey = (context, feedback.OfferedCategory);
 
-            for (int j = i + 1; j < events.Count && seen < horizon; j++)
+            if (!active.ContainsKey(newKey))
             {
-                if (!string.Equals(contexts[j], contexts[i], StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                seen++;
-
-                if (string.Equals(top1[j], feedback.OfferedCategory, StringComparison.Ordinal))
-                {
-                    count++;
-                }
-                else
-                {
-                    closed = true;
-                    break;
-                }
+                active[newKey] = new Episode();
+                episodes++;
             }
+        }
 
-            repeated += count;
-            repeats.Add(count);
-            max = Math.Max(max, count);
-
-            if (!closed)
-            {
-                censored++;
-            }
+        foreach (Episode episode in active.Values)
+        {
+            Close(episode, isCensored: true);
         }
 
         return new RepetitionRegretReport(
@@ -504,6 +510,18 @@ public static class AdaptiveEvaluator
             episodes > 0 ? repeated / (double)episodes : 0,
             Percentile(repeats, 0.9),
             max);
+
+        void Close(Episode episode, bool isCensored)
+        {
+            repeats.Add(episode.Repeats);
+            repeated += episode.Repeats;
+            max = Math.Max(max, episode.Repeats);
+
+            if (isCensored)
+            {
+                censored++;
+            }
+        }
     }
 
     private static ImportanceReport? MeasureImportance<TContext>(
@@ -692,6 +710,13 @@ public static class AdaptiveEvaluator
         int index = (int)Math.Ceiling(percentile * sorted.Count) - 1;
 
         return sorted[Math.Clamp(index, 0, sorted.Count - 1)];
+    }
+
+    private sealed class Episode
+    {
+        public int Seen { get; set; }
+
+        public int Repeats { get; set; }
     }
 
     private static AdaptiveReport EmptyReport() =>
