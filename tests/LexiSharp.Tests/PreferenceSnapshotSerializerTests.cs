@@ -50,6 +50,20 @@ public class PreferenceSnapshotSerializerTests
         Assert.Throws<InvalidDataException>(() => PreferenceSnapshotSerializer.Load(tampered));
     }
 
+    [Fact]
+    public void LearnerLoad_MissingFeature_IsInvalidData()
+    {
+        PreferenceOptions options = PreferenceOptions.Default;
+        var categories = new List<PreferenceCategorySnapshot>
+        {
+            new("A", [new PreferenceWeightSnapshot("missing", -1, 1.0)]),
+        };
+        string signature = PreferenceLearner.SignatureOf(options, false, ["known"], categories);
+        var snapshot = new PreferenceSnapshot(1, options, false, ["known"], categories, signature);
+
+        Assert.Throws<InvalidDataException>(() => PreferenceLearner.Load(snapshot));
+    }
+
     private static PreferenceEvent Event(string text, string chosen) =>
         new(
             text,

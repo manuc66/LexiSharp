@@ -11,6 +11,9 @@ description: >-
 `LexiSharp.Adaptive` is the layer above a calibrated distribution. It learns from a stream of
 corrections, per context and over time, without retraining the text model on every click.
 
+> **Status: experimental for 1.x.** The surface is additive and may change in a minor release; in
+> particular, the preference reranker's context seam is new. Pin a version if you depend on it.
+
 The boundary is deliberate: **LexiSharp provides calibrated distributions and the tools to measure
 and decide; the caller owns the temporal structure, the business constraints and the interface.**
 Nothing here segments a stream, knows a domain, or generates a question.
@@ -186,7 +189,8 @@ chosen category; without it, the report says so. DR needs a reward model and is 
 
 `PreferenceReranker` is the same pairwise idea over a **shared** query–document scorer, so it
 generalizes to documents the log never contained (the category learner learns one vector per
-category and is the right tool when the label set is closed). It implements `IReranker`:
+category and is the right tool when the label set is closed). It implements `IReranker` and also
+exposes the context explicitly:
 
 ```csharp
 var reranker = new PreferenceReranker(
@@ -194,15 +198,21 @@ var reranker = new PreferenceReranker(
 
 reranker.Train(clickLog); // PreferenceEvent: candidates are document ids
 
+// The IReranker contract has no context: this overload uses the empty key.
 IReranker stage = reranker;
 var engine = new RerankedTextSearchEngine(baseEngine, stage);
+
+// A caller that knows the context uses the additive overload.
+IReadOnlyList<SearchResult> page = reranker.Rerank(query, contextKey, candidates);
 ```
 
 The default `RerankFeatureSource` emits query terms (`q:`), document terms (`d:`), the context
-(`c:`) and the base rank (`r:0`..`r:9`), so the model can learn to preserve or overturn the first
-stage. `Rerank` returns a new list, never extends it, leaves the input untouched, and is the
-identity without weights. The model persists through the same `LXPR` snapshot, with one special
-`"*"` category holding the shared vector.
+(`c:`), the base rank (`r:0`..`r:9`) and **context × document interactions**
+(`cx:<context>|d:<token>`). The interaction is what lets the same candidate set be ranked
+differently in two contexts; a bare `c:` is constant across candidates and cancels. `Rerank`
+returns a new list, never extends it, leaves the input untouched, and is the identity without
+weights. The model persists through the same `LXPR` snapshot, with one special `"*"` category
+holding the shared vector.
 
 ## Persistence
 
@@ -244,6 +254,10 @@ using (var file = File.OpenRead("preference.lxpr"))
 `LXPR` carries the vocabulary in vocabulary mode, or the hashed indices in hash mode, plus the
 canonical preference signature and a trailing SHA-256. The feature source is not stored: load with
 the same configuration.
+
+The trailing SHA-256 is an integrity check, not a MAC: it catches corruption, not a malicious file.
+Treat a snapshot that crosses a trust boundary as untrusted input; the loader bounds the counts it
+allocates and reports a malformed body as `InvalidDataException`.
 
 ## Evaluation
 

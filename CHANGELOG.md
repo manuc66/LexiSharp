@@ -40,6 +40,8 @@
   is refused.
 
 No existing public signature changed; the new surface is additive in `LexiSharp.Adaptive`.
+The namespace is experimental for one release: the preference reranker's context seam may change
+in a minor release.
 
 ## [1.2.0] — 2026-11-24
 
