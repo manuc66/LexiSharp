@@ -1575,7 +1575,19 @@ public sealed class DecisionTreeClassifier : ITextClassifier
     /// <param name="tokenizer">Tokenizer used both at training and prediction time (default: <see cref="Tokenizer.Default"/>).</param>
     /// <param name="options">Tunable knobs; when null, <see cref="DecisionTreeOptions.Default"/> applies.</param>
     public DecisionTreeClassifier(ITokenizer? tokenizer = null, DecisionTreeOptions? options = null)
-        : this(new TextFeatureSource(tokenizer), options)
+        : this(new TextFeatureSource(tokenizer), options, weightOf: null)
+    {
+    }
+
+    /// <summary>Creates a text classifier over <see cref="SearchDocument.Text"/> with a sample weight.</summary>
+    /// <param name="tokenizer">Tokenizer used both at training and prediction time (default: <see cref="Tokenizer.Default"/>).</param>
+    /// <param name="options">Tunable knobs; when null, <see cref="DecisionTreeOptions.Default"/> applies.</param>
+    /// <param name="weightOf">Returns a document's non-negative sample weight; null means <c>1</c> for every document.</param>
+    public DecisionTreeClassifier(
+        ITokenizer? tokenizer,
+        DecisionTreeOptions? options,
+        Func<SearchDocument, double>? weightOf)
+        : this(new TextFeatureSource(tokenizer), options, weightOf)
     {
     }
 
@@ -1583,13 +1595,25 @@ public sealed class DecisionTreeClassifier : ITextClassifier
     /// <param name="features">The feature space to read from a document.</param>
     /// <param name="options">Tunable knobs; when null, <see cref="DecisionTreeOptions.Default"/> applies.</param>
     public DecisionTreeClassifier(IFeatureSource<SearchDocument> features, DecisionTreeOptions? options = null)
+        : this(features, options, weightOf: null)
+    {
+    }
+
+    /// <summary>Creates a text classifier over a caller-supplied document feature space with a sample weight.</summary>
+    /// <param name="features">The feature space to read from a document.</param>
+    /// <param name="options">Tunable knobs; when null, <see cref="DecisionTreeOptions.Default"/> applies.</param>
+    /// <param name="weightOf">Returns a document's non-negative sample weight; null means <c>1</c> for every document.</param>
+    public DecisionTreeClassifier(
+        IFeatureSource<SearchDocument> features,
+        DecisionTreeOptions? options,
+        Func<SearchDocument, double>? weightOf)
     {
         ArgumentNullException.ThrowIfNull(features);
 
         _inner = new DecisionTreeClassifier<SearchDocument>(
             features,
             document => document.Category,
-            weightOf: null,
+            weightOf,
             options);
     }
 

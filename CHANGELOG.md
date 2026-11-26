@@ -1,3 +1,48 @@
+## [Unreleased]
+
+### Added
+
+- **Recency policy and sample weights.** `RecencyPolicy` turns an age into a weight in `[0, 1]` with
+  a half-life, a maximum age and frequency damping; every member takes the instant it is evaluated
+  at. `LinearClassifier`, `DecisionTreeClassifier` and `RandomForestClassifier` now expose the
+  `weightOf` overloads their generic cores already accepted. The existing constructors keep their
+  binary signatures, and the delegate is not persisted: the trained coefficients carry the weights.
+  `SampleWeightMode.Quantized` and `SampleWeighting.Expand` remain the fallback for models without
+  weights, default off.
+- **Adaptive feedback memory and ranker.** `FeedbackMemory<TContext>` keeps decayed acceptance and
+  refusal masses per opaque context, shrinks towards a global prior and vetoes after a configurable
+  refusal threshold. `AdaptiveFeedbackRanker<TContext>` composes it with the model and an optional
+  `WeightedConformalCalibrator`; with an empty memory and no calibrator it returns the model's
+  distribution unchanged. `Ignored` is an exposure, never a refusal; a snapshot carries no text.
+- **Weighted conformal calibration.** `WeightedConformalCalibrator` stores non-conformity scores
+  with their instants and recomputes the quantile at prediction time under a `RecencyPolicy`. With
+  uniform weights it reduces exactly to the split-conformal index used by `ConformalClassifier`.
+- **Adaptive evaluation.** `AdaptiveEvaluator.Replay` predicts before observing and reports outcome
+  counts, labeled accuracy with a block-bootstrap interval, ECE, Brier, log-loss, conformal
+  coverage, time-to-recovery, repetition regret and a self-normalized IPS estimate with its
+  effective sample size.
+- **Drift monitor.** `DriftMonitor` detects a drop in accuracy with a Page–Hinkley statistic and
+  suggests a halved half-life on drift, or a 5 percent growth after a stable window; it never
+  changes a policy by itself. `AdaptiveOptions.AutoTuneHalfLife` lets the ranker apply the
+  suggestion, default off.
+- **Cost-sensitive decisions.** `CostAwareDecisionPolicy` turns a calibrated distribution and a cost
+  matrix into `Accept`, `Ask`, `Abstain` or `Explore`. It asks about the smallest candidate set that
+  reaches a mass target when the value of information pays for the question, and never explores
+  without an explicit `IExplorationPolicy`.
+- **Preference re-ranking.** `PreferenceLearner` trains one sparse weight vector per category from
+  logged choices with a pairwise RankNet loss, AdaGrad and a seeded shuffle. `PreferenceReranker`
+  applies the same loss to a **shared** query–document scorer and implements `IReranker`, so it
+  generalizes to documents outside the log; `PreferenceEvaluator` reports top-1 agreement, MRR,
+  per-logged-rank slices and a self-normalized IPS estimate. Without weights, both are the identity.
+- **Adaptive and preference snapshots.** `AdaptiveSnapshotSerializer` writes the options, memory and
+  optional calibration as `LXFA` v1, and `PreferenceSnapshotSerializer` writes a preference model
+  as `LXPR` v1; both end with a SHA-256, and an unknown version, a codec mismatch or a tampered byte
+  is refused.
+
+No existing public signature changed; the new surface is additive in `LexiSharp.Adaptive`.
+The namespace is experimental for one release: the preference reranker's context seam may change
+in a minor release.
+
 ## [1.2.0] — 2026-11-24
 
 ### Added
