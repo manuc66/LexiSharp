@@ -351,6 +351,11 @@ public sealed class PreferenceLearner : IPreferencePolicy
 
         if (!snapshot.Hashed)
         {
+            if (snapshot.Features.Count > snapshot.Options.MaxFeatures)
+            {
+                throw new InvalidDataException("The preference snapshot carries too many features.");
+            }
+
             for (int i = 0; i < snapshot.Features.Count; i++)
             {
                 learner._featureIds.Add(snapshot.Features[i], i);
@@ -369,7 +374,23 @@ public sealed class PreferenceLearner : IPreferencePolicy
                     throw new InvalidDataException("The preference snapshot carries a non-finite weight.");
                 }
 
-                int index = snapshot.Hashed ? row.Index : learner._featureIds[row.Feature!];
+                int index;
+
+                if (snapshot.Hashed)
+                {
+                    if (row.Index < 0 || row.Index >= snapshot.Options.HashDimension)
+                    {
+                        throw new InvalidDataException("The preference snapshot carries an invalid feature index.");
+                    }
+
+                    index = row.Index;
+                }
+                else if (row.Feature is null
+                         || !learner._featureIds.TryGetValue(row.Feature, out index))
+                {
+                    throw new InvalidDataException("The preference snapshot references an unknown feature.");
+                }
+
                 weights[index] = row.Weight;
             }
 

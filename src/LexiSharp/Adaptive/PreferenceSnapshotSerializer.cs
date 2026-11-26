@@ -141,7 +141,7 @@ public static class PreferenceSnapshotSerializer
         };
 
         bool hashed = reader.ReadBoolean();
-        int featureCount = ReadCount(reader);
+        int featureCount = ReadCount(reader, hashed ? 0 : options.MaxFeatures);
         var features = new List<string>(featureCount);
 
         for (int i = 0; i < featureCount; i++)
@@ -149,13 +149,13 @@ public static class PreferenceSnapshotSerializer
             features.Add(reader.ReadString());
         }
 
-        int categoryCount = ReadCount(reader);
+        int categoryCount = ReadCount(reader, 100_000);
         var categories = new List<PreferenceCategorySnapshot>(categoryCount);
 
         for (int i = 0; i < categoryCount; i++)
         {
             string category = reader.ReadString();
-            int weightCount = ReadCount(reader);
+            int weightCount = ReadCount(reader, options.MaxFeatures);
             var weights = new List<PreferenceWeightSnapshot>(weightCount);
 
             for (int w = 0; w < weightCount; w++)
@@ -187,11 +187,11 @@ public static class PreferenceSnapshotSerializer
             signature);
     }
 
-    private static int ReadCount(BinaryReader reader)
+    private static int ReadCount(BinaryReader reader, int maximum)
     {
         int count = reader.ReadInt32();
 
-        if (count is < 0 or > 10_000_000)
+        if (count < 0 || count > maximum)
         {
             throw new InvalidDataException($"The preference snapshot carries an invalid count: {count}.");
         }

@@ -44,6 +44,7 @@ public sealed class RerankFeatureSource : IFeatureSource<RerankItem>
         foreach (string token in _tokenizer.Tokenize(item.DocumentText))
         {
             features.Add("d:" + token);
+            features.Add("cx:" + item.ContextKey + "|d:" + token);
         }
 
         features.Add("c:" + item.ContextKey);
@@ -64,7 +65,7 @@ public sealed class RerankFeatureSource : IFeatureSource<RerankItem>
 /// base order is a feature (<c>r:</c>), so the model can learn to preserve or overturn it.
 /// </para>
 /// <para>
-/// <see cref="Rerank"/> returns a new list, never extends it, and leaves the input untouched. Without
+/// <see cref="Rerank(string, string, IReadOnlyList{SearchResult})"/> returns a new list, never extends it, and leaves the input untouched. Without
 /// weights it returns the candidate list unchanged. The feature source and the document resolver are
 /// runtime configuration, not snapshot data.
 /// </para>
@@ -175,12 +176,30 @@ public sealed class PreferenceReranker : IReranker, IDisposable
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// The <see cref="IReranker"/> contract has no context, so this overload uses the empty context.
+    /// Callers that have one should use
+    /// <see cref="Rerank(string, string, IReadOnlyList{SearchResult})"/>.
+    /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="candidates"/> is null.</exception>
     public IReadOnlyList<SearchResult> Rerank(
         string query,
+        IReadOnlyList<SearchResult> candidates) =>
+        Rerank(query, string.Empty, candidates);
+
+    /// <summary>Re-ranks a candidate list with an explicit context key.</summary>
+    /// <param name="query">The query text.</param>
+    /// <param name="contextKey">The context the choice was made in; empty means none.</param>
+    /// <param name="candidates">Candidates as produced by a search, ordered best-first.</param>
+    /// <returns>The re-ranked list; the input is not mutated and no document is added.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="query"/>, <paramref name="contextKey"/> or <paramref name="candidates"/> is null.</exception>
+    public IReadOnlyList<SearchResult> Rerank(
+        string query,
+        string contextKey,
         IReadOnlyList<SearchResult> candidates)
     {
         ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(contextKey);
         ArgumentNullException.ThrowIfNull(candidates);
 
         if (candidates.Count == 0)
@@ -204,7 +223,7 @@ public sealed class PreferenceReranker : IReranker, IDisposable
             {
                 SearchResult candidate = candidates[i];
                 double linear = Math.Clamp(
-                    Dot(FeatureIds(new RerankItem(query, string.Empty, candidate.DocumentId, candidate.Document.Text, i))),
+                    Dot(FeatureIds(new RerankItem(query, contextKey, candidate.DocumentId, candidate.Document.Text, i))),
                     -50,
                     50);
 
@@ -305,6 +324,11 @@ public sealed class PreferenceReranker : IReranker, IDisposable
 
         if (!snapshot.Hashed)
         {
+            if (snapshot.Features.Count > snapshot.Options.MaxFeatures)
+            {
+                throw new InvalidDataException("The preference snapshot carries too many features.");
+            }
+
             for (int i = 0; i < snapshot.Features.Count; i++)
             {
                 reranker._featureIds.Add(snapshot.Features[i], i);
@@ -312,13 +336,16 @@ public sealed class PreferenceReranker : IReranker, IDisposable
             }
         }
 
-        PreferenceCategorySnapshot? shared = snapshot.Categories
-            .SingleOrDefault(category => string.Equals(category.Category, "*", StringComparison.Ordinal));
+        var sharedCategories = snapshot.Categories
+            .Where(category => string.Equals(category.Category, "*", StringComparison.Ordinal))
+            .ToList();
 
-        if (shared is null)
+        if (sharedCategories.Count != 1)
         {
-            throw new InvalidDataException("The preference snapshot has no shared '*' category.");
+            throw new InvalidDataException("The preference snapshot must have exactly one shared '*' category.");
         }
+
+        PreferenceCategorySnapshot shared = sharedCategories[0];
 
         foreach (PreferenceWeightSnapshot row in shared.Weights)
         {
@@ -327,7 +354,23 @@ public sealed class PreferenceReranker : IReranker, IDisposable
                 throw new InvalidDataException("The preference snapshot carries a non-finite weight.");
             }
 
-            int index = snapshot.Hashed ? row.Index : reranker._featureIds[row.Feature!];
+            int index;
+
+            if (snapshot.Hashed)
+            {
+                if (row.Index < 0 || row.Index >= snapshot.Options.HashDimension)
+                {
+                    throw new InvalidDataException("The preference snapshot carries an invalid feature index.");
+                }
+
+                index = row.Index;
+            }
+            else if (row.Feature is null
+                     || !reranker._featureIds.TryGetValue(row.Feature, out index))
+            {
+                throw new InvalidDataException("The preference snapshot references an unknown feature.");
+            }
+
             reranker._weights[index] = row.Weight;
         }
 
