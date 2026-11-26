@@ -1,0 +1,43 @@
+{
+  "seed": 7,
+  "events": 100,
+  "driftAt": 50,
+  "askCost": 0.1,
+  "abstainCost": 2,
+  "orderHash": "19205db5f834db9f4e4c2e54ac0abc7de00ac5fe24522b7a9b267dad9a13e1e4",
+  "variants": [
+    {
+      "name": "static",
+      "events": 100,
+      "accepted": 100,
+      "asked": 0,
+      "abstained": 0,
+      "precision": 0.5,
+      "costPer100": 50,
+      "recovered": 0,
+      "recoveryMean": 0
+    },
+    {
+      "name": "adaptive",
+      "events": 100,
+      "accepted": 100,
+      "asked": 0,
+      "abstained": 0,
+      "precision": 0.99,
+      "costPer100": 1.0000000000000009,
+      "recovered": 49,
+      "recoveryMean": 1
+    },
+    {
+      "name": "decision",
+      "events": 100,
+      "accepted": 46,
+      "asked": 54,
+      "abstained": 0,
+      "precision": 1,
+      "costPer100": 5.399999999999997,
+      "recovered": 0,
+      "recoveryMean": 0
+    }
+  ]
+}

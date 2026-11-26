@@ -705,6 +705,41 @@ interchangeable: `Learn` corrects the reached leaf or the feature logits and doe
 the tree or re-optimize the coefficients, so measure the accuracy you need rather than assuming
 `Learn` equals `Train`.
 
+### Recency and sample weights
+
+A classifier can weight a training document, and the weight is the caller's policy: the core sees a
+number, not a clock. `RecencyPolicy` turns an age into that number.
+
+```csharp
+using LexiSharp.Adaptive;
+
+var policy = new RecencyPolicy(
+    halfLife: TimeSpan.FromDays(10),
+    maxAge: TimeSpan.FromDays(30));
+
+var model = new LinearClassifier(
+    tokenizer: null,
+    options: null,
+    weightOf: document => policy.Weight(trainingNow, timestamps[document.Id]));
+
+model.Train(documents);
+```
+
+The weight halves every half-life and is `0` past `MaxAge`: a sample outside the window must not be
+trained on. The optional `occurrences` argument damps a repeatedly seen item; the first occurrence
+has full weight, the eighth (with the default saturation of 7) has half.
+
+`LinearClassifier`, `DecisionTreeClassifier` and `RandomForestClassifier` expose the same
+three-argument overloads. The existing two-argument constructors keep their binary signatures; the
+delegate is not persisted, because the trained coefficients already carry the weights. A model
+saved and loaded with `ClassificationModelSerializer` predicts the same without the delegate.
+
+For a model that cannot consume a fractional weight (Naive Bayes, a centroid, a nearest neighbour),
+`SampleWeightMode.Quantized` and `SampleWeighting.Expand` produce whole copies. That is an
+approximation: it inflates the document counts and interacts with priors and `Unlearn`. Prefer the
+exact weight when the model supports it. The full adaptive layer — memory, calibration, decision
+and preferences — is in [adaptive feedback](adaptive-feedback.md).
+
 ### Unsupervised: dividing a corpus
 
 ```csharp
