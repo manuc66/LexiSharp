@@ -366,6 +366,79 @@ public class LexiSharpIndexTests
     }
 
     [Fact]
+    public void Highlight_ProducesSnippets_UsingHighlightOptions()
+    {
+        var index = CreateIndex(
+            null,
+            With("1", "zero padding words here the quick brown fox and more words after the match", "docs"));
+
+        var hit = RequireSingle(index.Search("quick", new LexiSharpQueryOptions(Highlight: true)
+        {
+            HighlightOptions = new LexiSharp.Highlighting.HighlightOptions
+            {
+                MaxSnippets = 1,
+                Padding = 4,
+                PreTag = "<mark>",
+                PostTag = "</mark>",
+            },
+        }));
+
+        var snippet = Assert.Single(hit.Snippets);
+        Assert.Contains("<mark>quick</mark>", snippet.Text);
+        Assert.True(snippet.Length > 0);
+    }
+
+    [Fact]
+    public void Highlight_Snippets_AreEmpty_WhenHighlightingIsOff()
+    {
+        var index = CreateIndex(null, With("1", "the quick brown fox", "docs"));
+
+        var hit = RequireSingle(index.Search("quick"));
+
+        Assert.Empty(hit.Snippets);
+        Assert.Empty(hit.Ranges);
+    }
+
+    [Fact]
+    public void Highlight_ExposesSourceRanges()
+    {
+        var index = CreateIndex(null, With("1", "the quick brown fox", "docs"));
+
+        var hit = RequireSingle(index.Search("quick", new LexiSharpQueryOptions(Highlight: true)));
+
+        Assert.Equal(new Range(4, 9), Assert.Single(hit.Ranges));
+    }
+
+    [Fact]
+    public void Highlight_ProducesSnippets_OnFacetedSearch()
+    {
+        var index = CreateIndex(null, With("1", "the quick brown fox", "docs"));
+
+        var result = index.SearchWithFacets(
+            "quick",
+            new LexiSharpQueryOptions(Highlight: true),
+            facetFields: null);
+
+        var hit = Assert.Single(result.Results);
+        Assert.Equal("the <em>quick</em> brown fox", hit.HighlightedText);
+        Assert.NotEmpty(hit.Snippets);
+    }
+
+    [Fact]
+    public void Highlight_ProducesSnippets_OnNumericFacetedSearch()
+    {
+        var index = CreateIndex(null, With("1", "the quick brown fox", "docs"));
+
+        var result = index.SearchWithNumericFacets(
+            "quick",
+            new LexiSharpQueryOptions(Highlight: true));
+
+        var hit = Assert.Single(result.Results);
+        Assert.Equal("the <em>quick</em> brown fox", hit.HighlightedText);
+        Assert.NotEmpty(hit.Snippets);
+    }
+
+    [Fact]
     public void Reranker_ReordersBeforeLimit()
     {
         var index = CreateIndex(o => o.Reranker = new ReverseReranker(), With("1", "alpha first", "docs"));
