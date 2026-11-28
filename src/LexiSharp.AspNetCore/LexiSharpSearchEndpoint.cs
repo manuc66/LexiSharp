@@ -20,7 +20,20 @@ public sealed record LexiSharpSearchHit<TDocument>(
     double Score,
     TDocument Document,
     string? HighlightedText)
-    where TDocument : class;
+    where TDocument : class
+{
+    /// <summary>
+    /// Word-snapped excerpts with query terms wrapped in highlight tags when <c>highlight</c>
+    /// was requested; empty otherwise. The document's own characters are HTML-encoded.
+    /// </summary>
+    public IReadOnlyList<HighlightSnippet> Snippets { get; init; } = Array.Empty<HighlightSnippet>();
+
+    /// <summary>
+    /// Source ranges <c>[Start, End)</c> of every query-term occurrence in the indexed text,
+    /// merged and in reading order; empty when <c>highlight</c> was not requested or nothing matches.
+    /// </summary>
+    public IReadOnlyList<Range> Ranges { get; init; } = Array.Empty<Range>();
+}
 
 /// <summary>The payload of a successful search response.</summary>
 /// <param name="Query">The query that was searched, echoed back to the caller.</param>
@@ -240,7 +253,11 @@ public static class LexiSharpSearchEndpoint
             Offset: parameters.Offset,
             Highlight: parameters.Highlight)
         {
-            HighlightOptions = EscapedHighlight,
+            HighlightOptions = EscapedHighlight with
+            {
+                MaxSnippets = parameters.HighlightMaxSnippets,
+                Padding = parameters.HighlightPadding,
+            },
         };
 
         IReadOnlyList<LexiSharpHit<TDocument>> hits;
@@ -288,7 +305,11 @@ public static class LexiSharpSearchEndpoint
                 hit.DocumentId,
                 hit.Score,
                 hit.Document,
-                hit.HighlightedText)).ToList())
+                hit.HighlightedText)
+            {
+                Snippets = hit.Snippets,
+                Ranges = hit.Ranges,
+            }).ToList())
         {
             Terms = terms,
             Facets = facets,
