@@ -159,6 +159,33 @@ public class AspNetCoreSearchEndpointTests
                 CreateIndex(),
                 new LexiSharpSearchParameters { Query = "distributed", Highlight = true }));
 
-        Assert.All(ok.Value!.Hits, hit => Assert.Contains("<em>", hit.HighlightedText));
+        Assert.All(ok.Value!.Hits, hit =>
+        {
+            Assert.Contains("<em>", hit.HighlightedText);
+            Assert.NotEmpty(hit.Snippets);
+            Assert.NotEmpty(hit.Ranges);
+        });
+    }
+
+    [Fact]
+    public void Handle_HighlightMaxSnippetsZero_KeepsHighlightedTextAndRanges()
+    {
+        var ok = Assert.IsType<Ok<LexiSharpSearchResponse<SearchDocument>>>(
+            LexiSharpSearchEndpoint.Handle(
+                CreateIndex(),
+                new LexiSharpSearchParameters
+                {
+                    Query = "distributed",
+                    Highlight = true,
+                    HighlightMaxSnippets = 0,
+                    HighlightPadding = 0,
+                }));
+
+        Assert.All(ok.Value!.Hits, hit =>
+        {
+            Assert.Contains("<em>", hit.HighlightedText);
+            Assert.Empty(hit.Snippets);
+            Assert.NotEmpty(hit.Ranges);
+        });
     }
 }
