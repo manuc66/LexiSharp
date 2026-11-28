@@ -1,4 +1,5 @@
 using LexiSharp.Core;
+using LexiSharp.Highlighting;
 using LexiSharp.Linguistics;
 
 namespace LexiSharp;
@@ -19,7 +20,21 @@ public sealed record LexiSharpHit<TDocument>(
     double Score,
     TDocument Document,
     string? HighlightedText = null)
-    where TDocument : class;
+    where TDocument : class
+{
+    /// <summary>
+    /// Word-snapped excerpts with query terms wrapped in highlight tags, when highlighting was
+    /// requested and the configured tokenizer exposes spans; empty otherwise. Snippet count and
+    /// padding follow <see cref="LexiSharpQueryOptions.HighlightOptions"/>.
+    /// </summary>
+    public IReadOnlyList<HighlightSnippet> Snippets { get; init; } = Array.Empty<HighlightSnippet>();
+
+    /// <summary>
+    /// Source ranges <c>[Start, End)</c> of every query-term occurrence in <see cref="SearchDocument.Text"/>,
+    /// merged and in reading order; empty when highlighting was not requested or nothing matches.
+    /// </summary>
+    public IReadOnlyList<Range> Ranges { get; init; } = Array.Empty<Range>();
+}
 
 /// <summary>
 /// Ranked hits plus one facet bucket per requested field, as returned by
