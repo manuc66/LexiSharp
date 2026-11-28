@@ -383,6 +383,110 @@ weight is right when every positive candidate means the same thing; a sum-scaled
 when five agreeing neighbours should outvote one. The choice is a validation decision, and a wrong
 one can cost several points.
 
+### Position priors from observed texts
+
+`LeadingTokenPrior` and `TrailingTokenPrior` are two built-in `ITextPriorSource` implementations.
+They count which categories the first (or last) tokens of a text were assigned to in past
+observations and return `log P(category | tokens at that end)` with Dirichlet smoothing:
+
+```csharp
+var leading = new LeadingTokenPrior(new[]
+{
+    new ObservedText("shipping label not printed", "Support"),
+    new ObservedText("shipping label missing", "Support"),
+    new ObservedText("invoice total is wrong", "Billing"),
+});
+
+var blend = new BlendTextClassifier(
+    [new TextClassifierLane(model, 1)],
+    priors: [new PriorLane(leading, 0.5)]); // tune 0.5 on a validation split
+
+blend.Train(trainingDocuments);
+```
+
+`ObservedText` carries only a text and the category it received. The two sources are immutable and
+safe for concurrent prediction; `LeadingTokenPrior.Empty` and `TrailingTokenPrior.Empty` are
+neutral. Because prior bonuses add in log space, using both ends is two lanes, not a special mode:
+
+```csharp
+priors: [new PriorLane(leading, 0.5), new PriorLane(trailing, 0.5)]
+```
+
+`PriorWeightTuner` fits those weights instead of leaving them to guesswork. It takes an already
+trained classifier, the sources, and validation texts with their actual categories; it searches a
+grid that includes zero, so a source that does not help is dropped. Pass a fitted
+`TemperatureCalibrator` to tune the weights **after** calibration, on a different validation slice
+from the one used for the temperature:
+
+```csharp
+var weights = PriorWeightTuner.Fit(
+    calibrated,
+    [leading, trailing],
+    validation.Select(item => new PriorValidationSample(item.Text, item.Category)),
+    temperature);
+
+var blend = new BlendTextClassifier(
+    [new TextClassifierLane(calibrated, 1)],
+    priors: weights.Weights.Select((weight, i) =>
+        new PriorLane(i == 0 ? leading : trailing, weight)).ToArray());
+```
+
+The token count and the smoothing are constructor options (`tokenCount: 3`, `alpha: 1.0` by
+default). A token never seen with a category contributes only the smoothing term, so an unknown
+text is neutral rather than abrupt.
+
+**What the measurement actually showed.** On ChaosNLI (1,514 SNLI and 1,599 MNLI examples, each
+re-judged by 100 people), scoring against the human *distribution* rather than the majority label,
+the priors gave small but consistent gains on top of a dense E5 baseline (SNLI cross-entropy
+`1.0266 → 1.0132`, JSD `0.3443 → 0.3317`) and on top of a DeBERTa cross-encoder (SNLI cross-entropy
+`1.1805 → 1.1248`, JSD `0.2474 → 0.2389`). The decisive control was a single temperature fitted on
+the same validation slice: it reduced cross-entropy from `1.1805` to `0.7920` on SNLI and from
+`1.7826` to `0.9862` on MNLI, **far more than either position prior**.
+
+So: calibrate first, then tune the prior. `CalibratedClassifier` and `TemperatureCalibrator` are
+the first thing to try when a model's probabilities disagree with human judgments. The residual
+gain is real, though smaller: applying a leading or trailing prior **after** the temperature moved
+SNLI cross-entropy `0.7920 → 0.7614` and KL `0.2366 → 0.2061`, and MNLI cross-entropy
+`0.9862 → 0.9553` and KL `0.2474 → 0.2165`. Inverting the prior degraded both corpora sharply, so
+the direction is doing work. The original motivation — modelling human cognitive biases — is a
+metaphor here: the module reads tokens at one end of the text, and it says nothing about why an
+annotator chose a label.
+
+#### Where this sits in the literature
+
+These references support the **shape** of the design above. None of them describes
+`LeadingTokenPrior` itself, and none reports the residual-gain figures measured here.
+
+- **Predicting the human distribution instead of the majority label.** ChaosNLI re-annotates
+  4,645 NLI examples 100 times each and publishes `label_dist`
+  ([Nie, Zhou & Bansal, EMNLP 2020](https://arxiv.org/abs/2010.03532)). Distributed NLI makes that
+  target explicit as a task and measures models with JSD and `KL(human ‖ model)`
+  ([Zhou, Nie & Bansal, Findings of ACL 2022](https://aclanthology.org/2022.findings-acl.79/)).
+- **Calibration as the first fix.** Temperature scaling is the one-parameter post-hoc method that
+  reliably fixes overconfident softmax probabilities without changing the ranking
+  ([Guo et al., ICML 2017](https://arxiv.org/abs/1706.04599)). Distributed NLI independently lists
+  *re-calibration*, deep ensembles and MC dropout as the methods that improve distribution
+  estimation over a vanilla BERT baseline — which is why the residual gain above is reported only
+  **after** calibration.
+- **Disagreement is structure, not noise.** CrowdTruth's seven myths of human annotation
+  ([Aroyo & Welty, 2015](https://ojs.aaai.org/index.php/aimagazine/article/view/2564)), *Looking
+  Beyond the Majority Vote* ([Davani et al., TACL 2022](https://aclanthology.org/2022.tacl-1.6/)),
+  and the *Disagreement Deconvolution* ([Gordon et al., CHI 2021](https://dl.acm.org/doi/abs/10.1145/3411764.3445423)).
+  The field's survey and dataset catalogue are
+  [Uma et al., JAIR 2021](https://www.jair.org/index.php/jair/article/view/12752),
+  [Plank, EMNLP 2022](https://arxiv.org/abs/2211.02570) and
+  [awesome-human-label-variation](https://github.com/mainlp/awesome-human-label-variation).
+- **Effects of position in textual judgment.** Primacy and recency effects are documented for
+  label choice in prompted models ([Wang et al., EMNLP 2023](https://aclanthology.org/2023.emnlp-main.8/))
+  and for where relevant information sits in a context (Liu et al., *Lost in the Middle*, TACL
+  2023). Our module is not a replication of those results: it reads the first or last tokens of a
+  training text as a cheap categorical cue, not the order of options in a prompt.
+- **What is not documented here.** A named `log P(category | tokens at one end)` prior source,
+  tuned by log-loss after a temperature, and the specific SNLI/MNLI gains quoted above. Those are
+  an engineering composition of the pieces cited above plus local measurements; treat them as
+  evidence about this baseline and these corpora, not as a published result. The original
+  cognitive-bias framing was an exploration aid, not a claim supported by this literature.
+
 ### What the centroids cost and how they read
 
 Training is one pass over the vectors plus the mean and the centroid norms; prediction is one
