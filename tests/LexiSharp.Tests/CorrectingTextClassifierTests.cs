@@ -85,25 +85,25 @@ public class CorrectingTextClassifierTests
     public void OovTokenNearKnownTerm_IsCorrectedByDefault()
     {
         var inner = new RecordingClassifier(new NaiveBayesClassifier());
-        inner.Train(new[] { new SearchDocument("1", "LegacyCaller", Category: "A") });
-        var corrector = new DamerauLevenshteinTermCorrector(new[] { "LegacyCaller" });
-        var ranker = new CorrectingTextClassifier(inner, corrector, new[] { "LegacyCaller" });
+        inner.Train(new[] { new SearchDocument("1", "lexisharp", Category: "A") });
+        var corrector = new DamerauLevenshteinTermCorrector(new[] { "lexisharp" });
+        var ranker = new CorrectingTextClassifier(inner, corrector, new[] { "lexisharp" });
 
-        _ = ranker.Predict("windowtracke", limit: 3);
-        Assert.Contains(inner.Inputs, input => input.Contains("LegacyCaller", StringComparison.Ordinal));
+        _ = ranker.Predict("lexishar", limit: 3);
+        Assert.Contains(inner.Inputs, input => input.Contains("lexisharp", StringComparison.Ordinal));
     }
 
     [Fact]
     public void CustomGate_CanExcludeOovTokens()
     {
         var inner = new RecordingClassifier(new NaiveBayesClassifier());
-        inner.Train(new[] { new SearchDocument("1", "LegacyCaller", Category: "A") });
-        var corrector = new DamerauLevenshteinTermCorrector(new[] { "LegacyCaller" });
+        inner.Train(new[] { new SearchDocument("1", "lexisharp", Category: "A") });
+        var corrector = new DamerauLevenshteinTermCorrector(new[] { "lexisharp" });
         var ranker = new CorrectingTextClassifier(
-            inner, corrector, new[] { "LegacyCaller" }, correctable: _ => false);
+            inner, corrector, new[] { "lexisharp" }, correctable: _ => false);
 
-        _ = ranker.Predict("windowtracke", limit: 3);
-        Assert.DoesNotContain(inner.Inputs, input => input.Contains("LegacyCaller", StringComparison.Ordinal));
+        _ = ranker.Predict("lexishar", limit: 3);
+        Assert.DoesNotContain(inner.Inputs, input => input.Contains("lexisharp", StringComparison.Ordinal));
     }
 
     [Fact]

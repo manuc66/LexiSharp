@@ -305,7 +305,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `TimeSeriesSplit` | record | — | A split of a labelled stream into a training prefix and a test suffix. |
 | `TimeSeriesSplitter` | class | — | Helpers for candidate-scoped, time-ordered evaluation. |
 | `UnknownIndicatorSource<TItem>` | class | `IFeatureSource` | Turns every unknown feature into an explicit binary indicator named prefix + feature, so a model that only asks binary questions can learn the difference… |
-| `VocabularyGate` | class | `VocabularyOverlapGate` | Backwards-friendly alias for VocabularyOverlapGate, matching the name used by LegacyCaller. |
+| `VocabularyGate` | class | `VocabularyOverlapGate` | Backwards-friendly alias for VocabularyOverlapGate. |
 | `VocabularyOverlapGate` | class | `ITextClassifier` | ITextClassifier decorator that drops categories sharing no token with the query: a model may still return a distribution for an unseen text, and a strong prior… |
 
 #### `LexiSharp.Compression`
@@ -699,7 +699,7 @@ expression, and calling it a `struct` would be as wrong as calling a `record` a 
 | `BertWordPieceTokenizer` | class | `IOnnxTokenizer` | A BERT WordPiece tokenizer over a vocab.txt: the tokenizer most BERT-derived encoders and cross-encoders (including the MiniLM family) publish beside their ONNX… |
 | `BpeOnnxTokenizer` | class | `IOnnxTokenizer` | A byte-level BPE tokenizer loaded from a HuggingFace tokenizer.json — the file most modern exports actually ship, where vocab.json and merges.txt are no longer… |
 | `BpeOnnxTokenizerOptions` | class | — | Options for BpeOnnxTokenizer: the file carries the vocabulary and the merges, the caller states the byte-level and special-token conventions. |
-| `EmbeddingCache` | class | `PersistentEmbeddingCache` | Backwards-friendly alias for PersistentEmbeddingCache, matching the name used by LegacyCaller's original implementation. |
+| `EmbeddingCache` | class | `PersistentEmbeddingCache` | Backwards-friendly alias for PersistentEmbeddingCache. |
 | `OnnxCrossEncoderOptions` | class | — | Everything the pairwise scorer needs from the caller. As with the dense encoder, no default guesses a checkpoint: the export states its own tensor names, its… |
 | `OnnxCrossEncoderScorer` | class | `ICrossEncoderScorer`, `IDisposable` | A pairwise relevance model backed by an ONNX Runtime session: the shipped implementation of ICrossEncoderScorer for a local cross-encoder, ready for… |
 | `OnnxPooling` | enum | — | How a token-level model output is reduced to one vector per text. |

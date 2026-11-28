@@ -275,6 +275,6 @@ public class TimeOfDayPrior : TemporalPrior
 /// </summary>
 public readonly record struct ObservedAssignment(DayOfWeek Weekday, int Hour, string Category)
 {
-    /// <summary>Alias for <see cref="Category"/>, matching LegacyCaller's vocabulary.</summary>
+    /// <summary>Alias for <see cref="Category"/>.</summary>
     public string SubjectKey => Category;
 }

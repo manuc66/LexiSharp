@@ -215,8 +215,7 @@ public class PersistentEmbeddingCache : IEmbeddingProvider, IDisposable
 }
 
 /// <summary>
-/// Backwards-friendly alias for <see cref="PersistentEmbeddingCache"/>, matching the name used by
-/// LegacyCaller's original implementation.
+/// Backwards-friendly alias for <see cref="PersistentEmbeddingCache"/>.
 /// </summary>
 [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode("JSON serialization of the embedding cache requires unreferenced code.")]
 [System.Diagnostics.CodeAnalysis.RequiresDynamicCode("JSON serialization of the embedding cache requires dynamic code.")]

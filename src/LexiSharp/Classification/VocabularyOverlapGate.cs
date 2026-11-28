@@ -117,8 +117,7 @@ public class VocabularyOverlapGate : ITextClassifier
 }
 
 /// <summary>
-/// Backwards-friendly alias for <see cref="VocabularyOverlapGate"/>, matching the name used by
-/// LegacyCaller.
+/// Backwards-friendly alias for <see cref="VocabularyOverlapGate"/>.
 /// </summary>
 public sealed class VocabularyGate : VocabularyOverlapGate
 {
