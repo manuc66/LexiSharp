@@ -384,12 +384,10 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
         if (coreOptions.IsEmpty)
             return Array.Empty<LexiSharpHit<TDocument>>();
 
-        IReadOnlyList<string>? queryTerms = null;
-
-        if (options?.Highlight == true && _spanTokenizer is not null)
-            queryTerms = QueryParser.Parse(effectiveQuery, _tokenizer).AllTerms;
-
-        return MapHits(_engine.Search(effectiveQuery, coreOptions, cancellationToken), queryTerms, options?.HighlightOptions);
+        return MapHits(
+            _engine.Search(effectiveQuery, coreOptions, cancellationToken),
+            QueryTermsFor(effectiveQuery, options),
+            options?.HighlightOptions);
     }
 
     /// <summary>
@@ -451,7 +449,7 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
             : _engine.Search(effectiveQuery, coreOptions, cancellationToken);
 
         return new LexiSharpFacetedResult<TDocument>(
-            MapHits(ranked, null, options?.HighlightOptions), faceted.Buckets);
+            MapHits(ranked, QueryTermsFor(effectiveQuery, options), options?.HighlightOptions), faceted.Buckets);
     }
 
     /// <summary>
@@ -480,7 +478,10 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
             return new LexiSharpFacetedResult<TDocument>(Array.Empty<LexiSharpHit<TDocument>>(), Array.Empty<FacetBucket>());
 
         var faceted = _baseEngine.SearchWithNumericFacets(effectiveQuery, coreOptions, facetFields, numericFacets);
-        var results = MapHits(_engine.Search(effectiveQuery, coreOptions), null, options?.HighlightOptions);
+        var results = MapHits(
+            _engine.Search(effectiveQuery, coreOptions),
+            QueryTermsFor(effectiveQuery, options),
+            options?.HighlightOptions);
 
         return new LexiSharpFacetedResult<TDocument>(results, faceted.Buckets)
         {
@@ -577,6 +578,15 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
             _category(document),
             _textFields(document));
 
+    /// <summary>Query terms to highlight when highlighting was requested and spans are available.</summary>
+    private IReadOnlyList<string>? QueryTermsFor(string effectiveQuery, LexiSharpQueryOptions? options)
+    {
+        if (options?.Highlight != true || _spanTokenizer is null)
+            return null;
+
+        return QueryParser.Parse(effectiveQuery, _tokenizer).AllTerms;
+    }
+
     /// <summary>Wraps engine results into typed hits, optionally highlighting each hit's text.</summary>
     private IReadOnlyList<LexiSharpHit<TDocument>> MapHits(
         IReadOnlyList<SearchResult> results,
@@ -588,16 +598,31 @@ public sealed class LexiSharpIndex<TDocument> : IDisposable
         for (int i = 0; i < results.Count; i++)
         {
             var result = results[i];
-            string? highlighted = queryTerms is null || _spanTokenizer is null
-                ? null
-                : TextHighlighter.HighlightFull(
-                    result.Document.Text, queryTerms, _spanTokenizer, highlightOptions);
+            bool canHighlight = queryTerms is not null && _spanTokenizer is not null;
+
+            string? highlighted = canHighlight
+                ? TextHighlighter.HighlightFull(
+                    result.Document.Text, queryTerms!, _spanTokenizer!, highlightOptions)
+                : null;
+
+            IReadOnlyList<LexiSharp.Highlighting.HighlightSnippet> snippets = canHighlight
+                ? TextHighlighter.Highlight(
+                    result.Document.Text, queryTerms!, _spanTokenizer!, highlightOptions)
+                : Array.Empty<LexiSharp.Highlighting.HighlightSnippet>();
+
+            IReadOnlyList<Range> ranges = canHighlight
+                ? TextHighlighter.MatchRanges(result.Document.Text, queryTerms!, _spanTokenizer!)
+                : Array.Empty<Range>();
 
             hits[i] = new LexiSharpHit<TDocument>(
                 result.DocumentId,
                 result.Score,
                 Resolve(result.DocumentId),
-                highlighted);
+                highlighted)
+            {
+                Snippets = snippets,
+                Ranges = ranges,
+            };
         }
 
         return hits;
