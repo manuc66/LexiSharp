@@ -25,6 +25,18 @@ public sealed record LexiSharpSearchParameters
     public bool Highlight { get; init; }
 
     /// <summary>
+    /// Maximum number of snippets in <c>snippets</c> per hit when highlighting is requested.
+    /// Defaults to 3; 0 or less disables snippets while keeping <c>highlightedText</c> and <c>ranges</c>.
+    /// </summary>
+    public int HighlightMaxSnippets { get; init; } = 3;
+
+    /// <summary>
+    /// Characters of context before/after each match cluster in <c>snippets</c>, snapped outward to word boundaries.
+    /// Defaults to 40; negative values clamp to 0.
+    /// </summary>
+    public int HighlightPadding { get; init; } = 40;
+
+    /// <summary>
     /// Include corpus statistics for the query's terms in the response. Defaults to <c>false</c>.
     /// </summary>
     /// <remarks>
